@@ -18,6 +18,7 @@ Precedence: a hook block always wins. `pnpm verify` must pass before any commit.
 | [`testing.md`](./testing.md) | Vitest conventions, "QA-able per change", behavior-not-implementation |
 | [`performance.md`](./performance.md) | no sync I/O in core/server, async logging, lazy imports, benching |
 | [`security.md`](./security.md) | credential plaintext handling, banned APIs, secrets-in-errors |
+| [`data.md`](./data.md) | additive forward-only migrations, secrets-as-references, repository layer (inc 4+) |
 
 ## The prime directives
 

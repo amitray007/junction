@@ -30,7 +30,7 @@ We lean on **compound-engineering (CE)** for generic heavy lifting and use junct
 5. **Agent QA / tests** — the builder runs `pnpm verify` and writes behavior tests. If something breaks, root-cause it.
    → CE: `/ce-debug` (systematic root-cause; never patch symptoms). Then `/ce-simplify-code` on the diff before review.
 6. **Background review** — run in parallel:
-   → Junction custom agents: `junction-package-boundary`, `junction-clean-code-reviewer`, plus the active stubs (`junction-credential-security` from inc 6, `junction-mcp-contract` from inc 7, `junction-tui` from inc 9).
+   → Junction custom agents: `junction-package-boundary`, `junction-clean-code-reviewer`, plus the active stubs (`junction-credential-security` from inc 6, `junction-mcp-contract` from inc 7, `junction-sandbox-security` from inc 8, `junction-tui` from inc 9).
    → CE: `/ce-code-review` (tiered persona pipeline), and dispatch the relevant CE reviewers directly — `ce-correctness-reviewer` (logic/edge cases/TS idioms), `ce-security-reviewer` (auth/secrets diffs), `ce-performance-reviewer`, `ce-maintainability-reviewer`, `ce-testing-reviewer`, `ce-api-contract-reviewer` (exported types, inc 4+), `ce-data-migration-reviewer` / `ce-data-integrity-guardian` (migrations, inc 5+).
 7. **Ask the user to test.**
 8. **→ USER APPROVES (gate)** → commit & next increment.

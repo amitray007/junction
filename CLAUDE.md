@@ -68,11 +68,11 @@ Every increment follows this loop (gates at step 4 and step 8):
 
 Prefer CE commands/agents for generic work; junction's custom agents cover the junction-specific layer. Map (see `docs/workflow.md` for full detail):
 
-- **Research:** `ce-best-practices-researcher`, `ce-framework-docs-researcher`, `ce-repo-research-analyst`, `ce-web-researcher`.
+- **Research:** `ce-best-practices-researcher`, `ce-framework-docs-researcher`, `ce-repo-research-analyst`, `ce-web-researcher`, `ce-learnings-researcher`.
 - **Plan:** `/ce-plan`; review the method file with `/ce-doc-review` + `ce-spec-flow-analyzer`.
 - **Build:** `/ce-work` (the Sonnet builder's harness).
 - **QA / debug:** `pnpm verify` + `/ce-debug` (root-cause, not symptom). `/ce-simplify-code` on the diff. (Note: `ce-proof` is markdown publishing, **not** a verifier.)
-- **Review:** `/ce-code-review` + `ce-correctness-reviewer`, `ce-security-reviewer`, `ce-performance-reviewer`, `ce-testing-reviewer`, `ce-maintainability-reviewer`, `ce-data-migration-reviewer` (migrations) — **plus** junction's `junction-package-boundary` + `junction-clean-code-reviewer` (always) and the credential/MCP/TUI stubs when active.
+- **Review:** `/ce-code-review` + `ce-correctness-reviewer`, `ce-security-reviewer`, `ce-performance-reviewer`, `ce-testing-reviewer`, `ce-maintainability-reviewer`, `ce-data-migration-reviewer` (migrations) — **plus** junction's `junction-package-boundary` + `junction-clean-code-reviewer` (always) and the credential/MCP/sandbox/TUI stubs when active.
 - **Commit / ship:** `/ce-commit`, `/ce-commit-push-pr`, `/ce-resolve-pr-feedback`.
 
 Selection is by relevance — run the reviewers a diff warrants, not all of them. Junction's custom agents always run.
@@ -109,7 +109,9 @@ ESM-only · `nodenext` · `target: es2023` · Node 22 LTS (floor 20).
 
 pnpm workspaces · tsdown (+ publint + attw) · citty + @clack/prompts · Vitest · Zod v4 · **neverthrow `Result<T,E>`** (typed errors; no Effect-TS) · env-paths + proper-lockfile (`~/.junction`, `JUNCTION_HOME` override) · Drizzle + better-sqlite3 · `CredentialStore` → @napi-rs/keyring + AES-256-GCM file store · `@modelcontextprotocol/sdk`.
 
-**QA loop (every change):** **`pnpm verify`** = `tsc -b` (→ tsgo at GA) + **Biome** (lint+format) + **Vitest**. Plus **knip** (dead code/deps), **type-coverage** (≥99%), **publint+attw** (packaging). Enforcement: **lefthook** runs `pnpm verify` pre-commit/pre-push (the commit gate); **`.claude/settings.json`** hooks add per-edit `biome --write` (PostToolUse) and the PreToolUse boundary guard. See `docs/rules/` + design spec §5b.
+**QA loop (every change):** **`pnpm verify`** = `tsc -b` (→ tsgo at GA) + **Biome** (lint) + **Vitest**. (Formatting is the separate `format` script + the per-edit hook.) Enforcement: **lefthook** runs `pnpm verify` pre-commit/pre-push (the commit gate); **`.claude/settings.json`** hooks add per-edit `biome --write` (PostToolUse) and the PreToolUse boundary guard.
+
+*Deferred CI tooling (wired at the increments that need it, not yet present):* **knip** (dead code/deps, inc 1+), **type-coverage** (≥99%, inc 2+), **publint+attw** (packaging, when a package publishes), **targeted semgrep** (sandbox/secrets paths, inc 6/8). See `docs/rules/` + design spec §5b.
 
 **Future-domain (recorded, installed at their increment):** TanStack Start (web) · arctic (OAuth vault) · pino (audit) · better-auth (remote web login only) · OpenTUI (TUI dashboard, increment 9) · microsandbox (microVM escalation) · Sandbox = Deno + bubblewrap/Seatbelt · React Compiler + eslint-plugin-react-hooks + react-doctor (web increment only).
 

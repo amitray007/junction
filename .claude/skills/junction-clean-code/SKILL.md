@@ -33,4 +33,4 @@ Every change ships ready to QA:
 
 ## When in doubt
 
-Read `docs/rules/`. The hooks enforce the mechanical rules (formatting, banned imports); the review agents (`junction-package-boundary`, `junction-clean-code`) audit the rest. If a rule and a deadline conflict, fix the rule violation — `pnpm verify` is the gate.
+Read `docs/rules/`. The hooks enforce the mechanical rules (formatting, banned imports); the review agents (`junction-package-boundary`, `junction-clean-code-reviewer`) audit the rest. If a rule and a deadline conflict, fix the rule violation — `pnpm verify` is the gate.

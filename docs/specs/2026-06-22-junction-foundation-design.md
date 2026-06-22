@@ -266,7 +266,7 @@ All of the following are written before increment 1, so every increment is gover
 5. **Clean-code / dev skills** — `junction-clean-code` (guidance pointing at `docs/rules/`) and `junction-dev` (how to run/build/test; grows per increment).
 6. **Custom review agents:**
    - *Active now:* **package-boundary reviewer** (dependency-direction + no-http-in-core) and **clean-code reviewer** (audits against `docs/rules/`).
-   - *Stubbed until their target code lands:* **credential-security** (increment 6), **MCP-contract** (increment 7), **TUI** (increment 9).
+   - *Stubbed until their target code lands:* **credential-security** (increment 6), **MCP-contract** (increment 7), **sandbox-security** (increment 8), **TUI** (increment 9).
    - Everything else (correctness, security, performance, architecture, testing, …) comes free from the installed compound-engineering plugin — not rebuilt.
 
 ### Operating model & method files
