@@ -16,7 +16,8 @@ See [`docs/idea.md`](docs/idea.md) for the full pain log and vision.
 
 **Foundation in active development — not yet usable.**
 
-The foundation increments (0 → 8) are in progress. Until they complete, there is no install
+The foundation increments (0 → 9) are in progress — the core is "ready" after increment 8,
+with increment 9 (the TUI dashboard) completing it. Until they complete, there is no install
 path, no CLI binary, and no stable API. See [`docs/specs/`](docs/specs/) and
 [`docs/methods/`](docs/methods/) for the build plan and per-increment method files.
 
