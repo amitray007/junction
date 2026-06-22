@@ -43,7 +43,7 @@ fails, root-cause it — do not skip or disable the gate.
 
 ## Changesets (user-facing changes)
 
-If your change affects a published package's behavior, run:
+If your change is user-facing (affects a package's released behavior), run:
 
 ```sh
 pnpm changeset

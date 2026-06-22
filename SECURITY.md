@@ -11,7 +11,13 @@ as the primary channel.** Private advisories keep the report confidential while 
 investigated and patched — do not open a public issue for a security vulnerability.
 
 If you cannot use GitHub advisories, contact **hey@amitray.dev** as a fallback. Include
-enough detail to reproduce the issue.
+enough detail to reproduce the issue. For sensitive reproduction details, **ask for an
+encrypted channel (PGP key / age recipient) before sending** — don't send credential-exposure
+repro steps over cleartext email.
+
+> Private Security Advisories require the repository to be public; once junction is public,
+> the advisory link above is the primary channel. While the repo is private, use the email
+> fallback.
 
 **CRITICAL — never paste real credentials, tokens, or secrets:**
 When writing a report (in an advisory, an issue, a PR, or any other channel), **redact all

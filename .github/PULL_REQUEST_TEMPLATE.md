@@ -5,7 +5,7 @@
 ## Checklist
 
 - [ ] `pnpm verify` passes (typecheck + lint + tests)
-- [ ] Changeset added (`pnpm changeset`) if this is a user-facing change to a published package
+- [ ] Changeset added (`pnpm changeset`) if this is a user-facing change
 - [ ] Follows `docs/rules/` (TypeScript, testing, performance, security, data)
 - [ ] Follows `docs/principles/` (modularity, DRY)
 - [ ] Tests included for new behavior
