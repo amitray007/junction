@@ -12,7 +12,7 @@ jobs:
     name: gitleaks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with: { fetch-depth: 0 }
       - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
         env:
@@ -24,7 +24,7 @@ jobs:
     name: no-publish-guard
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Assert no npm-publish path exists
         # Scans ci.yml + release.yml (not this file, to avoid matching the
         # patterns below). Fails if a real publish path or npm auth token appears.
