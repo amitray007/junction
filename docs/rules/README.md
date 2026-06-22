@@ -19,6 +19,7 @@ Precedence: a hook block always wins. `pnpm verify` must pass before any commit.
 | [`performance.md`](./performance.md) | no sync I/O in core/server, async logging, lazy imports, benching |
 | [`security.md`](./security.md) | credential plaintext handling, banned APIs, secrets-in-errors |
 | [`data.md`](./data.md) | additive forward-only migrations, secrets-as-references, repository layer (inc 4+) |
+| [`licensing.md`](./licensing.md) | SPDX header policy (AGPL-3.0-only), AGPL §13 network-source-offer product requirement |
 
 > **See also `docs/principles/`** — modularity (where code lives, no `utils` packages, one-way graph) and DRY (factor primitives eagerly, keep policies duplicated until the rule of three). The rules are *what*; the principles are *how to structure*.
 
