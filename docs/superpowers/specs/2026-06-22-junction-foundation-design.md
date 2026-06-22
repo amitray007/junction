@@ -202,7 +202,7 @@ Dual-execution needs different tools for different jobs, all behind one `Sandbox
 
 All of the following are written before increment 1, so every increment is governed from line one.
 
-1. **`CLAUDE.md` (root)** — the decided stack, the 4-package shape, the hard boundary rules (core has no cli/web/http deps; credentials never leave the process; `__` namespacing; per-profile endpoints), the banned lists, and pointers to the workflow + skills below.
+1. **`CLAUDE.md` (root)** — the **operating model** (orchestrator-Opus thinks/plans/reviews; **research → Opus subagents, building → Sonnet subagents**; delegate by default, only trivial changes done directly; **method files** as the per-increment spec+implementation hand-off in `docs/methods/`), the decided stack, the 4-package shape, the hard boundary rules (core has no cli/web/http deps; credentials never leave the process; `__` namespacing; per-profile endpoints), the banned lists, and pointers to the workflow + skills below. **Written.**
 2. **Per-increment workflow checklist** — the 8-step loop (below) as a durable doc the agents follow every increment.
 3. **Clean-code / codebase-quality skills** — junction-specific guidance for humans *and* agents: file-size/single-purpose boundaries, naming, error-handling conventions, the "core is pure, edges are thin" rule, Vitest test conventions, and keeping the dependency graph honest (`core` ← others, never reverse).
 4. **`junction` project skill** (starts minimal) — how to run/build/test: pnpm commands, launching the CLI, running the web app later. Grows with the project.
@@ -210,6 +210,12 @@ All of the following are written before increment 1, so every increment is gover
    - *Active now:* **package-boundary reviewer** (enforces dependency-direction + no-http-in-core) and **clean-code reviewer** (tuned to the skills in #3). A **TUI reviewer** (OpenTUI patterns) activates at increment 9.
    - *Stubbed until their target code lands:* **credential-security reviewer** (activates at increment 6), **MCP-contract reviewer** (activates at increment 7).
    - Everything else (correctness, security, performance, architecture, testing, …) comes free from the installed compound-engineering plugin — not rebuilt.
+
+### Operating model & method files
+
+- **Orchestrator (Opus) is the brain:** thinks, researches, plans, prepares jobs, reviews. Does not usually write implementation itself.
+- **Model routing:** research → **Opus** subagents; building features/fixes → **Sonnet** subagents. **Delegate by default**; only do super-simple/small changes directly.
+- **Method file:** before any increment, the orchestrator writes one file — `docs/methods/NN-<increment>.md` — containing the increment's **mini-spec + step-by-step implementation together**. It is the self-contained artifact used to delegate the build to a Sonnet subagent. The project design spec stays the source of truth; `writing-plans` output becomes these method files (no parallel doc trail).
 
 ### The per-increment workflow (8 steps)
 
