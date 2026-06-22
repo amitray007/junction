@@ -26,3 +26,7 @@ Junction holds the user's credentials. These rules are non-negotiable.
 ## Enforcement
 
 The boundary-guard hook blocks `node:vm`/`vm2` and obvious violations pre-edit; the `junction-credential-security` reviewer (active from increment 6) audits the credential layer in depth.
+
+## See also
+
+- [`docs/rules/licensing.md`](./licensing.md) — SPDX header policy and AGPL §13 network-source-offer requirement (the compliance layer alongside these credential rules).
