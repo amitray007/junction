@@ -3,7 +3,7 @@
 Junction is a self-hosted, single-user **broker**: the one place you connect your platform accounts once, so any AI agent can reach that data through MCP / CLI / API — granular, profiled, sandboxed, secured.
 
 - **Idea / pain / landscape:** `docs/idea.md`
-- **Foundation design (source of truth):** `docs/superpowers/specs/2026-06-22-junction-foundation-design.md`
+- **Foundation design (source of truth):** `docs/specs/2026-06-22-junction-foundation-design.md`
 - **Per-increment method files:** `docs/methods/` (see Operating Model below)
 
 ---
