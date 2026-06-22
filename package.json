@@ -11,7 +11,8 @@
   "scripts": {
     "verify": "pnpm run typecheck && pnpm run lint && pnpm run test:ci",
     "quality": "pnpm audit --audit-level=high || true",
-    "typecheck": "test -f tsconfig.json && tsc -b || echo '(no tsconfig project yet — typecheck no-op until increment 1; remove this guard then)'",
+    "typecheck": "tsc -b",
+    "build": "pnpm -r build",
     "lint": "biome check .",
     "format": "biome format --write .",
     "test": "vitest",
@@ -23,6 +24,7 @@
     "@changesets/changelog-github": "^0.7.0",
     "@changesets/cli": "^2.31.0",
     "lefthook": "^1.13.0",
+    "tsdown": "^0.22.3",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"
   },
