@@ -9,16 +9,16 @@ importers:
   .:
     devDependencies:
       '@biomejs/biome':
-        specifier: ^2.0.0
+        specifier: ^2.5.0
         version: 2.5.0
       lefthook:
-        specifier: ^1.7.0
+        specifier: ^1.13.0
         version: 1.13.6
       typescript:
-        specifier: ^5.7.0
+        specifier: ^5.9.0
         version: 5.9.3
       vitest:
-        specifier: ^3.0.0
+        specifier: ^3.2.0
         version: 3.2.6
 
 packages:
