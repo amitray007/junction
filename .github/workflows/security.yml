@@ -14,6 +14,31 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with: { fetch-depth: 0 }
-      - uses: gitleaks/gitleaks-action@v2
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  no-publish-guard:
+    # Locks in the publish-disabled invariant (increment 0.75): junction
+    # must never gain an npm-publish path until deliberately enabled.
+    name: no-publish-guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Assert no npm-publish path exists
+        # Scans ci.yml + release.yml (not this file, to avoid matching the
+        # patterns below). Fails if a real publish path or npm auth token appears.
+        shell: bash
+        run: |
+          fail=0
+          if grep -EHn 'changeset publish|npm publish|pnpm publish' \
+               .github/workflows/ci.yml .github/workflows/release.yml; then
+            echo "::error::An npm-publish path was introduced. Publishing is intentionally disabled (increment 0.75)."
+            fail=1
+          fi
+          if grep -EHn 'NODE_AUTH_TOKEN|NPM_TOKEN' \
+               .github/workflows/ci.yml .github/workflows/release.yml; then
+            echo "::error::An npm auth token was introduced. Publishing is intentionally disabled."
+            fail=1
+          fi
+          exit $fail
