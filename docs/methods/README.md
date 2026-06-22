@@ -26,3 +26,7 @@ A **method file** holds one increment's **spec + step-by-step implementation tog
 | 9 | OpenTUI dashboard | `09-*.md` | TBD |
 
 After increment 8 the foundation is "ready"; increment 9 (TUI) completes it. Features come after, each with its own method file.
+
+## Carry-forward notes (raised in review, actioned at the noted increment)
+
+- **Increment 2+ — `tsc -b` project references:** when `cli`/`web`/`mcp/*` start importing `@junction/core`, each consumer's `tsconfig.json` must add `"references": [{ "path": "../core" }]` (mcp packages: `"../../core"`). Otherwise `tsc -b` won't rebuild `core` first, and the one-way edge isn't machine-checked. (Flagged in the increment-1 boundary + standards reviews.)
