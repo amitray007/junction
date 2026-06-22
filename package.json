@@ -7,8 +7,10 @@
   "engines": {
     "node": ">=20"
   },
+  "license": "AGPL-3.0-only",
   "scripts": {
     "verify": "pnpm run typecheck && pnpm run lint && pnpm run test:ci",
+    "quality": "pnpm audit --audit-level=high || true",
     "typecheck": "test -f tsconfig.json && tsc -b || echo '(no tsconfig project yet — typecheck no-op until increment 1; remove this guard then)'",
     "lint": "biome check .",
     "format": "biome format --write .",
@@ -18,6 +20,8 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.0",
+    "@changesets/changelog-github": "^0.7.0",
+    "@changesets/cli": "^2.31.0",
     "lefthook": "^1.13.0",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"
