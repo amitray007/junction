@@ -50,8 +50,8 @@ junction/
 |---|---|---|
 | Monorepo | **pnpm workspaces** | Add Turborepo only when builds hurt (~5+ pkgs). |
 | Build | **tsdown** (+ `publint` + `attw`) | Rolldown-based successor to tsup (maintenance-only). |
-| CLI framework | **citty** (unjs) | Zero-dep, native `parseArgs`, lazy subcommands. Runner-up: commander. |
-| Interactive prompts | **@clack/prompts** | Kept separate from the parser, lazy-imported in handlers. |
+| CLI framework | **citty** (unjs) | Zero-dep, native `parseArgs`, lazy subcommands. Runner-up: commander. The command/argument layer — owns `junction <cmd>`, flags, `npx` entry. |
+| Interactive prompts | **@clack/prompts** | Lightweight inline prompts for the `init` wizard. Kept separate from the parser, lazy-imported. Superseded by OpenTUI for the full-screen dashboard surface (see §5 ADR + increment 9). |
 | Config home | **`~/.junction`** (explicit, `JUNCTION_HOME` override) + **env-paths** for cache | Predictable for a self-hosted broker. |
 | File locking | **proper-lockfile** | Atomic `mkdir` locks; wrap every mutating write. |
 | Secrets at rest | **`CredentialStore` interface** → **@napi-rs/keyring** + **AES-256-GCM** file store (node:crypto) | keytar is dead. Keyring for desktop; encrypted file is the server default. |
@@ -149,6 +149,7 @@ Committed choices so we never improvise a dependency mid-increment. **Nothing he
 | OAuth / token vault | **arctic** for the broker's per-provider token store | Per-provider `refreshAccessToken()`. junction owns its own encrypted token table. |
 | Persistence | **Drizzle ORM + better-sqlite3** | Code-first TS schema, single file, zero infra. Cheap swap to libsql later. |
 | Audit logging | **pino** (machine audit trail) + **consola** (human CLI output) | Don't conflate the two streams. |
+| Terminal UI | **OpenTUI** (React/Solid reconciler) | Full-screen interactive TUI dashboard (profiles/platforms/status). Layers *on top of* citty — bare `junction` launches the TUI; commands stay scriptable. Replaces @clack/prompts for rich interaction. Deferred to increment 9 to keep the CLI base lean. |
 | Sandbox | see §6b | — |
 
 **Load-bearing structural call:** *web login* and *the broker's platform-token vault* are two different problems. The vault (arctic + encrypted Drizzle table + keyring) lives in **`core`** and exists regardless of whether a web UI ships. better-auth, if adopted, only handles human login on the web app — it **never owns platform tokens.** This is why `Credential` is a core concept, not a web concept.
@@ -164,7 +165,7 @@ Each increment is a complete, tested, runnable thing. The §7 workflow loop runs
 **Phase A — Repo & CLI base**
 1. **Monorepo skeleton** — pnpm workspace, `tsconfig.base`, Vitest, tsdown, 4 empty packages wired via `workspace:*`. *Proof:* `pnpm test` + `pnpm build` pass.
 2. **`core` paths + config layer** — `~/.junction` home (`JUNCTION_HOME` override), env-paths cache, proper-lockfile, Zod-validated JSON config. *Proof:* read/write/lock unit tests; config round-trips.
-3. **`cli` boots over core** — citty CLI: `junction init` (creates home, writes default config via @clack/prompts) + `junction status` (reads + prints). *Proof:* `npx junction init` then `status` works end-to-end.
+3. **`cli` boots over core** — citty CLI: `junction init` (creates home, writes default config via @clack/prompts) + `junction status` (reads + prints, `--json` supported). *Proof:* `npx junction init` then `status` works end-to-end. The terminal experience has three layers: **citty** owns `junction <cmd>` + flags + the `npx` entry; **@clack/prompts** handles inline wizard steps; **OpenTUI** (increment 9) becomes the full-screen interactive surface. Scriptable/`--json` paths always remain so agents can drive the CLI.
 
 **Phase B — The spine (typed, persisted, no features)**
 4. **Data model in `core`** — `Platform`/`Credential`/`Profile`/`SourceRef` Zod schemas + inferred types; `__` namespace + per-profile-endpoint conventions encoded. *Proof:* schema tests incl. the wedge (two GitHub credentials, one platform).
@@ -177,7 +178,10 @@ Each increment is a complete, tested, runnable thing. The §7 workflow loop runs
 **Phase D — Sandbox foundation**
 8. **Sandbox core** — the `Sandbox` interface + the Deno/bubblewrap impl (§6b), exercised by a trivial "run this, return output" test. *Proof:* a scoped Deno eval and a bubblewrapped command run and return output under restriction.
 
-**After increment 8 the foundation is "ready."** Only then do we discuss the first real feature (connecting an actual platform — likely work-GitHub, the wedge), each re-justified as it comes up.
+**Phase E — Terminal UI**
+9. **OpenTUI dashboard** — bare `junction` launches a full-screen TUI (profiles, platforms, status), rendered over `core`. citty commands and `--json` paths remain for scripting/agents. *Proof:* the TUI lists profiles/platforms from the DB and reflects live state; `junction status --json` still works headless.
+
+**After increment 8 the foundation is "ready"** (the spine + MCP shell + sandbox). Increment 9 (TUI) is a foundation-completing polish layer, not a feature. Only after that do we discuss the first real feature (connecting an actual platform — likely work-GitHub, the wedge), each re-justified as it comes up.
 
 ### 6b. Sandbox decision (increment 8)
 
@@ -203,7 +207,7 @@ All of the following are written before increment 1, so every increment is gover
 3. **Clean-code / codebase-quality skills** — junction-specific guidance for humans *and* agents: file-size/single-purpose boundaries, naming, error-handling conventions, the "core is pure, edges are thin" rule, Vitest test conventions, and keeping the dependency graph honest (`core` ← others, never reverse).
 4. **`junction` project skill** (starts minimal) — how to run/build/test: pnpm commands, launching the CLI, running the web app later. Grows with the project.
 5. **Custom review agents:**
-   - *Active now:* **package-boundary reviewer** (enforces dependency-direction + no-http-in-core) and **clean-code reviewer** (tuned to the skills in #3).
+   - *Active now:* **package-boundary reviewer** (enforces dependency-direction + no-http-in-core) and **clean-code reviewer** (tuned to the skills in #3). A **TUI reviewer** (OpenTUI patterns) activates at increment 9.
    - *Stubbed until their target code lands:* **credential-security reviewer** (activates at increment 6), **MCP-contract reviewer** (activates at increment 7).
    - Everything else (correctness, security, performance, architecture, testing, …) comes free from the installed compound-engineering plugin — not rebuilt.
 
