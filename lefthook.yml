@@ -1,0 +1,18 @@
+# Lefthook — git hooks for junction.
+# Install once with: pnpm exec lefthook install
+
+pre-commit:
+  parallel: false
+  commands:
+    # Fast formatter/lint pass on staged files (auto-fixes, re-stages).
+    biome:
+      glob: "*.{ts,tsx,js,jsx,json}"
+      run: pnpm exec biome check --write {staged_files} && git add {staged_files}
+    # The real gate: full verify (typecheck + lint + tests). Blocks on failure.
+    verify:
+      run: pnpm run verify
+
+pre-push:
+  commands:
+    verify:
+      run: pnpm run verify

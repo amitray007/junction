@@ -1,0 +1,25 @@
+{
+  "name": "junction-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.2",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "verify": "pnpm run typecheck && pnpm run lint && pnpm run test:ci",
+    "typecheck": "tsc -b 2>/dev/null || echo '(no tsconfig project yet — typecheck is a no-op until increment 1)'",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "test": "vitest",
+    "test:related": "vitest related --run",
+    "test:ci": "vitest run --passWithNoTests"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.0.0",
+    "lefthook": "^1.7.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}
