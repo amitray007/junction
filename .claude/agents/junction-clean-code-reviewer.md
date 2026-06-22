@@ -16,6 +16,7 @@ These have no CE home; they are your core job:
 - **`<namespace>__<tool>` tool naming** and `/profiles/{name}/mcp` endpoint convention. (`docs/rules/typescript.md`)
 - **Secrets never logged / in errors; credential plaintext never persisted or returned.** (`docs/rules/security.md`)
 - **Data rules** when migrations/persistence are touched: additive forward-only migrations, secrets-as-references, repository layer. (`docs/rules/data.md`)
+- **Modularity & DRY** (`docs/principles/`): no `utils`/`common`/`shared` grab-bag; shared code is a named `core` module; primitives factored eagerly but policies (repos, CLI commands, MCP handlers) kept duplicated until the rule of three; no premature `Repository<T>`/"Command" base; narrow barrels (no blanket `export *`).
 
 ## Also check (lighter touch — CE covers the depth)
 

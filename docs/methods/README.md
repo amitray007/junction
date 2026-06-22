@@ -12,7 +12,8 @@ A **method file** holds one increment's **spec + step-by-step implementation tog
 |---|---|---|---|
 | 0 | Scaffolding (docs, skills, agents) | `00-scaffolding.md` | written |
 | 0.5 | Rules & enforcement (docs/rules + hooks) | `00.5-rules-and-enforcement.md` | written |
-| 1 | Monorepo skeleton | `01-*.md` | TBD |
+| 1 | Monorepo skeleton (+ core module structure) | `01-monorepo-skeleton.md` | written |
+| 1.5 | Duplication & boundary tooling | `01.5-duplication-tooling.md` | written |
 | 2 | core paths + config layer | `02-*.md` | TBD |
 | 3 | cli boots over core | `03-*.md` | TBD |
 | 4 | Data model in core | `04-*.md` | TBD |

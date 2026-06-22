@@ -5,6 +5,7 @@ Junction is a self-hosted, single-user **broker**: the one place you connect you
 - **Idea / pain / landscape:** `docs/idea.md`
 - **Foundation design (source of truth):** `docs/specs/2026-06-22-junction-foundation-design.md`
 - **Coding guardrails (read before writing any code):** `docs/rules/` — per-language rules, enforced by hooks + review agents.
+- **Design principles (modularity & DRY):** `docs/principles/` — where code lives, when to factor, when to keep duplicated.
 - **Per-increment method files:** `docs/methods/` (see Operating Model below)
 
 ---
@@ -123,6 +124,7 @@ pnpm workspaces · tsdown (+ publint + attw) · citty + @clack/prompts · Vitest
 
 **Read `docs/rules/` before writing any code** — it is the enforceable rule set (TypeScript, testing, performance, security). Highlights:
 
+- **Modularity & DRY** (`docs/principles/`): default to a **named `core` module**, not a new package (everything depends on `core`); **never** a `utils`/`common`/`shared` grab-bag; **DRY primitives eagerly** (errors, IDs, paths, logger, branded-ID schema), **keep policies duplicated** until the rule of three (repos, CLI commands, MCP handlers); the wrong abstraction is costlier than duplication.
 - **Core is pure; edges are thin.** Logic lives in `core`; `cli`/`web`/`mcp/*` translate to/from it.
 - **Typed errors, no bare throws across boundaries.** Fallible operations return neverthrow `Result<T, E>` with discriminated-union domain errors. Use `using`/`Symbol.asyncDispose` for cleanup.
 - **Single purpose per file/unit.** If a file grows large, it's doing too much — split it.

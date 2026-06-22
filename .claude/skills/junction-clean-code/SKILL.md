@@ -9,6 +9,7 @@ Junction's code must be clean for **both humans and agents**, and **easy to QA o
 
 ## The non-negotiables
 
+- **Modularity & DRY** (`docs/principles/`): shared code is a **named module in `core`**, never a new package and never a `utils`/`common`/`shared` grab-bag. **Factor primitives eagerly** (errors, Result helpers, IDs, paths, logger, branded-ID schema); **keep policies/workflows duplicated** until the rule of three (per-entity repos, CLI commands, MCP handlers look alike but mean different things). The wrong abstraction costs more than duplication.
 - **Core is pure; edges are thin.** All logic lives in `@junction/core`. `cli`, `web`, and `mcp/*` only translate between the outside world and `core`. If you're writing logic in an edge package, it probably belongs in `core`.
 - **Dependency direction is one-way.** `core` depends on nothing in the repo; `mcp/server`, `mcp/client`, `cli`, `web` may depend on `core`; **never** the reverse. No HTTP server or daemon in `core`.
 - **Typed errors, no bare throws across boundaries.** Fallible operations return neverthrow `Result<T, E>`. Domain errors are discriminated unions (e.g. `type CredentialError = DecryptionError | KeyNotFoundError | StorageError`). A returned `Result` must be consumed — no floating results. See `docs/rules/typescript.md`.
