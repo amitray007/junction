@@ -1,5 +1,5 @@
 ---
-name: junction-clean-code
+name: junction-clean-code-reviewer
 description: Reviews recent junction changes against docs/rules/ — typed errors, single-purpose modules, validation at boundaries, no sync I/O, QA-ability. Use after writing or modifying junction code, before committing.
 model: inherit
 tools: Read, Grep, Glob, Bash

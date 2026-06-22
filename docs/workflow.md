@@ -22,7 +22,7 @@ Before doing any work on an increment, the orchestrator writes **one method file
 3. **Produce the method file** (spec + implementation) with a final set of reviews.
 4. **→ USER APPROVES (gate)** → build (delegate to a Sonnet subagent).
 5. **Agent QA / tests** — the builder runs `pnpm verify` and writes behavior tests.
-6. **Background review** — compound-engineering reviewers + junction's custom reviewers (`junction-package-boundary`, `junction-clean-code`, and any active stubs).
+6. **Background review** — compound-engineering reviewers + junction's custom reviewers (`junction-package-boundary`, `junction-clean-code-reviewer`, and any active stubs).
 7. **Ask the user to test.**
 8. **→ USER APPROVES (gate)** → next increment.
 

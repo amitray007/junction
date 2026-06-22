@@ -22,19 +22,23 @@ function violationsFor(path, content) {
   const isServer = /(^|\/)packages\/mcp\//.test(path)
 
   // 1. No reverse dependency into core: core must not import cli/web/mcp.
+  // Match only cross-PACKAGE references: a @junction/* specifier, or a
+  // parent-traversal path (../) that escapes into a sibling package dir.
+  // An intra-core relative import like "./catalog/mcp" must NOT match.
   if (isCore) {
     const reverse =
-      /from\s+["'][^"']*\/(cli|web|mcp)\b/.test(content) ||
-      /@junction\/(cli|web|mcp-server|mcp-client)/.test(content)
+      /@junction\/(cli|web|mcp-server|mcp-client)\b/.test(content) ||
+      /from\s+["'](?:\.\.\/)+(cli|web|mcp)\//.test(content)
     if (reverse) {
       out.push(
         "core/ must not import from cli/web/mcp (dependency direction is one-way). See docs/rules/typescript.md.",
       )
     }
-    // 2. No HTTP server / daemon in core.
+    // 2. No HTTP server / daemon in core. (node:http server detection is
+    // best-effort — the junction-package-boundary review agent covers the rest.)
     if (
       /from\s+["'](express|fastify|hono)["']/.test(content) ||
-      /node:http['"]\s*\)?\s*[;\n].*createServer/s.test(content)
+      /createServer\s*\(/.test(content)
     ) {
       out.push("core/ must contain no HTTP server/daemon. See docs/rules/typescript.md.")
     }

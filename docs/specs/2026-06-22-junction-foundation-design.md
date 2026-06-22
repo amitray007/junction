@@ -61,7 +61,7 @@ Both MCP directions live under one `mcp/` namespace (two-word package dirs avoid
 | File locking | **proper-lockfile** | Atomic `mkdir` locks; wrap every mutating write. |
 | Secrets at rest | **`CredentialStore` interface** → **@napi-rs/keyring** + **AES-256-GCM** file store (node:crypto) | keytar is dead. Keyring for desktop; encrypted file is the server default. |
 | Validation | **Zod v4** | Shared types via `z.infer`. Standard Schema → later Valibot swap at the web edge is localized. |
-| Error handling | **neverthrow `Result<T,E>`** + typed domain error unions | Typed errors without Effect-TS's cost (see §5a). `eslint-plugin-neverthrow` forbids accidental throws. Drizzle transactions work naturally. |
+| Error handling | **neverthrow `Result<T,E>`** + typed domain error unions | Typed errors without Effect-TS's cost (see §5a). The `junction-clean-code-reviewer` enforces "no floating Results" (an `eslint-plugin-neverthrow` rule could add this if ESLint is ever introduced for that niche — Biome remains the loop). Drizzle transactions work naturally. |
 | Resource cleanup | TS 5.2 **`using` / `Symbol.asyncDispose`** | For the few cases needing guaranteed cleanup; no Effect `Scope` needed. |
 | Retries | **p-retry** (or a small helper) | Declarative retry/backoff for the future MCP client; no Effect `Schedule`. |
 | Lint + format | **Biome** (one Rust binary) | format + lint + import-organize, sub-second. No ESLint/Prettier sprawl. |
@@ -197,12 +197,12 @@ Committed choices so we never improvise a dependency mid-increment. **Nothing he
 
 A tiered, cost-aware loop so verification is cheap and broken code is mechanically unshippable:
 
-- **Per-edit (PostToolUse hook): fast only.** `biome check --write` on the edited file. Sub-second. **No typecheck/tests here** (avoids the per-edit slowness trap).
-- **Pre-commit (lefthook): the real gate.** `pnpm verify` (typecheck + biome + vitest); blocks on failure. Committing broken code becomes impossible.
-- **Boundary guard (PreToolUse hook): blocks banned patterns** in the diff — cli/web→core imports, HTTP/daemon libs in `core`, `node:vm`/`vm2` anywhere, `fs.*Sync` in `core`/server paths. Turns the package-boundary rules into a wall, not just a review.
-- **Pre-push / session-end: heavy CI pass.** Full `tsc -b`, vitest+coverage, knip, publint/attw, type-coverage threshold, and a **targeted semgrep** on sandbox/secrets paths only.
+- **Per-edit (`.claude/settings.json` PostToolUse hook): fast only.** `biome check --write` on the edited file. Sub-second. **No typecheck/tests here** (avoids the per-edit slowness trap).
+- **Pre-commit (lefthook): the real gate.** `pnpm verify` (typecheck + biome + vitest); blocks on failure. Committing broken code becomes impossible. (This is the commit gate — it lives in lefthook, not `.claude/settings.json`.)
+- **Boundary guard (`.claude/settings.json` PreToolUse hook): blocks banned patterns** in the edit — cli/web/mcp→core imports, HTTP/daemon libs in `core`, `node:vm`/`vm2` anywhere, `fs.*Sync` in `core`/server paths. Turns the package-boundary rules into a wall, not just a review.
+- **Pre-push (lefthook) / session-end: heavy CI pass.** Full `tsc -b`, vitest+coverage, knip, publint/attw, type-coverage threshold, and a **targeted semgrep** on sandbox/secrets paths only.
 
-Hook config lives in `.claude/settings.json` (project-committed) so it governs every agent/increment. The mechanical rules trace back to `docs/rules/` (see §7).
+Hook config is split: the **commit/push gate is lefthook** (`lefthook.yml`); the **per-edit format + boundary guard are Claude Code hooks** (`.claude/settings.json`). Both are project-committed so they govern every agent/increment. The mechanical rules trace back to `docs/rules/` (see §7).
 
 ---
 

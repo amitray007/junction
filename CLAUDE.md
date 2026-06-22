@@ -92,7 +92,7 @@ ESM-only · `nodenext` · `target: es2023` · Node 22 LTS (floor 20).
 
 pnpm workspaces · tsdown (+ publint + attw) · citty + @clack/prompts · Vitest · Zod v4 · **neverthrow `Result<T,E>`** (typed errors; no Effect-TS) · env-paths + proper-lockfile (`~/.junction`, `JUNCTION_HOME` override) · Drizzle + better-sqlite3 · `CredentialStore` → @napi-rs/keyring + AES-256-GCM file store · `@modelcontextprotocol/sdk`.
 
-**QA loop (every change):** **`pnpm verify`** = `tsc -b` (→ tsgo at GA) + **Biome** (lint+format) + **Vitest**. Plus **knip** (dead code/deps), **type-coverage** (≥99%), **lefthook** (git hooks), **publint+attw** (packaging). Hooks in `.claude/settings.json`: per-edit `biome --write`, pre-commit `verify`, PreToolUse boundary guard. See `docs/rules/` + design spec §5b.
+**QA loop (every change):** **`pnpm verify`** = `tsc -b` (→ tsgo at GA) + **Biome** (lint+format) + **Vitest**. Plus **knip** (dead code/deps), **type-coverage** (≥99%), **publint+attw** (packaging). Enforcement: **lefthook** runs `pnpm verify` pre-commit/pre-push (the commit gate); **`.claude/settings.json`** hooks add per-edit `biome --write` (PostToolUse) and the PreToolUse boundary guard. See `docs/rules/` + design spec §5b.
 
 **Future-domain (recorded, installed at their increment):** TanStack Start (web) · arctic (OAuth vault) · pino (audit) · better-auth (remote web login only) · OpenTUI (TUI dashboard, increment 9) · microsandbox (microVM escalation) · Sandbox = Deno + bubblewrap/Seatbelt · React Compiler + eslint-plugin-react-hooks + react-doctor (web increment only).
 
@@ -112,4 +112,4 @@ pnpm workspaces · tsdown (+ publint + attw) · citty + @clack/prompts · Vitest
 - **Tests with Vitest** alongside the code; assert behavior, not implementation. Every change ships QA-able: passes `pnpm verify` + a behavior test.
 - **Scriptable paths stay scriptable** — every interactive command keeps a `--json`/headless path so agents can drive the CLI.
 
-**Never ship broken code:** `pnpm verify` is the gate; hooks enforce it (per-edit format, pre-commit verify, boundary guard). The mechanical rules trace to `docs/rules/`.
+**Never ship broken code:** `pnpm verify` is the gate. lefthook runs it pre-commit (blocks broken commits); `.claude` hooks add per-edit Biome formatting and the PreToolUse boundary guard. The mechanical rules trace to `docs/rules/`.

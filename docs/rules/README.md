@@ -6,7 +6,7 @@ The enforceable guardrails for junction code. **Read these before writing any co
 
 1. **Cited** — the `junction-clean-code` skill summarizes these and points here.
 2. **Checked mechanically** — the greppable/automatable subset is enforced by hooks (`.claude/settings.json` + `.claude/hooks/boundary-guard.mjs`) and by `pnpm verify` (typecheck + Biome + Vitest). A hook block is a **hard stop**.
-3. **Audited** — the review agents (`junction-package-boundary`, `junction-clean-code`, and the credential/MCP/TUI reviewers when active) check the rest at review time. An agent finding is advisory-but-expected-to-be-resolved.
+3. **Audited** — the review agents (`junction-package-boundary`, `junction-clean-code-reviewer`, and the credential/MCP/TUI reviewers when active) check the rest at review time. An agent finding is advisory-but-expected-to-be-resolved.
 
 Precedence: a hook block always wins. `pnpm verify` must pass before any commit.
 

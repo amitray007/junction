@@ -21,7 +21,7 @@ Stand up all engineering scaffolding **before any package code**, so every later
 | 3 | Clean-code / codebase-quality skill | `.claude/skills/junction-clean-code/SKILL.md` | direct |
 | 4 | Junction project skill (run/build/test) | `.claude/skills/junction-dev/SKILL.md` | direct |
 | 5 | Package-boundary review agent (active) | `.claude/agents/junction-package-boundary.md` | direct |
-| 6 | Clean-code review agent (active) | `.claude/agents/junction-clean-code.md` | direct |
+| 6 | Clean-code review agent (active) | `.claude/agents/junction-clean-code-reviewer.md` | direct |
 | 7 | Credential-security review agent (stub) | `.claude/agents/junction-credential-security.md` | direct |
 | 8 | MCP-contract review agent (stub) | `.claude/agents/junction-mcp-contract.md` | direct |
 | 9 | TUI review agent (stub) | `.claude/agents/junction-tui.md` | direct |
@@ -90,7 +90,7 @@ Body — a focused reviewer that checks:
 - `mcp/server` and `mcp/client` depend only on `@modelcontextprotocol/sdk` + `core`.
 - Reports violations with file:line and the rule cited from CLAUDE.md §Architecture.
 
-### Step 5 — Active review agent: `.claude/agents/junction-clean-code.md`
+### Step 5 — Active review agent: `.claude/agents/junction-clean-code-reviewer.md`
 
 Frontmatter like above; `tools: Read, Grep, Glob, Bash`. Body — reviews recent changes against `junction-clean-code` skill: single-purpose files, oversized files, edges-stay-thin, validation at boundaries, `--json` paths preserved, Vitest behavior-asserting tests present. Confidence-gated findings; cites the skill.
 

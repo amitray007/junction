@@ -9,7 +9,7 @@
   },
   "scripts": {
     "verify": "pnpm run typecheck && pnpm run lint && pnpm run test:ci",
-    "typecheck": "tsc -b 2>/dev/null || echo '(no tsconfig project yet — typecheck is a no-op until increment 1)'",
+    "typecheck": "test -f tsconfig.json && tsc -b || echo '(no tsconfig project yet — typecheck no-op until increment 1; remove this guard then)'",
     "lint": "biome check .",
     "format": "biome format --write .",
     "test": "vitest",
