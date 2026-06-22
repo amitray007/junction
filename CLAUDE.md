@@ -28,6 +28,11 @@ Rules:
 - Only skip delegation when the change is genuinely **super simple or small** (a one-line edit, a rename, a trivial config tweak).
 - The orchestrator's job is to **prepare a complete, self-contained job** so the Sonnet agent can execute well — the orchestrator thinks so the builder doesn't have to guess.
 
+### Skills policy
+
+- **Do not use `superpowers:*` skills for this project unless the user explicitly asks for them.** Junction's own **method-file workflow** (below) replaces the superpowers brainstorming → writing-plans → executing-plans flow. The orchestration + per-increment loop here is the process; don't auto-invoke superpowers skills on top of it.
+- Other skills (compound-engineering review agents, the OpenTUI skill, junction's own clean-code/project skills) remain available and encouraged where relevant.
+
 ### Method files (the work + hand-off artifact)
 
 Before doing *any* work on an increment, the orchestrator writes **one file** — the **method file** — containing **both the spec and the implementation plan together**:
