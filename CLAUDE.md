@@ -60,6 +60,23 @@ Every increment follows this loop (gates at step 4 and step 8):
 7. **Ask the user to test.**
 8. **User approves** → next increment.
 
+`docs/workflow.md` names the exact tool to use at each step.
+
+---
+
+## Tooling — use compound-engineering (CE)
+
+Prefer CE commands/agents for generic work; junction's custom agents cover the junction-specific layer. Map (see `docs/workflow.md` for full detail):
+
+- **Research:** `ce-best-practices-researcher`, `ce-framework-docs-researcher`, `ce-repo-research-analyst`, `ce-web-researcher`.
+- **Plan:** `/ce-plan`; review the method file with `/ce-doc-review` + `ce-spec-flow-analyzer`.
+- **Build:** `/ce-work` (the Sonnet builder's harness).
+- **QA / debug:** `pnpm verify` + `/ce-debug` (root-cause, not symptom). `/ce-simplify-code` on the diff. (Note: `ce-proof` is markdown publishing, **not** a verifier.)
+- **Review:** `/ce-code-review` + `ce-correctness-reviewer`, `ce-security-reviewer`, `ce-performance-reviewer`, `ce-testing-reviewer`, `ce-maintainability-reviewer`, `ce-data-migration-reviewer` (migrations) — **plus** junction's `junction-package-boundary` + `junction-clean-code-reviewer` (always) and the credential/MCP/TUI stubs when active.
+- **Commit / ship:** `/ce-commit`, `/ce-commit-push-pr`, `/ce-resolve-pr-feedback`.
+
+Selection is by relevance — run the reviewers a diff warrants, not all of them. Junction's custom agents always run.
+
 ---
 
 ## Architecture (hard rules)
