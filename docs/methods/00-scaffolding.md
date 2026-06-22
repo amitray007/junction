@@ -27,16 +27,18 @@ Stand up all engineering scaffolding **before any package code**, so every later
 | 9 | TUI review agent (stub) | `.claude/agents/junction-tui.md` | direct |
 | 10 | `docs/methods/README.md` | `docs/methods/README.md` | direct |
 
+> **`docs/rules/` + QA-loop hooks are increment 0.5** — see method file `00.5-rules-and-enforcement.md`. They land before increment 1, after this file. The clean-code skill (#3) and clean-code agent (#6) below reference `docs/rules/`, so 0.5's rule docs should exist before they're considered "done" — write 0.5 immediately after 0.
+
 ### Proof of done
 
 - All files exist at the paths above with valid frontmatter (skills: `name` + `description`; agents: `name` + `description` + `model` + `tools`).
 - `CLAUDE.md`, the design spec, and `docs/workflow.md` agree on the 8-step loop and operating model (no contradictions).
-- The two **active** review agents reference real, checkable rules (dependency direction, no-http-in-core, file-size/single-purpose). The three **stub** agents clearly state "activates at increment N" and describe what they will check.
+- The two **active** review agents reference real, checkable rules and cite `docs/rules/`. The three **stub** agents clearly state "activates at increment N" and describe what they will check.
 - Committed to git.
 
 ### Out of scope for increment 0
 
-Any package code, `package.json`, `pnpm-workspace.yaml`, tsconfig — those are **increment 1**.
+Any package code, `package.json`, `pnpm-workspace.yaml`, tsconfig — those are **increment 1**. The `docs/rules/` content + enforcement wiring (Biome/lefthook/.claude hooks) are **increment 0.5** (method file `00.5`).
 
 ---
 
@@ -59,7 +61,8 @@ The 8-step per-increment loop as a durable checklist agents follow. Mirror CLAUD
 ### Step 2 — `.claude/skills/junction-clean-code/SKILL.md`
 
 Junction-specific clean-code conventions for humans + agents. Body covers:
-- **Core is pure; edges are thin** — logic in `core`; `cli`/`web`/`mcp-server` only translate.
+- **Core is pure; edges are thin** — logic in `core`; `cli`/`web`/`mcp/*` only translate.
+- **Typed errors** — neverthrow `Result<T,E>` + discriminated-union domain errors; no bare throws across boundaries (cite `docs/rules/typescript.md`).
 - **Single purpose per file/unit**; split when a file grows. Each unit answers what/how-to-use/depends-on.
 - **Dependency direction** — `core` ← others, never reverse. No HTTP/daemon in `core`.
 - **Validate at trust boundaries** with Zod (config load, MCP/API inputs, OAuth responses).
@@ -82,9 +85,9 @@ How to run/build/test junction. Starts minimal (foundation not built yet), grows
 
 Frontmatter: `name: junction-package-boundary`, `description` ("Reviews changes for junction's package-boundary rules — dependency direction and no-HTTP-in-core. Use when reviewing diffs that touch package imports or core."), `model: inherit`, `tools: Read, Grep, Glob, Bash`.
 Body — a focused reviewer that checks:
-- No import from `cli`/`web`/`mcp-server` *into* `core` (grep for reverse deps).
+- No import from `cli`/`web`/`mcp/*` *into* `core` (grep for reverse deps).
 - `core` imports no HTTP server / daemon libs (no express/hono/http server in core).
-- `mcp-server` depends only on `@modelcontextprotocol/sdk` + `core`.
+- `mcp/server` and `mcp/client` depend only on `@modelcontextprotocol/sdk` + `core`.
 - Reports violations with file:line and the rule cited from CLAUDE.md §Architecture.
 
 ### Step 5 — Active review agent: `.claude/agents/junction-clean-code.md`

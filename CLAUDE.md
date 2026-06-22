@@ -4,6 +4,7 @@ Junction is a self-hosted, single-user **broker**: the one place you connect you
 
 - **Idea / pain / landscape:** `docs/idea.md`
 - **Foundation design (source of truth):** `docs/specs/2026-06-22-junction-foundation-design.md`
+- **Coding guardrails (read before writing any code):** `docs/rules/` — per-language rules, enforced by hooks + review agents.
 - **Per-increment method files:** `docs/methods/` (see Operating Model below)
 
 ---
@@ -63,18 +64,20 @@ Every increment follows this loop (gates at step 4 and step 8):
 
 ## Architecture (hard rules)
 
-**4-package pnpm/TypeScript monorepo:**
+**pnpm/TypeScript monorepo** (`core` + `mcp/{server,client}` + `cli` + `web`):
 
 ```
 packages/
-  core/         @junction/core      — types, catalog, credential store, profile manager,
-                                       persistence, sandbox interface. NO HTTP, NO cli/web deps.
-  mcp-server/   @junction/mcp-server — McpServer wiring over a Profile. MCP SDK + core only.
-  cli/          junction            — thin: argv → core.
-  web/          @junction/web        — (later) imports core directly.
+  core/          @junction/core       — types, catalog, credential store, profile manager,
+                                        persistence, sandbox interface. NO HTTP, NO cli/web deps.
+  mcp/
+    server/      @junction/mcp-server  — serves agents. McpServer over a Profile. MCP SDK + core only.
+    client/      @junction/mcp-client  — consumes upstream MCP sources. Reserved; built post-foundation.
+  cli/           junction             — thin: argv → core.
+  web/           @junction/web         — (later) imports core directly.
 ```
 
-- **Dependency direction is one-way:** `core` depends on nothing in the repo; `mcp-server`/`cli`/`web` may depend on `core`; **never** the reverse.
+- **Dependency direction is one-way:** `core` depends on nothing in the repo; `mcp/server`, `mcp/client`, `cli`, `web` may depend on `core`; **never** the reverse.
 - **`core` has no HTTP server and no daemon** — it stays embeddable and testable.
 - **Credentials never leave the process.** Plaintext exists only in memory during a tool call; the MCP endpoint never returns credential values.
 - **`Credential` (not `Platform`) is the unit a `Profile` references** — this encodes the multi-account wedge.
@@ -87,19 +90,26 @@ packages/
 
 ESM-only · `nodenext` · `target: es2023` · Node 22 LTS (floor 20).
 
-pnpm workspaces · tsdown (+ publint + attw) · citty + @clack/prompts · Vitest · Zod v4 · env-paths + proper-lockfile (`~/.junction`, `JUNCTION_HOME` override) · Drizzle + better-sqlite3 · `CredentialStore` → @napi-rs/keyring + AES-256-GCM file store · `@modelcontextprotocol/sdk`.
+pnpm workspaces · tsdown (+ publint + attw) · citty + @clack/prompts · Vitest · Zod v4 · **neverthrow `Result<T,E>`** (typed errors; no Effect-TS) · env-paths + proper-lockfile (`~/.junction`, `JUNCTION_HOME` override) · Drizzle + better-sqlite3 · `CredentialStore` → @napi-rs/keyring + AES-256-GCM file store · `@modelcontextprotocol/sdk`.
 
-**Future-domain (recorded, installed at their increment):** TanStack Start (web) · arctic (OAuth vault) · pino (audit) · better-auth (remote web login only) · OpenTUI (TUI dashboard, increment 9) · microsandbox (microVM escalation) · Sandbox = Deno + bubblewrap/Seatbelt.
+**QA loop (every change):** **`pnpm verify`** = `tsc -b` (→ tsgo at GA) + **Biome** (lint+format) + **Vitest**. Plus **knip** (dead code/deps), **type-coverage** (≥99%), **lefthook** (git hooks), **publint+attw** (packaging). Hooks in `.claude/settings.json`: per-edit `biome --write`, pre-commit `verify`, PreToolUse boundary guard. See `docs/rules/` + design spec §5b.
 
-**Banned:** keytar · vm2 / `node:vm`-as-sandbox · legacy inquirer · Jest · oclif · Lucia · `conf` (as primary store) · Clerk/WorkOS · isolated-vm (maintenance-mode; avoid unless Deno+bubblewrap impractical).
+**Future-domain (recorded, installed at their increment):** TanStack Start (web) · arctic (OAuth vault) · pino (audit) · better-auth (remote web login only) · OpenTUI (TUI dashboard, increment 9) · microsandbox (microVM escalation) · Sandbox = Deno + bubblewrap/Seatbelt · React Compiler + eslint-plugin-react-hooks + react-doctor (web increment only).
+
+**Banned:** keytar · vm2 / `node:vm`-as-sandbox · **Effect-TS** (use neverthrow) · **ESLint+Prettier as the loop** (use Biome) · **ts-prune** (use knip) · **Million.js/Lint** (use React Compiler) · legacy inquirer · Jest · oclif · Lucia · `conf` (as primary store) · Clerk/WorkOS · isolated-vm (maintenance-mode; avoid unless Deno+bubblewrap impractical).
 
 ---
 
 ## Code quality
 
-- **Core is pure; edges are thin.** Logic lives in `core`; `cli`/`web`/`mcp-server` translate to/from it.
-- **Single purpose per file/unit.** If a file grows large, it's doing too much — split it. Each unit: clear what-it-does, how-to-use-it, what-it-depends-on.
+**Read `docs/rules/` before writing any code** — it is the enforceable rule set (TypeScript, testing, performance, security). Highlights:
+
+- **Core is pure; edges are thin.** Logic lives in `core`; `cli`/`web`/`mcp/*` translate to/from it.
+- **Typed errors, no bare throws across boundaries.** Fallible operations return neverthrow `Result<T, E>` with discriminated-union domain errors. Use `using`/`Symbol.asyncDispose` for cleanup.
+- **Single purpose per file/unit.** If a file grows large, it's doing too much — split it.
 - **Validate at trust boundaries** (config load, MCP/API inputs, OAuth responses) with Zod.
-- **Tests with Vitest** alongside the code; assert behavior, not implementation details.
+- **No `fs.*Sync` in core/server paths**; structured async logging (pino); lazy-import heavy deps.
+- **Tests with Vitest** alongside the code; assert behavior, not implementation. Every change ships QA-able: passes `pnpm verify` + a behavior test.
 - **Scriptable paths stay scriptable** — every interactive command keeps a `--json`/headless path so agents can drive the CLI.
-- See `docs/skills/` (junction clean-code skills) for the full conventions.
+
+**Never ship broken code:** `pnpm verify` is the gate; hooks enforce it (per-edit format, pre-commit verify, boundary guard). The mechanical rules trace to `docs/rules/`.
