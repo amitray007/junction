@@ -23,10 +23,10 @@
     "@biomejs/biome": "^2.5.0",
     "@changesets/changelog-github": "^0.7.0",
     "@changesets/cli": "^2.31.0",
-    "lefthook": "^1.13.0",
+    "lefthook": "^2.1.9",
     "tsdown": "^0.22.3",
-    "typescript": "^5.9.0",
-    "vitest": "^3.2.0"
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

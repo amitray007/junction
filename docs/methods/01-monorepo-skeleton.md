@@ -130,13 +130,25 @@ A references-only file listing each package:
 
 > The `zod`/`neverthrow` versions here become **`catalog:` references in increment 1.5** (syncpack + pnpm catalogs). Hardcode them now; 1.5 migrates them.
 
-`packages/core/tsconfig.json`:
+`packages/core/tsconfig.json` (every package tsconfig **must** exclude `*.test.ts` from emit — `tsc -b`/composite otherwise compiles tests into `dist/`, which pollutes build output and gets double-run by Vitest. `exclude` is NOT inherited via `extends`, so it's repeated per package):
 ```jsonc
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": { "rootDir": "src", "outDir": "dist" },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["**/*.test.ts"]
 }
+```
+
+Also add a root `vitest.config.ts` scoping tests to source and excluding built output:
+```ts
+import { defineConfig } from "vitest/config"
+export default defineConfig({
+  test: {
+    include: ["packages/**/src/**/*.test.ts"],
+    exclude: ["**/node_modules/**", "**/dist/**"],
+  },
+})
 ```
 
 `packages/core/tsdown.config.ts` (two entries: the main barrel + the `./testing` subpath):
