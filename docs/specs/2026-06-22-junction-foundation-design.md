@@ -186,6 +186,8 @@ Committed choices so we never improvise a dependency mid-increment. **Nothing he
 | Audit logging | **pino** (machine audit trail) + **consola** (human CLI output) | Don't conflate the two streams. |
 | Terminal UI | **OpenTUI** (React/Solid reconciler) | Full-screen interactive TUI dashboard (profiles/platforms/status). Layers *on top of* citty — bare `junction` launches the TUI; commands stay scriptable. Replaces @clack/prompts for rich interaction. Deferred to increment 9 to keep the CLI base lean. |
 | Sandbox | see §6b | — |
+| License | **AGPL-3.0-only** | Copyleft with §13 network-use disclosure — defends a self-hostable broker against closed SaaS forks. Implication: any hosted junction (incl. ours) must offer Corresponding Source to network users (embed commit/version, surface a source link — broker increment). |
+| CI / versioning | **GitHub Actions** (`pnpm verify`, Node 20/22) + **Changesets** (tag/release only, **no npm publish**) + `main` ruleset + Dependabot + gitleaks | Set up at increment 0.75. Publishing deferred until a package is real; `private: true` makes "no publish" structural. |
 
 **Load-bearing structural call:** *web login* and *the broker's platform-token vault* are two different problems. The vault (arctic + encrypted Drizzle table + keyring) lives in **`core`** and exists regardless of whether a web UI ships. better-auth, if adopted, only handles human login on the web app — it **never owns platform tokens.** This is why `Credential` is a core concept, not a web concept.
 
@@ -215,7 +217,11 @@ Each increment is a complete, tested, runnable thing. The §7 workflow loop runs
 
 **Phase 0 — Scaffolding & guardrails (no package code)**
 - **0. Scaffolding** — CLAUDE.md, workflow doc, clean-code + dev skills, review agents (see §7 + method file `00`).
-- **0.5. Rules & enforcement** — `docs/rules/` (per-language guardrails: `typescript.md`, `testing.md`, `performance.md`, `security.md`) + the QA-loop wiring: root `pnpm verify` script, Biome + lefthook + `.claude/settings.json` hooks (per-edit format, pre-commit verify, boundary guard). *Proof:* hooks fire on a throwaway edit/commit; a deliberately-broken edit is blocked. **This lands before increment 1 so all package code is governed from line one.**
+- **0.5. Rules & enforcement** — `docs/rules/` (per-language guardrails: `typescript.md`, `testing.md`, `performance.md`, `security.md`, `data.md`) + the QA-loop wiring: root `pnpm verify` script, Biome + lefthook + `.claude/settings.json` hooks (per-edit format, pre-commit verify, boundary guard). *Proof:* hooks fire on a throwaway edit/commit; a deliberately-broken edit is blocked.
+- **0.75. CI + GitHub governance + versioning** — GitHub Actions CI (`pnpm verify`, Node 20/22 matrix) + `quality` job; **Changesets** for versioning/changelogs/GitHub-releases with **publishing structurally disabled** (`private: true` + `changeset tag`, no npm); `main` ruleset (PR + required checks + linear history); Dependabot; gitleaks secret scan; **AGPL-3.0 LICENSE**. *Proof:* CI green on a test PR; changeset produces a Version PR; no publish path exists. (Method `00.75`.)
+- **0.9. OSS-ready patterns** — README, CONTRIBUTING, CODE_OF_CONDUCT, **SECURITY.md** (credential-handling disclosure), issue/PR templates, SPDX/AGPL-§13 policy doc. *Proof:* community files complete; security reporting routes privately. (Method `00.9`.)
+
+**All of 0–0.9 land before increment 1, so every line of package code is governed from the start.**
 
 **Phase A — Repo & CLI base**
 1. **Monorepo skeleton** — pnpm workspace (`packages/*` + `packages/mcp/*`), `tsconfig.base`, Vitest, tsdown, Biome config, the packages wired via `workspace:*`. *Proof:* `pnpm verify` passes on empty packages.

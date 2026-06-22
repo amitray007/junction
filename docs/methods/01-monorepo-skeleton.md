@@ -43,6 +43,10 @@ packages/
 - Boundary-guard hook still passes (no violations introduced).
 - Committed.
 
+### Every package gets (set at creation — from 0.75/0.9 decisions)
+
+Every `package.json` created this increment **must** include `"private": true` (makes "no npm publish" structural — see 0.75) and `"license": "AGPL-3.0-only"`. Do not omit these; the release tooling and license compliance depend on them from line one.
+
 ### Out of scope
 
 - Any real logic: config layer (inc 2), CLI commands (inc 3), data model (inc 4), etc.
@@ -111,6 +115,8 @@ A references-only file listing each package:
 {
   "name": "@junction/core",
   "version": "0.0.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
   "type": "module",
   "exports": {
     ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
