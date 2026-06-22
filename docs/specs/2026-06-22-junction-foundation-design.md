@@ -93,12 +93,15 @@ The repo-wide convention: **`pnpm verify` = typecheck + biome + vitest** — the
     "declarationMap": true,
     "sourceMap": true,
     "skipLibCheck": true,
-    "noUncheckedIndexedAccess": true
+    "noUncheckedIndexedAccess": true,
+    "composite": true
   }
 }
 ```
 
-`core/package.json`: `"type": "module"`, single `exports` map (`types` + `import`), `"engines": { "node": ">=20" }`. Validate every publish with publint + attw.
+(`composite: true` enables `tsc -b` **project references** — each package has its own tsconfig extending this base, and a root solution `tsconfig.json` lists them. This is how the monorepo typechecks as a graph.)
+
+`core/package.json`: `"type": "module"`, an `exports` map with the main barrel **plus a `./testing` subpath** for test helpers (`types` + `import` each), `"engines": { "node": ">=20" }`. Validate every publish with publint + attw.
 
 ---
 

@@ -63,7 +63,7 @@ packages:
 
 ### Step 2 — `tsconfig.base.json` (repo root)
 
-Use the exact compiler options from design spec §3:
+The compiler options from design spec §3 (including `composite: true`, which enables `tsc -b` project references):
 
 ```jsonc
 {
@@ -106,18 +106,23 @@ A references-only file listing each package:
 
 ### Step 4 — `packages/core` (the one real package)
 
-`packages/core/package.json`:
+`packages/core/package.json` — **this is the final form; use it verbatim** (note the two `exports` entries: the main barrel + the `./testing` subpath):
 ```jsonc
 {
   "name": "@junction/core",
   "version": "0.0.0",
   "type": "module",
-  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./testing": { "types": "./dist/testing/index.d.ts", "import": "./dist/testing/index.js" }
+  },
   "engines": { "node": ">=20" },
   "scripts": { "build": "tsdown" },
   "dependencies": { "zod": "^4.4.0", "neverthrow": "^8.2.0" }
 }
 ```
+
+> The `zod`/`neverthrow` versions here become **`catalog:` references in increment 1.5** (syncpack + pnpm catalogs). Hardcode them now; 1.5 migrates them.
 
 `packages/core/tsconfig.json`:
 ```jsonc
@@ -152,7 +157,9 @@ packages/core/src/
   testing/          ← JUNCTION_HOME tmpdir + fixture helpers (inc 2) — exported on ./testing subpath ONLY
 ```
 
-This increment: each module folder has a placeholder `index.ts` (e.g. `result/index.ts` → `export {}` or a single stub) so it compiles and the structure is visible. The real implementations land at the increments noted. This is **factoring the structure**, not the logic — the logic is YAGNI until its increment.
+This increment: each module folder has a placeholder `index.ts` containing `export {}` (a bare file with no exports is not a module under `isolatedModules`/`verbatimModuleSyntax` — `export {}` makes it a valid empty module). The real implementations land at the increments noted. This is **factoring the structure**, not the logic — the logic is YAGNI until its increment.
+
+> `src/testing/index.ts` is a tsdown entry (Step 4 config) and the `./testing` subpath target, so give it at least a trivial real export this increment (e.g. `export const TESTING_PLACEHOLDER = true`) so the `dist/testing/index.{js,d.ts}` files emit and the subpath resolves. Replace with the real `JUNCTION_HOME` tmpdir helper at increment 2.
 
 `packages/core/src/index.ts` — the curated public barrel (narrow; re-export only what's public, never blanket `export *`):
 ```ts
@@ -161,13 +168,7 @@ export const VERSION = "0.0.0"
 // Module re-exports added as each lands (result, errors, paths, … ).
 ```
 
-**Add a `./testing` subpath export** to `core/package.json` so test helpers never bloat the main barrel:
-```jsonc
-"exports": {
-  ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
-  "./testing": { "types": "./dist/testing/index.d.ts", "import": "./dist/testing/index.js" }
-}
-```
+(The `./testing` subpath export is already included in the `core/package.json` above, so test helpers never bloat the main barrel.)
 
 `packages/core/src/index.test.ts`:
 ```ts
@@ -178,6 +179,8 @@ test("core exposes a version", () => {
   expect(VERSION).toBe("0.0.0")
 })
 ```
+
+> This trivial test only proves the toolchain end-to-end (Vitest runs, imports resolve). Real behavior tests begin at increment 2, when there's actual logic to assert.
 
 ### Step 5 — `packages/mcp/server`, `packages/mcp/client`, `packages/web` (shells)
 
