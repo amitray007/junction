@@ -24,7 +24,7 @@
     "@changesets/cli": "^2.31.0",
     "lefthook": "^1.13.0",
     "typescript": "^5.9.0",
-    "vitest": "^3.2.0"
+    "vitest": "^4.1.9"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
