@@ -21,7 +21,7 @@
     "build": "tsdown"
   },
   "dependencies": {
-    "zod": "^4.4.0",
-    "neverthrow": "^8.2.0"
+    "zod": "catalog:",
+    "neverthrow": "catalog:"
   }
 }

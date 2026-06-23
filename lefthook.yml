@@ -11,8 +11,16 @@ pre-commit:
     # The real gate: full verify (typecheck + lint + tests). Blocks on failure.
     verify:
       run: pnpm run verify
+    # Version consistency check (fast).
+    syncpack:
+      run: pnpm run syncpack:check
 
 pre-push:
   commands:
     verify:
       run: pnpm run verify
+    # Boundary + duplication checks (slower — pre-push only).
+    depcruise:
+      run: pnpm run depcruise
+    syncpack:
+      run: pnpm run syncpack:check

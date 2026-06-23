@@ -1,3 +1,7 @@
 packages:
   - "packages/*"
   - "packages/mcp/*"
+
+catalog:
+  zod: "^4.4.0"
+  neverthrow: "^8.2.0"

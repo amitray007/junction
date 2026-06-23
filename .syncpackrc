@@ -1,0 +1,24 @@
+{
+  "$schema": "https://unpkg.com/syncpack@15/dist/syncpackrc.schema.json",
+  "source": [
+    "package.json",
+    "packages/*/package.json",
+    "packages/mcp/*/package.json"
+  ],
+  "versionGroups": [
+    {
+      "label": "Use catalog versions",
+      "packages": ["**"],
+      "dependencies": ["zod", "neverthrow"],
+      "policy": "catalog"
+    }
+  ],
+  "semverGroups": [
+    {
+      "label": "All deps use ^ ranges",
+      "packages": ["**"],
+      "dependencies": ["**"],
+      "range": "^"
+    }
+  ]
+}
