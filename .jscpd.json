@@ -1,0 +1,7 @@
+{
+  "minTokens": 50,
+  "minLines": 5,
+  "threshold": 0,
+  "reporters": ["console"],
+  "ignore": ["**/dist/**", "**/node_modules/**", "**/*.test.ts", "**/drizzle/**", "**/*.d.ts"]
+}
