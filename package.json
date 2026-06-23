@@ -10,20 +10,27 @@
   "license": "AGPL-3.0-only",
   "scripts": {
     "verify": "pnpm run typecheck && pnpm run lint && pnpm run test:ci",
-    "quality": "pnpm audit --audit-level=high || true",
+    "quality": "pnpm depcruise && pnpm syncpack:check && pnpm dup && (pnpm audit --audit-level=high || true)",
     "typecheck": "tsc -b",
     "build": "pnpm -r build",
     "lint": "biome check .",
     "format": "biome format --write .",
     "test": "vitest",
     "test:related": "vitest related --run",
-    "test:ci": "vitest run --passWithNoTests"
+    "test:ci": "vitest run --passWithNoTests",
+    "depcruise": "depcruise packages --config .dependency-cruiser.cjs",
+    "syncpack:check": "syncpack lint",
+    "syncpack:fix": "syncpack fix-mismatches",
+    "dup": "jscpd packages"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.0",
     "@changesets/changelog-github": "^0.7.0",
     "@changesets/cli": "^2.31.0",
+    "dependency-cruiser": "^17.4.3",
+    "jscpd": "^5.0.11",
     "lefthook": "^2.1.9",
+    "syncpack": "^15.3.2",
     "tsdown": "^0.22.3",
     "typescript": "^6.0.3",
     "vitest": "^4.1.9"
