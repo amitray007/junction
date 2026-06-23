@@ -25,29 +25,49 @@ module.exports = {
       },
     },
     {
+      // Fix #2: the original rule used ^packages/(cli|web|mcp)/ which captured
+      // only "mcp" for both packages/mcp/server/ and packages/mcp/client/, so
+      // pathNot "^packages/$1/" (= "^packages/mcp/") matched both sub-packages
+      // and let server<->client cross-imports slip through.
+      // Now each nested package is a distinct arm in the alternation so $1
+      // resolves to "mcp/server" or "mcp/client" and pathNot correctly excludes
+      // only intra-package edges.
       name: "no-cross-edge-imports",
       comment:
-        "cli, web, and mcp packages must not import each other — they are peer edges that only depend on core.",
+        "cli, web, mcp/server, and mcp/client are peer edges — they must not import each other. " +
+        "Each is matched as a full path segment so mcp/server and mcp/client are distinct peers.",
       severity: "error",
       from: {
-        path: "^packages/(cli|web|mcp)/",
+        path: "^packages/(cli|web|mcp/server|mcp/client)/",
       },
       to: {
-        path: "^packages/(cli|web|mcp)/",
+        path: "^packages/(cli|web|mcp/server|mcp/client)/",
         pathNot: "^packages/$1/",
       },
     },
     {
+      // Fix #3: the original rule used ^packages/([^/]+)/src/ for both from and to,
+      // which failed to match nested packages like packages/mcp/server/src/ because
+      // [^/]+ stops at the first slash (capturing only "mcp", not "mcp/server").
+      // The updated pattern (mcp/[^/]+|[^/]+) matches both nested mcp sub-packages
+      // and top-level flat packages, so deep imports into mcp/server or mcp/client
+      // internals are now caught.
+      //
+      // The pathNot uses alternation to exclude two cases:
+      //   - ^packages/$1/src/ : intra-package imports (same package, always OK)
+      //   - /src/index\\.ts$  : imports to another package's top-level entry point
+      //     (e.g. packages/core/src/index.ts reached via "@junction/core" tsconfig paths)
+      //     These are legitimate; no-cross-edge-imports handles direction enforcement.
       name: "no-deep-src-imports",
       comment:
         "Do not deep-import into another package's src/ internals — use the package entry point.",
       severity: "error",
       from: {
-        path: "^packages/([^/]+)/",
+        path: "^packages/(mcp/[^/]+|[^/]+)/",
       },
       to: {
-        path: "^packages/([^/]+)/src/",
-        pathNot: "^packages/$1/src/",
+        path: "^packages/(mcp/[^/]+|[^/]+)/src/",
+        pathNot: "^packages/$1/src/|/src/index\\.ts$",
       },
     },
     {
@@ -63,28 +83,37 @@ module.exports = {
   ],
 
   options: {
-    /* Which modules NOT to follow when encountered */
+    // Which modules NOT to follow when encountered
     doNotFollow: {
       path: "(node_modules|dist|build)",
     },
 
-    /* Exclude paths from being scanned */
+    // Exclude paths from being scanned
     exclude: {
       path: "(node_modules|dist|build|\\.d\\.ts$)",
     },
 
-    /* Use TypeScript config for module resolution */
+    // ROOT CAUSE FIX (#1): the original config used
+    //   enhancedResolveOptions.exportsFields: ["exports"]
+    // which resolved "@junction/core" (and other package-name imports) through
+    // each package's exports map to "./dist/index.js". The exclude.path rule
+    // (which drops "dist") then silently stripped those edges before any rule
+    // could evaluate — making ALL cross-package imports via package names invisible.
+    //
+    // Fix: tsconfig.depcruise.json adds compilerOptions.paths that map every
+    // "@junction/X" specifier to "packages/X/src/index.ts". Depcruise resolves
+    // these via the tsConfig paths (not the exports map), so cross-package edges
+    // land on packages/pkg/src/index.ts paths that survive the exclude filter
+    // and are visible to the forbidden rules.
+    //
+    // We also remove exportsFields from enhancedResolveOptions so enhanced-resolve
+    // does not re-resolve the already-mapped specifier through package.json exports
+    // back to dist.
     tsConfig: {
-      fileName: "tsconfig.base.json",
+      fileName: "tsconfig.depcruise.json",
     },
 
-    /* Resolve to the tsconfig that is closest to the cruised module */
-    enhancedResolveOptions: {
-      exportsFields: ["exports"],
-      conditionNames: ["import", "require", "node", "default"],
-    },
-
-    /* We're using ES modules */
+    // We're using ES modules
     externalModuleResolutionStrategy: "node_modules",
 
     reporterOptions: {
