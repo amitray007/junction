@@ -10,7 +10,7 @@
 import { randomUUID } from "node:crypto"
 import { readFile, rename, unlink, writeFile } from "node:fs/promises"
 import path from "node:path"
-import { err, ok, ResultAsync } from "neverthrow"
+import { err, ok, type Result, ResultAsync } from "neverthrow"
 import { z } from "zod"
 import type { ConfigError } from "../errors/index.js"
 import type { JunctionPaths } from "../paths/index.js"
@@ -21,30 +21,52 @@ export type Config = z.infer<typeof ConfigSchema>
 
 export const DEFAULT_CONFIG: Config = { version: 1 }
 
+/** Internal: parse raw JSON string into a validated Config. Not exported. */
+function parseConfigRaw(raw: string): Result<Config, ConfigError> {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return err<Config, ConfigError>({ kind: "invalid", issues: ["invalid JSON"] })
+  }
+  const result = ConfigSchema.safeParse(parsed)
+  if (!result.success) {
+    return err<Config, ConfigError>({
+      kind: "invalid",
+      issues: result.error.issues.map((i) => i.message),
+    })
+  }
+  return ok<Config, ConfigError>(result.data)
+}
+
 export function loadConfig(paths: JunctionPaths): ResultAsync<Config, ConfigError> {
   return new ResultAsync(
     readFile(paths.configFile, "utf-8")
-      .then((raw) => {
-        let parsed: unknown
-        try {
-          parsed = JSON.parse(raw)
-        } catch {
-          return err<Config, ConfigError>({ kind: "invalid", issues: ["invalid JSON"] })
-        }
-        const result = ConfigSchema.safeParse(parsed)
-        if (!result.success) {
-          return err<Config, ConfigError>({
-            kind: "invalid",
-            issues: result.error.issues.map((i) => i.message),
-          })
-        }
-        return ok<Config, ConfigError>(result.data)
-      })
+      .then((raw) => parseConfigRaw(raw))
       .catch((cause: unknown) => {
         if (isNodeError(cause) && cause.code === "ENOENT") {
           return ok<Config, ConfigError>(DEFAULT_CONFIG)
         }
         return err<Config, ConfigError>({ kind: "read-failed", cause })
+      }),
+  )
+}
+
+export type ConfigState = { initialized: false } | { initialized: true; config: Config }
+
+export function loadConfigState(paths: JunctionPaths): ResultAsync<ConfigState, ConfigError> {
+  return new ResultAsync(
+    readFile(paths.configFile, "utf-8")
+      .then((raw) => {
+        const parsed = parseConfigRaw(raw)
+        if (parsed.isErr()) return err<ConfigState, ConfigError>(parsed.error)
+        return ok<ConfigState, ConfigError>({ initialized: true, config: parsed.value })
+      })
+      .catch((cause: unknown) => {
+        if (isNodeError(cause) && cause.code === "ENOENT") {
+          return ok<ConfigState, ConfigError>({ initialized: false })
+        }
+        return err<ConfigState, ConfigError>({ kind: "read-failed", cause })
       }),
   )
 }

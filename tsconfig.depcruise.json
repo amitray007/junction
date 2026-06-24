@@ -4,6 +4,7 @@
     "baseUrl": ".",
     "paths": {
       "@junction/core": ["./packages/core/src/index.ts"],
+      "@junction/core/testing": ["./packages/core/src/testing/index.ts"],
       "@junction/core/*": ["./packages/core/src/*"],
       "@junction/mcp-server": ["./packages/mcp/server/src/index.ts"],
       "@junction/mcp-client": ["./packages/mcp/client/src/index.ts"],

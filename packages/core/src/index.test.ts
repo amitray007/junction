@@ -28,16 +28,16 @@ describe("barrel exports", () => {
   })
 
   it("getPaths returns home, configFile, cacheDir", () => {
-    const saved = process.env["JUNCTION_HOME"]
-    process.env["JUNCTION_HOME"] = "/tmp/junction-barrel-test"
+    const saved = process.env.JUNCTION_HOME
+    process.env.JUNCTION_HOME = "/tmp/junction-barrel-test"
     try {
       const p = getPaths()
       expect(p.home).toBe("/tmp/junction-barrel-test")
       expect(p.configFile).toContain("config.json")
       expect(typeof p.cacheDir).toBe("string")
     } finally {
-      if (saved === undefined) delete process.env["JUNCTION_HOME"]
-      else process.env["JUNCTION_HOME"] = saved
+      if (saved === undefined) delete process.env.JUNCTION_HOME
+      else process.env.JUNCTION_HOME = saved
     }
   })
 })
