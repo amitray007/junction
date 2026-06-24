@@ -21,7 +21,13 @@
     "build": "tsdown"
   },
   "dependencies": {
-    "zod": "catalog:",
-    "neverthrow": "catalog:"
+    "env-paths": "^4.0.0",
+    "neverthrow": "catalog:",
+    "proper-lockfile": "^4.1.2",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.0",
+    "@types/proper-lockfile": "^4.1.4"
   }
 }
