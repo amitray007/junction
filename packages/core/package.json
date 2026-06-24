@@ -24,6 +24,7 @@
     "env-paths": "^4.0.0",
     "neverthrow": "catalog:",
     "proper-lockfile": "^4.1.2",
+    "ulid": "^3.0.2",
     "zod": "catalog:"
   },
   "devDependencies": {
