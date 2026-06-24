@@ -1,7 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Human-vs-JSON render helpers for CLI output.
 
-import type { Config, ConfigError, JunctionPaths, PathsError } from "@junction/core"
+import {
+  type Config,
+  type ConfigError,
+  type ConfigState,
+  type JunctionPaths,
+  loadConfigState,
+  type PathsError,
+} from "@junction/core"
+import { consola } from "consola"
 
 export type StatusData = {
   home: string
@@ -66,6 +74,30 @@ export function formatConfigError(e: ConfigError): string {
  */
 export function formatPathsError(e: PathsError): string {
   return `failed to resolve home: ${String(e.cause)}`
+}
+
+/**
+ * Loads config state, rendering the error path uniformly for both commands.
+ * On a read/parse failure it emits the JSON error line (or a consola error),
+ * sets `process.exitCode = 1`, and returns `null` so the caller can `return`.
+ * process.exit is intentionally avoided — it truncates async stdout on a pipe.
+ */
+export async function loadConfigStateOrFail(
+  paths: JunctionPaths,
+  json: boolean,
+): Promise<ConfigState | null> {
+  const stateResult = await loadConfigState(paths)
+  if (stateResult.isErr()) {
+    const e = stateResult.error
+    if (json) {
+      process.stdout.write(`${JSON.stringify({ ok: false, error: formatConfigError(e) })}\n`)
+    } else {
+      consola.error(`Failed to read config: ${formatConfigError(e)}`)
+    }
+    process.exitCode = 1
+    return null
+  }
+  return stateResult.value
 }
 
 export type { JunctionPaths }
