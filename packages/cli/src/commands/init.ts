@@ -1,10 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // `junction init` — ensure home + write default config.
 
-import { DEFAULT_CONFIG, ensureHome, loadConfigState, saveConfig } from "@junction/core"
+import { DEFAULT_CONFIG, ensureHome, saveConfig } from "@junction/core"
 import { defineCommand } from "citty"
 import { consola } from "consola"
-import { formatConfigError, formatInitJson, formatPathsError } from "../format.js"
+import {
+  formatConfigError,
+  formatInitJson,
+  formatPathsError,
+  loadConfigStateOrFail,
+} from "../format.js"
 
 export const initCommand = defineCommand({
   meta: {
@@ -57,19 +62,9 @@ export const initCommand = defineCommand({
     }
 
     // Check if already initialized (config file exists) and validate if so.
-    const stateResult = await loadConfigState(paths)
-    if (stateResult.isErr()) {
-      const e = stateResult.error
-      if (json) {
-        process.stdout.write(`${JSON.stringify({ ok: false, error: formatConfigError(e) })}\n`)
-      } else {
-        consola.error(`Failed to read config: ${formatConfigError(e)}`)
-      }
-      process.exitCode = 1
-      return
-    }
-
-    const state = stateResult.value
+    // Fail cleanly on a corrupt config rather than silently overwriting it.
+    const state = await loadConfigStateOrFail(paths, json)
+    if (state === null) return
 
     if (state.initialized) {
       if (json) {

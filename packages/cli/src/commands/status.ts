@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // `junction status` — report home path, config state, and contents.
 
-import { getPaths, loadConfigState } from "@junction/core"
+import { getPaths } from "@junction/core"
 import { defineCommand } from "citty"
 import { consola } from "consola"
-import { formatConfigError, formatStatusHuman, formatStatusJson } from "../format.js"
+import { formatStatusHuman, formatStatusJson, loadConfigStateOrFail } from "../format.js"
 
 export const statusCommand = defineCommand({
   meta: {
@@ -23,19 +23,8 @@ export const statusCommand = defineCommand({
 
     const paths = getPaths()
 
-    const stateResult = await loadConfigState(paths)
-    if (stateResult.isErr()) {
-      const e = stateResult.error
-      if (json) {
-        process.stdout.write(`${JSON.stringify({ ok: false, error: formatConfigError(e) })}\n`)
-      } else {
-        consola.error(`Failed to read config: ${formatConfigError(e)}`)
-      }
-      process.exitCode = 1
-      return
-    }
-
-    const state = stateResult.value
+    const state = await loadConfigStateOrFail(paths, json)
+    if (state === null) return
 
     if (!state.initialized) {
       const data = {
