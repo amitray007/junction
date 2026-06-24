@@ -8,13 +8,13 @@ import { ensureHome, getPaths } from "./index.js"
 
 describe("paths", () => {
   it("default home is ~/.junction when JUNCTION_HOME is unset", () => {
-    const saved = process.env["JUNCTION_HOME"]
-    delete process.env["JUNCTION_HOME"]
+    const saved = process.env.JUNCTION_HOME
+    delete process.env.JUNCTION_HOME
     try {
       const p = getPaths()
       expect(p.home).toBe(path.join(os.homedir(), ".junction"))
     } finally {
-      if (saved !== undefined) process.env["JUNCTION_HOME"] = saved
+      if (saved !== undefined) process.env.JUNCTION_HOME = saved
     }
   })
 

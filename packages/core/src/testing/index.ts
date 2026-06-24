@@ -19,15 +19,15 @@ export async function createTempHome(): Promise<string> {
  */
 export async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
   const home = await createTempHome()
-  const prev = process.env["JUNCTION_HOME"]
-  process.env["JUNCTION_HOME"] = home
+  const prev = process.env.JUNCTION_HOME
+  process.env.JUNCTION_HOME = home
   try {
     return await fn(home)
   } finally {
     if (prev === undefined) {
-      delete process.env["JUNCTION_HOME"]
+      delete process.env.JUNCTION_HOME
     } else {
-      process.env["JUNCTION_HOME"] = prev
+      process.env.JUNCTION_HOME = prev
     }
     await rm(home, { recursive: true, force: true })
   }

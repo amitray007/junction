@@ -53,11 +53,14 @@ module.exports = {
       // and top-level flat packages, so deep imports into mcp/server or mcp/client
       // internals are now caught.
       //
-      // The pathNot uses alternation to exclude two cases:
+      // The pathNot uses alternation to exclude three cases:
       //   - ^packages/$1/src/ : intra-package imports (same package, always OK)
       //   - /src/index\\.ts$  : imports to another package's top-level entry point
       //     (e.g. packages/core/src/index.ts reached via "@junction/core" tsconfig paths)
       //     These are legitimate; no-cross-edge-imports handles direction enforcement.
+      //   - /src/[^/]+/index\\.ts$ : imports to a declared subpath entry point
+      //     (e.g. packages/core/src/testing/index.ts via "@junction/core/testing")
+      //     Package subpath exports are public API — these are legitimate cross-package imports.
       name: "no-deep-src-imports",
       comment:
         "Do not deep-import into another package's src/ internals — use the package entry point.",
@@ -67,7 +70,7 @@ module.exports = {
       },
       to: {
         path: "^packages/(mcp/[^/]+|[^/]+)/src/",
-        pathNot: "^packages/$1/src/|/src/index\\.ts$",
+        pathNot: "^packages/$1/src/|/src/index\\.ts$|/src/[^/]+/index\\.ts$",
       },
     },
     {
