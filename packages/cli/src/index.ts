@@ -17,4 +17,11 @@ const main = defineCommand({
   },
 })
 
-runMain(main)
+runMain(main).catch((err: unknown) => {
+  const wantJson = process.argv.includes("--json")
+  if (wantJson) {
+    const message = err instanceof Error ? err.message : String(err)
+    process.stdout.write(`${JSON.stringify({ ok: false, error: message })}\n`)
+  }
+  process.exitCode = 1
+})

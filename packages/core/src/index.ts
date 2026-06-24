@@ -5,8 +5,10 @@
 export {
   type Config,
   ConfigSchema,
+  type ConfigState,
   DEFAULT_CONFIG,
   loadConfig,
+  loadConfigState,
   saveConfig,
 } from "./config/index.js"
 export type { ConfigError, PathsError } from "./errors/index.js"

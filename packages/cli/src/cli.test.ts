@@ -2,11 +2,11 @@
 // CLI integration tests — drive command handlers directly + one child-process smoke test.
 
 import { execFile } from "node:child_process"
-import { mkdir, stat } from "node:fs/promises"
+import { mkdir, stat, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
-import { getPaths } from "@junction/core"
+import { ensureHome, getPaths } from "@junction/core"
 import { withTempHome } from "@junction/core/testing"
 import { describe, expect, it } from "vitest"
 import { initCommand } from "./commands/init.js"
@@ -119,6 +119,42 @@ describe("CLI commands", () => {
       expect(parsed).toHaveProperty("initialized", true)
     })
   })
+
+  it("status --json on malformed config.json → exit != 0, valid JSON {ok:false,error:...}", async () => {
+    await withTempHome(async () => {
+      const pathsResult = await ensureHome()
+      if (!pathsResult.isOk()) throw new Error("ensureHome failed")
+      await writeFile(pathsResult.value.configFile, "this is not json", "utf-8")
+
+      const savedCode = process.exitCode
+      const out = await captureStdout(() => statusCommand.run?.(ctx({ json: true })))
+      expect(process.exitCode).not.toBe(0)
+      process.exitCode = savedCode
+
+      const parsed = JSON.parse(out.trim())
+      expect(parsed.ok).toBe(false)
+      expect(typeof parsed.error).toBe("string")
+      expect(parsed.error.length).toBeGreaterThan(0)
+    })
+  })
+
+  it("init over a corrupt config.json → exit != 0, valid JSON {ok:false,error:...}", async () => {
+    await withTempHome(async () => {
+      const pathsResult = await ensureHome()
+      if (!pathsResult.isOk()) throw new Error("ensureHome failed")
+      await writeFile(pathsResult.value.configFile, "garbage", "utf-8")
+
+      const savedCode = process.exitCode
+      const out = await captureStdout(() => initCommand.run?.(ctx({ json: true, yes: false })))
+      expect(process.exitCode).not.toBe(0)
+      process.exitCode = savedCode
+
+      const parsed = JSON.parse(out.trim())
+      expect(parsed.ok).toBe(false)
+      expect(typeof parsed.error).toBe("string")
+      expect(parsed.error.length).toBeGreaterThan(0)
+    })
+  })
 })
 
 describe("CLI smoke test (child-process)", () => {
@@ -148,6 +184,38 @@ describe("CLI smoke test (child-process)", () => {
       const statusJson = JSON.parse(statusOut.trim())
       expect(statusJson.initialized).toBe(true)
       expect(statusJson.config).toMatchObject({ version: 1 })
+    })
+  })
+
+  it("--json error output is parseable and non-empty on a non-TTY pipe (bad config.json)", async () => {
+    await withTempHome(async (home) => {
+      const env = { ...process.env, JUNCTION_HOME: home }
+
+      // First create the home dir so we can write a bad config.json into it.
+      await execFileAsync("node", [distIndex, "init", "--json"], { env })
+
+      // Overwrite config.json with garbage to trigger a parse error.
+      const paths = getPaths()
+      await writeFile(paths.configFile, "not valid json at all", "utf-8")
+
+      // Run status --json — must exit non-zero and emit parseable JSON with ok:false.
+      let stdout = ""
+      let exitedNonZero = false
+      try {
+        const result = await execFileAsync("node", [distIndex, "status", "--json"], { env })
+        stdout = result.stdout
+      } catch (err: unknown) {
+        exitedNonZero = true
+        if (err && typeof err === "object" && "stdout" in err) {
+          stdout = String((err as { stdout: unknown }).stdout)
+        }
+      }
+
+      expect(exitedNonZero).toBe(true)
+      expect(stdout.trim().length).toBeGreaterThan(0)
+      const parsed = JSON.parse(stdout.trim())
+      expect(parsed.ok).toBe(false)
+      expect(typeof parsed.error).toBe("string")
     })
   })
 })

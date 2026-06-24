@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // `junction init` — ensure home + write default config.
 
-import { DEFAULT_CONFIG, ensureHome, loadConfig, saveConfig } from "@junction/core"
+import { DEFAULT_CONFIG, ensureHome, loadConfigState, saveConfig } from "@junction/core"
 import { defineCommand } from "citty"
 import { consola } from "consola"
-import { formatInitJson } from "../format.js"
+import { formatConfigError, formatInitJson, formatPathsError } from "../format.js"
 
 export const initCommand = defineCommand({
   meta: {
@@ -32,11 +32,12 @@ export const initCommand = defineCommand({
     if (pathsResult.isErr()) {
       const e = pathsResult.error
       if (json) {
-        process.stdout.write(`${JSON.stringify({ ok: false, error: String(e.cause) })}\n`)
+        process.stdout.write(`${JSON.stringify({ ok: false, error: formatPathsError(e) })}\n`)
       } else {
-        consola.error(`Failed to resolve home: ${String(e.cause)}`)
+        consola.error(formatPathsError(e))
       }
-      process.exit(1)
+      process.exitCode = 1
+      return
     }
 
     const paths = pathsResult.value
@@ -55,31 +56,22 @@ export const initCommand = defineCommand({
       }
     }
 
-    // Check if already initialized (config file exists).
-    const configResult = await loadConfig(paths)
-    if (configResult.isErr()) {
-      const e = configResult.error
+    // Check if already initialized (config file exists) and validate if so.
+    const stateResult = await loadConfigState(paths)
+    if (stateResult.isErr()) {
+      const e = stateResult.error
       if (json) {
         process.stdout.write(`${JSON.stringify({ ok: false, error: formatConfigError(e) })}\n`)
       } else {
         consola.error(`Failed to read config: ${formatConfigError(e)}`)
       }
-      process.exit(1)
+      process.exitCode = 1
+      return
     }
 
-    // Distinguish "file exists and was loaded" vs "file absent, got DEFAULT_CONFIG".
-    // loadConfig returns ok(DEFAULT_CONFIG) when ENOENT — we check if config.json exists
-    // by trying to save only if needed. Use a stat to avoid a second round-trip.
-    const { stat } = await import("node:fs/promises")
-    let initialized = false
-    try {
-      await stat(paths.configFile)
-      initialized = true
-    } catch {
-      initialized = false
-    }
+    const state = stateResult.value
 
-    if (initialized) {
+    if (state.initialized) {
       if (json) {
         process.stdout.write(`${formatInitJson({ ok: true, home: paths.home, created: false })}\n`)
       } else {
@@ -88,7 +80,9 @@ export const initCommand = defineCommand({
       return
     }
 
-    // Write default config.
+    // TOCTOU: initialized-check and saveConfig are not atomic. For a single-user
+    // broker this is acceptable — saveConfig's home-dir lock + atomic rename
+    // prevents file corruption; only the created:true/false flag is racy.
     const saveResult = await saveConfig(paths, DEFAULT_CONFIG)
     if (saveResult.isErr()) {
       const e = saveResult.error
@@ -97,7 +91,8 @@ export const initCommand = defineCommand({
       } else {
         consola.error(`Failed to write config: ${formatConfigError(e)}`)
       }
-      process.exit(1)
+      process.exitCode = 1
+      return
     }
 
     if (json) {
@@ -107,16 +102,3 @@ export const initCommand = defineCommand({
     }
   },
 })
-
-function formatConfigError(
-  e:
-    | { kind: "read-failed"; cause: unknown }
-    | { kind: "invalid"; issues: string[] }
-    | { kind: "write-failed"; cause: unknown }
-    | { kind: "lock-failed"; cause: unknown },
-): string {
-  if (e.kind === "invalid") return `invalid config: ${e.issues.join(", ")}`
-  if (e.kind === "lock-failed") return `config lock failed: ${String(e.cause)}`
-  if (e.kind === "read-failed") return `config read failed: ${String(e.cause)}`
-  return `config write failed: ${String(e.cause)}`
-}
