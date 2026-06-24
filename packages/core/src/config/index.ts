@@ -7,6 +7,7 @@
 // proper-lockfile's realpath:true (the default) requires the locked file to
 // exist — which it doesn't before the first saveConfig.
 
+import { randomUUID } from "node:crypto"
 import { readFile, rename, unlink, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { err, ok, ResultAsync } from "neverthrow"
@@ -62,7 +63,9 @@ export function saveConfig(paths: JunctionPaths, config: Config): ResultAsync<vo
       const { lock } = await import("proper-lockfile")
       const lockfilePath = path.join(paths.home, ".config.lock")
       let release: (() => Promise<void>) | undefined
-      const tmp = path.join(paths.home, `.config.${Date.now()}.tmp`)
+      // Unique temp name: Date.now() collides under same-millisecond concurrency,
+      // which would race two renames onto config.json. randomUUID is collision-free.
+      const tmp = path.join(paths.home, `.config.${randomUUID()}.tmp`)
       try {
         release = await lock(paths.home, { lockfilePath })
         await writeFile(tmp, JSON.stringify(config, null, 2), "utf-8")
