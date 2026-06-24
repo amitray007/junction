@@ -61,12 +61,16 @@ export function formatInitJson(result: { ok: boolean; home: string; created: boo
  * error kind to ConfigError becomes a compile error here.
  */
 export function formatConfigError(e: ConfigError): string {
-  if (e.kind === "invalid") return `invalid config: ${e.issues.join(", ")}`
-  if (e.kind === "lock-failed") return `config lock failed: ${String(e.cause)}`
-  if (e.kind === "read-failed") return `config read failed: ${String(e.cause)}`
-  if (e.kind === "write-failed") return `config write failed: ${String(e.cause)}`
-  const _exhaustive: never = e
-  return String(_exhaustive)
+  switch (e.kind) {
+    case "invalid":
+      return `invalid config: ${e.issues.join(", ")}`
+    case "lock-failed":
+      return `config lock failed: ${String(e.cause)}`
+    case "read-failed":
+      return `config read failed: ${String(e.cause)}`
+    case "write-failed":
+      return `config write failed: ${String(e.cause)}`
+  }
 }
 
 /**
