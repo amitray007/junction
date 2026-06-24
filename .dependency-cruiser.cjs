@@ -53,11 +53,18 @@ module.exports = {
       // and top-level flat packages, so deep imports into mcp/server or mcp/client
       // internals are now caught.
       //
-      // The pathNot uses alternation to exclude two cases:
+      // The pathNot uses alternation to exclude three cases:
       //   - ^packages/$1/src/ : intra-package imports (same package, always OK)
       //   - /src/index\\.ts$  : imports to another package's top-level entry point
       //     (e.g. packages/core/src/index.ts reached via "@junction/core" tsconfig paths)
       //     These are legitimate; no-cross-edge-imports handles direction enforcement.
+      //   - /src/testing/index\\.ts$ : the ONE sanctioned subpath export convention
+      //     (e.g. packages/core/src/testing/index.ts via "@junction/core/testing";
+      //     docs/principles/modularity.md §5 — test helpers ship on a ./testing subpath).
+      // NOTE: this deliberately does NOT allow /src/<any-module>/index.ts — importing
+      // an internal module like core/src/config/index.ts must stay BLOCKED so consumers
+      // use the curated public barrel, not internals. If a package adds a NEW public
+      // subpath export, add it here explicitly (mirroring its package.json "exports").
       name: "no-deep-src-imports",
       comment:
         "Do not deep-import into another package's src/ internals — use the package entry point.",
@@ -67,7 +74,7 @@ module.exports = {
       },
       to: {
         path: "^packages/(mcp/[^/]+|[^/]+)/src/",
-        pathNot: "^packages/$1/src/|/src/index\\.ts$",
+        pathNot: "^packages/$1/src/|/src/index\\.ts$|/src/testing/index\\.ts$",
       },
     },
     {

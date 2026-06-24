@@ -4,7 +4,7 @@ import { mkdir, writeFile } from "node:fs/promises"
 import { describe, expect, it } from "vitest"
 import { ensureHome } from "../paths/index.js"
 import { withTempHome } from "../testing/index.js"
-import { type Config, DEFAULT_CONFIG, loadConfig, saveConfig } from "./index.js"
+import { type Config, DEFAULT_CONFIG, loadConfig, loadConfigState, saveConfig } from "./index.js"
 
 describe("config", () => {
   it("missing config.json returns ok(DEFAULT_CONFIG)", async () => {
@@ -138,6 +138,63 @@ describe("config", () => {
       expect(loadResult.isOk()).toBe(true)
       if (loadResult.isOk()) {
         expect(loadResult.value).toEqual(DEFAULT_CONFIG)
+      }
+    })
+  })
+})
+
+describe("loadConfigState", () => {
+  it("absent config.json → ok({ initialized: false })", async () => {
+    await withTempHome(async () => {
+      const paths = await ensureHome()
+      if (!paths.isOk()) throw new Error("ensureHome failed")
+      const result = await loadConfigState(paths.value)
+      expect(result.isOk()).toBe(true)
+      if (result.isOk()) {
+        expect(result.value.initialized).toBe(false)
+      }
+    })
+  })
+
+  it("present valid config.json → ok({ initialized: true, config })", async () => {
+    await withTempHome(async () => {
+      const paths = await ensureHome()
+      if (!paths.isOk()) throw new Error("ensureHome failed")
+      const saveResult = await saveConfig(paths.value, DEFAULT_CONFIG)
+      expect(saveResult.isOk()).toBe(true)
+      const result = await loadConfigState(paths.value)
+      expect(result.isOk()).toBe(true)
+      if (result.isOk()) {
+        expect(result.value.initialized).toBe(true)
+        if (result.value.initialized) {
+          expect(result.value.config).toEqual(DEFAULT_CONFIG)
+        }
+      }
+    })
+  })
+
+  it("present invalid JSON → err({ kind: 'invalid' })", async () => {
+    await withTempHome(async () => {
+      const paths = await ensureHome()
+      if (!paths.isOk()) throw new Error("ensureHome failed")
+      await writeFile(paths.value.configFile, "garbage", "utf-8")
+      const result = await loadConfigState(paths.value)
+      expect(result.isOk()).toBe(false)
+      if (!result.isOk()) {
+        expect(result.error.kind).toBe("invalid")
+      }
+    })
+  })
+
+  it("config.json is a directory (unreadable) → err({ kind: 'read-failed' })", async () => {
+    await withTempHome(async () => {
+      const paths = await ensureHome()
+      if (!paths.isOk()) throw new Error("ensureHome failed")
+      await mkdir(paths.value.configFile)
+      const result = await loadConfigState(paths.value)
+      expect(result.isOk()).toBe(false)
+      if (!result.isOk()) {
+        expect(result.error.kind).toBe("read-failed")
       }
     })
   })
