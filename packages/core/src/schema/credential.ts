@@ -22,6 +22,13 @@ export type CredentialKind = z.infer<typeof CredentialKind>
  * Minimal reserved slot for OAuth metadata.
  * Present day one so the OAuth increment needs no migration (design spec §4a).
  * The OAuth refresh-loop increment will extend this schema.
+ *
+ * INVARIANT: every field here is metadata or a REFERENCE — never a token value.
+ * When the OAuth increment adds a refresh-token field, it MUST be a handle
+ * (e.g. `refreshTokenRef: string` resolving through the CredentialStore /
+ * token table), NOT the raw refresh token. Same secrets-as-references rule as
+ * `Credential.secretRef` (docs/rules/security.md). Adding optional fields here
+ * is additive/non-breaking (z.object strips unknowns).
  */
 export const OAuthMetaSchema = z.object({
   /** Granted OAuth scopes */

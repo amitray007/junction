@@ -26,11 +26,14 @@ export type ProfileId = z.infer<typeof ProfileIdSchema>
 // Naming-convention schemas
 // ---------------------------------------------------------------------------
 
-/** Tool namespace: lowercase alphanumeric + underscores only.
- *  Validated per the `<namespace>__<tool>` convention (design spec §4).
- *  Example: "github_work" */
-export const ToolNamespaceSchema = z.string().regex(/^[a-z0-9_]+$/, {
-  message: "toolNamespace must match ^[a-z0-9_]+$ (lowercase, digits, underscores only)",
+/** Tool namespace: lowercase alphanumeric with SINGLE underscores between
+ *  segments. Consecutive underscores are forbidden so the `<namespace>__<tool>`
+ *  convention (double underscore, design spec §4) splits unambiguously — a
+ *  namespace or tool containing `__` would break the split.
+ *  Valid: "github_work", "list_issues". Invalid: "a__b", "_x", "x_". */
+export const ToolNamespaceSchema = z.string().regex(/^[a-z0-9]+(_[a-z0-9]+)*$/, {
+  message:
+    "must match ^[a-z0-9]+(_[a-z0-9]+)*$ (lowercase/digits, single underscores between segments, no '__')",
 })
 
 /** Profile name: URL-safe lowercase alphanumeric + hyphens.
@@ -48,14 +51,23 @@ export const ProfileNameSchema = z.string().regex(/^[a-z0-9-]+$/, {
  * Build a namespaced tool name from a namespace and tool name.
  * Convention: `<namespace>__<tool>` (double underscore, design spec §4).
  *
- * @throws {Error} if namespace is not valid per ToolNamespaceSchema
+ * Both parts must match ToolNamespaceSchema (^[a-z0-9_]+$, which forbids the
+ * `__` separator inside either part). If `tool` could itself contain `__`, the
+ * split would be ambiguous for any parser that later splits on `__`.
+ *
+ * @throws {Error} if namespace OR tool is not valid per ToolNamespaceSchema
  */
 export function namespacedTool(namespace: string, tool: string): string {
-  const result = ToolNamespaceSchema.safeParse(namespace)
-  if (!result.success) {
-    throw new Error(
-      `Invalid tool namespace "${namespace}": ${result.error.issues.map((i) => i.message).join(", ")}`,
-    )
+  for (const [label, value] of [
+    ["namespace", namespace],
+    ["tool", tool],
+  ] as const) {
+    const result = ToolNamespaceSchema.safeParse(value)
+    if (!result.success) {
+      throw new Error(
+        `Invalid tool ${label} "${value}": ${result.error.issues.map((i) => i.message).join(", ")}`,
+      )
+    }
   }
   return `${namespace}__${tool}`
 }

@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest"
 
 import { newCredentialId, newPlatformId, newProfileId } from "../ids/index.js"
-import { CredentialSchema } from "./credential.js"
+import { CredentialSchema, OAuthMetaSchema } from "./credential.js"
 import { PlatformSchema } from "./platform.js"
 import {
   CredentialIdSchema,
@@ -196,6 +196,27 @@ describe("invalid entity rejection", () => {
     })
     expect(result.success).toBe(false)
   })
+
+  it("rejects a Profile whose mcpEndpointPath is well-formed but drifts from name", () => {
+    // name "work" but endpoint points at a DIFFERENT profile — the drift case.
+    const result = ProfileSchema.safeParse({
+      id: newProfileId(),
+      name: "work",
+      sources: [],
+      mcpEndpointPath: "/profiles/personal/mcp",
+    })
+    expect(result.success).toBe(false)
+  })
+
+  it("rejects a Profile with a malformed empty-segment mcpEndpointPath", () => {
+    const result = ProfileSchema.safeParse({
+      id: newProfileId(),
+      name: "work",
+      sources: [],
+      mcpEndpointPath: "/profiles//mcp",
+    })
+    expect(result.success).toBe(false)
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -213,6 +234,14 @@ describe("namespacedTool helper", () => {
 
   it("throws for an invalid namespace (spaces)", () => {
     expect(() => namespacedTool("github work", "list_issues")).toThrow()
+  })
+
+  it("throws for a tool containing '__' (would make the namespace split ambiguous)", () => {
+    expect(() => namespacedTool("github", "a__b")).toThrow()
+  })
+
+  it("throws for an invalid tool (uppercase)", () => {
+    expect(() => namespacedTool("github", "ListIssues")).toThrow()
   })
 })
 
@@ -289,5 +318,20 @@ describe("security: no plaintext secret survives Credential parse", () => {
     expect(Object.hasOwn(result.data, "secret")).toBe(false)
     // Ensure no value leaks under any key name resembling plaintext
     expect(JSON.stringify(result.data)).not.toContain("PLAINTEXT_SECRET_DO_NOT_STORE")
+  })
+
+  it("OAuthMetaSchema strips unknown keys — a stray token value never survives parse", () => {
+    // Guard against a future maintainer switching OAuthMetaSchema to
+    // .passthrough()/loose: a raw refresh token must never survive into oauthMeta
+    // (the secrets-as-references invariant). This test fails if strip is removed.
+    const result = OAuthMetaSchema.safeParse({
+      scopes: ["repo"],
+      expiresAt: null,
+      refreshToken: "RAW_REFRESH_TOKEN_DO_NOT_STORE",
+    })
+    expect(result.success).toBe(true)
+    if (!result.success) return
+    expect(Object.hasOwn(result.data, "refreshToken")).toBe(false)
+    expect(JSON.stringify(result.data)).not.toContain("RAW_REFRESH_TOKEN_DO_NOT_STORE")
   })
 })
