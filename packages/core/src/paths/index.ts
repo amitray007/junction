@@ -14,7 +14,7 @@ export type JunctionPaths = {
 }
 
 export function resolveHome(): string {
-  const override = process.env["JUNCTION_HOME"]
+  const override = process.env["JUNCTION_HOME"]?.trim()
   if (override) return path.resolve(override)
   return path.join(os.homedir(), ".junction")
 }

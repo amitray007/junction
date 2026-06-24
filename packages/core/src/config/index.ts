@@ -7,7 +7,7 @@
 // proper-lockfile's realpath:true (the default) requires the locked file to
 // exist — which it doesn't before the first saveConfig.
 
-import { readFile, rename, writeFile } from "node:fs/promises"
+import { readFile, rename, unlink, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { err, ok, ResultAsync } from "neverthrow"
 import { z } from "zod"
@@ -53,19 +53,24 @@ export function saveConfig(paths: JunctionPaths, config: Config): ResultAsync<vo
     (async () => {
       const validation = ConfigSchema.safeParse(config)
       if (!validation.success) {
-        return err<void, ConfigError>({ kind: "write-failed", cause: new Error("invalid config") })
+        return err<void, ConfigError>({
+          kind: "invalid",
+          issues: validation.error.issues.map((i) => i.message),
+        })
       }
       // Lazy-import proper-lockfile to keep module import-light
       const { lock } = await import("proper-lockfile")
       const lockfilePath = path.join(paths.home, ".config.lock")
       let release: (() => Promise<void>) | undefined
+      const tmp = path.join(paths.home, `.config.${Date.now()}.tmp`)
       try {
         release = await lock(paths.home, { lockfilePath })
-        const tmp = path.join(paths.home, `.config.${Date.now()}.tmp`)
         await writeFile(tmp, JSON.stringify(config, null, 2), "utf-8")
         await rename(tmp, paths.configFile)
         return ok<void, ConfigError>(undefined)
       } catch (cause: unknown) {
+        // Best-effort cleanup: a failed rename leaves the temp file behind.
+        await unlink(tmp).catch(() => {})
         if (isNodeError(cause) && cause.code === "ELOCKED") {
           return err<void, ConfigError>({ kind: "lock-failed", cause })
         }
