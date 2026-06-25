@@ -3,5 +3,12 @@
   "minLines": 5,
   "threshold": 0,
   "reporters": ["console"],
-  "ignore": ["**/dist/**", "**/node_modules/**", "**/*.test.ts", "**/drizzle/**", "**/*.d.ts"]
+  "ignore": [
+    "**/dist/**",
+    "**/node_modules/**",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/drizzle/**",
+    "**/*.d.ts"
+  ]
 }

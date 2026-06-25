@@ -135,7 +135,7 @@ pnpm workspaces · tsdown (+ publint + attw) · citty + @clack/prompts · Vitest
 
 *Deferred CI tooling (wired at the increments that need it, not yet present):* **knip** (dead code/deps, inc 1+), **type-coverage** (≥99%, inc 2+), **publint+attw** (packaging, when a package publishes), **targeted semgrep** (sandbox/secrets paths, inc 6/8). See `docs/rules/` + design spec §5b.
 
-**Future-domain (recorded, installed at their increment):** TanStack Start (web) · arctic (OAuth vault) · pino (audit) · better-auth (remote web login only) · OpenTUI (TUI dashboard, increment 9) · microsandbox (microVM escalation) · Sandbox = Deno + bubblewrap/Seatbelt · React Compiler + eslint-plugin-react-hooks + react-doctor (web increment only).
+**Future-domain (recorded, installed at their increment):** TanStack Start (web) · arctic (OAuth vault) · pino (audit) · better-auth (remote web login only) · **Ink** (TUI dashboard, increment 9; OpenTUI deferred — Bun-only renderer, see `docs/futures/`) · microsandbox (microVM escalation) · Sandbox = Deno + bubblewrap/Seatbelt · React Compiler + eslint-plugin-react-hooks + react-doctor (web increment only).
 
 **Banned:** keytar · vm2 / `node:vm`-as-sandbox · **Effect-TS** (use neverthrow) · **ESLint+Prettier as the loop** (use Biome) · **ts-prune** (use knip) · **Million.js/Lint** (use React Compiler) · legacy inquirer · Jest · oclif · Lucia · `conf` (as primary store) · Clerk/WorkOS · isolated-vm (maintenance-mode; avoid unless Deno+bubblewrap impractical).
 

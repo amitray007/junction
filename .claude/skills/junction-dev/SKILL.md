@@ -88,6 +88,33 @@ Human-readable output always goes to stderr.
 - Claude Code hooks (`.claude/settings.json`) format on edit and guard package boundaries.
 - See `docs/rules/` for the coding rules and `docs/workflow.md` for the per-increment loop.
 
-## Grows here
+## TUI dashboard (increment 9)
 
-> Update this skill at each increment: add the sandbox usage (inc 8), the TUI launch (inc 9), and the web dev server (web increment).
+Bare `junction` in an interactive terminal launches the full-screen Ink TUI dashboard.
+The TUI shows three panels (Status / Profiles / Platforms), is keyboard-driven, and exits
+cleanly with `q`. Use Tab to move between panels, ↑/↓ or j/k to navigate within a panel,
+`r` to reload live data.
+
+```bash
+# Interactive TUI — only in a real TTY:
+junction
+
+# Headless fallback (non-TTY / piped / CI / agent) — same as `junction status`:
+junction | cat            # outputs human-readable status, no hang, no pipe corruption
+
+# --json always bypasses the TUI:
+junction --json           # machine-readable JSON status
+
+# Subcommands are unchanged:
+junction status --json
+junction profile list --json
+```
+
+**Headless contract (load-bearing):**
+- `bare + both TTYs + no --json` → Ink TUI dashboard
+- `bare + no TTY (pipe/CI/agent)` → headless status (no hang)
+- `any subcommand or meta flag` → citty as before
+
+**Security:** the TUI never renders credential secret values — only metadata
+(displayName, kind, credentialCount per platform). `secretRef` is intentionally absent
+from every `DashboardSnapshot` type.

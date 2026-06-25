@@ -12,9 +12,15 @@ const coreSrc = fileURLToPath(new URL("./packages/core/src", import.meta.url))
 const mcpServerSrc = fileURLToPath(new URL("./packages/mcp/server/src", import.meta.url))
 
 export default defineConfig({
+  // Configure esbuild to use the automatic React 17+ JSX runtime for .tsx test files.
+  // This matches the cli tsconfig "jsx": "react-jsx" and avoids needing to import React
+  // in every tsx file.
+  esbuild: {
+    jsx: "automatic",
+  },
   test: {
     // Only run source tests; never compiled output or deps.
-    include: ["packages/**/src/**/*.test.ts"],
+    include: ["packages/**/src/**/*.test.ts", "packages/**/src/**/*.test.tsx"],
     exclude: ["**/node_modules/**", "**/dist/**"],
     alias: {
       "@junction/core/testing": `${coreSrc}/testing/index.ts`,
