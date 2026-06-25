@@ -17,6 +17,17 @@ export { ensureHome, getPaths, type JunctionPaths } from "./paths/index.js"
 export { err, ok, type Result, ResultAsync } from "./result/index.js"
 export const VERSION = "0.0.0"
 
+export type {
+  Sandbox,
+  SandboxCapabilities,
+  SandboxPolicy,
+  SandboxResult,
+} from "./sandbox/index.js"
+// ---------------------------------------------------------------------------
+// Sandbox — OS-level code-execution isolation (Seatbelt / bubblewrap / Deno)
+// ---------------------------------------------------------------------------
+export { createSandbox } from "./sandbox/index.js"
+
 // ---------------------------------------------------------------------------
 // Data model — entity schemas, types, ID generators, convention helpers
 // ---------------------------------------------------------------------------
@@ -27,7 +38,7 @@ export const VERSION = "0.0.0"
 export { type CredentialStore, createCredentialStore } from "./credentials/index.js"
 // Database + repositories
 export { type Db, getDatabase } from "./db/index.js"
-export type { CredentialError, DbError } from "./errors/index.js"
+export type { CredentialError, DbError, SandboxError } from "./errors/index.js"
 // ID generators — ids/ is the sole generator; see ids/index.ts for the swap-point comment
 export { newCredentialId, newPlatformId, newProfileId } from "./ids/index.js"
 export { createRepositories, type Repositories } from "./repositories/index.js"

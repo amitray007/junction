@@ -24,6 +24,25 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node }}
+      # Install Deno so the Deno runScript tests RUN (not skip) on both Node matrix runners.
+      # Pinned to commit SHA per security policy for third-party actions.
+      - uses: denoland/setup-deno@667a34cdef165d8d2b2e98dde39547c9daac7282 # v2.0.4
+        with:
+          deno-version: "2.x"
+      # Install bubblewrap on Linux so the bubblewrap tests RUN on the ubuntu runner.
+      - name: Install bubblewrap
+        run: sudo apt-get update -qq && sudo apt-get install -y bubblewrap
+      # Ubuntu 24.04 (noble) ships kernel.apparmor_restrict_unprivileged_userns=1,
+      # which blocks unprivileged user namespaces — bwrap's userns probe would fail
+      # and the bubblewrap tests would SKIP instead of RUN. Relax it so the bwrap
+      # path is genuinely exercised in CI (the only place we have a Linux box).
+      - name: Enable unprivileged user namespaces (for bubblewrap)
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+      # Regression guard: assert the bwrap userns probe succeeds, so the
+      # bubblewrap tests can never silently go back to skipping. Mirrors
+      # probeUserns() in bubblewrap.ts (real /usr/bin/true under a bound path).
+      - name: Verify bubblewrap is usable
+        run: bwrap --ro-bind /usr /usr --ro-bind /bin /bin --ro-bind-try /lib /lib --ro-bind-try /lib64 /lib64 -- /usr/bin/true
       - run: pnpm install --frozen-lockfile
       - run: pnpm verify
   quality:

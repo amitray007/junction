@@ -20,3 +20,10 @@ export type CredentialError =
   | { kind: "decrypt-failed"; cause: unknown }
   | { kind: "key-unavailable"; cause: unknown }
   | { kind: "io-failed"; cause: unknown }
+
+export type SandboxError =
+  | { kind: "runtime-unavailable"; runtime: "deno"; cause?: unknown }
+  | { kind: "unsupported-platform"; platform: string }
+  | { kind: "policy-invalid"; reason: string }
+  | { kind: "spawn-failed"; cause: unknown }
+  | { kind: "timed-out"; timeoutMs: number }
