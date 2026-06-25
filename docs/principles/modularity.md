@@ -29,6 +29,8 @@ The monorepo uses an **app-vs-lib** topology, enforced by `dependency-cruiser`:
 Allowed edges: `cli → core`, `cli → mcp/server`, `cli → mcp/client`, `web → core`, `web → mcp/server`, `web → mcp/client`.  
 Blocked: any lib → app (e.g. `mcp/server → cli`), lib → peer lib (`mcp/server ↔ mcp/client`), app → app (`cli ↔ web`), `core → anything-in-repo`.
 
+The depcruise rules are **structural, not an enumeration of today's packages**: "a lib (any non-app package) may import only core + itself" and "apps must not import each other". So a **package added later is automatically a governed lib** — it can reach only `core`, and nothing may import it unless it's declared an app. (This closed the enumeration gap the inc-7 boundary review found.) "App" = `cli` (package name `junction`) and `web`; everything else is a lib.
+
 **No circular dependencies** — at the package level *and* the module level inside `core`. A cycle means a missing layer or a misplaced responsibility. (`dependency-cruiser` enforces this, inc 1.5; app-vs-lib model introduced in inc 7.)
 
 ## 4. Layer placement

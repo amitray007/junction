@@ -64,11 +64,19 @@ const serveCommand = defineCommand({
     const result = await repos.profiles.getByName(profileName)
 
     if (result.isErr()) {
-      // Profile not found or query error — fall back to synthetic default.
+      // Distinguish a genuinely missing profile (fall back to the default) from a
+      // real DB error (surface it — don't mask it as "not found").
+      if (result.error.kind === "not-found") {
+        process.stderr.write(
+          `junction mcp serve: profile "${profileName}" not found, serving synthetic default profile\n`,
+        )
+        await serveStdio(defaultProfile())
+        return
+      }
       process.stderr.write(
-        `junction mcp serve: profile "${profileName}" not found, serving synthetic default profile\n`,
+        `junction mcp serve: failed to load profile "${profileName}" (${result.error.kind})\n`,
       )
-      await serveStdio(defaultProfile())
+      process.exitCode = 1
       return
     }
 
