@@ -3,6 +3,7 @@
 import { VERSION } from "@junction/core"
 import { defineCommand, runMain } from "citty"
 import { initCommand } from "./commands/init.js"
+import { mcpCommand } from "./commands/mcp.js"
 import { profileCommand } from "./commands/profile.js"
 import { statusCommand } from "./commands/status.js"
 
@@ -14,6 +15,7 @@ const main = defineCommand({
   },
   subCommands: {
     init: initCommand,
+    mcp: mcpCommand,
     profile: profileCommand,
     status: statusCommand,
   },
