@@ -63,6 +63,16 @@ Every increment follows this loop (gates at step 4 and step 8):
 
 `docs/workflow.md` names the exact tool to use at each step.
 
+### End-of-increment report (always)
+
+At the end of **every** increment/method, the orchestrator MUST close with a structured report containing exactly these three parts:
+
+1. **Visually testable by you?** — **Yes** (with copy-paste commands the user can run, e.g. `JUNCTION_HOME=/tmp/jt node packages/cli/dist/index.js …`) **or No** (state plainly there's no user-facing surface yet — e.g. pure schema/internal increments — and name the increment where it *becomes* visible).
+2. **QA tested by me** — what the orchestrator independently verified (not just the builder's claim): gates run (`pnpm verify`/`build`/`depcruise`), behavior driven against the real built code, review findings addressed.
+3. **Checklist of intricate details** — a markdown checklist (`- [x]`) of the load-bearing/subtle points proven this increment (invariants, edge cases, conventions, gotchas), so the user can scan what's actually guaranteed.
+
+Be honest in part 1: if it isn't user-visible, say so — don't invent a visual test.
+
 ---
 
 ## Tooling — use compound-engineering (CE)
