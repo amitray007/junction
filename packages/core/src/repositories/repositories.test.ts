@@ -897,4 +897,69 @@ describe("repositories", () => {
       }
     })
   })
+
+  // ---------------------------------------------------------------------------
+  // Malformed JSON columns → typed boundary error (FIX 4)
+  // ---------------------------------------------------------------------------
+  describe("malformed JSON columns return typed query-failed error (boundary-validation contract)", () => {
+    it("corrupt platforms.connection → platforms.get returns isErr with query-failed", async () => {
+      const platformId = newPlatformId()
+      // Insert a row with a malformed JSON connection value directly — bypasses
+      // the repo layer so we can simulate disk/import corruption.
+      db.run(
+        sql`INSERT INTO platforms (id, kind, display_name, connection)
+            VALUES (${String(platformId)}, 'mcp', 'Corrupt Platform', 'NOT_VALID_JSON')`,
+      )
+
+      const result = await repos.platforms.get(platformId)
+      expect(result.isErr()).toBe(true)
+      if (result.isErr()) {
+        expect(result.error.kind).toBe("query-failed")
+      }
+    })
+
+    it("wrong-shape JSON in platforms.connection → platforms.get returns isErr with query-failed", async () => {
+      const platformId = newPlatformId()
+      // Valid JSON but fails McpConnectionSchema (missing required `transport`)
+      db.run(
+        sql`INSERT INTO platforms (id, kind, display_name, connection)
+            VALUES (${String(platformId)}, 'mcp', 'Bad Shape Platform', '{"not":"a_connection"}')`,
+      )
+
+      const result = await repos.platforms.get(platformId)
+      expect(result.isErr()).toBe(true)
+      if (result.isErr()) {
+        expect(result.error.kind).toBe("query-failed")
+      }
+    })
+
+    it("corrupt source_refs.tool_filter → profiles.get returns isErr with query-failed", async () => {
+      const platformId = newPlatformId()
+      const credId = newCredentialId()
+      const profileId = newProfileId()
+      await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
+      await repos.credentials.create({
+        id: credId,
+        platformId,
+        profileName: "work",
+        kind: "bearer" as const,
+        secretRef: "ref_corrupt_filter",
+      })
+      // Insert source_ref row with corrupt tool_filter directly
+      db.run(
+        sql`INSERT INTO profiles (id, name, mcp_endpoint_path)
+            VALUES (${String(profileId)}, 'corrupt-filter', '/profiles/corrupt-filter/mcp')`,
+      )
+      db.run(
+        sql`INSERT INTO source_refs (id, profile_id, platform_id, credential_id, tool_namespace, enabled, tool_filter)
+            VALUES ('sr_corrupt_1', ${String(profileId)}, ${String(platformId)}, ${String(credId)}, 'ns', 1, 'BROKEN_JSON')`,
+      )
+
+      const result = await repos.profiles.get(profileId)
+      expect(result.isErr()).toBe(true)
+      if (result.isErr()) {
+        expect(result.error.kind).toBe("query-failed")
+      }
+    })
+  })
 })

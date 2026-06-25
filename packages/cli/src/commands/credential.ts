@@ -56,6 +56,23 @@ const addCommand = defineCommand({
       return
     }
 
+    // Validate platform and account BEFORE reading the token — bad input must
+    // not cause a secret to be captured from stdin (nice-to-have 2 + FIX 2).
+    if (!args.platform || args.platform.trim() === "") {
+      const msg = "invalid input: --platform must not be empty"
+      if (json) process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
+      else consola.error(msg)
+      process.exitCode = 1
+      return
+    }
+    if (!args.account || args.account.trim() === "") {
+      const msg = "invalid input: --account must not be empty"
+      if (json) process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
+      else consola.error(msg)
+      process.exitCode = 1
+      return
+    }
+
     // Acquire the token — either from stdin (headless) or interactive masked prompt
     let secret: string
     if (args["token-stdin"]) {
@@ -115,7 +132,8 @@ const addCommand = defineCommand({
         e.kind === "store-unavailable" ||
         e.kind === "decrypt-failed" ||
         e.kind === "key-unavailable" ||
-        e.kind === "io-failed"
+        e.kind === "io-failed" ||
+        e.kind === "invalid-input"
       ) {
         reportCredentialError(e, json)
       } else {

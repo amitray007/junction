@@ -146,6 +146,8 @@ export function formatCredentialError(e: CredentialError): string {
       return `encryption key unavailable: ${String(e.cause)}`
     case "io-failed":
       return `credential store I/O failed: ${String(e.cause)}`
+    case "invalid-input":
+      return `invalid input: ${e.reason}`
   }
 }
 

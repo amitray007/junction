@@ -21,6 +21,7 @@ export type CredentialError =
   | { kind: "decrypt-failed"; cause: unknown }
   | { kind: "key-unavailable"; cause: unknown }
   | { kind: "io-failed"; cause: unknown }
+  | { kind: "invalid-input"; reason: string }
 
 export type SandboxError =
   | { kind: "runtime-unavailable"; runtime: "deno"; cause?: unknown }

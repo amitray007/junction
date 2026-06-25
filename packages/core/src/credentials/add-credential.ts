@@ -3,7 +3,7 @@
 // security.md invariant: plaintext lives only in this call's stack frame;
 // never returned, never logged, never in any error cause, never in the DB.
 
-import { errAsync, type ResultAsync } from "neverthrow"
+import { errAsync, okAsync, type ResultAsync } from "neverthrow"
 import { ulid } from "ulid"
 import type { CredentialError, DbError } from "../errors/index.js"
 import { newCredentialId } from "../ids/index.js"
@@ -33,13 +33,15 @@ export interface AddCredentialInput {
 /**
  * Orchestrates the credential creation lifecycle:
  *
- * 1. Mint an opaque secretRef (ULID) — this is what the DB row stores.
- * 2. Persist the secret in the CredentialStore (keyring or encrypted-file).
- * 3. Insert a Credential DB row with only the secretRef (never the secret).
+ * 1. Validate platformId and account — return a typed Err on invalid input
+ *    (so bad input is caught BEFORE the secret is ever touched by the store).
+ * 2. Mint an opaque secretRef (ULID) — this is what the DB row stores.
+ * 3. Persist the secret in the CredentialStore (keyring or encrypted-file).
+ * 4. Insert a Credential DB row with only the secretRef (never the secret).
  *
- * On DB failure: best-effort CredentialStore.delete(secretRef) to avoid orphaned
- * store entries. If the cleanup itself fails, the secretRef is unreachable but
- * the plaintext is not leaked — the store entry is simply orphaned.
+ * On DB failure: awaits CredentialStore.delete(secretRef) before propagating
+ * the original dbErr (cleanup is deterministic; cleanup failure is ignored but
+ * the await ensures it completes).
  *
  * SECURITY: `input.secret` never appears in the return value, error causes, or logs.
  */
@@ -48,26 +50,44 @@ export function addCredential(
   store: CredentialStore,
   credentialsRepo: CredentialsRepo,
 ): ResultAsync<Credential, CredentialError | DbError> {
-  const secretRef = ulid()
-  const credentialId = newCredentialId()
-  const platformId = PlatformIdSchema.parse(input.platformId)
+  // Validate platform ID before touching the secret — bad input exits early.
+  const platformParse = PlatformIdSchema.safeParse(input.platformId)
+  if (!platformParse.success) {
+    return errAsync({
+      kind: "invalid-input" as const,
+      reason: `invalid platformId: ${platformParse.error.issues.map((i) => i.message).join(", ")}`,
+    })
+  }
 
-  const credential = CredentialSchema.parse({
-    id: credentialId,
-    platformId,
+  // Validate the full credential shape (defensive; CLI pre-validates, but we
+  // must not trust the caller).
+  const credentialParse = CredentialSchema.safeParse({
+    id: newCredentialId(),
+    platformId: platformParse.data,
     profileName: input.account,
     kind: input.kind,
-    secretRef,
+    secretRef: ulid(), // mint secretRef here so it's validated too
   })
+  if (!credentialParse.success) {
+    return errAsync({
+      kind: "invalid-input" as const,
+      reason: credentialParse.error.issues.map((i) => i.message).join(", "),
+    })
+  }
 
-  return store.set(secretRef, input.secret).andThen(() =>
+  const credential = credentialParse.data
+
+  return store.set(credential.secretRef, input.secret).andThen(() =>
     credentialsRepo
       .create(credential)
       .orElse((dbErr): ResultAsync<Credential, CredentialError | DbError> => {
-        // Best-effort cleanup: remove the orphaned store entry.
-        // We ignore the cleanup result — the DB error is what we propagate.
-        void store.delete(secretRef)
-        return errAsync(dbErr)
+        // Best-effort cleanup: await the delete so cleanup is deterministic.
+        // A delete failure is ignored (best-effort) — the original DB error is
+        // what we propagate; don't mask it with a cleanup error.
+        return store
+          .delete(credential.secretRef)
+          .orElse((_cleanupErr): ResultAsync<void, never> => okAsync(undefined))
+          .andThen(() => errAsync(dbErr))
       }),
   )
 }
