@@ -29,3 +29,18 @@ export type SandboxError =
   | { kind: "policy-invalid"; reason: string }
   | { kind: "spawn-failed"; cause: unknown }
   | { kind: "timed-out"; timeoutMs: number }
+
+/**
+ * Errors from connecting to or calling an upstream MCP source.
+ * Consumed by the mcp-client package and by the CLI's debug formatter.
+ * Defined in core so the CLI can import the type without depending on mcp-client.
+ */
+export type UpstreamError =
+  | { kind: "binary-not-found"; command: string }
+  | { kind: "connect-failed"; cause: unknown }
+  | { kind: "auth-failed"; cause?: unknown }
+  | { kind: "upstream-unavailable"; cause: unknown }
+  | { kind: "tool-not-found"; name: string }
+  | { kind: "call-failed"; cause: unknown }
+  | { kind: "namespace-too-long"; name: string }
+  | { kind: "timed-out"; ms: number }

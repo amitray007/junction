@@ -90,7 +90,7 @@ const addCommand = defineCommand({
       connection,
     })
     if (!parseResult.success) {
-      const msg = parseResult.error.issues.map((i) => i.message).join(", ")
+      const msg = parseResult.error.issues.map((i: { message: string }) => i.message).join(", ")
       reportError(`Invalid platform: ${msg}`, json)
       return
     }

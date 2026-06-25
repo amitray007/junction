@@ -6,6 +6,7 @@
 
 import {
   addCredential,
+  type Credential,
   createCredentialStore,
   createRepositories,
   getDatabase,
@@ -195,7 +196,8 @@ const listCommand = defineCommand({
     }
 
     // Map to metadata-only objects — NEVER include secret or secretRef
-    const metaList = credResult.value.map((c) => ({
+    const creds = credResult.value as Credential[]
+    const metaList = creds.map((c) => ({
       id: c.id,
       platformId: c.platformId,
       account: c.profileName,

@@ -18,6 +18,10 @@ Non-obvious sharp edges we've already paid for. Each lists the **symptom** and t
 - **Corrupt-but-present `credentials.enc.json` must not be silently emptied.** Treating a JSON `SyntaxError` as "empty store" lets the next `set()` overwrite and destroy all ciphertext. **Fix:** only `ENOENT` → empty map; a present-but-unparseable file → `io-failed` (refuse to load/overwrite).
 - **Temp files: create at `0600`, don't `chmod` after.** Writing the master key / salt tmp at the umask default then chmod-ing leaves a world-readable window on the actual key. **Fix:** `writeFile(tmp, data, { mode: 0o600 })`.
 
+## MCP client — upstream connector (inc 11)
+
+- **`env` on `StdioClientTransport` REPLACES the default environment.** A custom `env` object passed to `StdioClientTransport` is used verbatim — it does NOT inherit from `process.env`. If you omit `PATH` and `HOME`, the child process cannot resolve binaries or find its home directory and will fail with ENOENT or unexpected errors. **Fix:** always spread `getDefaultEnvironment()` (returns HOME, LOGNAME, PATH, SHELL, TERM, USER) first, then inject the token: `{ ...getDefaultEnvironment(), [tokenEnvVar]: secret }`. This also keeps the child env minimal — no `process.env` spill — which matches the sandbox env-scrub discipline (no `JUNCTION_MASTER_KEY` leaking to an upstream binary).
+
 ## MCP (inc 7)
 
 - **A zero-tool `McpServer` doesn't advertise the `tools` capability** → a client's `tools/list` returns `-32601 Method not found`, not an empty list. **Fix:** use the low-level `Server` with `capabilities:{tools:{}}` + an explicit `ListToolsRequestSchema` handler returning the (profile-driven) tool list — which is also the right model for junction.
