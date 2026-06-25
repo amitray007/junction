@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Credentials repository — CRUD + forPlatform (the multi-account wedge).
 // dry.md: no generic base. security.md: only secret_ref stored, never plaintext.
+// better-sqlite3 is sync; we present an async API for libsql-swap safety.
 
 import { eq } from "drizzle-orm"
 import { errAsync, okAsync, type ResultAsync } from "neverthrow"

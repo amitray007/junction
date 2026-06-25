@@ -15,6 +15,8 @@ import {
   PlatformIdSchema,
   type ProfileId,
   ProfileIdSchema,
+  type SourceRefId,
+  SourceRefIdSchema,
 } from "../schema/primitives.js"
 
 /** Generate a new opaque PlatformId backed by a ULID. */
@@ -33,4 +35,10 @@ export function newCredentialId(): CredentialId {
 export function newProfileId(): ProfileId {
   // THIS IS THE SINGLE ulid↔uuid SWAP POINT — change format here only.
   return ProfileIdSchema.parse(ulid())
+}
+
+/** Generate a new opaque SourceRefId backed by a ULID. */
+export function newSourceRefId(): SourceRefId {
+  // THIS IS THE SINGLE ulid↔uuid SWAP POINT — change format here only.
+  return SourceRefIdSchema.parse(ulid())
 }

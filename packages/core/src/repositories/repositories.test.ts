@@ -84,6 +84,22 @@ describe("repositories", () => {
       const fetched = await repos.platforms.get(id)
       expect(fetched.isErr()).toBe(true)
     })
+
+    it("rejects deleting a platform that still has credentials (FK enforced)", async () => {
+      const platformId = newPlatformId()
+      await repos.platforms.create({ id: platformId, kind: "mcp" as const, displayName: "GitHub" })
+      await repos.credentials.create({
+        id: newCredentialId(),
+        platformId,
+        profileName: "work",
+        kind: "api-key" as const,
+        secretRef: "keyring://junction/ref_plat_del",
+      })
+
+      const result = await repos.platforms.delete(platformId)
+      expect(result.isErr()).toBe(true)
+      if (result.isErr()) expect(result.error.kind).toBe("constraint-violation")
+    })
   })
 
   describe("credentials — multi-account wedge", () => {
@@ -157,6 +173,16 @@ describe("repositories", () => {
       const credId = newCredentialId()
       const profileId = newProfileId()
 
+      // Pre-insert platform and credential (required by FK constraints)
+      await repos.platforms.create({ id: platformId, kind: "mcp" as const, displayName: "GitHub" })
+      await repos.credentials.create({
+        id: credId,
+        platformId,
+        profileName: "work",
+        kind: "api-key" as const,
+        secretRef: "keyring://junction/cred_roundtrip",
+      })
+
       const profile = {
         id: profileId,
         name: "my-profile",
@@ -211,14 +237,27 @@ describe("repositories", () => {
 
     it("deletes profile and cascades source_refs", async () => {
       const profileId = newProfileId()
+      const platformId = newPlatformId()
+      const credId = newCredentialId()
+
+      // Pre-insert platform and credential (required by FK constraints)
+      await repos.platforms.create({ id: platformId, kind: "mcp" as const, displayName: "GitHub" })
+      await repos.credentials.create({
+        id: credId,
+        platformId,
+        profileName: "work",
+        kind: "api-key" as const,
+        secretRef: "keyring://junction/cred_cascade",
+      })
+
       const profile = {
         id: profileId,
         name: "cascade-test",
         mcpEndpointPath: "/profiles/cascade-test/mcp",
         sources: [
           {
-            platformId: newPlatformId(),
-            credentialId: newCredentialId(),
+            platformId,
+            credentialId: credId,
             toolNamespace: "github",
             enabled: true,
           },
@@ -249,6 +288,57 @@ describe("repositories", () => {
     it("has PRAGMA foreign_keys enabled on the connection (cascade contract)", () => {
       const rows = db.all<{ foreign_keys: number }>(sql`PRAGMA foreign_keys`)
       expect(rows[0]?.foreign_keys).toBe(1)
+    })
+
+    it("rejects a source_ref with a non-existent credential_id (FK enforced)", async () => {
+      const platformId = newPlatformId()
+      await repos.platforms.create({ id: platformId, kind: "mcp" as const, displayName: "GitHub" })
+
+      const result = await repos.profiles.create({
+        id: newProfileId(),
+        name: "fk-cred-test",
+        mcpEndpointPath: "/profiles/fk-cred-test/mcp",
+        sources: [
+          {
+            platformId,
+            credentialId: newCredentialId(), // valid-looking ID but not in DB
+            toolNamespace: "github",
+            enabled: true,
+          },
+        ],
+      })
+      expect(result.isErr()).toBe(true)
+      if (result.isErr()) expect(result.error.kind).toBe("constraint-violation")
+    })
+
+    it("cascade then delete: deleting profile frees credential for deletion", async () => {
+      const platformId = newPlatformId()
+      const credId = newCredentialId()
+      const profileId = newProfileId()
+      await repos.platforms.create({ id: platformId, kind: "mcp" as const, displayName: "GitHub" })
+      await repos.credentials.create({
+        id: credId,
+        platformId,
+        profileName: "work",
+        kind: "api-key" as const,
+        secretRef: "keyring://junction/cred_del_test",
+      })
+      await repos.profiles.create({
+        id: profileId,
+        name: "cred-del-test",
+        mcpEndpointPath: "/profiles/cred-del-test/mcp",
+        sources: [{ platformId, credentialId: credId, toolNamespace: "gh", enabled: true }],
+      })
+
+      // Deleting the credential while source_ref references it must fail
+      const failDel = await repos.credentials.delete(credId)
+      expect(failDel.isErr()).toBe(true)
+      if (failDel.isErr()) expect(failDel.error.kind).toBe("constraint-violation")
+
+      // Deleting the profile cascades its source_refs, then credential can be deleted
+      await repos.profiles.delete(profileId)
+      const okDel = await repos.credentials.delete(credId)
+      expect(okDel.isOk()).toBe(true)
     })
 
     it("lists all profiles", async () => {

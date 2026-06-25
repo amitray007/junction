@@ -30,5 +30,7 @@ CREATE TABLE `source_refs` (
 	`credential_id` text NOT NULL,
 	`tool_namespace` text NOT NULL,
 	`enabled` integer NOT NULL,
-	FOREIGN KEY (`profile_id`) REFERENCES `profiles`(`id`) ON UPDATE no action ON DELETE cascade
+	FOREIGN KEY (`profile_id`) REFERENCES `profiles`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`platform_id`) REFERENCES `platforms`(`id`) ON UPDATE no action ON DELETE restrict,
+	FOREIGN KEY (`credential_id`) REFERENCES `credentials`(`id`) ON UPDATE no action ON DELETE restrict
 );

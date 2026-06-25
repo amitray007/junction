@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "1ef4ddc5-aa3e-4426-a464-bad1a836bad6",
+  "id": "1fbd004e-3726-46db-bddc-4352871663a3",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "credentials": {
@@ -203,6 +203,24 @@
           "columnsFrom": ["profile_id"],
           "columnsTo": ["id"],
           "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "source_refs_platform_id_platforms_id_fk": {
+          "name": "source_refs_platform_id_platforms_id_fk",
+          "tableFrom": "source_refs",
+          "tableTo": "platforms",
+          "columnsFrom": ["platform_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "source_refs_credential_id_credentials_id_fk": {
+          "name": "source_refs_credential_id_credentials_id_fk",
+          "tableFrom": "source_refs",
+          "tableTo": "credentials",
+          "columnsFrom": ["credential_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
           "onUpdate": "no action"
         }
       },

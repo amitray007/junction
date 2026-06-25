@@ -37,8 +37,12 @@ export const sourceRefs = sqliteTable("source_refs", {
   profileId: text("profile_id")
     .notNull()
     .references(() => profiles.id, { onDelete: "cascade" }),
-  platformId: text("platform_id").notNull(),
-  credentialId: text("credential_id").notNull(),
+  platformId: text("platform_id")
+    .notNull()
+    .references(() => platforms.id, { onDelete: "restrict" }),
+  credentialId: text("credential_id")
+    .notNull()
+    .references(() => credentials.id, { onDelete: "restrict" }),
   toolNamespace: text("tool_namespace").notNull(),
   enabled: integer("enabled", { mode: "boolean" }).notNull(),
 })
