@@ -37,6 +37,7 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
+      "@napi-rs/keyring",
       "better-sqlite3",
       "esbuild",
       "lefthook"
