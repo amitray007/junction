@@ -11,6 +11,7 @@ export type JunctionPaths = {
   home: string
   configFile: string
   cacheDir: string
+  dbFile: string
 }
 
 export function resolveHome(): string {
@@ -25,6 +26,7 @@ export function getPaths(): JunctionPaths {
     home,
     configFile: path.join(home, "config.json"),
     cacheDir: envPaths("junction").cache,
+    dbFile: path.join(home, "junction.db"),
   }
 }
 
