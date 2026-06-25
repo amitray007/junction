@@ -17,6 +17,7 @@ export type StatusData = {
   cacheDir: string
   initialized: boolean
   config: Config | null
+  credentialStore: string
 }
 
 /**
@@ -24,13 +25,14 @@ export type StatusData = {
  */
 export function formatStatusHuman(data: StatusData): string {
   const lines: string[] = [
-    `  home        ${data.home}`,
-    `  configFile  ${data.configFile}`,
-    `  cacheDir    ${data.cacheDir}`,
-    `  initialized ${data.initialized}`,
+    `  home             ${data.home}`,
+    `  configFile       ${data.configFile}`,
+    `  cacheDir         ${data.cacheDir}`,
+    `  initialized      ${data.initialized}`,
+    `  credential store ${data.credentialStore}`,
   ]
   if (data.config !== null) {
-    lines.push(`  version     ${data.config.version}`)
+    lines.push(`  version          ${data.config.version}`)
   }
   return lines.join("\n")
 }
@@ -45,6 +47,7 @@ export function formatStatusJson(data: StatusData): string {
     cacheDir: data.cacheDir,
     initialized: data.initialized,
     config: data.config,
+    credentialStore: data.credentialStore,
   })
 }
 

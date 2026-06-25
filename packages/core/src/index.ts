@@ -21,9 +21,13 @@ export const VERSION = "0.0.0"
 // Data model — entity schemas, types, ID generators, convention helpers
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Credential store — encrypted-at-rest secret management
+// ---------------------------------------------------------------------------
+export { type CredentialStore, createCredentialStore } from "./credentials/index.js"
 // Database + repositories
 export { type Db, getDatabase } from "./db/index.js"
-export type { DbError } from "./errors/index.js"
+export type { CredentialError, DbError } from "./errors/index.js"
 // ID generators — ids/ is the sole generator; see ids/index.ts for the swap-point comment
 export { newCredentialId, newPlatformId, newProfileId } from "./ids/index.js"
 export { createRepositories, type Repositories } from "./repositories/index.js"
