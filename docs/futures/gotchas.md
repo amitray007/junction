@@ -25,7 +25,7 @@ Non-obvious sharp edges we've already paid for. Each lists the **symptom** and t
 
 ## TUI (inc 9)
 
-- **OpenTUI's native renderer is Bun-only under Node.** `@opentui/core` imports cleanly but calling `createCliRenderer()` or `createTestRenderer()` throws `"native FFI is not available for this runtime yet"` on Node 22/24 — the renderer uses `bun:ffi` internally, which is unavailable outside Bun. **Symptom:** import succeeds, first render call throws. **Fix:** use **Ink** for Node TUIs. Ink 5.x is pure ESM, renders entirely in Node, and has `ink-testing-library` for headless snapshot tests. The OpenTUI revisit-when entry tracks the trigger. (inc 9)
+- **OpenTUI's native renderer is Bun-only under Node.** `@opentui/core` imports cleanly but calling `createCliRenderer()` or `createTestRenderer()` throws `"native FFI is not available for this runtime yet"` on Node 22/24 — the renderer uses `bun:ffi` internally, which is unavailable outside Bun. **Symptom:** import succeeds, first render call throws. **Fix:** use **Ink** for Node TUIs. Ink 7.x (7.1.0 here, `engines: node >=22`) is pure ESM, renders entirely in Node, and has `ink-testing-library` for headless snapshot tests. The OpenTUI revisit-when entry tracks the trigger. (inc 9)
 
 ## Boundary tooling (inc 1.5 / 3 / 7)
 

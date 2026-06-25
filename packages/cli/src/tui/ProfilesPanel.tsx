@@ -18,9 +18,10 @@ export function ProfilesPanel({
   focused,
   selectedRow,
 }: ProfilesPanelProps): ReactElement {
-  const items = profiles.map(
-    (p) => `${p.name.padEnd(16)} ${String(p.sourceCount).padEnd(3)} src  ${p.mcpEndpointPath}`,
-  )
+  const items = profiles.map((p) => ({
+    id: p.id,
+    label: `${p.name.padEnd(16)} ${String(p.sourceCount).padEnd(3)} src  ${p.mcpEndpointPath}`,
+  }))
 
   return (
     <Box

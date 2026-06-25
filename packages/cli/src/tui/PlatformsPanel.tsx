@@ -20,9 +20,10 @@ export function PlatformsPanel({
   selectedRow,
 }: PlatformsPanelProps): ReactElement {
   // Only metadata shown — never secretRef or any plaintext credential value.
-  const items = platforms.map(
-    (p) => `${p.displayName.padEnd(16)} ${p.kind.padEnd(8)} ${String(p.credentialCount)} cred(s)`,
-  )
+  const items = platforms.map((p) => ({
+    id: p.id,
+    label: `${p.displayName.padEnd(16)} ${p.kind.padEnd(8)} ${String(p.credentialCount)} cred(s)`,
+  }))
 
   return (
     <Box
