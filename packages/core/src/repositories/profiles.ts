@@ -12,6 +12,11 @@ import type { DbError } from "../errors/index.js"
 import { newSourceRefId } from "../ids/index.js"
 import type { Profile } from "../schema/profile.js"
 import { ProfileSchema } from "../schema/profile.js"
+import type { SourceRef } from "../schema/source-ref.js"
+import { SourceRefSchema, ToolFilterSchema } from "../schema/source-ref.js"
+
+// Sentinel symbols for custom transaction errors (avoids instanceof checks on plain Error)
+const _DUPLICATE_NS = Symbol("duplicate-namespace")
 
 function reconstructProfile(
   profileRow: typeof profiles.$inferSelect,
@@ -26,6 +31,10 @@ function reconstructProfile(
       credentialId: sr.credentialId,
       toolNamespace: sr.toolNamespace,
       enabled: sr.enabled,
+      // Validate JSON on read — boundary validation per docs/rules/data.md
+      toolFilter: sr.toolFilter
+        ? ToolFilterSchema.parse(JSON.parse(sr.toolFilter) as unknown)
+        : undefined,
     })),
   })
 }
@@ -52,12 +61,72 @@ export function createProfilesRepo(db: Db) {
                 credentialId: sr.credentialId,
                 toolNamespace: sr.toolNamespace,
                 enabled: sr.enabled,
+                toolFilter: sr.toolFilter ? JSON.stringify(sr.toolFilter) : null,
               })
               .run()
           }
         })
         return okAsync(validated)
       } catch (cause) {
+        return errAsync(mapDbError(cause))
+      }
+    },
+
+    /**
+     * Append a SourceRef to an existing Profile.
+     *
+     * Invariants enforced:
+     * - Profile must exist (FK → profiles.id; becomes constraint-violation if absent)
+     * - platformId + credentialId must exist (FK enforced by SQLite)
+     * - toolNamespace must be unique within the profile (explicit duplicate guard)
+     *
+     * All checks run inside a transaction for atomicity.
+     */
+    addSource(profileId: string, sourceRef: SourceRef): ResultAsync<void, DbError> {
+      try {
+        const validatedSr = SourceRefSchema.parse(sourceRef)
+        db.transaction((tx) => {
+          // Guard: reject duplicate toolNamespace within this profile
+          const existing = tx
+            .select({ toolNamespace: sourceRefs.toolNamespace })
+            .from(sourceRefs)
+            .where(eq(sourceRefs.profileId, profileId))
+            .all()
+          const hasDuplicate = existing.some((sr) => sr.toolNamespace === validatedSr.toolNamespace)
+          if (hasDuplicate) {
+            throw Object.assign(new Error(`duplicate namespace: ${validatedSr.toolNamespace}`), {
+              _sentinel: _DUPLICATE_NS,
+              _namespace: validatedSr.toolNamespace,
+            })
+          }
+          // FK constraints (profileId, platformId, credentialId) enforced by SQLite
+          tx.insert(sourceRefs)
+            .values({
+              id: newSourceRefId(),
+              profileId,
+              platformId: validatedSr.platformId,
+              credentialId: validatedSr.credentialId,
+              toolNamespace: validatedSr.toolNamespace,
+              enabled: validatedSr.enabled,
+              toolFilter: validatedSr.toolFilter ? JSON.stringify(validatedSr.toolFilter) : null,
+            })
+            .run()
+        })
+        return okAsync(undefined)
+      } catch (cause) {
+        // Custom sentinel: duplicate toolNamespace within the profile
+        if (
+          cause !== null &&
+          typeof cause === "object" &&
+          "_sentinel" in cause &&
+          (cause as { _sentinel: unknown })._sentinel === _DUPLICATE_NS
+        ) {
+          const ns = (cause as { _namespace?: unknown })._namespace
+          return errAsync({
+            kind: "duplicate-namespace" as const,
+            namespace: typeof ns === "string" ? ns : String(ns),
+          })
+        }
         return errAsync(mapDbError(cause))
       }
     },

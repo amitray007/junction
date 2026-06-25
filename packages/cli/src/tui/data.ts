@@ -69,7 +69,7 @@ export function loadDashboardSnapshot(
 ): ResultAsync<DashboardSnapshot, SnapshotError> {
   return ResultAsync.fromPromise(
     buildSnapshot(paths),
-    (e): SnapshotError => ({
+    (e: unknown): SnapshotError => ({
       kind: "load-failed",
       message: e instanceof Error ? e.message : String(e),
     }),

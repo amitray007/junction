@@ -11,6 +11,8 @@ export const platforms = sqliteTable("platforms", {
   displayName: text("display_name").notNull(),
   specUrl: text("spec_url"),
   baseUrl: text("base_url"),
+  /** JSON-serialized McpConnection — optional; meaningful when kind === "mcp" */
+  connection: text("connection"),
 })
 
 export const credentials = sqliteTable("credentials", {
@@ -45,6 +47,8 @@ export const sourceRefs = sqliteTable("source_refs", {
     .references(() => credentials.id, { onDelete: "restrict" }),
   toolNamespace: text("tool_namespace").notNull(),
   enabled: integer("enabled", { mode: "boolean" }).notNull(),
+  /** JSON-serialized ToolFilter — optional; absent means expose all upstream tools */
+  toolFilter: text("tool_filter"),
 })
 
 export type PlatformRow = typeof platforms.$inferSelect

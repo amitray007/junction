@@ -5,6 +5,9 @@
 export type { Credential, OAuthMeta } from "./credential.js"
 // Credential
 export { CredentialKind, CredentialSchema, OAuthMetaSchema } from "./credential.js"
+export type { McpConnection } from "./mcp-connection.js"
+// McpConnection — generic MCP transport descriptor (http | stdio)
+export { McpConnectionSchema } from "./mcp-connection.js"
 export type { Platform } from "./platform.js"
 // Platform
 export { PlatformKind, PlatformSchema } from "./platform.js"
@@ -22,6 +25,6 @@ export {
 export type { Profile } from "./profile.js"
 // Profile
 export { ProfileSchema } from "./profile.js"
-export type { SourceRef } from "./source-ref.js"
-// SourceRef
-export { SourceRefSchema } from "./source-ref.js"
+export type { SourceRef, ToolFilter } from "./source-ref.js"
+// SourceRef + ToolFilter
+export { SourceRefSchema, ToolFilterSchema } from "./source-ref.js"

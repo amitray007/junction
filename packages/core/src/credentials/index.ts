@@ -11,6 +11,7 @@ import { createKeyringStore } from "./keyring-store.js"
 import { resolveMasterKey } from "./master-key.js"
 import type { CredentialStore } from "./store.js"
 
+export { type AddCredentialInput, addCredential } from "./add-credential.js"
 export type { CredentialStore }
 
 /** Probe whether the OS keyring is accessible. Result is cached for the lifetime of the process. */

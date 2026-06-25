@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Platforms repository — CRUD behind ResultAsync. dry.md: no generic base.
+// Platforms repository — CRUD + upsert behind ResultAsync. dry.md: no generic base.
 // better-sqlite3 is sync; we present an async API for libsql-swap safety.
 
 import { eq } from "drizzle-orm"
@@ -8,17 +8,35 @@ import { mapDbError } from "../db/errors.js"
 import type { Db } from "../db/index.js"
 import { platforms } from "../db/schema.js"
 import type { DbError } from "../errors/index.js"
+import { McpConnectionSchema } from "../schema/mcp-connection.js"
 import type { Platform } from "../schema/platform.js"
 import { PlatformSchema } from "../schema/platform.js"
 
 function rowToPlatform(row: typeof platforms.$inferSelect): Platform {
-  return PlatformSchema.parse({
+  const raw: Record<string, unknown> = {
     id: row.id,
     kind: row.kind,
     displayName: row.displayName,
     specUrl: row.specUrl ?? undefined,
     baseUrl: row.baseUrl ?? undefined,
-  })
+  }
+  if (row.connection) {
+    // Validate JSON on read — boundary validation per docs/rules/data.md
+    raw.connection = McpConnectionSchema.parse(JSON.parse(row.connection) as unknown)
+  }
+  return PlatformSchema.parse(raw)
+}
+
+/** Serialise a validated Platform to the DB row shape (JSON-encode nested objects). */
+function toPlatformRow(p: Platform) {
+  return {
+    id: p.id,
+    kind: p.kind,
+    displayName: p.displayName,
+    specUrl: p.specUrl ?? null,
+    baseUrl: p.baseUrl ?? null,
+    connection: p.connection ? JSON.stringify(p.connection) : null,
+  }
 }
 
 export function createPlatformsRepo(db: Db) {
@@ -26,13 +44,32 @@ export function createPlatformsRepo(db: Db) {
     create(input: Platform): ResultAsync<Platform, DbError> {
       try {
         const validated = PlatformSchema.parse(input)
+        db.insert(platforms).values(toPlatformRow(validated)).run()
+        return okAsync(validated)
+      } catch (cause) {
+        return errAsync(mapDbError(cause))
+      }
+    },
+
+    /**
+     * Create-or-replace a Platform including its connection descriptor.
+     * Replaces all fields on conflict (the platform may be edited/updated).
+     */
+    upsert(input: Platform): ResultAsync<Platform, DbError> {
+      try {
+        const validated = PlatformSchema.parse(input)
+        const row = toPlatformRow(validated)
         db.insert(platforms)
-          .values({
-            id: validated.id,
-            kind: validated.kind,
-            displayName: validated.displayName,
-            specUrl: validated.specUrl ?? null,
-            baseUrl: validated.baseUrl ?? null,
+          .values(row)
+          .onConflictDoUpdate({
+            target: platforms.id,
+            set: {
+              kind: row.kind,
+              displayName: row.displayName,
+              specUrl: row.specUrl,
+              baseUrl: row.baseUrl,
+              connection: row.connection,
+            },
           })
           .run()
         return okAsync(validated)

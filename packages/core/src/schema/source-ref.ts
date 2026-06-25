@@ -7,6 +7,25 @@ import { z } from "zod"
 import { CredentialIdSchema, PlatformIdSchema, ToolNamespaceSchema } from "./primitives.js"
 
 // ---------------------------------------------------------------------------
+// ToolFilterSchema — generic per-source tool allow/deny list
+// ---------------------------------------------------------------------------
+
+/**
+ * Optional tool filter applied to this source's upstream tools.
+ * Absent means expose all upstream tools (full by default).
+ * Applied uniformly in increment C (proxy). No vendor-specific logic.
+ *
+ * allow: if set, ONLY these upstream tool names are exposed.
+ * deny: these upstream tool names are hidden (applied after allow).
+ */
+export const ToolFilterSchema = z.object({
+  allow: z.array(z.string()).optional(),
+  deny: z.array(z.string()).optional(),
+})
+
+export type ToolFilter = z.infer<typeof ToolFilterSchema>
+
+// ---------------------------------------------------------------------------
 // SourceRefSchema
 // ---------------------------------------------------------------------------
 
@@ -24,6 +43,11 @@ export const SourceRefSchema = z.object({
   toolNamespace: ToolNamespaceSchema,
   /** Whether this source is currently active in the profile */
   enabled: z.boolean(),
+  /**
+   * Optional generic tool filter — absent means expose all upstream tools.
+   * Allow/deny lists are applied uniformly to every source in increment C.
+   */
+  toolFilter: ToolFilterSchema.optional(),
 })
 
 export type SourceRef = z.infer<typeof SourceRefSchema>
