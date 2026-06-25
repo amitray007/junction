@@ -19,9 +19,10 @@ import { createMcpServer } from "./server.js"
 /**
  * Serve a per-profile MCP server over stdio.
  *
- * Connects the server and awaits transport close (the process runs until the
- * MCP client disconnects or the process is killed). Returns a Promise that
- * resolves when the server closes.
+ * Connects the server, then explicitly awaits transport close. The transport
+ * closes when the MCP client disconnects (stdin reaches EOF). Wires both
+ * transport.onclose and stdin 'end' so the process exits cleanly on either
+ * signal — never hangs, never exits prematurely.
  *
  * @param profile  - Profile being served (for server metadata and future audit).
  * @param handlers - Injected tool handlers from the cli composition root.
@@ -30,4 +31,15 @@ export async function serveStdio(profile: Profile, handlers: McpServerHandlers):
   const server = createMcpServer(profile, handlers)
   const transport = new StdioServerTransport()
   await server.connect(transport)
+  // Await explicit close so the caller's await tracks the full session lifetime.
+  // transport.onclose fires when the MCP SDK closes the transport (client disconnect);
+  // stdin 'end' is a belt-and-suspenders catch for EOF before the SDK fires onclose.
+  await new Promise<void>((resolve) => {
+    const prev = transport.onclose
+    transport.onclose = () => {
+      prev?.()
+      resolve()
+    }
+    process.stdin.once("end", resolve)
+  })
 }

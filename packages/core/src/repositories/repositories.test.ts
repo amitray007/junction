@@ -854,6 +854,49 @@ describe("repositories", () => {
   })
 
   // ---------------------------------------------------------------------------
+  // profiles.create() — duplicate namespace guard (SHOULD-FIX 3)
+  // ---------------------------------------------------------------------------
+  describe("profiles.create() — duplicate toolNamespace guard", () => {
+    it("rejects two sources with the same namespace in the initial create()", async () => {
+      const platformId = newPlatformId()
+      const credId = newCredentialId()
+      await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
+      await repos.credentials.create({
+        id: credId,
+        platformId,
+        profileName: "work",
+        kind: "bearer" as const,
+        secretRef: "ref_dup_create",
+      })
+
+      const result = await repos.profiles.create({
+        id: newProfileId(),
+        name: "dup-ns-create",
+        mcpEndpointPath: "/profiles/dup-ns-create/mcp",
+        sources: [
+          { platformId, credentialId: credId, toolNamespace: "myns", enabled: true },
+          { platformId, credentialId: credId, toolNamespace: "myns", enabled: true },
+        ],
+      })
+      expect(result.isErr()).toBe(true)
+      if (result.isErr()) {
+        expect(result.error.kind).toBe("duplicate-namespace")
+        if (result.error.kind === "duplicate-namespace") {
+          expect(result.error.namespace).toBe("myns")
+        }
+      }
+    })
+
+    it("the DB unique index on (profile_id, tool_namespace) exists after migration 0002", () => {
+      const indexes = db.all<{ name: string }>(
+        sql`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='source_refs'`,
+      )
+      const indexNames = indexes.map((i) => i.name)
+      expect(indexNames).toContain("source_refs_profile_ns_unique")
+    })
+  })
+
+  // ---------------------------------------------------------------------------
   // Migration 0001 — additive columns survive existing data (inc 10)
   // ---------------------------------------------------------------------------
   describe("migration 0001 — existing rows survive additive columns", () => {

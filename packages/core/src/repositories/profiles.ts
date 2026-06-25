@@ -44,6 +44,21 @@ export function createProfilesRepo(db: Db) {
     create(input: Profile): ResultAsync<Profile, DbError> {
       try {
         const validated = ProfileSchema.parse(input)
+
+        // Guard: reject duplicate toolNamespace within the profile's initial sources.
+        // Defense-in-depth beyond the DB unique index — catches the error before the
+        // transaction rather than relying solely on a constraint-violation at write time.
+        const seen = new Set<string>()
+        for (const sr of validated.sources) {
+          if (seen.has(sr.toolNamespace)) {
+            return errAsync({
+              kind: "duplicate-namespace" as const,
+              namespace: sr.toolNamespace,
+            })
+          }
+          seen.add(sr.toolNamespace)
+        }
+
         db.transaction((tx) => {
           tx.insert(profiles)
             .values({

@@ -336,7 +336,7 @@ describe("createProfileProxy — per-source resilience", () => {
 })
 
 // ---------------------------------------------------------------------------
-// (d) toolFilter
+// (d) toolFilter — list path
 // ---------------------------------------------------------------------------
 
 describe("createProfileProxy — toolFilter", () => {
@@ -412,6 +412,221 @@ describe("createProfileProxy — toolFilter", () => {
     expect(result.isOk()).toBe(true)
     const names = result._unsafeUnwrap().map((t) => t.name)
     expect(names).toEqual(["src__list_issues", "src__get_issue"])
+  })
+
+  it("allow: [] (empty allow list) hides ALL tools from listTools", async () => {
+    const { session, close } = await makeInMemorySession("src", [
+      { name: "list_issues" },
+      { name: "get_issue" },
+    ])
+    cleanups.push(close)
+
+    const filter: ToolFilter = { allow: [] }
+    const proxy = createProfileProxy(
+      [makeSourceRef("src", filter)],
+      resolveOk("src", filter),
+      makeSessionFactory(new Map([["src", session]])),
+    )
+
+    const result = await proxy.listTools()
+    expect(result.isOk()).toBe(true)
+    expect(result._unsafeUnwrap()).toHaveLength(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// (d2) toolFilter enforcement on callTool (MUST-FIX 1 + 1b)
+// ---------------------------------------------------------------------------
+
+describe("createProfileProxy — toolFilter enforced on callTool", () => {
+  const cleanups: Array<() => Promise<void>> = []
+  afterEach(async () => {
+    for (const c of cleanups) await c()
+    cleanups.length = 0
+  })
+
+  it("deny filter: denied tool returns tool-not-found even when called directly", async () => {
+    const { session, close } = await makeInMemorySession("src", [
+      { name: "list_issues" },
+      { name: "delete_repo" },
+    ])
+    cleanups.push(close)
+
+    const filter: ToolFilter = { deny: ["delete_repo"] }
+    const proxy = createProfileProxy(
+      [makeSourceRef("src", filter)],
+      resolveOk("src", filter),
+      makeSessionFactory(new Map([["src", session]])),
+    )
+
+    // Agent bypasses listTools and tries to call the denied tool directly — must be blocked.
+    const result = await proxy.callTool("src__delete_repo", {})
+    expect(result.isErr()).toBe(true)
+    expect(result._unsafeUnwrapErr().kind).toBe("tool-not-found")
+  })
+
+  it("allow filter: tool not in the allow list returns tool-not-found from callTool", async () => {
+    const { session, close } = await makeInMemorySession("src", [
+      { name: "list_issues" },
+      { name: "delete_repo" },
+    ])
+    cleanups.push(close)
+
+    const filter: ToolFilter = { allow: ["list_issues"] }
+    const proxy = createProfileProxy(
+      [makeSourceRef("src", filter)],
+      resolveOk("src", filter),
+      makeSessionFactory(new Map([["src", session]])),
+    )
+
+    // "delete_repo" is not in the allow list — must be blocked at callTool.
+    const result = await proxy.callTool("src__delete_repo", {})
+    expect(result.isErr()).toBe(true)
+    expect(result._unsafeUnwrapErr().kind).toBe("tool-not-found")
+  })
+
+  it("allowed tool still routes to upstream via callTool", async () => {
+    const calls: string[] = []
+    const { session, close } = await makeInMemorySession(
+      "src",
+      [{ name: "list_issues" }],
+      (name) => {
+        calls.push(name)
+        return { result: "ok" }
+      },
+    )
+    cleanups.push(close)
+
+    const filter: ToolFilter = { allow: ["list_issues"] }
+    const proxy = createProfileProxy(
+      [makeSourceRef("src", filter)],
+      resolveOk("src", filter),
+      makeSessionFactory(new Map([["src", session]])),
+    )
+
+    const result = await proxy.callTool("src__list_issues", {})
+    expect(result.isOk()).toBe(true)
+    expect(calls).toEqual(["list_issues"])
+  })
+
+  it("allow: [] (empty allow list) blocks callTool for any tool", async () => {
+    const { session, close } = await makeInMemorySession("src", [{ name: "list_issues" }])
+    cleanups.push(close)
+
+    const filter: ToolFilter = { allow: [] }
+    const proxy = createProfileProxy(
+      [makeSourceRef("src", filter)],
+      resolveOk("src", filter),
+      makeSessionFactory(new Map([["src", session]])),
+    )
+
+    const result = await proxy.callTool("src__list_issues", {})
+    expect(result.isErr()).toBe(true)
+    expect(result._unsafeUnwrapErr().kind).toBe("tool-not-found")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// (g) session close() discipline — parallel listTools (SHOULD-FIX 2)
+// ---------------------------------------------------------------------------
+
+describe("createProfileProxy — session close() discipline", () => {
+  const cleanups: Array<() => Promise<void>> = []
+  afterEach(async () => {
+    for (const c of cleanups) await c()
+    cleanups.length = 0
+  })
+
+  /**
+   * Build a SessionFactory that wraps sessions with a close() spy.
+   * closeCallCounts maps toolNamespace → number of times close() was called.
+   */
+  function makeSpySessionFactory(
+    sessionMap: Map<string, UpstreamSession>,
+    closeCallCounts: Map<string, number>,
+  ): SessionFactory {
+    return (_connection, toolNamespace, _secret) => {
+      const session = sessionMap.get(toolNamespace)
+      if (session === undefined) {
+        return errAsync({
+          kind: "connect-failed",
+          cause: "no test session for namespace",
+        } satisfies UpstreamError)
+      }
+      const wrapped: UpstreamSession = {
+        listTools: () => session.listTools(),
+        callTool: (n, a) => session.callTool(n, a),
+        close: async () => {
+          closeCallCounts.set(toolNamespace, (closeCallCounts.get(toolNamespace) ?? 0) + 1)
+          await session.close()
+        },
+      }
+      return okAsync(wrapped)
+    }
+  }
+
+  it("close() called exactly once per connected source on listTools success", async () => {
+    const { session: s1, close: c1 } = await makeInMemorySession("ns1", [{ name: "tool_a" }])
+    const { session: s2, close: c2 } = await makeInMemorySession("ns2", [{ name: "tool_b" }])
+    cleanups.push(c1, c2)
+
+    const closeCounts = new Map<string, number>()
+    const sessionMap = new Map([
+      ["ns1", s1],
+      ["ns2", s2],
+    ])
+    const proxy = createProfileProxy(
+      [makeSourceRef("ns1"), makeSourceRef("ns2")],
+      (sr) => resolveOk(sr.toolNamespace)(sr),
+      makeSpySessionFactory(sessionMap, closeCounts),
+    )
+
+    const result = await proxy.listTools()
+    expect(result.isOk()).toBe(true)
+    expect(closeCounts.get("ns1")).toBe(1)
+    expect(closeCounts.get("ns2")).toBe(1)
+  })
+
+  it("later source still lists and closes when a mid-list source fails to connect", async () => {
+    const { session: good, close } = await makeInMemorySession("good", [{ name: "tool_a" }])
+    cleanups.push(close)
+
+    const closeCounts = new Map<string, number>()
+    // "bad" not in sessionMap → factory returns Err → never gets a session → close never called
+    const sessionMap = new Map([["good", good]])
+    const proxy = createProfileProxy(
+      [makeSourceRef("bad"), makeSourceRef("good")],
+      (sr) => resolveOk(sr.toolNamespace)(sr),
+      makeSpySessionFactory(sessionMap, closeCounts),
+    )
+
+    const result = await proxy.listTools()
+    expect(result.isOk()).toBe(true)
+    expect(result._unsafeUnwrap().map((t) => t.name)).toEqual(["good__tool_a"])
+    // good was connected — its session must be closed exactly once
+    expect(closeCounts.get("good")).toBe(1)
+    // bad never connected — no close call expected
+    expect(closeCounts.get("bad")).toBeUndefined()
+  })
+
+  it("callTool: session close() is called even when callTool returns an error", async () => {
+    // Use a source whose session's callTool returns an Err (via unknown namespace in callTool).
+    // The session factory returns a connected session for "src" but the session itself
+    // errors when asked to call a tool with wrong namespace — close() must still run.
+    const { session, close } = await makeInMemorySession("src", [{ name: "tool_a" }])
+    cleanups.push(close)
+
+    const closeCounts = new Map<string, number>()
+    const proxy = createProfileProxy(
+      [makeSourceRef("src")],
+      resolveOk("src"),
+      makeSpySessionFactory(new Map([["src", session]]), closeCounts),
+    )
+
+    // Call a tool that the session's callTool will reject (wrong namespace mismatch internally).
+    // The proxy still must close the session in its finally block.
+    await proxy.callTool("src__tool_a", {})
+    expect(closeCounts.get("src")).toBe(1)
   })
 })
 
