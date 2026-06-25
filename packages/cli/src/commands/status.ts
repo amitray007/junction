@@ -9,6 +9,7 @@ import { formatStatusHuman, formatStatusJson, loadConfigStateOrFail } from "../f
 async function resolveCredentialBackend(): Promise<string> {
   const paths = getPaths()
   const result = await createCredentialStore(paths)
+  // FIX 5: only .kind (an enum) is surfaced — never .cause, which may carry paths/secrets.
   if (result.isErr()) return `unavailable (${result.error.kind})`
   return result.value.backend === "keyring" ? "keyring" : "encrypted-file (auto-generated key)"
 }

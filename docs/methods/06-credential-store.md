@@ -109,7 +109,7 @@ Add `CredentialError` to `errors/index.ts`. Create `core/src/credentials/store.t
 
 ### Step 3 — master-key resolver (`core/src/credentials/master-key.ts`)
 
-Implement the 4-tier resolver (§master-key) returning `ResultAsync<Buffer, CredentialError>` (a 32-byte key). scrypt via async `crypto.scrypt` with the real params + `maxmem`. Validate env-key length (decode base64/hex → exactly 32 bytes). Auto-generate + persist the Tier-3 key 0600 atomically. **Zero the passphrase/intermediate Buffers** after derivation (cheap defense-in-depth; don't pretend to scrub strings). Lazy-import nothing native here (crypto is built-in).
+Implement the 4-tier resolver (§master-key) returning `ResultAsync<Buffer, CredentialError>` (a 32-byte key). scrypt via async `crypto.scrypt` with the real params + `maxmem`. Validate env-key length (decode base64/hex → exactly 32 bytes). Auto-generate + persist the Tier-3 key 0600 atomically. **Note on key-material scrubbing:** intermediate `Buffer` values (e.g. a decoded salt) may be zeroed if a dedicated intermediate exists; however JS strings (passphrase input) cannot be scrubbed — do NOT claim string zeroing happens. The live key Buffer itself must not be zeroed — it is the key in active use. Lazy-import nothing native here (crypto is built-in).
 
 ### Step 4 — `EncryptedFileStore` (`core/src/credentials/encrypted-file-store.ts`)
 

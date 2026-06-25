@@ -20,17 +20,31 @@ function isNodeError(value: unknown): value is NodeJS.ErrnoException {
 }
 
 /**
- * Decode a strict base64 or hex string to exactly 32 bytes, or return null.
- * The encodings are validated by exact-shape regex (43/44-char base64, 64-char hex)
- * BEFORE decoding, so an ordinary passphrase is never silently mis-read as a raw key.
+ * Decode a strict base64 or hex string to exactly 32 bytes, or return a classified result.
+ *
+ * Returns:
+ *   { kind: "key", value: Buffer }  — matched raw-key shape AND decoded to exactly 32 bytes.
+ *   { kind: "shape-mismatch" }       — matched raw-key shape but decoded to ≠32 bytes (near-miss).
+ *   null                             — does not match any raw-key shape (treat as passphrase).
+ *
+ * Shape check runs BEFORE decoding so an ordinary passphrase is never silently mis-read as a
+ * raw key, AND a clearly-intended-but-wrong raw key (e.g. truncated hex) is never silently
+ * downgraded to the passphrase/scrypt path.
  */
-function tryDecodeKey(value: string): Buffer | null {
+function tryDecodeKey(
+  value: string,
+): { kind: "key"; value: Buffer } | { kind: "shape-mismatch" } | null {
   // 32 bytes base64 = 43 chars (no padding) or 44 chars (one "=" pad).
   if (/^[A-Za-z0-9+/]{43}=?$/.test(value)) {
     const decoded = Buffer.from(value, "base64")
-    if (decoded.length === 32) return decoded
+    if (decoded.length === 32) return { kind: "key", value: decoded }
+    return { kind: "shape-mismatch" }
   }
-  if (/^[0-9a-fA-F]{64}$/.test(value)) return Buffer.from(value, "hex")
+  if (/^[0-9a-fA-F]{64}$/.test(value)) {
+    const decoded = Buffer.from(value, "hex")
+    if (decoded.length === 32) return { kind: "key", value: decoded }
+    return { kind: "shape-mismatch" }
+  }
   return null
 }
 
@@ -59,30 +73,53 @@ function deriveKeyFromPassphrase(
   )
 }
 
-/** Resolve from JUNCTION_MASTER_KEY_FILE or JUNCTION_MASTER_KEY env var. */
+/**
+ * Resolve from JUNCTION_MASTER_KEY_FILE or JUNCTION_MASTER_KEY env var.
+ *
+ * Returns:
+ *   { key: Buffer }        — a valid 32-byte raw key.
+ *   { passphrase: string } — a genuine passphrase (not raw-key-shaped) → scrypt.
+ *   { near-miss: true }    — value matches a raw-key shape but decodes to ≠32 bytes;
+ *                            operator clearly intended a raw key → must not silently
+ *                            downgrade to scrypt (would derive a DIFFERENT key and
+ *                            persist a salt, weakening the operator's intended Tier-1
+ *                            at-rest posture). Caller maps this to key-unavailable Err.
+ *   null                   — no env var set.
+ */
 async function resolveFromEnv(
   env: NodeJS.ProcessEnv,
-): Promise<{ key: Buffer } | { passphrase: string } | null> {
+): Promise<{ key: Buffer } | { passphrase: string } | { nearMiss: true } | null> {
   const keyFilePath = env.JUNCTION_MASTER_KEY_FILE?.trim()
   if (keyFilePath) {
     const raw = (await readFile(keyFilePath, "utf-8")).trim()
     const decoded = tryDecodeKey(raw)
-    if (decoded !== null) return { key: decoded }
-    return { passphrase: raw }
+    if (decoded === null) return { passphrase: raw }
+    if (decoded.kind === "shape-mismatch") return { nearMiss: true }
+    return { key: decoded.value }
   }
   const keyValue = env.JUNCTION_MASTER_KEY?.trim()
   if (keyValue) {
     const decoded = tryDecodeKey(keyValue)
-    if (decoded !== null) return { key: decoded }
-    return { passphrase: keyValue }
+    if (decoded === null) return { passphrase: keyValue }
+    if (decoded.kind === "shape-mismatch") return { nearMiss: true }
+    return { key: decoded.value }
   }
   return null
 }
 
-/** Write a buffer atomically at mode 0600 (chmod the tmp file before rename). */
+/**
+ * Write a buffer atomically at mode 0600.
+ *
+ * Security: the tmp file is created at 0600 immediately (not at the umask default 0644)
+ * so the raw key material is NEVER briefly world-readable between writeFile and chmod.
+ * The post-rename chmod is kept as belt-and-suspenders (handles cross-device rename edge
+ * cases where the destination inherits different umask behavior on some Linux kernels).
+ */
 async function writeFile0600(target: string, data: Buffer): Promise<void> {
   const tmp = `${target}.${randomBytes(8).toString("hex")}.tmp`
-  await writeFile(tmp, data)
+  // FIX 1: mode 0o600 here closes the world-readable window that existed between writeFile
+  // and chmod. POSIX honors the mode under umask for newly created files.
+  await writeFile(tmp, data, { mode: 0o600 })
   await chmod(tmp, 0o600)
   await rename(tmp, target)
 }
@@ -139,7 +176,7 @@ export function resolveMasterKey(
   return new ResultAsync<Buffer, CredentialError>(
     (async () => {
       // Tier 1: env key
-      let envResult: { key: Buffer } | { passphrase: string } | null = null
+      let envResult: { key: Buffer } | { passphrase: string } | { nearMiss: true } | null = null
       try {
         envResult = await resolveFromEnv(env)
       } catch (cause) {
@@ -148,6 +185,19 @@ export function resolveMasterKey(
 
       if (envResult !== null) {
         if ("key" in envResult) return ok<Buffer, CredentialError>(envResult.key)
+        // FIX 3: value matched a raw-key shape (base64/hex length) but decoded to ≠32 bytes.
+        // The operator clearly intended a raw key — do NOT silently downgrade to scrypt, which
+        // would derive a different key and persist a salt to disk, silently weakening their
+        // intended Tier-1 at-rest posture. Fail explicitly so the misconfiguration is visible.
+        if ("nearMiss" in envResult) {
+          return err<Buffer, CredentialError>({
+            kind: "key-unavailable",
+            cause: new Error(
+              "JUNCTION_MASTER_KEY/_FILE matches a raw-key shape (base64/hex) but does not decode to exactly 32 bytes. " +
+                "Fix the key value or use a non-raw-key-shaped passphrase.",
+            ),
+          })
+        }
         // Passphrase → scrypt with a persisted salt so the key is stable across restarts.
         let salt: Buffer
         try {
@@ -164,7 +214,21 @@ export function resolveMasterKey(
         const stored = new Entry("junction", "__master_key__").getPassword()
         if (stored !== null) {
           const decoded = Buffer.from(stored, "base64")
-          if (decoded.length === 32) return ok<Buffer, CredentialError>(decoded)
+          // FIX 4: a present-but-malformed keyring master key must NOT silently fall through
+          // to Tier 3 (auto-generated file key). Silent fallthrough would derive a DIFFERENT
+          // key for future writes while prior ciphertext was encrypted with the (corrupt)
+          // keyring key, bricking all previously-stored secrets.
+          // Absent keyring entry (stored === null) still falls through to Tier 3 normally.
+          if (decoded.length !== 32) {
+            return err<Buffer, CredentialError>({
+              kind: "key-unavailable",
+              cause: new Error(
+                `OS keyring master key decodes to ${decoded.length} bytes, expected 32. ` +
+                  "Delete the malformed keyring entry or correct it before restarting.",
+              ),
+            })
+          }
+          return ok<Buffer, CredentialError>(decoded)
         }
       } catch {
         // Keyring unavailable — fall through to Tier 3

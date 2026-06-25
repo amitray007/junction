@@ -10,6 +10,11 @@ import { createEncryptedFileStore } from "./encrypted-file-store.js"
 import { createCredentialStore } from "./index.js"
 import { resolveMasterKey } from "./master-key.js"
 
+// Helper: read a file's octal permission bits (masked to low 9 bits).
+async function fileMode(p: string): Promise<number> {
+  return (await stat(p)).mode & 0o777
+}
+
 // Walk a directory tree and return all file contents as Buffers
 async function walkFiles(dir: string): Promise<{ path: string; content: Buffer }[]> {
   const { readdir } = await import("node:fs/promises")
@@ -329,6 +334,341 @@ describe("createCredentialStore", () => {
       }
     })
   })
+})
+
+// ---- Security hardening tests ----
+
+describe("EncryptedFileStore security", () => {
+  let restoreEnv: (() => void) | undefined
+
+  beforeEach(() => {
+    const prev = process.env.JUNCTION_STORE
+    process.env.JUNCTION_STORE = "file"
+    restoreEnv = () => {
+      if (prev === undefined) delete process.env.JUNCTION_STORE
+      else process.env.JUNCTION_STORE = prev
+    }
+  })
+
+  afterEach(() => {
+    restoreEnv?.()
+  })
+
+  it("AAD-swap resistance: ciphertext from ref-A cannot be substituted into ref-B slot", async () => {
+    // Proves cross-handle ciphertext substitution is rejected by GCM auth-tag (AAD mismatch).
+    await withTempHome(async () => {
+      await ensureHome()
+      const paths = getPaths()
+      const keyResult = await resolveMasterKey(paths, process.env)
+      expect(keyResult.isOk()).toBe(true)
+      if (!keyResult.isOk()) return
+
+      const store = createEncryptedFileStore(paths, keyResult.value)
+      const refA = `aad-ref-a-${randomBytes(4).toString("hex")}`
+      const refB = `aad-ref-b-${randomBytes(4).toString("hex")}`
+      const secret = "aad-swap-secret"
+
+      // Write refA
+      const setResult = await store.set(refA, secret)
+      expect(setResult.isOk()).toBe(true)
+
+      // Read enc file, copy refA's {iv,tag,ct} into refB slot
+      const raw = await readFile(paths.credentialsFile, "utf-8")
+      const data = JSON.parse(raw) as {
+        v: number
+        entries: Record<string, { iv: string; tag: string; ct: string }>
+      }
+      const entryA = data.entries[refA]
+      expect(entryA).toBeDefined()
+      if (!entryA) return
+      // Substitute refA ciphertext into refB slot (different AAD on decrypt will fail)
+      data.entries[refB] = { ...entryA }
+      await writeFile(paths.credentialsFile, JSON.stringify(data), "utf-8")
+
+      // get(refB) MUST return decrypt-failed — the AAD mismatch causes GCM final() to throw
+      const getResult = await store.get(refB)
+      expect(getResult.isErr()).toBe(true)
+      if (getResult.isErr()) {
+        expect(getResult.error.kind).toBe("decrypt-failed")
+      }
+    })
+  })
+
+  it("corrupt-but-present file: get/set returns io-failed and does NOT overwrite", async () => {
+    // FIX 2: a one-byte-mangled credentials.enc.json must block all operations, not be silently
+    // treated as empty (which would let the next set() permanently destroy prior ciphertext).
+    await withTempHome(async () => {
+      await ensureHome()
+      const paths = getPaths()
+      const keyResult = await resolveMasterKey(paths, process.env)
+      expect(keyResult.isOk()).toBe(true)
+      if (!keyResult.isOk()) return
+
+      // Write a non-empty but mangled JSON to credentials.enc.json
+      const corruptContent = '{"v":1,"entries":{"ref1":{MANGLED}}}'
+      await writeFile(paths.credentialsFile, corruptContent, "utf-8")
+
+      const store = createEncryptedFileStore(paths, keyResult.value)
+
+      // get() must return io-failed
+      const getResult = await store.get("any-ref")
+      expect(getResult.isErr()).toBe(true)
+      if (getResult.isErr()) {
+        expect(getResult.error.kind).toBe("io-failed")
+      }
+
+      // set() must also return io-failed (must NOT overwrite the corrupt file)
+      const setResult = await store.set("any-ref", "some-secret")
+      expect(setResult.isErr()).toBe(true)
+      if (setResult.isErr()) {
+        expect(setResult.error.kind).toBe("io-failed")
+      }
+
+      // Assert: the corrupt file was NOT overwritten or emptied
+      const afterContent = await readFile(paths.credentialsFile, "utf-8")
+      expect(afterContent).toBe(corruptContent)
+    })
+  })
+
+  it("ENOENT (missing file) → ok(null) for get, ok for set (normal first-run)", async () => {
+    // Verify ENOENT still works as the normal 'no credentials yet' case (not broken by FIX 2).
+    await withTempHome(async () => {
+      await ensureHome()
+      const paths = getPaths()
+      const keyResult = await resolveMasterKey(paths, process.env)
+      expect(keyResult.isOk()).toBe(true)
+      if (!keyResult.isOk()) return
+
+      const store = createEncryptedFileStore(paths, keyResult.value)
+
+      // File doesn't exist yet — get should return ok(null)
+      const getResult = await store.get("nonexistent-ref")
+      expect(getResult.isOk()).toBe(true)
+      if (getResult.isOk()) {
+        expect(getResult.value).toBeNull()
+      }
+
+      // set should create the file and succeed
+      const ref = `new-ref-${randomBytes(4).toString("hex")}`
+      const setResult = await store.set(ref, "new-secret")
+      expect(setResult.isOk()).toBe(true)
+
+      // File now exists and is readable
+      const getAfter = await store.get(ref)
+      expect(getAfter.isOk()).toBe(true)
+      if (getAfter.isOk()) {
+        expect(getAfter.value).toBe("new-secret")
+      }
+    })
+  })
+
+  it("salt-file perms: master.key.salt is 0600 on POSIX after passphrase resolution", async () => {
+    if (process.platform === "win32") return
+
+    await withTempHome(async (home) => {
+      await ensureHome()
+      const paths = getPaths()
+
+      // Passphrase that is NOT raw-key-shaped → triggers scrypt → creates salt file
+      const keyResult = await resolveMasterKey(paths, {
+        ...process.env,
+        JUNCTION_MASTER_KEY: "a-genuine-passphrase-not-hex-or-base64",
+        JUNCTION_HOME: home,
+      })
+      expect(keyResult.isOk()).toBe(true)
+
+      const saltFile = `${paths.masterKeyFile}.salt`
+      const saltMode = await fileMode(saltFile)
+      expect(saltMode).toBe(0o600)
+    })
+  }, 30000)
+
+  it("error-cause-no-plaintext: decrypt-failed error does not contain the secret or key bytes", async () => {
+    // Regression guard: even if error serialization changes, known secret must never appear.
+    await withTempHome(async () => {
+      await ensureHome()
+      const paths = getPaths()
+      const keyResult = await resolveMasterKey(paths, process.env)
+      expect(keyResult.isOk()).toBe(true)
+      if (!keyResult.isOk()) return
+
+      const store = createEncryptedFileStore(paths, keyResult.value)
+      const ref = `error-cause-ref-${randomBytes(4).toString("hex")}`
+      const knownSecret = "KNOWN_SECRET_MUST_NOT_APPEAR_IN_ERROR"
+
+      await store.set(ref, knownSecret)
+
+      // Tamper the ciphertext to force decrypt-failed
+      const raw = await readFile(paths.credentialsFile, "utf-8")
+      const data = JSON.parse(raw) as {
+        v: number
+        entries: Record<string, { iv: string; tag: string; ct: string }>
+      }
+      const entry = data.entries[ref]
+      expect(entry).toBeDefined()
+      if (!entry) return
+      const ctBytes = Buffer.from(entry.ct, "base64")
+      ctBytes[0] ^= 0xff
+      entry.ct = ctBytes.toString("base64")
+      await writeFile(paths.credentialsFile, JSON.stringify(data), "utf-8")
+
+      const getResult = await store.get(ref)
+      expect(getResult.isErr()).toBe(true)
+      if (getResult.isErr()) {
+        expect(getResult.error.kind).toBe("decrypt-failed")
+        // Serialize the error object and assert no secret literal appears
+        const serialized = JSON.stringify(getResult.error)
+        expect(serialized).not.toContain(knownSecret)
+        // Also assert raw key bytes don't appear (key is 32 random bytes — check hex encoding)
+        const keyHex = keyResult.value.toString("hex")
+        expect(serialized).not.toContain(keyHex)
+      }
+    })
+  })
+})
+
+// ---- Master-key env near-miss + oversized key tests (FIX 3) ----
+
+describe("resolveMasterKey env near-miss (FIX 3)", () => {
+  it("valid 32-byte base64-encoded key (44 chars with =) is accepted as raw key", async () => {
+    // Baseline: a legitimate 32-byte key base64-encoded resolves to the raw key, not scrypt.
+    await withTempHome(async (home) => {
+      await ensureHome()
+      const paths = getPaths()
+
+      const rawKey = randomBytes(32)
+      const b64Key = rawKey.toString("base64") // 44 chars ending in '='
+      expect(b64Key.length).toBe(44)
+
+      const keyResult = await resolveMasterKey(paths, {
+        ...process.env,
+        JUNCTION_MASTER_KEY: b64Key,
+        JUNCTION_HOME: home,
+      })
+      expect(keyResult.isOk()).toBe(true)
+      if (keyResult.isOk()) {
+        expect(keyResult.value.equals(rawKey)).toBe(true)
+      }
+    })
+  })
+
+  it("valid 32-byte hex-encoded key (64 chars) is accepted as raw key", async () => {
+    // Baseline: a legitimate 32-byte key hex-encoded resolves to the raw key, not scrypt.
+    await withTempHome(async (home) => {
+      await ensureHome()
+      const paths = getPaths()
+
+      const rawKey = randomBytes(32)
+      const hexKey = rawKey.toString("hex") // 64 chars
+      expect(hexKey.length).toBe(64)
+
+      const keyResult = await resolveMasterKey(paths, {
+        ...process.env,
+        JUNCTION_MASTER_KEY: hexKey,
+        JUNCTION_HOME: home,
+      })
+      expect(keyResult.isOk()).toBe(true)
+      if (keyResult.isOk()) {
+        expect(keyResult.value.equals(rawKey)).toBe(true)
+      }
+    })
+  })
+
+  it("43-char base64 string (no padding) is accepted as raw key — 43 base64 chars always = 32 bytes", async () => {
+    // 32 bytes encodes to 44-char base64 with '='. Stripping the '=' gives 43 chars.
+    // Node.js Buffer.from() is lenient and decodes 43 chars to 32 bytes (treats as unpadded).
+    // The shape regex matches 43 chars (no '=') → this IS a valid raw-key shape.
+    await withTempHome(async (home) => {
+      await ensureHome()
+      const paths = getPaths()
+
+      const rawKey = randomBytes(32)
+      const b64Nopad = rawKey.toString("base64").replace(/=+$/, "") // strip trailing '='
+      expect(b64Nopad.length).toBe(43)
+
+      const keyResult = await resolveMasterKey(paths, {
+        ...process.env,
+        JUNCTION_MASTER_KEY: b64Nopad,
+        JUNCTION_HOME: home,
+      })
+      expect(keyResult.isOk()).toBe(true)
+      if (keyResult.isOk()) {
+        expect(keyResult.value.equals(rawKey)).toBe(true)
+      }
+    })
+  })
+
+  it("65-char hex string does NOT match raw-key shape (not 64 chars) → treated as passphrase", async () => {
+    // FIX 3 guard: a 65-char hex value doesn't match the 64-char hex shape, so it falls
+    // to scrypt (passphrase path). The result is a valid 32-byte key, NOT a raw-hex decode.
+    await withTempHome(async (home) => {
+      await ensureHome()
+      const paths = getPaths()
+
+      const sixtyFiveHex = `${randomBytes(32).toString("hex")}a` // 65 chars
+      expect(sixtyFiveHex.length).toBe(65)
+
+      const keyResult = await resolveMasterKey(paths, {
+        ...process.env,
+        JUNCTION_MASTER_KEY: sixtyFiveHex,
+        JUNCTION_HOME: home,
+      })
+      // Does NOT match raw-key shape → scrypt → ok (32-byte derived key, NOT the first 32 hex bytes)
+      expect(keyResult.isOk()).toBe(true)
+      if (keyResult.isOk()) {
+        expect(keyResult.value.length).toBe(32)
+        // Sanity: derived key ≠ first 32 bytes of the hex-decoded input (proves it went through scrypt)
+        const rawHexBytes = Buffer.from(sixtyFiveHex.slice(0, 64), "hex")
+        expect(keyResult.value.equals(rawHexBytes)).toBe(false)
+      }
+    })
+  }, 30000) // scrypt
+
+  it("genuine passphrase (non-raw-key-shaped) still derives key via scrypt", async () => {
+    // Confirm the genuine-passphrase path is unaffected by FIX 3.
+    await withTempHome(async (home) => {
+      await ensureHome()
+      const paths = getPaths()
+
+      // A passphrase with spaces — definitely not base64/hex shaped
+      const keyResult = await resolveMasterKey(paths, {
+        ...process.env,
+        JUNCTION_MASTER_KEY: "this is a plain passphrase with spaces",
+        JUNCTION_HOME: home,
+      })
+      expect(keyResult.isOk()).toBe(true)
+      if (keyResult.isOk()) {
+        expect(keyResult.value).toBeInstanceOf(Buffer)
+        expect(keyResult.value.length).toBe(32)
+      }
+    })
+  }, 30000)
+
+  it("oversized key (100-char hex) does not match raw-key shape → treated as passphrase, not truncated", async () => {
+    // FIX 3: a 100-char hex value does NOT match the 64-char hex shape regex.
+    // It falls to the passphrase/scrypt path — it is NOT silently truncated to 32 bytes.
+    await withTempHome(async (home) => {
+      await ensureHome()
+      const paths = getPaths()
+
+      const hundredHex = randomBytes(50).toString("hex") // 100 chars
+      expect(hundredHex.length).toBe(100)
+
+      const keyResult = await resolveMasterKey(paths, {
+        ...process.env,
+        JUNCTION_MASTER_KEY: hundredHex,
+        JUNCTION_HOME: home,
+      })
+      // Does NOT match raw-key shape → scrypt passphrase → 32-byte derived key
+      expect(keyResult.isOk()).toBe(true)
+      if (keyResult.isOk()) {
+        expect(keyResult.value.length).toBe(32)
+        // Derived key ≠ the first 32 bytes of the hex value (proves it's not a truncated raw-decode)
+        const inputBytes = Buffer.from(hundredHex.slice(0, 64), "hex")
+        expect(keyResult.value.equals(inputBytes)).toBe(false)
+      }
+    })
+  }, 30000)
 })
 
 // ---- KeyringStore (gated on keyring availability) ----
