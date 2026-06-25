@@ -32,6 +32,13 @@ describe("paths", () => {
     })
   })
 
+  it("dbFile is junction.db inside home", async () => {
+    await withTempHome(async (home) => {
+      const p = getPaths()
+      expect(p.dbFile).toBe(path.join(home, "junction.db"))
+    })
+  })
+
   it("cacheDir resolves to a non-empty string", async () => {
     await withTempHome(async () => {
       const p = getPaths()

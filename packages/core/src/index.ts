@@ -21,8 +21,12 @@ export const VERSION = "0.0.0"
 // Data model — entity schemas, types, ID generators, convention helpers
 // ---------------------------------------------------------------------------
 
+// Database + repositories
+export { type Db, getDatabase } from "./db/index.js"
+export type { DbError } from "./errors/index.js"
 // ID generators — ids/ is the sole generator; see ids/index.ts for the swap-point comment
 export { newCredentialId, newPlatformId, newProfileId } from "./ids/index.js"
+export { createRepositories, type Repositories } from "./repositories/index.js"
 export type { Credential, OAuthMeta } from "./schema/credential.js"
 // Credential
 export { CredentialKind, CredentialSchema, OAuthMetaSchema } from "./schema/credential.js"
@@ -42,7 +46,6 @@ export {
   ToolNamespaceSchema,
 } from "./schema/primitives.js"
 export type { Profile } from "./schema/profile.js"
-
 // Profile
 export { ProfileSchema } from "./schema/profile.js"
 export type { SourceRef } from "./schema/source-ref.js"
