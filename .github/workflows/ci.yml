@@ -38,18 +38,11 @@ jobs:
       # path is genuinely exercised in CI (the only place we have a Linux box).
       - name: Enable unprivileged user namespaces (for bubblewrap)
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
-      # Visibility: show the bwrap userns probe + a real sandboxed run. Non-fatal
-      # (|| true) so it never blocks the build; the bubblewrap *tests* are the gate.
-      - name: Diagnose bubblewrap (non-fatal)
-        run: |
-          set +e
-          echo "restrict=$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null)"
-          bwrap --ro-bind /usr /usr --ro-bind-try /bin /bin -- /usr/bin/true
-          echo "probe exit=$?"
-          echo hi > /tmp/bw.txt
-          bwrap --unshare-all --ro-bind /usr /usr --ro-bind-try /bin /bin --ro-bind /etc /etc --proc /proc --dev /dev --tmpfs /tmp --ro-bind /tmp/bw.txt /tmp/bw.txt -- /usr/bin/cat /tmp/bw.txt
-          echo "run exit=$?"
-          true
+      # Regression guard: assert the bwrap userns probe succeeds, so the
+      # bubblewrap tests can never silently go back to skipping. Mirrors
+      # probeUserns() in bubblewrap.ts (real /usr/bin/true under a bound path).
+      - name: Verify bubblewrap is usable
+        run: bwrap --ro-bind /usr /usr --ro-bind-try /bin /bin -- /usr/bin/true
       - run: pnpm install --frozen-lockfile
       - run: pnpm verify
   quality:
