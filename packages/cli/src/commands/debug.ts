@@ -37,6 +37,8 @@ function formatUpstreamError(e: UpstreamError): string {
       return `tool call failed: ${String(e.cause)}`
     case "namespace-too-long":
       return `namespaced tool name exceeds 64 chars: "${e.name}"`
+    case "invalid-tool-name":
+      return `upstream tool name contains MCP-illegal characters: "${e.name}"`
     case "timed-out":
       return `upstream timed out after ${e.ms}ms`
     default: {
@@ -172,17 +174,20 @@ const mcpProbeCommand = defineCommand({
         return
       }
 
-      const tools = toolsResult.value
+      const { tools, skippedCount } = toolsResult.value
       // Output: namespaced tool names + count. NEVER the token.
       if (json) {
         process.stdout.write(
-          `${JSON.stringify({ ok: true, namespace: toolNamespace, count: tools.length, tools: tools.map((t) => t.name) })}\n`,
+          `${JSON.stringify({ ok: true, namespace: toolNamespace, count: tools.length, skippedCount, tools: tools.map((t) => t.name) })}\n`,
         )
       } else {
         consola.info(`Namespace: ${toolNamespace}`)
         consola.info(`Tools (${tools.length}):`)
         for (const t of tools) {
           process.stdout.write(`  ${t.name}\n`)
+        }
+        if (skippedCount > 0) {
+          consola.warn(`${skippedCount} tool(s) skipped (namespaced name exceeds MCP limits)`)
         }
       }
     } finally {

@@ -23,22 +23,30 @@ export interface ToolResult {
   isError?: boolean | undefined
 }
 
+/** Result of listTools: the namespaced tools plus a count of skipped tools. */
+export interface ListToolsResult {
+  tools: NamespacedTool[]
+  /** Number of upstream tools whose namespaced names could not be built (skipped, not fatal). */
+  skippedCount: number
+}
+
 export interface UpstreamSession {
-  /** Upstream tools, each name prefixed with `<namespace>__`. */
-  listTools(): ResultAsync<NamespacedTool[], UpstreamError>
+  /** Upstream tools, each name prefixed with `<namespace>__`. Tools that
+   *  cannot be namespaced are skipped; skippedCount records how many. */
+  listTools(): ResultAsync<ListToolsResult, UpstreamError>
   /** Call a `<namespace>__<tool>` — strips the prefix, routes upstream. */
   callTool(name: string, args: Record<string, unknown>): ResultAsync<ToolResult, UpstreamError>
   close(): Promise<void>
 }
 
 // ---------------------------------------------------------------------------
-// Internal helpers
+// Internal helpers (exported for use by connect.ts)
 // ---------------------------------------------------------------------------
 
 /** Default call/connect timeout. Recorded in docs/futures/revisit-when.md. */
 export const DEFAULT_TIMEOUT_MS = 30_000
 
-class UpstreamTimeoutError extends Error {
+export class UpstreamTimeoutError extends Error {
   readonly ms: number
   constructor(ms: number) {
     super(`upstream timed out after ${ms}ms`)
@@ -47,7 +55,9 @@ class UpstreamTimeoutError extends Error {
   }
 }
 
-function withTimeoutMs<T>(promise: Promise<T>, ms: number): Promise<T> {
+/** Wrap a promise with a timer that rejects after `ms`. The timer is cleared
+ *  on both settle paths so it never leaks into the event loop. */
+export function withTimeoutMs<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
       reject(new UpstreamTimeoutError(ms))
@@ -65,7 +75,7 @@ function withTimeoutMs<T>(promise: Promise<T>, ms: number): Promise<T> {
   })
 }
 
-function isTimeoutError(e: unknown): e is UpstreamTimeoutError {
+export function isTimeoutError(e: unknown): e is UpstreamTimeoutError {
   return e instanceof UpstreamTimeoutError
 }
 
@@ -108,21 +118,25 @@ export function createSession(
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
 ): UpstreamSession {
   return {
-    listTools(): ResultAsync<NamespacedTool[], UpstreamError> {
-      const work = async (): Promise<Result<NamespacedTool[], UpstreamError>> => {
+    listTools(): ResultAsync<ListToolsResult, UpstreamError> {
+      const work = async (): Promise<Result<ListToolsResult, UpstreamError>> => {
         try {
           const { tools } = await withTimeoutMs(client.listTools(), timeoutMs)
           const result: NamespacedTool[] = []
+          let skippedCount = 0
           for (const t of tools) {
             const nameResult = namespaceToolName(toolNamespace, t.name)
-            if (nameResult.isErr()) return err(nameResult.error)
+            if (nameResult.isErr()) {
+              skippedCount++
+              continue
+            }
             result.push({
               name: nameResult.value,
               description: t.description,
               inputSchema: (t.inputSchema as object | undefined) ?? {},
             })
           }
-          return ok(result)
+          return ok({ tools: result, skippedCount })
         } catch (cause) {
           if (isTimeoutError(cause)) {
             return err({ kind: "timed-out" as const, ms: cause.ms } satisfies UpstreamError)

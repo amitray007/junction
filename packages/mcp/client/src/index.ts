@@ -3,4 +3,4 @@
 // SOURCE-AGNOSTIC: generic upstream MCP connector. No vendor code.
 
 export { connectSource } from "./connect.js"
-export type { NamespacedTool, ToolResult, UpstreamSession } from "./session.js"
+export type { ListToolsResult, NamespacedTool, ToolResult, UpstreamSession } from "./session.js"

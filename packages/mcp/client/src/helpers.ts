@@ -3,42 +3,44 @@
 // SOURCE-AGNOSTIC: no vendor code. A namespace and tool name are data, not code.
 
 import type { UpstreamError } from "@junction/core"
-import { namespacedTool } from "@junction/core"
 import { err, ok, type Result } from "neverthrow"
 
-/** Maximum tool-name length per MCP specification (`^[a-zA-Z0-9_-]{1,64}$`). */
-const MAX_TOOL_NAME_LENGTH = 64
+/** MCP tool-name charset and length limit per specification (`^[a-zA-Z0-9_-]{1,64}$`). */
+const MCP_TOOL_NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/
 
 /**
- * Build a namespaced tool name `<namespace>__<toolName>` and guard that the
- * result does not exceed 64 characters (the MCP tool-name limit).
+ * Build a namespaced tool name `<namespace>__<toolName>` and validate the
+ * combined result against the MCP tool-name rule `^[a-zA-Z0-9_-]{1,64}$`.
  *
- * Returns `namespace-too-long` if the prefixed name exceeds the limit or if
- * the namespace/toolName does not satisfy the ToolNamespaceSchema convention.
- * NEVER truncates — truncation would break routing when the name is split.
+ * The `namespace` is already constrained to junction's ToolNamespaceSchema.
+ * The upstream `toolName` is NOT re-validated against that schema — MCP allows
+ * uppercase and hyphens (e.g. `printEnv`, `get-thing`) that junction's schema
+ * does not. Only the COMBINED name is checked here.
+ *
+ * Returns:
+ * - Ok(combined)            — combined name passes MCP charset + length ≤ 64
+ * - Err(namespace-too-long) — combined length > 64 (NEVER truncates)
+ * - Err(invalid-tool-name)  — combined contains MCP-illegal characters
  */
 export function namespaceToolName(ns: string, toolName: string): Result<string, UpstreamError> {
-  let prefixed: string
-  try {
-    prefixed = namespacedTool(ns, toolName)
-  } catch {
-    // namespacedTool throws when ns or toolName violates ToolNamespaceSchema.
-    prefixed = `${ns}__${toolName}`
-    return err({ kind: "namespace-too-long" as const, name: prefixed })
+  const combined = `${ns}__${toolName}`
+  if (combined.length > 64) {
+    return err({ kind: "namespace-too-long" as const, name: combined })
   }
-  if (prefixed.length > MAX_TOOL_NAME_LENGTH) {
-    return err({ kind: "namespace-too-long" as const, name: prefixed })
+  if (!MCP_TOOL_NAME_RE.test(combined)) {
+    return err({ kind: "invalid-tool-name" as const, name: combined })
   }
-  return ok(prefixed)
+  return ok(combined)
 }
 
 /**
  * Split a `<namespace>__<tool>` name on the FIRST occurrence of `__`.
  *
  * If `__` is absent, `namespace` is `""` and `tool` is the whole string.
- * Splitting on the FIRST `__` is load-bearing: the tool name itself may
- * contain single underscores, but the convention forbids `__` within either
- * part (ToolNamespaceSchema), so the first occurrence is unambiguous.
+ * Splitting on the FIRST `__` is load-bearing: the upstream tool name may
+ * itself contain `__` (e.g. `bad__name`) — this is fine because the namespace
+ * never contains `__` (ToolNamespaceSchema forbids it), making the first `__`
+ * the unambiguous separator.
  */
 export function splitNamespacedName(name: string): { namespace: string; tool: string } {
   const idx = name.indexOf("__")

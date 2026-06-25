@@ -43,4 +43,5 @@ export type UpstreamError =
   | { kind: "tool-not-found"; name: string }
   | { kind: "call-failed"; cause: unknown }
   | { kind: "namespace-too-long"; name: string }
+  | { kind: "invalid-tool-name"; name: string }
   | { kind: "timed-out"; ms: number }

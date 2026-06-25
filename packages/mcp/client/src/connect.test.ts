@@ -5,12 +5,14 @@
 // InMemoryTransport.createLinkedPair() or construct transports without connecting.
 //
 // Test surface:
-//   (a) In-memory round-trip   — listTools prefixed, callTool stripped routing,
-//                                tool-not-found, namespace-too-long
-//   (b) Transport construction — http bearer header, stdio env-merge
-//   (c) Sentinel secret discipline — token never in output / error / result
-//   (d) Timeout                — hanging upstream → timed-out
-//   (e) Pure helper unit tests — namespaceToolName, splitNamespacedName
+//   (a) Pure helper unit tests  — namespaceToolName, splitNamespacedName
+//   (b) In-memory round-trip    — listTools prefixed, callTool stripped routing,
+//                                 tool-not-found, camelCase/hyphen/skip-too-long
+//   (c) Transport construction  — http bearer header, stdio env-merge
+//   (d) Sentinel secret discipline — token never in output / error / result
+//   (e) Timeout                 — hanging upstream → timed-out
+//   (f) Timer-cleanup unit test — withTimeoutMs clears timer on both settle paths
+//   (g) Credential point-#5     — axios-like cause never leaks Bearer tokens
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import {
@@ -21,19 +23,38 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 import { Server } from "@modelcontextprotocol/sdk/server/index.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import { namespaceToolName, splitNamespacedName } from "./helpers.js"
-import { createSession } from "./session.js"
+import { createSession, withTimeoutMs } from "./session.js"
 
 // ---------------------------------------------------------------------------
 // (a) Pure helper unit tests
 // ---------------------------------------------------------------------------
 
 describe("namespaceToolName", () => {
-  it("prefixes a valid tool name", () => {
+  it("prefixes a valid snake_case tool name", () => {
     const r = namespaceToolName("github_work", "list_issues")
     expect(r.isOk()).toBe(true)
     expect(r._unsafeUnwrap()).toBe("github_work__list_issues")
+  })
+
+  it("prefixes a camelCase upstream tool name (MCP allows uppercase)", () => {
+    const r = namespaceToolName("ns", "printEnv")
+    expect(r.isOk()).toBe(true)
+    expect(r._unsafeUnwrap()).toBe("ns__printEnv")
+  })
+
+  it("prefixes a hyphenated upstream tool name (MCP allows hyphens)", () => {
+    const r = namespaceToolName("ns", "get-thing")
+    expect(r.isOk()).toBe(true)
+    expect(r._unsafeUnwrap()).toBe("ns__get-thing")
+  })
+
+  it("allows upstream tool names with double underscores (MCP charset valid)", () => {
+    // Routing is unambiguous: splitNamespacedName splits on FIRST __ → tool="bad__name"
+    const r = namespaceToolName("ns", "bad__name")
+    expect(r.isOk()).toBe(true)
+    expect(r._unsafeUnwrap()).toBe("ns__bad__name")
   })
 
   it("returns namespace-too-long when prefixed name > 64 chars", () => {
@@ -44,18 +65,18 @@ describe("namespaceToolName", () => {
     expect(r._unsafeUnwrapErr().kind).toBe("namespace-too-long")
   })
 
-  it("returns namespace-too-long when tool name contains double underscores", () => {
-    // ToolNamespaceSchema forbids __ — namespacedTool throws, we catch and return namespace-too-long
-    const r = namespaceToolName("ns", "bad__name")
-    expect(r.isErr()).toBe(true)
-    expect(r._unsafeUnwrapErr().kind).toBe("namespace-too-long")
-  })
-
   it("accepts exactly 64-char prefixed name", () => {
     // 10 + 2 + 52 = 64
     const r = namespaceToolName("a".repeat(10), "b".repeat(52))
     expect(r.isOk()).toBe(true)
     expect(r._unsafeUnwrap()).toHaveLength(64)
+  })
+
+  it("returns invalid-tool-name when upstream name contains MCP-illegal characters", () => {
+    // Spaces are not in the MCP charset [a-zA-Z0-9_-]
+    const r = namespaceToolName("ns", "bad name")
+    expect(r.isErr()).toBe(true)
+    expect(r._unsafeUnwrapErr().kind).toBe("invalid-tool-name")
   })
 })
 
@@ -72,6 +93,18 @@ describe("splitNamespacedName", () => {
     expect(tool).toBe("get_pull_request")
   })
 
+  it("round-trips an upstream name containing __", () => {
+    const { namespace, tool } = splitNamespacedName("ns__bad__name")
+    expect(namespace).toBe("ns")
+    expect(tool).toBe("bad__name")
+  })
+
+  it("round-trips a hyphenated upstream name", () => {
+    const { namespace, tool } = splitNamespacedName("ns__get-thing")
+    expect(namespace).toBe("ns")
+    expect(tool).toBe("get-thing")
+  })
+
   it("returns empty namespace and whole string when __ is absent", () => {
     const { namespace, tool } = splitNamespacedName("no_separator")
     expect(namespace).toBe("")
@@ -80,10 +113,10 @@ describe("splitNamespacedName", () => {
 })
 
 // ---------------------------------------------------------------------------
-// (a) In-memory round-trip — full session behaviour without network/spawn
+// (b) In-memory round-trip — full session behaviour without network/spawn
 // ---------------------------------------------------------------------------
 
-/** Stand up a tiny in-memory MCP Server with two fake tools and connect a Client to it. */
+/** Stand up a tiny in-memory MCP Server with fake tools and connect a Client to it. */
 async function makeInMemoryPair(
   tools: Array<{ name: string; description?: string }>,
   callHandler?: (name: string, args: Record<string, unknown>) => unknown,
@@ -133,12 +166,49 @@ describe("createSession — in-memory round-trip", () => {
       const result = await session.listTools()
 
       expect(result.isOk()).toBe(true)
-      const tools = result._unsafeUnwrap()
+      const { tools, skippedCount } = result._unsafeUnwrap()
+      expect(skippedCount).toBe(0)
       expect(tools).toHaveLength(2)
       expect(tools.map((t) => t.name)).toEqual([
         "github_work__list_issues",
         "github_work__get_pull_request",
       ])
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it("listTools namespaces camelCase, hyphen, and snake_case upstream tools", async () => {
+    const { client, cleanup } = await makeInMemoryPair([
+      { name: "printEnv" },
+      { name: "get-thing" },
+      { name: "list_issues" },
+    ])
+    try {
+      const session = createSession(client, "ns", () => client.close())
+      const result = await session.listTools()
+
+      expect(result.isOk()).toBe(true)
+      const { tools, skippedCount } = result._unsafeUnwrap()
+      expect(skippedCount).toBe(0)
+      expect(tools.map((t) => t.name)).toEqual(["ns__printEnv", "ns__get-thing", "ns__list_issues"])
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it("skips a too-long tool and returns the rest (not an error, skippedCount=1)", async () => {
+    const longTool = "b".repeat(61) // "ns__" + 61 = 65 chars > 64
+    const { client, cleanup } = await makeInMemoryPair([{ name: "ok_tool" }, { name: longTool }])
+    try {
+      const session = createSession(client, "ns", () => client.close())
+      const result = await session.listTools()
+
+      expect(result.isOk()).toBe(true)
+      const { tools, skippedCount } = result._unsafeUnwrap()
+      expect(skippedCount).toBe(1)
+      expect(tools).toHaveLength(1)
+      expect(tools[0]?.name).toBe("ns__ok_tool")
     } finally {
       await cleanup()
     }
@@ -174,26 +244,10 @@ describe("createSession — in-memory round-trip", () => {
       await cleanup()
     }
   })
-
-  it("listTools returns namespace-too-long when prefixed name exceeds 64 chars", async () => {
-    // Use a namespace that is valid but combined with the tool name exceeds 64 chars
-    const _longTool = "b".repeat(60) // 2 + 2 + 60 = 64 chars — exactly at limit is ok; use 61 to exceed
-    const longTool2 = "b".repeat(61) // 2 + 2 + 61 = 65 > 64
-    const { client, cleanup } = await makeInMemoryPair([{ name: longTool2 }])
-    try {
-      const session = createSession(client, "ns", () => client.close())
-      const result = await session.listTools()
-
-      expect(result.isErr()).toBe(true)
-      expect(result._unsafeUnwrapErr().kind).toBe("namespace-too-long")
-    } finally {
-      await cleanup()
-    }
-  })
 })
 
 // ---------------------------------------------------------------------------
-// (b) Transport construction — no real connection; check parameters
+// (c) Transport construction — no real connection; check parameters
 // ---------------------------------------------------------------------------
 
 describe("transport construction — http", () => {
@@ -277,13 +331,14 @@ describe("transport construction — stdio env-merge", () => {
       command: "node",
       args: ["--version"],
       env,
+      stderr: "ignore",
     })
     expect(transport).toBeDefined()
   })
 })
 
 // ---------------------------------------------------------------------------
-// (c) SENTINEL secret discipline
+// (d) SENTINEL secret discipline
 // ---------------------------------------------------------------------------
 
 describe("sentinel secret discipline", () => {
@@ -313,8 +368,8 @@ describe("sentinel secret discipline", () => {
       expect(callSerialized).not.toContain(`${SENTINEL.split("_")[0]}_${SENTINEL.split("_")[1]}`)
       // The real sentinel check: if the session were to inject the secret into
       // error messages or tool names, those would contain the sentinel verbatim.
-      const toolNames = toolsResult._unsafeUnwrap().map((t) => t.name)
-      for (const name of toolNames) {
+      const { tools } = toolsResult._unsafeUnwrap()
+      for (const name of tools.map((t) => t.name)) {
         expect(name).not.toContain(SENTINEL)
       }
     } finally {
@@ -347,7 +402,7 @@ describe("sentinel secret discipline", () => {
 })
 
 // ---------------------------------------------------------------------------
-// (d) Timeout → timed-out
+// (e) Timeout → timed-out
 // ---------------------------------------------------------------------------
 
 describe("timeout", () => {
@@ -381,7 +436,90 @@ describe("timeout", () => {
 })
 
 // ---------------------------------------------------------------------------
-// (e) debug mcp-probe unit — mock connectSource, check output never has token
+// (f) Timer-cleanup unit test — withTimeoutMs clears its timer on both paths
+// ---------------------------------------------------------------------------
+
+describe("withTimeoutMs — timer cleanup (MUST-FIX 1 regression)", () => {
+  it("clears the timer when the underlying promise resolves", async () => {
+    vi.useFakeTimers()
+    try {
+      const p = Promise.resolve("done")
+      const result = withTimeoutMs(p, 5_000)
+      // Attach the handler synchronously before microtasks run; no need for runAllTimersAsync
+      // since the resolve comes from a microtask, not a timer.
+      await expect(result).resolves.toBe("done")
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("clears the timer when the underlying promise rejects before timeout", async () => {
+    vi.useFakeTimers()
+    try {
+      const p = Promise.reject(new Error("upstream fail"))
+      const result = withTimeoutMs(p, 5_000)
+      // Attach the handler before yielding so the rejection is never "unhandled".
+      // Do NOT call vi.runAllTimersAsync() here — that processes microtasks first,
+      // leaving `result` rejected without a handler until the next await.
+      await expect(result).rejects.toThrow("upstream fail")
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// (g) Credential point-#5 — axios-like cause must not leak Bearer tokens
+// ---------------------------------------------------------------------------
+
+describe("credential point-#5 — cause never leaks Bearer tokens via String()", () => {
+  it("String(axiosLike) excludes the Authorization header value", () => {
+    // formatUpstreamError in debug.ts uses String(cause) — this verifies the invariant
+    // holds for axios-style errors that store credentials in .config.headers.
+    const SENTINEL = "SENTINEL_BEARER_TOKEN_9876"
+    const axiosLike = Object.assign(new Error("Request failed with status code 401"), {
+      config: { headers: { Authorization: `Bearer ${SENTINEL}` } },
+      response: { status: 401 },
+    })
+    // String(Error) → "Error: <message>" — does NOT include .config.headers
+    expect(String(axiosLike)).not.toContain(SENTINEL)
+  })
+
+  it("call-failed UpstreamError cause does not surface a Bearer token via String()", async () => {
+    const SENTINEL = "SENTINEL_BEARER_CALL_XYZ"
+    const { client, cleanup } = await makeInMemoryPair([{ name: "test_tool" }])
+    try {
+      const session = createSession(client, "ns", () => client.close(), 5_000)
+      const axiosLike = Object.assign(new Error("upstream HTTP error"), {
+        config: { headers: { Authorization: `Bearer ${SENTINEL}` } },
+      })
+      vi.spyOn(client, "callTool").mockRejectedValueOnce(axiosLike)
+
+      const result = await session.callTool("ns__test_tool", {})
+      expect(result.isErr()).toBe(true)
+      const e = result._unsafeUnwrapErr()
+      // The error kind may be call-failed or auth-failed depending on error shape.
+      // In either case, String(cause) must not expose the sentinel.
+      if (e.kind === "call-failed") {
+        // String(cause) → "Error: <message>" — safe because Error.message
+        // does NOT include Object.assign-added properties like .config.headers.
+        // This is the invariant formatUpstreamError relies on (docs/futures/gotchas.md).
+        expect(String(e.cause)).not.toContain(SENTINEL)
+        // NOTE: JSON.stringify(e) CAN surface SENTINEL when the cause has enumerable
+        // properties added via Object.assign (like axios-style .config.headers).
+        // This is why formatUpstreamError uses String(cause), never JSON.stringify(cause).
+      }
+    } finally {
+      await cleanup()
+      vi.restoreAllMocks()
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// (h) debug mcp-probe unit — mock connectSource, check output never has token
 // ---------------------------------------------------------------------------
 
 describe("debug probe — output never contains a token", () => {
@@ -397,6 +535,7 @@ describe("debug probe — output never contains a token", () => {
       ok: true,
       namespace: "github_work",
       count,
+      skippedCount: 0,
       tools: toolNames,
     })
 
