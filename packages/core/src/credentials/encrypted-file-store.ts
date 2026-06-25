@@ -6,7 +6,7 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto"
 import { chmod, readFile, rename, unlink, writeFile } from "node:fs/promises"
 import path from "node:path"
-import { err, ok, ResultAsync } from "neverthrow"
+import { err, ok, okAsync, ResultAsync } from "neverthrow"
 import { z } from "zod"
 import type { CredentialError } from "../errors/index.js"
 import type { JunctionPaths } from "../paths/index.js"
@@ -52,8 +52,9 @@ async function saveEncFile(paths: JunctionPaths, data: EncFile): Promise<void> {
   try {
     release = await lock(paths.home, { lockfilePath })
     await writeFile(tmp, JSON.stringify(data), "utf-8")
+    // chmod the tmp file BEFORE rename so the live file is never briefly world-readable.
+    await chmod(tmp, 0o600)
     await rename(tmp, paths.credentialsFile)
-    await chmod(paths.credentialsFile, 0o600)
   } finally {
     await unlink(tmp).catch(() => {})
     if (release) await release().catch(() => {})
@@ -90,71 +91,52 @@ function decryptRecord(key: Buffer, secretRef: string, record: EncRecord): strin
 
 // ---- store ----
 
+/** Load the enc-file, mapping any filesystem/parse failure to an io-failed Err. */
+function loadOrIoFailed(credentialsFile: string): ResultAsync<EncFile, CredentialError> {
+  return ResultAsync.fromPromise(
+    loadEncFile(credentialsFile),
+    (cause): CredentialError => ({ kind: "io-failed", cause }),
+  )
+}
+
+/** Persist the enc-file, mapping any write failure to an io-failed Err. */
+function saveOrIoFailed(paths: JunctionPaths, data: EncFile): ResultAsync<void, CredentialError> {
+  return ResultAsync.fromPromise(
+    saveEncFile(paths, data),
+    (cause): CredentialError => ({ kind: "io-failed", cause }),
+  )
+}
+
 export function createEncryptedFileStore(paths: JunctionPaths, key: Buffer): CredentialStore {
   return {
     backend: "encrypted-file",
 
     get(secretRef: string): ResultAsync<string | null, CredentialError> {
-      return new ResultAsync<string | null, CredentialError>(
-        (async () => {
-          let data: EncFile
-          try {
-            data = await loadEncFile(paths.credentialsFile)
-          } catch (cause) {
-            return err<string | null, CredentialError>({ kind: "io-failed", cause })
-          }
-          const record = data.entries[secretRef]
-          if (record === undefined) return ok<string | null, CredentialError>(null)
-          try {
-            const plaintext = decryptRecord(key, secretRef, record)
-            return ok<string | null, CredentialError>(plaintext)
-          } catch (cause) {
-            // SECURITY: never return partial plaintext; cause is the GCM auth failure (no secret data)
-            return err<string | null, CredentialError>({ kind: "decrypt-failed", cause })
-          }
-        })(),
-      )
+      return loadOrIoFailed(paths.credentialsFile).andThen((data) => {
+        const record = data.entries[secretRef]
+        if (record === undefined) return ok<string | null, CredentialError>(null)
+        try {
+          return ok<string | null, CredentialError>(decryptRecord(key, secretRef, record))
+        } catch (cause) {
+          // SECURITY: never return partial plaintext; the GCM auth failure carries no secret data
+          return err<string | null, CredentialError>({ kind: "decrypt-failed", cause })
+        }
+      })
     },
 
     set(secretRef: string, secret: string): ResultAsync<void, CredentialError> {
-      return new ResultAsync<void, CredentialError>(
-        (async () => {
-          let data: EncFile
-          try {
-            data = await loadEncFile(paths.credentialsFile)
-          } catch (cause) {
-            return err<void, CredentialError>({ kind: "io-failed", cause })
-          }
-          data.entries[secretRef] = encryptRecord(key, secretRef, secret)
-          try {
-            await saveEncFile(paths, data)
-            return ok<void, CredentialError>(undefined)
-          } catch (cause) {
-            return err<void, CredentialError>({ kind: "io-failed", cause })
-          }
-        })(),
-      )
+      return loadOrIoFailed(paths.credentialsFile).andThen((data) => {
+        data.entries[secretRef] = encryptRecord(key, secretRef, secret)
+        return saveOrIoFailed(paths, data)
+      })
     },
 
     delete(secretRef: string): ResultAsync<void, CredentialError> {
-      return new ResultAsync<void, CredentialError>(
-        (async () => {
-          let data: EncFile
-          try {
-            data = await loadEncFile(paths.credentialsFile)
-          } catch (cause) {
-            return err<void, CredentialError>({ kind: "io-failed", cause })
-          }
-          if (!(secretRef in data.entries)) return ok<void, CredentialError>(undefined)
-          const { [secretRef]: _removed, ...rest } = data.entries
-          try {
-            await saveEncFile(paths, { v: 1, entries: rest })
-            return ok<void, CredentialError>(undefined)
-          } catch (cause) {
-            return err<void, CredentialError>({ kind: "io-failed", cause })
-          }
-        })(),
-      )
+      return loadOrIoFailed(paths.credentialsFile).andThen((data) => {
+        if (!(secretRef in data.entries)) return okAsync<void, CredentialError>(undefined)
+        const { [secretRef]: _removed, ...rest } = data.entries
+        return saveOrIoFailed(paths, { v: 1, entries: rest })
+      })
     },
   }
 }

@@ -280,6 +280,25 @@ describe("resolveMasterKey scrypt path", () => {
       }
     })
   }, 30000) // scrypt at N=131072 takes ~300ms; allow up to 30s in slow CI
+
+  it("passphrase derives the SAME key across two resolutions (salt persisted)", async () => {
+    await withTempHome(async (home) => {
+      await ensureHome()
+      const paths = getPaths()
+      const env = {
+        ...process.env,
+        JUNCTION_MASTER_KEY: "a-stable-passphrase-for-restart-determinism",
+        JUNCTION_HOME: home,
+      }
+      const first = await resolveMasterKey(paths, env)
+      const second = await resolveMasterKey(paths, env)
+      expect(first.isOk() && second.isOk()).toBe(true)
+      if (first.isOk() && second.isOk()) {
+        // Stable salt ⇒ identical derived key ⇒ ciphertext survives a restart.
+        expect(first.value.equals(second.value)).toBe(true)
+      }
+    })
+  }, 30000)
 })
 
 // ---- createCredentialStore backend selection ----
