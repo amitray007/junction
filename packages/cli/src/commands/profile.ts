@@ -19,6 +19,17 @@ function formatDbError(e: DbError): string {
   }
 }
 
+/** Render a DbError to the user (JSON or human), set exit code 1. */
+function reportDbError(e: DbError, json: boolean): void {
+  const msg = formatDbError(e)
+  if (json) {
+    process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
+  } else {
+    consola.error(msg)
+  }
+  process.exitCode = 1
+}
+
 const listCommand = defineCommand({
   meta: {
     name: "list",
@@ -37,13 +48,7 @@ const listCommand = defineCommand({
 
     const dbResult = await getDatabase(paths)
     if (dbResult.isErr()) {
-      const msg = formatDbError(dbResult.error)
-      if (json) {
-        process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
-      } else {
-        consola.error(msg)
-      }
-      process.exitCode = 1
+      reportDbError(dbResult.error, json)
       return
     }
 
@@ -51,13 +56,7 @@ const listCommand = defineCommand({
     const result = await repos.profiles.list()
 
     if (result.isErr()) {
-      const msg = formatDbError(result.error)
-      if (json) {
-        process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
-      } else {
-        consola.error(msg)
-      }
-      process.exitCode = 1
+      reportDbError(result.error, json)
       return
     }
 
@@ -69,7 +68,10 @@ const listCommand = defineCommand({
     }
 
     if (profileList.length === 0) {
-      consola.info("No profiles yet. (Connecting platforms comes later.)")
+      // Use stdout directly (not consola.info, which consola suppresses under
+      // NODE_ENV=test and other non-interactive contexts) so the empty-state
+      // line is always emitted — agents and scripts rely on it.
+      process.stdout.write("No profiles yet. (Connecting platforms comes later.)\n")
       return
     }
 
