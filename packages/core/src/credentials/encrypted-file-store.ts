@@ -33,13 +33,27 @@ function isNodeError(value: unknown): value is NodeJS.ErrnoException {
   return value instanceof Error && "code" in value
 }
 
+/**
+ * Load and parse the on-disk credentials file.
+ *
+ * ENOENT (file genuinely absent) → return empty map (normal first-run path).
+ * Any other error (SyntaxError, Zod parse failure, I/O error on a PRESENT file) → throw,
+ * so the caller maps it to io-failed Err.
+ *
+ * FIX 2: previously a SyntaxError on a PRESENT file was silently treated as empty, which
+ * caused the next set() to atomically OVERWRITE the corrupt-but-present file, permanently
+ * destroying all previously-stored ciphertext. Now only ENOENT is swallowed; a corrupt-
+ * but-present file propagates the error so callers return io-failed and refuse to overwrite.
+ */
 async function loadEncFile(credentialsFile: string): Promise<EncFile> {
   try {
     const raw = await readFile(credentialsFile, "utf-8")
     return EncFileSchema.parse(JSON.parse(raw) as unknown)
   } catch (e: unknown) {
     if (isNodeError(e) && e.code === "ENOENT") return { v: 1, entries: {} }
-    if (e instanceof SyntaxError) return { v: 1, entries: {} }
+    // SyntaxError, ZodError, or any other I/O error on a PRESENT file → rethrow.
+    // The caller (loadOrIoFailed) maps this to io-failed Err, which blocks set() from
+    // overwriting a corrupt-but-present credentials file.
     throw e
   }
 }
@@ -51,8 +65,11 @@ async function saveEncFile(paths: JunctionPaths, data: EncFile): Promise<void> {
   let release: (() => Promise<void>) | undefined
   try {
     release = await lock(paths.home, { lockfilePath })
-    await writeFile(tmp, JSON.stringify(data), "utf-8")
-    // chmod the tmp file BEFORE rename so the live file is never briefly world-readable.
+    // FIX 1: create the tmp file at 0600 immediately so the ciphertext is never briefly
+    // world-readable between writeFile and chmod (lower-stakes than master-key, but same
+    // pattern — belt-and-suspenders with the post-write chmod below).
+    await writeFile(tmp, JSON.stringify(data), { encoding: "utf-8", mode: 0o600 })
+    // Belt-and-suspenders: chmod again after write (handles cross-device rename edge cases).
     await chmod(tmp, 0o600)
     await rename(tmp, paths.credentialsFile)
   } finally {
