@@ -167,12 +167,25 @@ export function _resetCapabilitiesCache(): void {
 
 async function resolveCapabilities(): Promise<SandboxCapabilities> {
   if (cachedCapabilities !== undefined) return cachedCapabilities
-  // Dynamic imports break the static import cycle: sandbox ↔ seatbelt/deno.
-  const [{ probeCommandBackend }, { probeScriptBackend }] = await Promise.all([
-    import("./seatbelt.js"),
-    import("./deno.js"),
+  // Dynamic imports break the static import cycle: sandbox ↔ seatbelt/bubblewrap/deno.
+  // Probe the platform-appropriate command backend:
+  //   - macOS:  seatbelt (sandbox-exec at /usr/bin/sandbox-exec)
+  //   - Linux:  bubblewrap (bwrap, resolved to absolute path at probe time)
+  //   - other:  "none"
+  const [
+    { probeCommandBackend: probeSeatbelt },
+    { probeCommandBackend: probeBwrap },
+    { probeScriptBackend },
+  ] = await Promise.all([import("./seatbelt.js"), import("./bubblewrap.js"), import("./deno.js")])
+  const [seatbeltResult, bwrapResult, script] = await Promise.all([
+    probeSeatbelt(),
+    probeBwrap(),
+    probeScriptBackend(),
   ])
-  const [command, script] = await Promise.all([probeCommandBackend(), probeScriptBackend()])
+  // Prefer seatbelt on darwin (it returns "seatbelt" there and "none" elsewhere);
+  // fall back to bwrap on Linux (it returns "bubblewrap" or "none").
+  const command: SandboxCapabilities["command"] =
+    seatbeltResult !== "none" ? seatbeltResult : bwrapResult !== "none" ? bwrapResult : "none"
   cachedCapabilities = { command, script }
   return cachedCapabilities
 }
