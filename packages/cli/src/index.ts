@@ -3,6 +3,7 @@
 import { VERSION } from "@junction/core"
 import { defineCommand, runMain } from "citty"
 import { credentialCommand } from "./commands/credential.js"
+import { debugCommand } from "./commands/debug.js"
 import { initCommand } from "./commands/init.js"
 import { mcpCommand } from "./commands/mcp.js"
 import { platformCommand } from "./commands/platform.js"
@@ -22,6 +23,7 @@ const main = defineCommand({
     credential: credentialCommand,
     profile: profileCommand,
     status: statusCommand,
+    debug: debugCommand,
   },
 })
 

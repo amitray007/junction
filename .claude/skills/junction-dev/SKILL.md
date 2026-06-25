@@ -109,6 +109,35 @@ must hit only comments and example strings.
 JUNCTION_STORE=file junction credential add ...   # use AES-256-GCM encrypted file store
 ```
 
+## MCP client — upstream connector (increment 11)
+
+`junction debug mcp-probe` connects to a platform's upstream MCP source, lists tools, and
+prints the **namespaced** names (`<namespace>__<tool>`). Token never appears in output.
+
+```bash
+# List credentials to find the credential ID:
+JUNCTION_HOME=/tmp/jt10 junction credential list --platform github --json
+
+# Probe the upstream MCP source (replace <id> with the credential id):
+JUNCTION_HOME=/tmp/jt10 junction debug mcp-probe \
+  --platform github --credential <id>
+# → prints github_work__list_issues, github_work__get_pull_request, ... + count
+
+# Machine-readable output:
+JUNCTION_HOME=/tmp/jt10 junction debug mcp-probe \
+  --platform github --credential <id> --json
+# → {"ok":true,"namespace":"github_work","count":N,"tools":["github_work__..."]}
+```
+
+**Security invariants (enforced by tests):**
+- The bearer token NEVER appears in stdout, stderr, or any error message.
+- The probe prints only tool names and counts — no credential values.
+- The namespace is derived from `{platformId}_{credentialAccount}` (e.g. `github_work`).
+
+**Source-agnostic:** `mcp-client` knows transports (http / stdio), not vendors.
+`grep -rin github packages/mcp/client/src` must hit only comments and test examples —
+never control flow or hardcoded URLs/tool names.
+
 ## MCP server (increment 7)
 
 `junction mcp serve` speaks MCP over stdio — point any MCP client at it.

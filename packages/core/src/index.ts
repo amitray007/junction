@@ -11,7 +11,7 @@ export {
   loadConfigState,
   saveConfig,
 } from "./config/index.js"
-export type { ConfigError, PathsError } from "./errors/index.js"
+export type { ConfigError, PathsError, UpstreamError } from "./errors/index.js"
 export { getLogger, type Logger, setLogger } from "./logging/index.js"
 export { ensureHome, getPaths, type JunctionPaths } from "./paths/index.js"
 export { err, ok, type Result, ResultAsync } from "./result/index.js"

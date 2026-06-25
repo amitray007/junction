@@ -13,6 +13,7 @@
   "dependencies": {
     "@clack/prompts": "^1.0.0",
     "@junction/core": "workspace:*",
+    "@junction/mcp-client": "workspace:*",
     "@junction/mcp-server": "workspace:*",
     "citty": "^0.2.0",
     "consola": "^3.0.0",

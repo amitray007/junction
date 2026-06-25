@@ -10,6 +10,7 @@
     "**/*.test.tsx",
     "**/drizzle/**",
     "**/*.d.ts",
-    "**/migrations/meta/**"
+    "**/migrations/meta/**",
+    "**/package.json"
   ]
 }

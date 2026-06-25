@@ -56,6 +56,9 @@ importers:
       '@junction/core':
         specifier: workspace:*
         version: link:../core
+      '@junction/mcp-client':
+        specifier: workspace:*
+        version: link:../mcp/client
       '@junction/mcp-server':
         specifier: workspace:*
         version: link:../mcp/server
@@ -122,7 +125,21 @@ importers:
         specifier: ^0.31.0
         version: 0.31.10
 
-  packages/mcp/client: {}
+  packages/mcp/client:
+    dependencies:
+      '@junction/core':
+        specifier: workspace:*
+        version: link:../../core
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(zod@4.4.3)
+      neverthrow:
+        specifier: 'catalog:'
+        version: 8.2.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.20.0
+        version: 22.20.0
 
   packages/mcp/server:
     dependencies:

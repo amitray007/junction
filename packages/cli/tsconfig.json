@@ -3,5 +3,5 @@
   "compilerOptions": { "rootDir": "src", "outDir": "dist", "types": ["node"], "jsx": "react-jsx" },
   "include": ["src"],
   "exclude": ["**/*.test.ts", "**/*.test.tsx"],
-  "references": [{ "path": "../core" }]
+  "references": [{ "path": "../core" }, { "path": "../mcp/client" }]
 }
