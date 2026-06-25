@@ -1,0 +1,22 @@
+# Revisit-when — deliberately deferred decisions
+
+Things we chose **not** to build/adopt yet, each with the **trigger** that should make us reconsider. Deferral is a feature: we keep the foundation lean and add weight only when a real need arrives. When a trigger fires, revisit the row and record the increment that resolved it.
+
+| Deferred | Trigger to revisit | Notes |
+|---|---|---|
+| **Effect-TS** (structured concurrency / typed effects) | Concurrent multi-source MCP fan-out, a sandbox process-pool, or cancellation-heavy flows make neverthrow's manual `Result` composition genuinely painful | Today: **neverthrow** is the error model (spec §5a). The exception is narrow — only if structured concurrency earns its keep. Do not adopt for error-handling alone. |
+| **Long-running daemon** (`junction serve` as a persistent process) | MCP-serving needs a shared long-lived process, or multiple concurrent agents, or Streamable HTTP | Today: `mcp serve` is a per-invocation stdio process (inc 7). `core` stays daemon-free and embeddable. |
+| **Streamable HTTP transport** (MCP) | Remote / networked MCP serving arrives | Today: **stdio only** (inc 7). SSE is already deprecated and avoided. HTTP brings Origin / DNS-rebinding concerns — out of scope until then. |
+| **better-auth** | Remote / multi-device **web login** is needed | Human web login only; **never** owns platform tokens (those live in the encrypted vault in `core`). |
+| **arctic OAuth vault + refresh loop** | Real **OAuth platform sources** connect | The credential store (inc 6) already holds encrypted secrets; arctic adds the OAuth dance + token refresh at that increment. |
+| **microsandbox / libkrun microVM** (escalation tier) | Running **hostile code / arbitrary npm**, or needing stronger-than-OS-sandbox isolation | Also the **forward path** for the Seatbelt deprecation (see `deprecations.md`). Drops in behind the existing `Sandbox` interface. |
+| **tsgo** (TS7 native compiler) | GA + stable | Swap the `tsc -b` typecheck binary; no code change expected. |
+| **Valibot at the web edge** | Web **bundle size** becomes a *measured* constraint | Zod v4 stays in `core` (the boundary validator). Don't pre-optimize. |
+| **libsql** (swap from better-sqlite3) | **Whole-DB at-rest encryption** is wanted | Secrets-as-refs (inc 5/6) already neutralizes a DB leak; libsql only if full-DB encryption is independently desired. |
+| **pino structured audit log** | An **audit trail** of tool calls / credential use is needed | Recorded in the stack; installed at its increment. |
+| **AGPL §13 network-source-offer** | The broker **serves network users** | Must surface a source link + embed the running commit/version so network users can obtain source. Wire at the broker/serving increment. |
+| **SPDX header CI enforcement** (`fsfe/reuse-action`) | Security-hardening increment | Policy is in force now (every file carries SPDX); the *CI gate* lands with the other security tooling. |
+| **Deferred CI tooling** — knip (dead code/deps), type-coverage ≥99%, publint+attw, targeted semgrep (sandbox/secrets), CodeQL, osv-scanner, trufflehog, ruleset-drift check, signed commits | Each at the increment that needs it (mostly the security increment; publint/attw when a package first publishes) | Spec §5b. Wired incrementally, not upfront. |
+| **react-doctor / React Compiler / eslint-plugin-react-hooks** | The **web** increment | Frontend-only tooling; irrelevant until `@junction/web` has components. |
+| **Changesets publishing** | A package is actually **published** | Currently disabled (`private: true` + `changeset tag`); versioning works, publishing is intentionally off. |
+| **Credential key rotation** | Operator needs to rotate the master key | The encrypted store supports re-encrypt in principle; no `rotate` command yet. |
