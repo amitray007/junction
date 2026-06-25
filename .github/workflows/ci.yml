@@ -32,6 +32,12 @@ jobs:
       # Install bubblewrap on Linux so the bubblewrap tests RUN on the ubuntu runner.
       - name: Install bubblewrap
         run: sudo apt-get update -qq && sudo apt-get install -y bubblewrap
+      # Ubuntu 24.04 (noble) ships kernel.apparmor_restrict_unprivileged_userns=1,
+      # which blocks unprivileged user namespaces — bwrap's userns probe would fail
+      # and the bubblewrap tests would SKIP instead of RUN. Relax it so the bwrap
+      # path is genuinely exercised in CI (the only place we have a Linux box).
+      - name: Enable unprivileged user namespaces (for bubblewrap)
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - run: pnpm install --frozen-lockfile
       - run: pnpm verify
   quality:
