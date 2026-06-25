@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// `junction status` — report home path, config state, and credential store backend.
+// `junction status` — report home path, config state, credential store backend, and sandbox.
 
-import { createCredentialStore, getPaths } from "@junction/core"
+import { createCredentialStore, createSandbox, getPaths } from "@junction/core"
 import { defineCommand } from "citty"
 import { consola } from "consola"
 import { formatStatusHuman, formatStatusJson, loadConfigStateOrFail } from "../format.js"
@@ -9,9 +9,16 @@ import { formatStatusHuman, formatStatusJson, loadConfigStateOrFail } from "../f
 async function resolveCredentialBackend(): Promise<string> {
   const paths = getPaths()
   const result = await createCredentialStore(paths)
-  // FIX 5: only .kind (an enum) is surfaced — never .cause, which may carry paths/secrets.
+  // Only .kind (an enum) is surfaced — never .cause, which may carry paths/secrets.
   if (result.isErr()) return `unavailable (${result.error.kind})`
   return result.value.backend === "keyring" ? "keyring" : "encrypted-file (auto-generated key)"
+}
+
+async function resolveSandboxBackend(): Promise<string> {
+  const result = await createSandbox()
+  if (result.isErr()) return `unavailable (${result.error.kind})`
+  const caps = result.value.capabilities()
+  return `commands=${caps.command} · scripts=${caps.script}`
 }
 
 export const statusCommand = defineCommand({
@@ -31,9 +38,10 @@ export const statusCommand = defineCommand({
 
     const paths = getPaths()
 
-    const [state, credentialStore] = await Promise.all([
+    const [state, credentialStore, sandbox] = await Promise.all([
       loadConfigStateOrFail(paths, json),
       resolveCredentialBackend(),
+      resolveSandboxBackend(),
     ])
     if (state === null) return
 
@@ -45,6 +53,7 @@ export const statusCommand = defineCommand({
         initialized: false as const,
         config: null,
         credentialStore,
+        sandbox,
       }
       if (json) {
         process.stdout.write(`${formatStatusJson(data)}\n`)
@@ -62,6 +71,7 @@ export const statusCommand = defineCommand({
       initialized: true as const,
       config: state.config,
       credentialStore,
+      sandbox,
     }
 
     if (json) {

@@ -36,6 +36,20 @@ must supply a Tier-1 key (env var or file not stored on the same disk):
 
 **Do not oversell Tier 3 as at-rest encryption** — document this honestly in `--help` and the web UI.
 
+## Sandbox (increment 8+)
+
+- **Refuse-if-unavailable:** no enforceable backend on the platform → **`Err`, never raw `spawn`**. This is the most important property. Never silently degrade to unsandboxed execution.
+- **Two co-equal backends:** Deno (`runScript`) sandboxes JS/TS; Seatbelt/bubblewrap (`runCommand`) sandboxes native CLIs. Neither is a fallback for the other.
+- **No secrets in sandbox:** spawn with an EXPLICIT `env:` object from `policy.env` only — never inherit `process.env`. Validate `policy.env` at the boundary: reject any key matching `JUNCTION_MASTER_KEY`, `JUNCTION_MASTER_KEY_FILE`, `*_TOKEN`, `*_SECRET`, `*_KEY` → `policy-invalid`. The CredentialStore is NEVER passed to a sandbox.
+- **`shell: false` always, argv as an array** — no shell injection surface.
+- **Seatbelt profile (macOS):** use `(allow file-read*)` (broad — dyld needs it), then `(deny file-read* (subpath <CREDENTIAL_DIR>))` for the confidentiality boundary. A naive deny-all-read profile SIGABRTs every binary (exit 134). Profile temp files written at 0600, unlinked in `finally`. Invoke as `sandbox-exec -f <file> --`.
+- **Seatbelt paths must be realpath-resolved** — macOS `os.tmpdir()` returns `/var/folders/...` but the kernel sees `/private/var/folders/...`. Seatbelt matches on real paths; symlink paths silently fail.
+- **Seatbelt deprecation (known dependency):** Apple deprecated the `sandbox-exec` CLI (not the kernel sandbox). It still ships and is honored. The escalation path is microVMs (Containerization.framework / libkrun). The `Sandbox` interface is designed for a microVM backend to drop in behind the same `runCommand` surface.
+- **Deno mandatory deny flags:** `--deny-run` and `--deny-ffi` are MANDATORY on every `deno run` invocation — these are the documented escape hatches. Also apply `--deny-sys` and `--deny-import`. Pass `--no-prompt` (missing perm = hard error, never interactive). Write `{code}` to a temp `.ts` file — never `deno eval`, never a shell string.
+- **Deno binary path:** resolve the full path to `deno` at probe time so spawning with a scrubbed env (no `PATH`) still works.
+- **bubblewrap (Linux):** use `--unshare-all` (network OFF), `--clearenv` + per-key `--setenv`. Probe userns at runtime; if it fails → refuse (no raw exec).
+- **Denied op = nonzero exitCode, not a SandboxError.** A blocked read/write/net surfaces as a nonzero `exitCode` in `ok(SandboxResult)`. `SandboxError` is only for "couldn't run the sandbox at all."
+
 ## Banned APIs
 
 - **MUST NOT** use `node:vm` or `vm2` as a sandbox (not security boundaries; vm2 has active RCEs). Sandbox = Deno + bubblewrap/Seatbelt (design spec §6b).

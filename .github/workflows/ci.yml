@@ -24,6 +24,14 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node }}
+      # Install Deno so the Deno runScript tests RUN (not skip) on both Node matrix runners.
+      # Pinned to commit SHA per security policy for third-party actions.
+      - uses: denoland/setup-deno@e80b61fc5a15e2cf33c67218a7bb10bd7a04cbf4 # v2.0.3
+        with:
+          deno-version: "2.x"
+      # Install bubblewrap on Linux so the bubblewrap tests RUN on the ubuntu runner.
+      - name: Install bubblewrap
+        run: sudo apt-get update -qq && sudo apt-get install -y bubblewrap
       - run: pnpm install --frozen-lockfile
       - run: pnpm verify
   quality:

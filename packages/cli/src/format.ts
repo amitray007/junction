@@ -18,6 +18,7 @@ export type StatusData = {
   initialized: boolean
   config: Config | null
   credentialStore: string
+  sandbox: string
 }
 
 /**
@@ -30,6 +31,7 @@ export function formatStatusHuman(data: StatusData): string {
     `  cacheDir         ${data.cacheDir}`,
     `  initialized      ${data.initialized}`,
     `  credential store ${data.credentialStore}`,
+    `  sandbox          ${data.sandbox}`,
   ]
   if (data.config !== null) {
     lines.push(`  version          ${data.config.version}`)
@@ -48,6 +50,7 @@ export function formatStatusJson(data: StatusData): string {
     initialized: data.initialized,
     config: data.config,
     credentialStore: data.credentialStore,
+    sandbox: data.sandbox,
   })
 }
 
