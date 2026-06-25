@@ -19,7 +19,7 @@ A **method file** holds one increment's **spec + step-by-step implementation tog
 | 2 | core paths + config layer | `02-core-paths-config.md` | written |
 | 3 | cli boots over core | `03-cli-boots.md` | written |
 | 4 | Data model in core | `04-data-model.md` | written |
-| 5 | Persistence (Drizzle + better-sqlite3) | `05-*.md` | TBD |
+| 5 | Persistence (Drizzle + better-sqlite3) | `05-persistence.md` | written |
 | 6 | CredentialStore interface + impls | `06-*.md` | TBD |
 | 7 | mcp/server shell | `07-*.md` | TBD |
 | 8 | Sandbox core | `08-*.md` | TBD |

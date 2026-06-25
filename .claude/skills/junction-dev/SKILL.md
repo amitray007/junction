@@ -46,6 +46,19 @@ junction init                        # create the home + default config
 junction status                      # print state (supports --json)
 ```
 
+## Persistence (increment 5)
+
+The DB lives at `~/.junction/junction.db` (SQLite, via Drizzle + better-sqlite3),
+created and migrated on first use (`junction init` or the first `profile` command).
+
+```bash
+junction profile list                # list profiles (empty on a fresh home)
+junction profile list --json         # machine-readable JSON array
+```
+
+- Persistence (Drizzle schema, migrations, repository layer) lives in `@junction/core` only; the CLI edge is thin.
+- Migrations are committed + forward-only under `packages/core/src/db/migrations/` and copied into `dist/` at build so the built CLI can migrate a fresh DB.
+
 ## Enforcement
 
 - Git hooks (lefthook) run `pnpm verify` pre-commit — a failing verify blocks the commit.

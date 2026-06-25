@@ -6,6 +6,7 @@ Pragmatic, performance-by-default. No premature optimization, but good defaults 
 
 - **MUST NOT** use `fs.*Sync` or `execSync` in `core` or server (`mcp/*`) paths — they block the event loop. (CLI startup/`init` scripts MAY use sync I/O where it simplifies one-shot setup.)
 - **MUST NOT** do CPU-heavy work synchronously on a request/tool-call path; yield or move it off the hot path.
+- **Carve-out (inc 5):** **better-sqlite3** is the approved embedded DB driver and is synchronous by design (single-user, single-file). Its sync calls are confined to the `core` repository layer, which presents an **async `ResultAsync`** API — callers stay non-blocking and a future libsql swap is a driver change, not a signature change. This is the only sanctioned sync-I/O exception; the boundary-guard hook still blocks `fs.*Sync`.
 
 ## Logging
 
