@@ -7,6 +7,7 @@ Junction is a self-hosted, single-user **broker**: the one place you connect you
 - **Coding guardrails (read before writing any code):** `docs/rules/` — per-language rules, enforced by hooks + review agents.
 - **Design principles (modularity & DRY):** `docs/principles/` — where code lives, when to factor, when to keep duplicated.
 - **Per-increment method files:** `docs/methods/` (see Operating Model below)
+- **Forward-looking register:** `docs/futures/` — deprecations we knowingly depend on (+ forward paths), "revisit-when" deferred decisions (+ triggers), and known gotchas. **Maintain it as you go** (see convention below).
 
 ---
 
@@ -72,6 +73,16 @@ At the end of **every** increment/method, the orchestrator MUST close with a str
 3. **Checklist of intricate details** — a markdown checklist (`- [x]`) of the load-bearing/subtle points proven this increment (invariants, edge cases, conventions, gotchas), so the user can scan what's actually guaranteed.
 
 Be honest in part 1: if it isn't user-visible, say so — don't invent a visual test.
+
+### Forward-looking register (`docs/futures/`) — record as you go
+
+Whenever work surfaces a forward-looking caveat, **promote it out of the method file / commit message into `docs/futures/`** so it isn't lost. Record an entry when you:
+
+1. **Adopt a dependency or OS API that is deprecated / EOL-risk but necessary** → `docs/futures/deprecations.md`, with the **forward path** (what replaces it and when). *(e.g. macOS Seatbelt → microVM.)*
+2. **Defer a decision** with a "we'll do X when Y" shape → `docs/futures/revisit-when.md`, with the explicit **trigger**. *(e.g. Effect-TS only if concurrent fan-out earns it.)*
+3. **Work around a non-obvious fragility** that could bite again → `docs/futures/gotchas.md`, with the **symptom + the fix**. *(e.g. scrypt `maxmem`, Seatbelt env-scrub, depcruise "green but blind".)*
+
+Keep entries terse and scannable (one short paragraph, the increment it was raised, the trigger/forward-path). When a trigger fires or a deprecation is migrated off, update/strike the entry and note the resolving increment. This register is the project's durable forward memory — treat maintaining it as part of finishing the work, like the end-of-increment report.
 
 ---
 
