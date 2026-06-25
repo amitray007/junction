@@ -19,10 +19,19 @@ Otherwise: it's a module in `core`. Default = core module.
 
 Name by concern: `core/src/result/`, `core/src/errors/`, `core/src/paths/`, `core/src/schema/`, `core/src/ids/`, `core/src/logging/`. A reader should predict a module's contents from its name.
 
-## 3. One-way dependency graph, no cycles
+## 3. One-way dependency graph, no cycles — app-vs-lib model (inc 7)
 
-- `core` depends on nothing in the repo. `cli`/`web`/`mcp/server`/`mcp/client` may depend on `core`, never the reverse, never each other (unless a real, declared edge appears).
-- **No circular dependencies** — at the package level *and* the module level inside `core`. A cycle means a missing layer or a misplaced responsibility. (`dependency-cruiser` enforces this, inc 1.5.)
+The monorepo uses an **app-vs-lib** topology, enforced by `dependency-cruiser`:
+
+- **Apps (composition roots): `cli`, `web`.** Apps may import any lib (`core`, `mcp/server`, `mcp/client`). They are **leaves** — nothing may import an app. Apps must not import each other.
+- **Libs: `core`, `mcp/server`, `mcp/client`.** `core` imports nothing in-repo. `mcp/server` and `mcp/client` import **only `core`** — never each other, never an app (`cli`/`web`).
+
+Allowed edges: `cli → core`, `cli → mcp/server`, `cli → mcp/client`, `web → core`, `web → mcp/server`, `web → mcp/client`.  
+Blocked: any lib → app (e.g. `mcp/server → cli`), lib → peer lib (`mcp/server ↔ mcp/client`), app → app (`cli ↔ web`), `core → anything-in-repo`.
+
+The depcruise rules are **structural, not an enumeration of today's packages**: "a lib (any non-app package) may import only core + itself" and "apps must not import each other". So a **package added later is automatically a governed lib** — it can reach only `core`, and nothing may import it unless it's declared an app. (This closed the enumeration gap the inc-7 boundary review found.) "App" = `cli` (package name `junction`) and `web`; everything else is a lib.
+
+**No circular dependencies** — at the package level *and* the module level inside `core`. A cycle means a missing layer or a misplaced responsibility. (`dependency-cruiser` enforces this, inc 1.5; app-vs-lib model introduced in inc 7.)
 
 ## 4. Layer placement
 

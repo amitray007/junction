@@ -59,6 +59,29 @@ junction profile list --json         # machine-readable JSON array
 - Persistence (Drizzle schema, migrations, repository layer) lives in `@junction/core` only; the CLI edge is thin.
 - Migrations are committed + forward-only under `packages/core/src/db/migrations/` and copied into `dist/` at build so the built CLI can migrate a fresh DB.
 
+## MCP server (increment 7)
+
+`junction mcp serve` speaks MCP over stdio — point any MCP client at it.
+
+```bash
+# Serve the synthetic default profile (no DB needed):
+junction mcp serve
+
+# Serve a named profile from the DB:
+junction mcp serve --profile work
+
+# Manual MCP handshake smoke test (initialize + tools/list):
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}' \
+  '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
+  | JUNCTION_HOME=/tmp/jt node packages/cli/dist/index.js mcp serve
+# → initialize result + {"result":{"tools":[]},...}
+```
+
+**CRITICAL:** stdout is the MCP channel — nothing except JSON-RPC frames may appear on stdout.
+Human-readable output always goes to stderr.
+
 ## Enforcement
 
 - Git hooks (lefthook) run `pnpm verify` pre-commit — a failing verify blocks the commit.
@@ -67,4 +90,4 @@ junction profile list --json         # machine-readable JSON array
 
 ## Grows here
 
-> Update this skill at each increment: add the persistence commands (inc 5), the MCP serve command (inc 7), the sandbox usage (inc 8), the TUI launch (inc 9), and the web dev server (web increment).
+> Update this skill at each increment: add the sandbox usage (inc 8), the TUI launch (inc 9), and the web dev server (web increment).
