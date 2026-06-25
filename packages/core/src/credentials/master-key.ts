@@ -19,10 +19,17 @@ function isNodeError(value: unknown): value is NodeJS.ErrnoException {
   return value instanceof Error && "code" in value
 }
 
-/** Decode a base64 or hex string to exactly 32 bytes, or return null. */
+/**
+ * Decode a strict base64 or hex string to exactly 32 bytes, or return null.
+ * The encodings are validated by exact-shape regex (43/44-char base64, 64-char hex)
+ * BEFORE decoding, so an ordinary passphrase is never silently mis-read as a raw key.
+ */
 function tryDecodeKey(value: string): Buffer | null {
-  const b64 = Buffer.from(value, "base64")
-  if (b64.length === 32) return b64
+  // 32 bytes base64 = 43 chars (no padding) or 44 chars (one "=" pad).
+  if (/^[A-Za-z0-9+/]{43}=?$/.test(value)) {
+    const decoded = Buffer.from(value, "base64")
+    if (decoded.length === 32) return decoded
+  }
   if (/^[0-9a-fA-F]{64}$/.test(value)) return Buffer.from(value, "hex")
   return null
 }
@@ -72,14 +79,38 @@ async function resolveFromEnv(
   return null
 }
 
+/** Write a buffer atomically at mode 0600 (chmod the tmp file before rename). */
+async function writeFile0600(target: string, data: Buffer): Promise<void> {
+  const tmp = `${target}.${randomBytes(8).toString("hex")}.tmp`
+  await writeFile(tmp, data)
+  await chmod(tmp, 0o600)
+  await rename(tmp, target)
+}
+
 /** Auto-generate a 32-byte key, write atomically to masterKeyFile at mode 0600. */
 async function autoGenerateKey(masterKeyFile: string): Promise<Buffer> {
   const key = randomBytes(32)
-  const tmp = `${masterKeyFile}.${randomBytes(8).toString("hex")}.tmp`
-  await writeFile(tmp, key)
-  await chmod(tmp, 0o600)
-  await rename(tmp, masterKeyFile)
+  await writeFile0600(masterKeyFile, key)
   return key
+}
+
+/**
+ * Load the persisted 16-byte passphrase salt, or generate + persist one (0600).
+ * The salt MUST be stable across restarts — scrypt is deterministic only for a fixed
+ * salt, so a fresh salt each boot would derive a different key and brick prior ciphertext.
+ * The salt is not secret; persisting it is required for correctness, not confidentiality.
+ */
+async function loadOrCreateSalt(masterKeyFile: string): Promise<Buffer> {
+  const saltFile = `${masterKeyFile}.salt`
+  try {
+    const existing = await readFile(saltFile)
+    if (existing.length === 16) return existing
+  } catch (e: unknown) {
+    if (!isNodeError(e) || e.code !== "ENOENT") throw e
+  }
+  const salt = randomBytes(16)
+  await writeFile0600(saltFile, salt)
+  return salt
 }
 
 /** Load existing key at masterKeyFile, or auto-generate one. */
@@ -117,7 +148,13 @@ export function resolveMasterKey(
 
       if (envResult !== null) {
         if ("key" in envResult) return ok<Buffer, CredentialError>(envResult.key)
-        const salt = randomBytes(16)
+        // Passphrase → scrypt with a persisted salt so the key is stable across restarts.
+        let salt: Buffer
+        try {
+          salt = await loadOrCreateSalt(paths.masterKeyFile)
+        } catch (cause) {
+          return err<Buffer, CredentialError>({ kind: "key-unavailable", cause })
+        }
         return deriveKeyFromPassphrase(envResult.passphrase, salt)
       }
 
