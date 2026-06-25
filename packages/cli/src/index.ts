@@ -3,6 +3,7 @@
 import { VERSION } from "@junction/core"
 import { defineCommand, runMain } from "citty"
 import { initCommand } from "./commands/init.js"
+import { profileCommand } from "./commands/profile.js"
 import { statusCommand } from "./commands/status.js"
 
 const main = defineCommand({
@@ -13,6 +14,7 @@ const main = defineCommand({
   },
   subCommands: {
     init: initCommand,
+    profile: profileCommand,
     status: statusCommand,
   },
 })
