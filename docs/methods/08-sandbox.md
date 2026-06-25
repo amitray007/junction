@@ -12,6 +12,17 @@
 
 Give junction a `Sandbox` that runs untrusted code/commands under real OS-enforced restriction, and **refuses** when it can't. Realizes design spec §6/§6b + `docs/rules/security.md`. Proof (runnable on THIS macOS machine, no Deno): a scoped command **runs and returns output**, AND a **forbidden operation is actually denied** (the same op succeeding *outside* the sandbox proves it's real isolation, not the command failing for unrelated reasons).
 
+### Two co-equal backends — different jobs, both first-class
+
+junction's sandbox has **two equally-prioritized execution paths behind one `Sandbox` interface** — they are NOT a primary/secondary pair; they sandbox fundamentally different things and **both must be stable**:
+
+- **Deno** (`runScript`) — sandboxes **agent-authored JS/TS** running inside the Deno runtime (capability model). Cross-platform, not deprecated. The right tool for JS/TS + `fetch`/API-shaped sources. It **cannot** confine a native binary (a spawned subprocess escapes Deno's permissions — hence `--deny-run`).
+- **Seatbelt (macOS) / bubblewrap (Linux)** (`runCommand`) — sandboxes **arbitrary native CLIs** (`git`, `gh`, a platform CLI) at the OS syscall/FS/net layer. This is the only way to confine a real binary; Deno can't do it.
+
+Neither is a fallback for the other — a JS source goes through Deno, a native-CLI source goes through the OS sandbox. Both paths get equal engineering care, equal test rigor, and the same `refuse-if-unavailable` posture.
+
+> **Forward path (the Seatbelt deprecation, handled honestly):** Apple deprecated the `sandbox-exec` *CLI* (not the kernel sandbox), and offers no supported replacement for confining arbitrary child processes — so the reference implementations (Claude Code, Codex, Chromium) all still use it, and so do we. The post-deprecation direction is **microVMs**: Apple's **Containerization framework** (`Virtualization.framework`, per-workload micro-kernel) on macOS and **libkrun/microsandbox** (`Hypervisor.framework` on Apple Silicon; KVM on Linux) cross-platform. junction's `Sandbox` interface is designed so a **microVM backend drops in behind the same `runCommand`/`runScript`** as the escalation tier (design spec §6b) and as the eventual replacement if Apple removes `sandbox-exec`. Document the deprecation as a known dependency; don't hide it.
+
 ### The honest platform matrix (load-bearing)
 
 | Backend | This dev machine? | Protects against | Honest gap |
@@ -88,11 +99,20 @@ Probe once at `createSandbox()`, cache (like inc-6's keyring probe). Windows / u
 
 ### Visible surface (so the increment is visually testable)
 
-`junction status` shows sandbox capabilities — e.g. `sandbox: seatbelt (commands) · deno not installed (script sandbox disabled)`. Exposes no secret; lets the user *see* what isolation is available. Human + `--json`. (Reuse the inc-6 backend-display pattern.)
+`junction status` shows both sandbox backends — e.g. `sandbox: commands=seatbelt · scripts=deno` (or `commands=none`/`scripts=none` where unavailable, so the user sees the honest state). Exposes no secret. Human + `--json`. (Reuse the inc-6 backend-display pattern.)
+
+### Both backends must be STABLE and TESTED (not one tested, one skipped)
+
+Equal rigor for both paths. Because no single machine can exercise all three, coverage is split across platforms — but **every backend runs for real somewhere**, never all-skipped:
+- **Install Deno** on the dev machine (`brew install deno`) so the **Deno `runScript` tests RUN for real here** (not skip) — proving the JS/TS capability boundary works. (Verified absent now; install it as part of this increment so the path is genuinely tested.)
+- **Seatbelt** tests run on the **macOS dev machine** (verified working by the orchestrator).
+- **bubblewrap** tests run in **CI on the Linux (ubuntu) runner** — we have no Linux dev box, so CI is where the bwrap path is proven. **Add `deno` + `bubblewrap` install steps to `.github/workflows/ci.yml`** (e.g. `denoland/setup-deno` + `apt-get install -y bubblewrap`) so the **verify job exercises Deno on both runners AND bwrap on Linux**. Tests stay capability-gated (`skipIf(!available)`) so they pass cleanly where a tool/platform is absent, but with the CI installs they actually RUN rather than universally skip.
+
+Net coverage: Seatbelt (mac dev) + Deno (mac dev + CI both runners) + bwrap (CI Linux) = all three backends genuinely exercised. That's "both equally stable", proven.
 
 ### Proof of done
 
-- `pnpm verify` with tests (gated `process.platform !== "win32"`; Seatbelt tests run on macOS, bwrap on Linux, Deno `it.skipIf(!denoAvailable)`):
+- `pnpm verify` with tests (gated `process.platform !== "win32"`; Seatbelt on macOS, bwrap on Linux, Deno gated on `denoAvailable` — which is now TRUE locally after install):
   - **allowed command runs:** `runCommand(["/bin/cat", allowedFile], policy)` → `ok`, `exitCode 0`, stdout has the content.
   - **forbidden read DENIED:** `runCommand(["/bin/cat", deniedFile], policyWithDeniedInDenyList)` → `ok` with `exitCode !== 0`, empty stdout — AND assert the same read **without** the sandbox succeeds (proves real isolation).
   - **write confinement:** writing outside the workspace → `exitCode !== 0`, file not created; inside → `0`.
@@ -147,14 +167,19 @@ bwrap argv per §verified-constructions (userns probe gates availability). Deno 
 
 Add a sandbox capability line (human + `--json`) via a pure `describeSandbox()`-style helper or `createSandbox().capabilities()`. No secrets. Edge stays thin.
 
-### Step 7 — tests (macOS-runnable proofs)
+### Step 7 — tests (both backends genuinely exercised)
 
 Per Proof-of-done. Use a tmp workspace under `os.tmpdir()`; gate `process.platform`. The forbidden-op tests MUST also assert the same op succeeds outside the sandbox (the anti-theater check). Mock/force the probe for the refuse-if-unavailable + policy-invalid tests so they run on any platform.
+- **Seatbelt** tests (`describe.skipIf(process.platform!=="darwin")`): the allowed/denied-read/write/net/env proofs.
+- **Deno** `runScript` tests (`describe.skipIf(!denoAvailable)`): with Deno installed (Step 8), these RUN locally — prove the capability boundary, e.g. `runScript({code:"Deno.readTextFileSync('/etc/passwd')"}, {readPaths:[workspace]})` → child exits nonzero with `PermissionDenied` (read not granted), and an allowed read inside `readPaths` → exit 0. Plus `--deny-run` proven: a script that tries to spawn a subprocess is denied.
+- **bubblewrap** tests (`describe.skipIf(commandBackend!=="bubblewrap")`): the same FS/net/env proofs as Seatbelt — these RUN in CI on the Linux runner (Step 8).
 
-### Step 8 — deps, docs, verify, build, commit
+### Step 8 — install Deno, CI backends, deps, docs, verify, build, commit
 
-- No new npm deps (node:child_process/crypto/fs are built-in; deno/bwrap/sandbox-exec are external binaries, not npm). Update `docs/rules/security.md`: the deprecated-Seatbelt dependency, Deno-optional + install path, **refuse-if-unavailable** posture, the no-secrets-in-sandbox invariant. Update `junction-dev` skill.
-- `pnpm verify`; `pnpm build`; the built `junction status` shows the sandbox line; `pnpm depcruise`. SPDX. Commit; push; PR (base main): "feat: sandbox core — Seatbelt/bubblewrap + Deno behind a Sandbox interface (increment 8)".
+- **Install Deno locally** so the Deno path is tested for real: `brew install deno` (macOS). Confirm `deno --version`; the `denoAvailable` probe is now true and the Deno tests RUN.
+- **CI: add Deno + bubblewrap to `.github/workflows/ci.yml`** in the `verify` job, BEFORE `pnpm verify`: a `denoland/setup-deno@v2` (or curl install) step (both Node-matrix runners → Deno tests run in CI on every PR) and, on the Linux runners, `sudo apt-get update && sudo apt-get install -y bubblewrap` (→ the bwrap tests run in CI). Keep the steps minimal; the tests self-skip if a tool is somehow missing, so CI never goes red from absence. Pin `setup-deno` to a SHA (per our SHA-pin policy for security-sensitive/third-party actions). Verify the matrix-job still passes on both Node 20/22.
+- No new **npm** deps (node:child_process/crypto/fs are built-in; deno/bwrap/sandbox-exec are external binaries, not npm). Update `docs/rules/security.md`: the deprecated-Seatbelt dependency + the microVM forward path, Deno as a co-equal runtime + install path, **refuse-if-unavailable** posture, the no-secrets-in-sandbox invariant. Update `junction-dev` skill (the sandbox + the Deno requirement).
+- `pnpm verify` (Seatbelt + Deno tests now RUN locally); `pnpm build`; the built `junction status` shows the sandbox line; `pnpm depcruise`. SPDX. Commit; push; PR (base main): "feat: sandbox core — Seatbelt/bubblewrap + Deno behind a Sandbox interface (increment 8)". Confirm CI is green AND that the Deno/bwrap tests actually ran (not skipped) in the CI logs.
 
 ---
 
@@ -171,4 +196,4 @@ Per Proof-of-done. Use a tmp workspace under `os.tmpdir()`; gate `process.platfo
 
 ## User test gate
 
-`pnpm build`, then `JUNCTION_HOME=/tmp/jt8 node packages/cli/dist/index.js status` — see the `sandbox:` line (Seatbelt on your Mac; "deno not installed" for the script sandbox). The deeper proof (a forbidden op denied) is in `pnpm verify`. Approve before increment 9 (OpenTUI dashboard — the final foundation increment, after which the foundation is "ready").
+`pnpm build`, then `JUNCTION_HOME=/tmp/jt8 node packages/cli/dist/index.js status` — see the `sandbox:` line showing **both** backends (`commands=seatbelt · scripts=deno` on your Mac, with Deno now installed). The deeper proof (a forbidden op actually denied, for *both* the Seatbelt CLI path and the Deno script path) is in `pnpm verify`. Approve before increment 9 (OpenTUI dashboard — the final foundation increment, after which the foundation is "ready").
