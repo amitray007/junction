@@ -19,10 +19,17 @@ Otherwise: it's a module in `core`. Default = core module.
 
 Name by concern: `core/src/result/`, `core/src/errors/`, `core/src/paths/`, `core/src/schema/`, `core/src/ids/`, `core/src/logging/`. A reader should predict a module's contents from its name.
 
-## 3. One-way dependency graph, no cycles
+## 3. One-way dependency graph, no cycles — app-vs-lib model (inc 7)
 
-- `core` depends on nothing in the repo. `cli`/`web`/`mcp/server`/`mcp/client` may depend on `core`, never the reverse, never each other (unless a real, declared edge appears).
-- **No circular dependencies** — at the package level *and* the module level inside `core`. A cycle means a missing layer or a misplaced responsibility. (`dependency-cruiser` enforces this, inc 1.5.)
+The monorepo uses an **app-vs-lib** topology, enforced by `dependency-cruiser`:
+
+- **Apps (composition roots): `cli`, `web`.** Apps may import any lib (`core`, `mcp/server`, `mcp/client`). They are **leaves** — nothing may import an app. Apps must not import each other.
+- **Libs: `core`, `mcp/server`, `mcp/client`.** `core` imports nothing in-repo. `mcp/server` and `mcp/client` import **only `core`** — never each other, never an app (`cli`/`web`).
+
+Allowed edges: `cli → core`, `cli → mcp/server`, `cli → mcp/client`, `web → core`, `web → mcp/server`, `web → mcp/client`.  
+Blocked: any lib → app (e.g. `mcp/server → cli`), lib → peer lib (`mcp/server ↔ mcp/client`), app → app (`cli ↔ web`), `core → anything-in-repo`.
+
+**No circular dependencies** — at the package level *and* the module level inside `core`. A cycle means a missing layer or a misplaced responsibility. (`dependency-cruiser` enforces this, inc 1.5; app-vs-lib model introduced in inc 7.)
 
 ## 4. Layer placement
 

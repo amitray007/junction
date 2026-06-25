@@ -25,24 +25,64 @@ module.exports = {
       },
     },
     {
-      // Fix #2: the original rule used ^packages/(cli|web|mcp)/ which captured
-      // only "mcp" for both packages/mcp/server/ and packages/mcp/client/, so
-      // pathNot "^packages/$1/" (= "^packages/mcp/") matched both sub-packages
-      // and let server<->client cross-imports slip through.
-      // Now each nested package is a distinct arm in the alternation so $1
-      // resolves to "mcp/server" or "mcp/client" and pathNot correctly excludes
-      // only intra-package edges.
-      name: "no-cross-edge-imports",
+      // Increment 7: app-vs-lib boundary model.
+      //
+      // APPS (composition roots): cli, web.
+      //   Apps may import any lib (core, mcp/server, mcp/client).
+      //   Apps are leaves — nothing may import an app.
+      //   Apps must NOT import each other.
+      //
+      // LIBS: core, mcp/server, mcp/client.
+      //   core: imports nothing in-repo (no-core-importing-edges above).
+      //   mcp/server, mcp/client: import ONLY core — never each other, never an app.
+      //
+      // This rule (no-lib-importing-non-core):
+      //   Forbids mcp/server and mcp/client from importing any in-repo package
+      //   except core. Blocks: mcp-server→cli, mcp-server→web, mcp-server→mcp-client,
+      //   mcp-client→cli, mcp-client→web, mcp-client→mcp-server.
+      //   The no-core-importing-edges rule already handles core→anything.
+      name: "no-lib-importing-non-core",
       comment:
-        "cli, web, mcp/server, and mcp/client are peer edges — they must not import each other. " +
-        "Each is matched as a full path segment so mcp/server and mcp/client are distinct peers.",
+        "Lib packages (mcp/server, mcp/client) may only import core within the repo — " +
+        "never an app (cli/web) and never a peer lib (mcp/client↔mcp/server). " +
+        "Intra-package imports (within the same mcp/server or mcp/client) are always allowed.",
       severity: "error",
       from: {
-        path: "^packages/(cli|web|mcp/server|mcp/client)/",
+        path: "^packages/(mcp/server|mcp/client)/",
       },
       to: {
-        path: "^packages/(cli|web|mcp/server|mcp/client)/",
-        pathNot: "^packages/$1/",
+        // Target: any in-repo package except core AND except the same lib package itself.
+        // pathNot excludes:
+        //   - ^packages/core/             : core imports are always OK for libs
+        //   - ^packages/$1/               : intra-package (mcp/server→mcp/server, etc.)
+        path: "^packages/",
+        pathNot: "^packages/core/|^packages/$1/",
+      },
+    },
+    {
+      // Forbids apps from importing each other (cli→web, web→cli).
+      // cli and web may both import any lib (core, mcp/server, mcp/client).
+      name: "no-app-cross-imports",
+      comment:
+        "Apps (cli, web) are composition roots — they must not import each other. " +
+        "Each app may import any lib (core, mcp/server, mcp/client).",
+      severity: "error",
+      from: {
+        path: "^packages/cli/",
+      },
+      to: {
+        path: "^packages/web/",
+      },
+    },
+    {
+      name: "no-app-cross-imports-web-to-cli",
+      comment: "Apps (cli, web) are composition roots — they must not import each other.",
+      severity: "error",
+      from: {
+        path: "^packages/web/",
+      },
+      to: {
+        path: "^packages/cli/",
       },
     },
     {
@@ -57,7 +97,7 @@ module.exports = {
       //   - ^packages/$1/src/ : intra-package imports (same package, always OK)
       //   - /src/index\\.ts$  : imports to another package's top-level entry point
       //     (e.g. packages/core/src/index.ts reached via "@junction/core" tsconfig paths)
-      //     These are legitimate; no-cross-edge-imports handles direction enforcement.
+      //     These are legitimate; direction enforcement is handled by the boundary rules above.
       //   - /src/testing/index\\.ts$ : the ONE sanctioned subpath export convention
       //     (e.g. packages/core/src/testing/index.ts via "@junction/core/testing";
       //     docs/principles/modularity.md §5 — test helpers ship on a ./testing subpath).
