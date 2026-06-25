@@ -4,9 +4,9 @@
 // --clearenv + per-key --setenv for explicit env allowlist.
 // Probe userns at runtime; if it fails → "none" (refuse, not raw exec).
 
-import { err, ok, ResultAsync } from "neverthrow"
+import type { ResultAsync } from "neverthrow"
 import type { SandboxError } from "../errors/index.js"
-import { isSpawnErr, spawnSandboxed } from "./exec.js"
+import { isSpawnErr, runSandboxed, spawnSandboxed } from "./exec.js"
 import type { SandboxPolicy, SandboxResult } from "./sandbox.js"
 
 const BWRAP = "bwrap"
@@ -87,18 +87,6 @@ export function runWithBubblewrap(
   argv: readonly string[],
   policy: SandboxPolicy,
 ): ResultAsync<SandboxResult, SandboxError> {
-  return new ResultAsync(
-    (async () => {
-      const bwrapArgv = buildBwrapArgv(argv, policy)
-      const result = await spawnSandboxed(bwrapArgv, {
-        env: {},
-        cwd: policy.cwd,
-        timeoutMs: policy.timeoutMs,
-        stdin: policy.stdin,
-      })
-
-      if (isSpawnErr(result)) return err<SandboxResult, SandboxError>(result._err)
-      return ok<SandboxResult, SandboxError>(result)
-    })(),
-  )
+  // env is {} — bwrap re-injects the allowlist via --clearenv + --setenv.
+  return runSandboxed(buildBwrapArgv(argv, policy), policy, {})
 }

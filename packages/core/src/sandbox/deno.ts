@@ -12,9 +12,9 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { promisify } from "node:util"
-import { err, ok, ResultAsync } from "neverthrow"
+import { err, ResultAsync } from "neverthrow"
 import type { SandboxError } from "../errors/index.js"
-import { isSpawnErr, spawnSandboxed } from "./exec.js"
+import { runSandboxed } from "./exec.js"
 import type { SandboxPolicy, SandboxResult } from "./sandbox.js"
 
 const execFileAsync = promisify(execFile)
@@ -111,16 +111,8 @@ export function runWithDeno(
         }
 
         const argv = buildDenoArgv(scriptFile, policy, extraReadPaths)
-        const result = await spawnSandboxed(argv, {
-          // HOME is needed so Deno can locate its cache dir.
-          env: { ...policy.env, HOME: os.homedir() },
-          cwd: policy.cwd,
-          timeoutMs: policy.timeoutMs,
-          stdin: policy.stdin,
-        })
-
-        if (isSpawnErr(result)) return err<SandboxResult, SandboxError>(result._err)
-        return ok<SandboxResult, SandboxError>(result)
+        // HOME is needed so Deno can locate its cache dir.
+        return await runSandboxed(argv, policy, { ...policy.env, HOME: os.homedir() })
       } finally {
         if (tmpDir) {
           await rm(tmpDir, { recursive: true, force: true })

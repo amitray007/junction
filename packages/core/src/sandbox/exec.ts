@@ -2,8 +2,9 @@
 // Shared async spawn helper for sandbox backends. NO fs.*Sync — async only.
 
 import { spawn } from "node:child_process"
+import { err, ok, ResultAsync } from "neverthrow"
 import type { SandboxError } from "../errors/index.js"
-import type { SandboxResult } from "./sandbox.js"
+import type { SandboxPolicy, SandboxResult } from "./sandbox.js"
 
 /** Spawn argv[0] with argv.slice(1), collect stdout/stderr, enforce timeout→SIGKILL. */
 export async function spawnSandboxed(
@@ -68,4 +69,33 @@ export async function spawnSandboxed(
 
 export function isSpawnErr(r: SandboxResult | { _err: SandboxError }): r is { _err: SandboxError } {
   return "_err" in r
+}
+
+/**
+ * Spawn `argv` under the policy's cwd/timeout/stdin with an EXPLICIT env, and
+ * lift the outcome into a `ResultAsync<SandboxResult, SandboxError>`. Every
+ * backend funnels through here so the spawn-and-wrap boilerplate (and the
+ * policy→spawn-opts mapping) lives in exactly one place (DRY primitive).
+ *
+ * `env` is always passed explicitly by the caller (built from policy.env only,
+ * plus any backend-required keys like Deno's HOME) — this helper NEVER reads
+ * process.env, preserving the no-secret-leak invariant.
+ */
+export function runSandboxed(
+  argv: readonly string[],
+  policy: SandboxPolicy,
+  env: Record<string, string>,
+): ResultAsync<SandboxResult, SandboxError> {
+  return new ResultAsync(
+    spawnSandboxed(argv, {
+      env,
+      cwd: policy.cwd,
+      timeoutMs: policy.timeoutMs,
+      stdin: policy.stdin,
+    }).then((result) =>
+      isSpawnErr(result)
+        ? err<SandboxResult, SandboxError>(result._err)
+        : ok<SandboxResult, SandboxError>(result),
+    ),
+  )
 }

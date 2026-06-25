@@ -15,9 +15,9 @@
 import { access, mkdtemp, realpath, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { err, ok, ResultAsync } from "neverthrow"
+import { err, ResultAsync } from "neverthrow"
 import type { SandboxError } from "../errors/index.js"
-import { isSpawnErr, spawnSandboxed } from "./exec.js"
+import { runSandboxed } from "./exec.js"
 import { getAlwaysDeniedPaths } from "./policy.js"
 import type { SandboxPolicy, SandboxResult } from "./sandbox.js"
 
@@ -149,15 +149,7 @@ export function runWithSeatbelt(
         await writeFile(profilePath, profile, { mode: 0o600 })
 
         const sandboxArgv = [SANDBOX_EXEC, "-f", profilePath, "--", ...argv]
-        const result = await spawnSandboxed(sandboxArgv, {
-          env: { ...policy.env },
-          cwd: policy.cwd,
-          timeoutMs: policy.timeoutMs,
-          stdin: policy.stdin,
-        })
-
-        if (isSpawnErr(result)) return err<SandboxResult, SandboxError>(result._err)
-        return ok<SandboxResult, SandboxError>(result)
+        return await runSandboxed(sandboxArgv, policy, { ...policy.env })
       } finally {
         await rm(tmpDir, { recursive: true, force: true })
       }
