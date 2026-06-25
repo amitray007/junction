@@ -22,6 +22,10 @@ export type CredentialId = z.infer<typeof CredentialIdSchema>
 export const ProfileIdSchema = z.string().min(1).brand("ProfileId")
 export type ProfileId = z.infer<typeof ProfileIdSchema>
 
+/** Opaque source-ref identifier. */
+export const SourceRefIdSchema = z.string().min(1).brand("SourceRefId")
+export type SourceRefId = z.infer<typeof SourceRefIdSchema>
+
 // ---------------------------------------------------------------------------
 // Naming-convention schemas
 // ---------------------------------------------------------------------------

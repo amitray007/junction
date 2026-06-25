@@ -5,11 +5,11 @@
 
 import { eq } from "drizzle-orm"
 import { errAsync, okAsync, type ResultAsync } from "neverthrow"
-import { ulid } from "ulid"
 import { mapDbError } from "../db/errors.js"
 import type { Db } from "../db/index.js"
 import { profiles, sourceRefs } from "../db/schema.js"
 import type { DbError } from "../errors/index.js"
+import { newSourceRefId } from "../ids/index.js"
 import type { Profile } from "../schema/profile.js"
 import { ProfileSchema } from "../schema/profile.js"
 
@@ -46,7 +46,7 @@ export function createProfilesRepo(db: Db) {
           for (const sr of validated.sources) {
             tx.insert(sourceRefs)
               .values({
-                id: ulid(),
+                id: newSourceRefId(),
                 profileId: validated.id,
                 platformId: sr.platformId,
                 credentialId: sr.credentialId,
@@ -66,7 +66,12 @@ export function createProfilesRepo(db: Db) {
       try {
         const profileRow = db.select().from(profiles).where(eq(profiles.id, id)).get()
         if (!profileRow) return errAsync({ kind: "not-found" as const, entity: "profile", id })
-        const srRows = db.select().from(sourceRefs).where(eq(sourceRefs.profileId, id)).all()
+        const srRows = db
+          .select()
+          .from(sourceRefs)
+          .where(eq(sourceRefs.profileId, id))
+          .orderBy(sourceRefs.toolNamespace)
+          .all()
         return okAsync(reconstructProfile(profileRow, srRows))
       } catch (cause) {
         return errAsync(mapDbError(cause))
@@ -82,6 +87,7 @@ export function createProfilesRepo(db: Db) {
           .select()
           .from(sourceRefs)
           .where(eq(sourceRefs.profileId, profileRow.id))
+          .orderBy(sourceRefs.toolNamespace)
           .all()
         return okAsync(reconstructProfile(profileRow, srRows))
       } catch (cause) {
@@ -98,6 +104,7 @@ export function createProfilesRepo(db: Db) {
             .select()
             .from(sourceRefs)
             .where(eq(sourceRefs.profileId, profileRow.id))
+            .orderBy(sourceRefs.toolNamespace)
             .all()
           result.push(reconstructProfile(profileRow, srRows))
         }
