@@ -177,6 +177,11 @@ async function resolveCapabilities(): Promise<SandboxCapabilities> {
   return cachedCapabilities
 }
 
+/** A pre-resolved Err result — the sandbox refuses without spawning. */
+function refuse(e: SandboxError): ResultAsync<SandboxResult, SandboxError> {
+  return new ResultAsync(Promise.resolve(err<SandboxResult, SandboxError>(e)))
+}
+
 export function createSandbox(): ResultAsync<Sandbox, SandboxError> {
   return new ResultAsync(
     resolveCapabilities().then(async (caps) => {
@@ -192,18 +197,10 @@ export function createSandbox(): ResultAsync<Sandbox, SandboxError> {
         runCommand(argv, policy) {
           return ResultAsync.fromPromise(validatePolicy(policy), (e) => e as SandboxError).andThen(
             (validErr) => {
-              if (validErr)
-                return new ResultAsync(Promise.resolve(err<SandboxResult, SandboxError>(validErr)))
+              if (validErr) return refuse(validErr)
               if (caps.command === "seatbelt") return seatbeltMod.runWithSeatbelt(argv, policy)
               if (caps.command === "bubblewrap") return bwrapMod.runWithBubblewrap(argv, policy)
-              return new ResultAsync(
-                Promise.resolve(
-                  err<SandboxResult, SandboxError>({
-                    kind: "unsupported-platform",
-                    platform: process.platform,
-                  }),
-                ),
-              )
+              return refuse({ kind: "unsupported-platform", platform: process.platform })
             },
           )
         },
@@ -211,17 +208,9 @@ export function createSandbox(): ResultAsync<Sandbox, SandboxError> {
         runScript(script, policy) {
           return ResultAsync.fromPromise(validatePolicy(policy), (e) => e as SandboxError).andThen(
             (validErr) => {
-              if (validErr)
-                return new ResultAsync(Promise.resolve(err<SandboxResult, SandboxError>(validErr)))
+              if (validErr) return refuse(validErr)
               if (caps.script === "deno") return denoMod.runWithDeno(script, policy)
-              return new ResultAsync(
-                Promise.resolve(
-                  err<SandboxResult, SandboxError>({
-                    kind: "runtime-unavailable",
-                    runtime: "deno",
-                  }),
-                ),
-              )
+              return refuse({ kind: "runtime-unavailable", runtime: "deno" })
             },
           )
         },

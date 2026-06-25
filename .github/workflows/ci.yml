@@ -42,7 +42,7 @@ jobs:
       # bubblewrap tests can never silently go back to skipping. Mirrors
       # probeUserns() in bubblewrap.ts (real /usr/bin/true under a bound path).
       - name: Verify bubblewrap is usable
-        run: bwrap --ro-bind /usr /usr --ro-bind-try /bin /bin -- /usr/bin/true
+        run: bwrap --ro-bind /usr /usr --ro-bind /bin /bin --ro-bind-try /lib /lib --ro-bind-try /lib64 /lib64 -- /usr/bin/true
       - run: pnpm install --frozen-lockfile
       - run: pnpm verify
   quality:

@@ -17,10 +17,29 @@ async function probeUserns(): Promise<boolean> {
   // Probe must exec a binary that exists under a BOUND path. On merged-usr
   // distros (Ubuntu noble) /bin is a symlink to /usr/bin, so binding only /usr
   // and exec'ing "/bin/true" fails with "No such file or directory" even though
-  // the user namespace itself was created fine — a false negative. Use the real
-  // /usr/bin/true and also bind /bin so the merged-usr symlink resolves.
+  // the user namespace itself was created fine — a false negative. Bind the same
+  // minimal system paths the real sandbox does (/usr, /bin, and the /lib + /lib64
+  // loader paths) so the dynamically-linked /usr/bin/true can find its loader —
+  // otherwise exec fails with ENOENT ("No such file or directory") even though
+  // userns works. Must mirror buildBwrapArgv's system bindings.
   const result = await spawnSandboxed(
-    [BWRAP, "--ro-bind", "/usr", "/usr", "--ro-bind-try", "/bin", "/bin", "--", "/usr/bin/true"],
+    [
+      BWRAP,
+      "--ro-bind",
+      "/usr",
+      "/usr",
+      "--ro-bind",
+      "/bin",
+      "/bin",
+      "--ro-bind-try",
+      "/lib",
+      "/lib",
+      "--ro-bind-try",
+      "/lib64",
+      "/lib64",
+      "--",
+      "/usr/bin/true",
+    ],
     { env: {}, cwd: "/", timeoutMs: 5000 },
   )
   return !isSpawnErr(result) && result.exitCode === 0
