@@ -24,6 +24,8 @@ A **method file** holds one increment's **spec + step-by-step implementation tog
 | 7 | mcp/server shell | `07-mcp-server-shell.md` | written |
 | 8 | Sandbox core | `08-sandbox.md` | written |
 | 9 | TUI dashboard (Ink — OpenTUI is Bun-only) | `09-tui-dashboard.md` | written |
+| **— Feature: the work-GitHub wedge (any-source broker; GitHub is just the first test) —** | | | |
+| 10 | Generic MCP-source create/mutate ops + connection descriptor (Wedge A) | `10-source-create-ops.md` | written |
 
 After increment 8 the foundation is "ready"; increment 9 (TUI) completes it. Features come after, each with its own method file.
 
