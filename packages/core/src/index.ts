@@ -35,7 +35,12 @@ export { createSandbox } from "./sandbox/index.js"
 // ---------------------------------------------------------------------------
 // Credential store — encrypted-at-rest secret management
 // ---------------------------------------------------------------------------
-export { type CredentialStore, createCredentialStore } from "./credentials/index.js"
+export {
+  type AddCredentialInput,
+  addCredential,
+  type CredentialStore,
+  createCredentialStore,
+} from "./credentials/index.js"
 // Database + repositories
 export { type Db, getDatabase } from "./db/index.js"
 export type { CredentialError, DbError, SandboxError } from "./errors/index.js"
@@ -45,6 +50,9 @@ export { createRepositories, type Repositories } from "./repositories/index.js"
 export type { Credential, OAuthMeta } from "./schema/credential.js"
 // Credential
 export { CredentialKind, CredentialSchema, OAuthMetaSchema } from "./schema/credential.js"
+export type { McpConnection } from "./schema/mcp-connection.js"
+// McpConnection — generic MCP transport descriptor (http | stdio)
+export { McpConnectionSchema } from "./schema/mcp-connection.js"
 export type { Platform } from "./schema/platform.js"
 // Platform
 export { PlatformKind, PlatformSchema } from "./schema/platform.js"
@@ -63,6 +71,6 @@ export {
 export type { Profile } from "./schema/profile.js"
 // Profile
 export { ProfileSchema } from "./schema/profile.js"
-export type { SourceRef } from "./schema/source-ref.js"
-// SourceRef
-export { SourceRefSchema } from "./schema/source-ref.js"
+export type { SourceRef, ToolFilter } from "./schema/source-ref.js"
+// SourceRef + ToolFilter
+export { SourceRefSchema, ToolFilterSchema } from "./schema/source-ref.js"

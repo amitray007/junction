@@ -1,66 +1,26 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// `junction profile` — profile management commands. Currently: `list`.
+// `junction profile` — profile management commands: `list`, `add-source`.
 // Edge stays thin: calls core, formats output. No business logic here.
 
-import {
-  createRepositories,
-  type DbError,
-  getDatabase,
-  getPaths,
-  type Profile,
-} from "@junction/core"
+import { createCredentialStore, getPaths, type Profile, type SourceRef } from "@junction/core"
 import { defineCommand } from "citty"
 import { consola } from "consola"
-
-function formatDbError(e: DbError): string {
-  switch (e.kind) {
-    case "not-found":
-      return `not found: ${e.entity} ${e.id}`
-    case "migration-failed":
-      return `database migration failed: ${String(e.cause)}`
-    case "constraint-violation":
-      return `constraint violation: ${String(e.cause)}`
-    case "query-failed":
-      return `query failed: ${String(e.cause)}`
-  }
-}
-
-/** Render a DbError to the user (JSON or human), set exit code 1. */
-function reportDbError(e: DbError, json: boolean): void {
-  const msg = formatDbError(e)
-  if (json) {
-    process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
-  } else {
-    consola.error(msg)
-  }
-  process.exitCode = 1
-}
+import { collectRepeatableFlag, JSON_ARG } from "../args.js"
+import { openDb } from "../db.js"
+import { reportCredentialError, reportDbError } from "../format.js"
 
 const listCommand = defineCommand({
   meta: {
     name: "list",
     description: "List all profiles.",
   },
-  args: {
-    json: {
-      type: "boolean",
-      description: "Machine-readable JSON output",
-      default: false,
-    },
-  },
+  args: { json: JSON_ARG },
   async run({ args }) {
     const json = args.json ?? false
-    const paths = getPaths()
+    const repos = await openDb(json)
+    if (!repos) return
 
-    const dbResult = await getDatabase(paths)
-    if (dbResult.isErr()) {
-      reportDbError(dbResult.error, json)
-      return
-    }
-
-    const repos = createRepositories(dbResult.value)
     const result = await repos.profiles.list()
-
     if (result.isErr()) {
       reportDbError(result.error, json)
       return
@@ -93,6 +53,99 @@ const listCommand = defineCommand({
   },
 })
 
+const addSourceCommand = defineCommand({
+  meta: {
+    name: "add-source",
+    description: "Add an MCP source to a profile.",
+  },
+  args: {
+    profile: {
+      type: "string",
+      description: "Profile name",
+      required: true,
+    },
+    platform: {
+      type: "string",
+      description: "Platform ID",
+      required: true,
+    },
+    credential: {
+      type: "string",
+      description: "Credential ID",
+      required: true,
+    },
+    namespace: {
+      type: "string",
+      description: "Tool namespace (e.g. github_work) — must be unique within the profile",
+      required: true,
+    },
+    allow: {
+      type: "string",
+      description: "Allow-list tool name (repeatable: --allow list_issues --allow get_issue)",
+    },
+    deny: {
+      type: "string",
+      description: "Deny-list tool name (repeatable: --deny admin_delete)",
+    },
+    json: JSON_ARG,
+  },
+  async run({ args, rawArgs }) {
+    const json = args.json ?? false
+    const paths = getPaths()
+
+    // Collect repeatable --allow / --deny flags from rawArgs
+    const allowList = collectRepeatableFlag(rawArgs, "--allow")
+    const denyList = collectRepeatableFlag(rawArgs, "--deny")
+
+    const repos = await openDb(json)
+    if (!repos) return
+
+    const storeResult = await createCredentialStore(paths)
+    if (storeResult.isErr()) {
+      reportCredentialError(storeResult.error, json)
+      return
+    }
+
+    // Resolve profile by name
+    const profileResult = await repos.profiles.getByName(args.profile)
+    if (profileResult.isErr()) {
+      reportDbError(profileResult.error, json)
+      return
+    }
+    const profile = profileResult.value
+
+    const sourceRef: SourceRef = {
+      platformId: args.platform as SourceRef["platformId"],
+      credentialId: args.credential as SourceRef["credentialId"],
+      toolNamespace: args.namespace,
+      enabled: true,
+      toolFilter:
+        allowList.length > 0 || denyList.length > 0
+          ? {
+              allow: allowList.length > 0 ? allowList : undefined,
+              deny: denyList.length > 0 ? denyList : undefined,
+            }
+          : undefined,
+    }
+
+    const result = await repos.profiles.addSource(profile.id, sourceRef)
+    if (result.isErr()) {
+      reportDbError(result.error, json)
+      return
+    }
+
+    if (json) {
+      process.stdout.write(
+        `${JSON.stringify({ ok: true, profileName: args.profile, namespace: args.namespace })}\n`,
+      )
+    } else {
+      consola.success(
+        `Source "${args.namespace}" added to profile "${args.profile}" (platform: ${args.platform})`,
+      )
+    }
+  },
+})
+
 export const profileCommand = defineCommand({
   meta: {
     name: "profile",
@@ -100,5 +153,6 @@ export const profileCommand = defineCommand({
   },
   subCommands: {
     list: listCommand,
+    "add-source": addSourceCommand,
   },
 })

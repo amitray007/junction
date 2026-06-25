@@ -9,6 +9,7 @@
     "**/*.test.ts",
     "**/*.test.tsx",
     "**/drizzle/**",
-    "**/*.d.ts"
+    "**/*.d.ts",
+    "**/migrations/meta/**"
   ]
 }

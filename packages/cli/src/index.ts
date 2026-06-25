@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { VERSION } from "@junction/core"
 import { defineCommand, runMain } from "citty"
+import { credentialCommand } from "./commands/credential.js"
 import { initCommand } from "./commands/init.js"
 import { mcpCommand } from "./commands/mcp.js"
+import { platformCommand } from "./commands/platform.js"
 import { profileCommand } from "./commands/profile.js"
 import { runStatus, statusCommand } from "./commands/status.js"
 
@@ -16,6 +18,8 @@ const main = defineCommand({
   subCommands: {
     init: initCommand,
     mcp: mcpCommand,
+    platform: platformCommand,
+    credential: credentialCommand,
     profile: profileCommand,
     status: statusCommand,
   },

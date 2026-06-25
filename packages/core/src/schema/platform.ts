@@ -4,6 +4,7 @@
 
 import { z } from "zod"
 
+import { McpConnectionSchema } from "./mcp-connection.js"
 import { PlatformIdSchema } from "./primitives.js"
 
 // ---------------------------------------------------------------------------
@@ -28,6 +29,12 @@ export const PlatformSchema = z.object({
   specUrl: z.string().url().optional(),
   /** Self-hosted instance base URL override (optional) */
   baseUrl: z.string().url().optional(),
+  /**
+   * Generic MCP connection descriptor — transport (http or stdio) + params.
+   * Meaningful when kind === "mcp". No vendor-specific fields:
+   * connection details are DATA in this row, not code.
+   */
+  connection: McpConnectionSchema.optional(),
 })
 
 export type Platform = z.infer<typeof PlatformSchema>

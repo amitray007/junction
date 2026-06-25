@@ -59,6 +59,56 @@ junction profile list --json         # machine-readable JSON array
 - Persistence (Drizzle schema, migrations, repository layer) lives in `@junction/core` only; the CLI edge is thin.
 - Migrations are committed + forward-only under `packages/core/src/db/migrations/` and copied into `dist/` at build so the built CLI can migrate a fresh DB.
 
+## Platforms, credentials, and profile sources (increment 10)
+
+Define a generic MCP source platform, add a bearer credential, and wire a profile source:
+
+```bash
+# Define a remote (http) MCP source:
+JUNCTION_HOME=/tmp/jt10 junction platform add \
+  --id my-server --display-name "My Server" \
+  --transport http --url https://api.example.com/mcp/ \
+  --auth-header Authorization --json
+
+# Define a local (stdio) MCP source:
+JUNCTION_HOME=/tmp/jt10 junction platform add \
+  --id local-mcp --display-name "Local MCP" \
+  --transport stdio --command npx \
+  --arg "-y" --arg "some-mcp-package" \
+  --token-env MY_TOKEN --json
+
+# List all platforms:
+junction platform list --json
+
+# Add a bearer credential (reads token from stdin — never echoed):
+echo "<token>" | junction credential add \
+  --platform my-server --account work --kind bearer --token-stdin --json
+
+# List credentials for a platform (metadata only — never secretRef or secret):
+junction credential list --platform my-server --json
+
+# Add an MCP source to a profile (profile must already exist):
+junction profile add-source \
+  --profile default --platform my-server \
+  --credential <credential-id> --namespace mcp_work \
+  --allow list_tools --allow get_info \   # optional tool filter (repeatable)
+  --json
+```
+
+**Token security invariants (enforced by tests):**
+- The token NEVER appears in any command stdout or stderr.
+- A whole-DB scan (`readFile(dbPath).toString("utf8")`) finds NO trace of the token.
+- `credential list` emits metadata only: `id`, `platformId`, `account`, `kind` — never `secretRef`.
+
+**Source-agnostic:** platforms are generic data rows. No `if (platform === "github")` logic
+anywhere in `core`/`cli`/`mcp`. `grep -ri github packages/core/src packages/cli/src packages/mcp`
+must hit only comments and example strings.
+
+**Override credential store backend** (useful in tests/CI — avoids keyring access):
+```bash
+JUNCTION_STORE=file junction credential add ...   # use AES-256-GCM encrypted file store
+```
+
 ## MCP server (increment 7)
 
 `junction mcp serve` speaks MCP over stdio — point any MCP client at it.

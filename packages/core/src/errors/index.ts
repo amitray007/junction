@@ -13,6 +13,7 @@ export type DbError =
   | { kind: "migration-failed"; cause: unknown }
   | { kind: "constraint-violation"; cause: unknown }
   | { kind: "not-found"; entity: string; id: string }
+  | { kind: "duplicate-namespace"; namespace: string }
   | { kind: "query-failed"; cause: unknown }
 
 export type CredentialError =
@@ -20,6 +21,7 @@ export type CredentialError =
   | { kind: "decrypt-failed"; cause: unknown }
   | { kind: "key-unavailable"; cause: unknown }
   | { kind: "io-failed"; cause: unknown }
+  | { kind: "invalid-input"; reason: string }
 
 export type SandboxError =
   | { kind: "runtime-unavailable"; runtime: "deno"; cause?: unknown }
