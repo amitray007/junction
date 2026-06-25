@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `source_refs_profile_ns_unique` ON `source_refs` (`profile_id`,`tool_namespace`);

@@ -3,7 +3,7 @@
 // Row types are derived via $inferSelect/$inferInsert — do NOT redeclare.
 // Zod schemas (schema/*.ts) remain the boundary/validation shapes.
 
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core"
+import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core"
 
 export const platforms = sqliteTable("platforms", {
   id: text("id").primaryKey(),
@@ -34,22 +34,28 @@ export const profiles = sqliteTable("profiles", {
   mcpEndpointPath: text("mcp_endpoint_path").notNull(),
 })
 
-export const sourceRefs = sqliteTable("source_refs", {
-  id: text("id").primaryKey(),
-  profileId: text("profile_id")
-    .notNull()
-    .references(() => profiles.id, { onDelete: "cascade" }),
-  platformId: text("platform_id")
-    .notNull()
-    .references(() => platforms.id, { onDelete: "restrict" }),
-  credentialId: text("credential_id")
-    .notNull()
-    .references(() => credentials.id, { onDelete: "restrict" }),
-  toolNamespace: text("tool_namespace").notNull(),
-  enabled: integer("enabled", { mode: "boolean" }).notNull(),
-  /** JSON-serialized ToolFilter — optional; absent means expose all upstream tools */
-  toolFilter: text("tool_filter"),
-})
+export const sourceRefs = sqliteTable(
+  "source_refs",
+  {
+    id: text("id").primaryKey(),
+    profileId: text("profile_id")
+      .notNull()
+      .references(() => profiles.id, { onDelete: "cascade" }),
+    platformId: text("platform_id")
+      .notNull()
+      .references(() => platforms.id, { onDelete: "restrict" }),
+    credentialId: text("credential_id")
+      .notNull()
+      .references(() => credentials.id, { onDelete: "restrict" }),
+    toolNamespace: text("tool_namespace").notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull(),
+    /** JSON-serialized ToolFilter — optional; absent means expose all upstream tools */
+    toolFilter: text("tool_filter"),
+  },
+  (table) => [
+    uniqueIndex("source_refs_profile_ns_unique").on(table.profileId, table.toolNamespace),
+  ],
+)
 
 export type PlatformRow = typeof platforms.$inferSelect
 export type NewPlatformRow = typeof platforms.$inferInsert

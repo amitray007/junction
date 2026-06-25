@@ -1,13 +1,78 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// `junction profile` — profile management commands: `list`, `add-source`.
+// `junction profile` — profile management commands: `create`, `list`, `add-source`.
 // Edge stays thin: calls core, formats output. No business logic here.
 
-import { createCredentialStore, getPaths, type Profile, type SourceRef } from "@junction/core"
+import {
+  createCredentialStore,
+  deriveMcpEndpointPath,
+  getPaths,
+  newProfileId,
+  type Profile,
+  ProfileNameSchema,
+  type SourceRef,
+} from "@junction/core"
 import { defineCommand } from "citty"
 import { consola } from "consola"
 import { collectRepeatableFlag, JSON_ARG } from "../args.js"
 import { openDb } from "../db.js"
 import { reportCredentialError, reportDbError } from "../format.js"
+
+const createCommand = defineCommand({
+  meta: {
+    name: "create",
+    description: "Create a new empty profile.",
+  },
+  args: {
+    name: {
+      type: "string",
+      description: "Profile name (e.g. work, personal, client-acme)",
+      required: true,
+    },
+    json: JSON_ARG,
+  },
+  async run({ args }) {
+    const json = args.json ?? false
+    const nameRaw = args.name
+
+    // Validate name early — gives a clear error before touching the DB.
+    const nameResult = ProfileNameSchema.safeParse(nameRaw)
+    if (!nameResult.success) {
+      const msg = `invalid profile name "${nameRaw}": ${nameResult.error.issues.map((i) => i.message).join(", ")}`
+      if (json) {
+        process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
+      } else {
+        consola.error(msg)
+      }
+      process.exitCode = 1
+      return
+    }
+
+    const name = nameResult.data
+    const repos = await openDb(json)
+    if (!repos) return
+
+    const profile: Profile = {
+      id: newProfileId(),
+      name,
+      sources: [],
+      mcpEndpointPath: deriveMcpEndpointPath(name),
+    }
+
+    const result = await repos.profiles.create(profile)
+    if (result.isErr()) {
+      reportDbError(result.error, json)
+      return
+    }
+
+    if (json) {
+      process.stdout.write(
+        `${JSON.stringify({ ok: true, id: result.value.id, name: result.value.name, mcpEndpointPath: result.value.mcpEndpointPath })}\n`,
+      )
+    } else {
+      consola.success(`Profile "${name}" created (endpoint: ${profile.mcpEndpointPath})`)
+    }
+  },
+})
 
 const listCommand = defineCommand({
   meta: {
@@ -152,6 +217,7 @@ export const profileCommand = defineCommand({
     description: "Manage profiles.",
   },
   subCommands: {
+    create: createCommand,
     list: listCommand,
     "add-source": addSourceCommand,
   },

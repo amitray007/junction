@@ -15,7 +15,8 @@ import { CredentialIdSchema, PlatformIdSchema, ToolNamespaceSchema } from "./pri
  * Absent means expose all upstream tools (full by default).
  * Applied uniformly in increment C (proxy). No vendor-specific logic.
  *
- * allow: if set, ONLY these upstream tool names are exposed.
+ * allow: if present, ONLY listed upstream tool names are exposed.
+ *   allow present ⇒ only listed tools; allow: [] ⇒ none exposed.
  * deny: these upstream tool names are hidden (applied after allow).
  */
 export const ToolFilterSchema = z.object({
