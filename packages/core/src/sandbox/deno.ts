@@ -46,12 +46,20 @@ export async function probeScriptBackend(): Promise<"deno" | "none"> {
   return scriptBackendCache
 }
 
-function buildDenoArgv(scriptFile: string, policy: SandboxPolicy): string[] {
+function buildDenoArgv(
+  scriptFile: string,
+  policy: SandboxPolicy,
+  extraReadPaths: readonly string[] = [],
+): string[] {
   const deno = denoBinPath ?? "deno"
   const args = [deno, "run", "--no-prompt"]
 
-  if (policy.readPaths.length > 0) {
-    args.push(`--allow-read=${policy.readPaths.join(",")}`)
+  // Deno needs read access to its own entry module. When {code} is written to a
+  // temp dir, that dir is granted read here (not exposed to the script's own logic
+  // beyond loading the module — it is a junction-controlled dir, not caller data).
+  const readPaths = [...policy.readPaths, ...extraReadPaths]
+  if (readPaths.length > 0) {
+    args.push(`--allow-read=${readPaths.join(",")}`)
   }
   if (policy.writePaths.length > 0) {
     args.push(`--allow-write=${policy.writePaths.join(",")}`)
@@ -80,19 +88,29 @@ export function runWithDeno(
     (async () => {
       let tmpDir: string | undefined
       let scriptFile: string
+      const extraReadPaths: string[] = []
 
       try {
         if ("code" in script) {
-          // Write code to a temp file in a writePath so Deno can read it.
-          const baseDir = policy.writePaths[0] ?? os.tmpdir()
+          // {code} must land inside a granted writePath so the script file is
+          // covered by the policy (never a shared world dir like os.tmpdir()).
+          const baseDir = policy.writePaths[0]
+          if (baseDir === undefined) {
+            return err<SandboxResult, SandboxError>({
+              kind: "policy-invalid",
+              reason: "runScript({code}) requires at least one writePath for the script file",
+            })
+          }
           tmpDir = await mkdtemp(path.join(baseDir, "jx-deno-"))
           scriptFile = path.join(tmpDir, "script.ts")
           await writeFile(scriptFile, script.code, { mode: 0o600 })
+          // Grant read of the temp dir so Deno can load its own entry module.
+          extraReadPaths.push(tmpDir)
         } else {
           scriptFile = script.file
         }
 
-        const argv = buildDenoArgv(scriptFile, policy)
+        const argv = buildDenoArgv(scriptFile, policy, extraReadPaths)
         const result = await spawnSandboxed(argv, {
           // HOME is needed so Deno can locate its cache dir.
           env: { ...policy.env, HOME: os.homedir() },

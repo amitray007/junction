@@ -3,7 +3,7 @@
 // ANTI-THEATER: every forbidden-op test also asserts the same op succeeds OUTSIDE the sandbox.
 
 import { execFile as execFileCb } from "node:child_process"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { promisify } from "node:util"
@@ -104,6 +104,38 @@ describe.skipIf(process.platform !== "darwin")("Seatbelt", () => {
     const outsideResult = await execFileAsync("cat", [allowedFile]).catch(() => null)
     expect(outsideResult).not.toBeNull()
     expect(outsideResult?.stdout).toContain("hello-allowed")
+  })
+
+  it("denied credential path is blocked via BOTH its logical and realpath (symlink bypass)", async () => {
+    // Regression: if a denied path is under a symlinked prefix (e.g. /tmp → /private/tmp
+    // on macOS), the kernel matches the deny-subpath on the REAL path. A logical-only deny
+    // line is silently bypassed by reading the file via its real path. The profile must emit
+    // both. We exercise ~/.junction (always-denied) reached via realpath.
+    const sb = await createSandbox()
+    expect(sb.isOk()).toBe(true)
+    if (!sb.isOk()) return
+
+    const dotJunction = path.join(os.homedir(), ".junction")
+    await rm(path.join(dotJunction, "symlink-probe.txt"), { force: true }).catch(() => {})
+    await writeFile(path.join(dotJunction, "symlink-probe.txt"), "CRED-SECRET").catch(() => {})
+    const realDenied = await realpath(path.join(dotJunction, "symlink-probe.txt")).catch(() =>
+      path.join(dotJunction, "symlink-probe.txt"),
+    )
+
+    try {
+      const policy = basePolicy(ws)
+      const r = await sb.value.runCommand(
+        ["/bin/bash", "-c", `cat "${realDenied}" 2>&1; echo "exit:$?"`],
+        policy,
+      )
+      expect(r.isOk()).toBe(true)
+      if (!r.isOk()) return
+      // Must NOT leak the secret and must NOT exit 0 (the read was denied).
+      expect(r.value.stdout).not.toContain("CRED-SECRET")
+      expect(r.value.stdout).not.toContain("exit:0")
+    } finally {
+      await rm(path.join(dotJunction, "symlink-probe.txt"), { force: true }).catch(() => {})
+    }
   })
 
   it("write confinement: write inside workspace succeeds, outside fails", async () => {
@@ -386,6 +418,11 @@ describe("refuse-if-unavailable", () => {
   it("returns Err{unsupported-platform} and does NOT spawn when command backend is none", async () => {
     vi.spyOn(await import("./seatbelt.js"), "probeCommandBackend").mockResolvedValue("none")
     vi.spyOn(await import("./bubblewrap.js"), "probeCommandBackend").mockResolvedValue("none")
+    // Tripwire: if any code path tried to spawn, this throws — proving the refuse
+    // posture never falls through to raw exec when no backend is enforceable.
+    const spawnSpy = vi
+      .spyOn(await import("./exec.js"), "spawnSandboxed")
+      .mockRejectedValue(new Error("spawnSandboxed must NOT be called when backend is none"))
 
     _resetCapabilitiesCache()
 
@@ -394,16 +431,16 @@ describe("refuse-if-unavailable", () => {
     if (!sb.isOk()) return
 
     const caps = sb.value.capabilities()
-    if (caps.command !== "none") {
-      // Mock may not pierce dynamic import cache on some Node versions — skip asserting.
-      return
-    }
+    // The mock pierces createSandbox's dynamic import — assert it (no silent skip).
+    expect(caps.command).toBe("none")
 
     const policy = basePolicy(os.tmpdir())
     const result = await sb.value.runCommand(["/bin/echo", "hi"], policy)
     expect(result.isErr()).toBe(true)
     if (!result.isErr()) return
     expect(result.error.kind).toBe("unsupported-platform")
+    // CARDINAL RULE proof: no spawn happened.
+    expect(spawnSpy).not.toHaveBeenCalled()
   })
 })
 
@@ -472,6 +509,136 @@ describe("policy-invalid", () => {
         timeoutMs: 5_000,
       }
       const result = await sb.value.runCommand(["/bin/echo", "hi"], policy)
+      expect(result.isErr()).toBe(true)
+      if (!result.isErr()) return
+      expect(result.error.kind).toBe("policy-invalid")
+    } finally {
+      await cleanup(ws)
+    }
+  })
+
+  it("rejects a granted path that is an ancestor of the credential dir", async () => {
+    const sb = await createSandbox()
+    expect(sb.isOk()).toBe(true)
+    if (!sb.isOk()) return
+
+    const ws = await makeWorkspace()
+    try {
+      // $HOME is an ancestor of ~/.junction (always-denied) → must be refused.
+      const policy: SandboxPolicy = {
+        readPaths: [os.homedir()],
+        writePaths: [ws],
+        allowNet: [],
+        env: {},
+        cwd: ws,
+        timeoutMs: 5_000,
+      }
+      const result = await sb.value.runCommand(["/bin/echo", "hi"], policy)
+      expect(result.isErr()).toBe(true)
+      if (!result.isErr()) return
+      expect(result.error.kind).toBe("policy-invalid")
+    } finally {
+      await cleanup(ws)
+    }
+  })
+
+  it("rejects cwd outside all read/write paths", async () => {
+    const sb = await createSandbox()
+    expect(sb.isOk()).toBe(true)
+    if (!sb.isOk()) return
+
+    const ws = await makeWorkspace()
+    try {
+      const policy: SandboxPolicy = {
+        readPaths: [ws],
+        writePaths: [ws],
+        allowNet: [],
+        env: {},
+        cwd: "/usr", // not within ws
+        timeoutMs: 5_000,
+      }
+      const result = await sb.value.runCommand(["/bin/echo", "hi"], policy)
+      expect(result.isErr()).toBe(true)
+      if (!result.isErr()) return
+      expect(result.error.kind).toBe("policy-invalid")
+    } finally {
+      await cleanup(ws)
+    }
+  })
+})
+
+// Seatbelt cannot scope egress per-host; host-scoped allowNet must be refused
+// (NOT silently produce a non-compiling profile). Port-only allowNet compiles.
+describe.skipIf(process.platform !== "darwin")("Seatbelt allowNet", () => {
+  it("rejects host-scoped allowNet as policy-invalid", async () => {
+    const sb = await createSandbox()
+    expect(sb.isOk()).toBe(true)
+    if (!sb.isOk()) return
+
+    const ws = await makeWorkspace()
+    try {
+      const policy: SandboxPolicy = {
+        readPaths: [ws],
+        writePaths: [ws],
+        allowNet: ["api.github.com:443"],
+        env: {},
+        cwd: ws,
+        timeoutMs: 5_000,
+      }
+      const result = await sb.value.runCommand(["/bin/echo", "hi"], policy)
+      expect(result.isErr()).toBe(true)
+      if (!result.isErr()) return
+      expect(result.error.kind).toBe("policy-invalid")
+    } finally {
+      await cleanup(ws)
+    }
+  })
+
+  it("accepts port-only allowNet (profile compiles, command runs)", async () => {
+    const sb = await createSandbox()
+    expect(sb.isOk()).toBe(true)
+    if (!sb.isOk()) return
+
+    const ws = await makeWorkspace()
+    try {
+      const policy: SandboxPolicy = {
+        readPaths: [ws],
+        writePaths: [ws],
+        allowNet: ["443"],
+        env: {},
+        cwd: ws,
+        timeoutMs: 5_000,
+      }
+      const result = await sb.value.runCommand(["/bin/echo", "ok"], policy)
+      // Must be ok (profile compiled) with exit 0 — NOT a spawn/compile failure.
+      expect(result.isOk()).toBe(true)
+      if (!result.isOk()) return
+      expect(result.value.exitCode).toBe(0)
+    } finally {
+      await cleanup(ws)
+    }
+  })
+})
+
+// runScript({code}) requires a writePath so the script file is policy-covered.
+describe.skipIf(process.platform === "win32")("Deno runScript code requires writePath", () => {
+  it("rejects {code} when writePaths is empty", async () => {
+    const sb = await createSandbox()
+    expect(sb.isOk()).toBe(true)
+    if (!sb.isOk()) return
+    if (sb.value.capabilities().script !== "deno") return // gated: deno absent
+
+    const ws = await makeWorkspace()
+    try {
+      const policy: SandboxPolicy = {
+        readPaths: [ws],
+        writePaths: [], // no writePath → {code} must be refused
+        allowNet: [],
+        env: {},
+        cwd: ws,
+        timeoutMs: 5_000,
+      }
+      const result = await sb.value.runScript({ code: `console.log("hi")` }, policy)
       expect(result.isErr()).toBe(true)
       if (!result.isErr()) return
       expect(result.error.kind).toBe("policy-invalid")

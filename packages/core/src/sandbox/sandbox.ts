@@ -4,6 +4,7 @@
 import path from "node:path"
 import { err, ok, ResultAsync } from "neverthrow"
 import type { SandboxError } from "../errors/index.js"
+import { grantedPathExposesSecrets, isPathWithin } from "./policy.js"
 
 // Secret key patterns that must never appear in sandbox env.
 const SECRET_DENYLIST_EXACT = new Set(["JUNCTION_MASTER_KEY", "JUNCTION_MASTER_KEY_FILE"])
@@ -62,7 +63,8 @@ export function validatePolicy(policy: SandboxPolicy): SandboxError | null {
     }
   }
 
-  for (const p of [...policy.readPaths, ...policy.writePaths]) {
+  const grantedPaths = [...policy.readPaths, ...policy.writePaths]
+  for (const p of grantedPaths) {
     if (!path.isAbsolute(p)) {
       return { kind: "policy-invalid", reason: `path not absolute: ${p}` }
     }
@@ -70,6 +72,22 @@ export function validatePolicy(policy: SandboxPolicy): SandboxError | null {
 
   if (!path.isAbsolute(policy.cwd)) {
     return { kind: "policy-invalid", reason: `cwd not absolute: ${policy.cwd}` }
+  }
+
+  // cwd must live within a granted read/write path (documented invariant).
+  if (!grantedPaths.some((p) => isPathWithin(policy.cwd, p))) {
+    return { kind: "policy-invalid", reason: `cwd not within any read/write path: ${policy.cwd}` }
+  }
+
+  // Structural defense (protects BOTH backends): refuse if a granted path is an
+  // ancestor of a credential/secret dir — that would pull secrets into the sandbox.
+  // bwrap has no deny primitive, so this containment check is its only guard.
+  const exposure = grantedPathExposesSecrets(grantedPaths)
+  if (exposure.exposed) {
+    return {
+      kind: "policy-invalid",
+      reason: `granted path "${exposure.grantedPath}" exposes secret path "${exposure.secretPath}"`,
+    }
   }
 
   return null
