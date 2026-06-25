@@ -3,15 +3,25 @@
 // Network OFF = --unshare-all (do NOT add --share-net).
 // --clearenv + per-key --setenv for explicit env allowlist.
 // Probe userns at runtime; if it fails → "none" (refuse, not raw exec).
+//
+// The bwrap binary is resolved to an ABSOLUTE path at probe time (via `which`)
+// so that spawning with an explicit scrubbed env (no PATH) still works. This
+// mirrors how deno.ts resolves denoBinPath. Child env isolation is unaffected —
+// bwrap's own --clearenv + --setenv controls the sandboxed child; we only need
+// the absolute path so the HOST process can find and exec the bwrap wrapper.
 
+import { execFile } from "node:child_process"
+import { promisify } from "node:util"
 import type { ResultAsync } from "neverthrow"
 import type { SandboxError } from "../errors/index.js"
 import { isSpawnErr, runSandboxed, spawnSandboxed } from "./exec.js"
 import type { SandboxPolicy, SandboxResult } from "./sandbox.js"
 
-const BWRAP = "bwrap"
+const execFileAsync = promisify(execFile)
 
 let commandBackendCache: "bubblewrap" | "none" | undefined
+/** Absolute path to the bwrap binary, resolved once at probe time. */
+let bwrapBinPath: string | undefined
 
 async function probeUserns(): Promise<boolean> {
   // Probe must exec a binary that exists under a BOUND path. On merged-usr
@@ -22,9 +32,15 @@ async function probeUserns(): Promise<boolean> {
   // loader paths) so the dynamically-linked /usr/bin/true can find its loader —
   // otherwise exec fails with ENOENT ("No such file or directory") even though
   // userns works. Must mirror buildBwrapArgv's system bindings.
+  //
+  // Use the resolved absolute bwrapBinPath so Node can spawn the binary even when
+  // the child env has no PATH. bwrapBinPath is set by probeCommandBackend before
+  // calling this function.
+  const bwrap = bwrapBinPath
+  if (!bwrap) return false
   const result = await spawnSandboxed(
     [
-      BWRAP,
+      bwrap,
       "--ro-bind",
       "/usr",
       "/usr",
@@ -49,14 +65,35 @@ export async function probeCommandBackend(): Promise<"bubblewrap" | "none"> {
   if (process.platform !== "linux") return "none"
   if (commandBackendCache !== undefined) return commandBackendCache
 
+  try {
+    // Resolve the full binary path using the HOST process.env PATH (same pattern
+    // as deno.ts's probeScriptBackend). We then use the absolute path for all
+    // subsequent spawns so the child env (env: {}) never needs a PATH variable.
+    const { stdout: whichOut } = await execFileAsync("which", ["bwrap"], { timeout: 5000 })
+    const binPath = whichOut.trim()
+    if (!binPath) {
+      commandBackendCache = "none"
+      return commandBackendCache
+    }
+    bwrapBinPath = binPath
+  } catch {
+    commandBackendCache = "none"
+    return commandBackendCache
+  }
+
   const ok_ = await probeUserns().catch(() => false)
   commandBackendCache = ok_ ? "bubblewrap" : "none"
   return commandBackendCache
 }
 
 function buildBwrapArgv(argv: readonly string[], policy: SandboxPolicy): string[] {
+  // bwrapBinPath is always set by probeCommandBackend before runWithBubblewrap is
+  // ever reachable — probeCommandBackend sets it or returns "none" (which blocks
+  // the bubblewrap code path entirely). The fallback to "bwrap" is unreachable in
+  // normal operation but satisfies TypeScript's type checker.
+  const bwrap = bwrapBinPath ?? "bwrap"
   const args: string[] = [
-    BWRAP,
+    bwrap,
     "--unshare-all",
     "--die-with-parent",
     "--new-session",

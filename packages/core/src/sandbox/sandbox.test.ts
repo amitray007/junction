@@ -3,7 +3,7 @@
 // ANTI-THEATER: every forbidden-op test also asserts the same op succeeds OUTSIDE the sandbox.
 
 import { execFile as execFileCb } from "node:child_process"
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises"
+import { mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { promisify } from "node:util"
@@ -825,16 +825,25 @@ describe("allowNet validation (FIX 2)", () => {
   }
 
   it('bare hostname "api.github.com" -> policy-invalid', async () => {
+    // Caught by central validateAllowNetEntry: bare hostname without port is always rejected.
+    // Cross-platform: runs on seatbelt (macOS) and bubblewrap (Linux) alike.
     const r = await runWithNet(["api.github.com"])
     expect(r.isErr).toBe(true)
     expect(r.kind).toBe("policy-invalid")
   })
 
-  it('"api.github.com:443" -> policy-invalid (Seatbelt cannot host-scope)', async () => {
-    const r = await runWithNet(["api.github.com:443"])
-    expect(r.isErr).toBe(true)
-    expect(r.kind).toBe("policy-invalid")
-  })
+  // Seatbelt-specific: "host:port" passes central validation (valid shape) but
+  // validateSeatbeltNet rejects it because seatbelt cannot scope egress per-host.
+  // On bubblewrap, --unshare-all denies all network anyway; host-scoped entries
+  // are not rejected at the policy level (there's no seatbelt profile to compile).
+  it.skipIf(process.platform !== "darwin")(
+    '"api.github.com:443" -> policy-invalid (Seatbelt cannot host-scope)',
+    async () => {
+      const r = await runWithNet(["api.github.com:443"])
+      expect(r.isErr).toBe(true)
+      expect(r.kind).toBe("policy-invalid")
+    },
+  )
 
   it('"evil.com,x.com" -> policy-invalid (comma metachar)', async () => {
     const r = await runWithNet(["evil.com,x.com"])
@@ -895,38 +904,35 @@ describe.skipIf(process.platform === "win32")(
   "symlinked writePath into secret tree (FIX 3)",
   () => {
     it("symlink whose realpath is inside JUNCTION_HOME -> policy-invalid", async () => {
-      // Set up a fake JUNCTION_HOME with a credential sub-directory.
-      const fakeHome = await mkdtemp(path.join(os.tmpdir(), "jx-fake-home-"))
-      const fakeJunction = path.join(fakeHome, ".junction")
-      await mkdir(fakeJunction, { recursive: true })
-      const realCred = path.join(fakeJunction, "credentials.enc.json")
-      await writeFile(realCred, "{}")
+      // Set JUNCTION_HOME to a CONTROLLED temp dir so the always-denied list is
+      // deterministic on any runner (including CI where ~/.junction does not exist).
+      // getPaths() reads process.env.JUNCTION_HOME, so setting it here means
+      // getAlwaysDeniedPaths() returns paths inside fakeJunctionHome.
+      const fakeJunctionHome = await mkdtemp(path.join(os.tmpdir(), "jx-fake-junction-"))
+      const prevJunctionHome = process.env.JUNCTION_HOME
+      process.env.JUNCTION_HOME = fakeJunctionHome
 
-      // Create a symlink that points INTO the credential tree.
+      // Create a credential file inside the controlled secret tree so realpath
+      // resolution succeeds (the exposure check resolves both sides with realpath).
+      const fakeCredFile = path.join(fakeJunctionHome, "credentials.enc.json")
+      await writeFile(fakeCredFile, "{}")
+
+      // Create a symlink in a separate temp dir that points INTO the controlled
+      // secret tree. The symlink itself is outside JUNCTION_HOME.
       const linkBase = await mkdtemp(path.join(os.tmpdir(), "jx-link-base-"))
-      const linkPath = path.join(linkBase, "cred-link")
-      await symlink(fakeJunction, linkPath)
+      const linkToSecret = path.join(linkBase, "cred-link")
+      // Symlink points to fakeJunctionHome — resolving it lands inside the secret tree.
+      await symlink(fakeJunctionHome, linkToSecret)
 
       try {
-        // Verify the symlink resolves into the fake secret tree.
-        const resolved = await realpath(linkPath)
-        expect(resolved).toBe(await realpath(fakeJunction))
+        // Verify the symlink resolves into the fake secret tree (sanity check).
+        const resolvedLink = await realpath(linkToSecret)
+        expect(resolvedLink).toBe(await realpath(fakeJunctionHome))
 
-        // Verify symlink resolves correctly (realpath-aware invariant for FIX 3).
-        const resolvedLink = await realpath(linkPath)
-        expect(resolvedLink).toBe(await realpath(fakeJunction))
-
-        // Direct test: if a writePath symlinks into a secret, the policy must be invalid.
-        // We simulate this by constructing a policy where the symlinked path IS the secret
-        // target (which validatePolicy + grantedPathExposesSecrets catches after realpath).
-        // Use the real homedir's .junction as the secret target (always-denied list).
-        // Create a symlink into ~/.junction from a temp dir.
-        const dotJunction = path.join(os.homedir(), ".junction")
-        const linkToRealSecret = path.join(linkBase, "real-cred-link")
-        await symlink(dotJunction, linkToRealSecret).catch(() => {
-          // If ~/.junction doesn't exist the symlink still points there; that's fine for the test.
-        })
-
+        // The exposure check is cross-platform (no backend needed): a writePath
+        // whose realpath falls inside JUNCTION_HOME must be flagged policy-invalid.
+        // This test exercises validatePolicy → grantedPathExposesSecrets with a real
+        // secret tree present in the controlled JUNCTION_HOME.
         const ws = await makeWorkspace()
         try {
           const sb = await createSandbox()
@@ -934,14 +940,15 @@ describe.skipIf(process.platform === "win32")(
           if (!sb.isOk()) return
           const policy: SandboxPolicy = {
             readPaths: [ws],
-            writePaths: [linkToRealSecret], // symlink into secret tree
+            writePaths: [linkToSecret], // symlink → fakeJunctionHome (always-denied)
             allowNet: [],
             env: {},
             cwd: ws,
             timeoutMs: 5_000,
           }
           const result = await sb.value.runCommand(["/bin/echo", "hi"], policy)
-          // Must be policy-invalid -- the realpath of linkToRealSecret is inside ~/.junction.
+          // Must be policy-invalid — realpath(linkToSecret) == fakeJunctionHome,
+          // which is in the always-denied list (since JUNCTION_HOME=fakeJunctionHome).
           expect(result.isErr()).toBe(true)
           if (!result.isErr()) return
           expect(result.error.kind).toBe("policy-invalid")
@@ -949,8 +956,15 @@ describe.skipIf(process.platform === "win32")(
           await cleanup(ws)
         }
       } finally {
+        // Restore JUNCTION_HOME before cleanup so any subsequent getPaths() calls
+        // in the same test run see the original value.
+        if (prevJunctionHome === undefined) {
+          delete process.env.JUNCTION_HOME
+        } else {
+          process.env.JUNCTION_HOME = prevJunctionHome
+        }
         await cleanup(linkBase)
-        await cleanup(fakeHome)
+        await cleanup(fakeJunctionHome)
       }
     })
   },
