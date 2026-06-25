@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Sandbox integration tests — Seatbelt (macOS), Deno (when available), bubblewrap (Linux).
+// Sandbox integration tests -- Seatbelt (macOS), Deno (when available), bubblewrap (Linux).
 // ANTI-THEATER: every forbidden-op test also asserts the same op succeeds OUTSIDE the sandbox.
 
 import { execFile as execFileCb } from "node:child_process"
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { promisify } from "node:util"
@@ -649,7 +649,7 @@ describe.skipIf(process.platform === "win32")("Deno runScript code requires writ
 })
 
 describe("timeout", () => {
-  it.skipIf(process.platform === "win32")("sleep beyond timeoutMs → timed-out error", async () => {
+  it.skipIf(process.platform === "win32")("sleep beyond timeoutMs -> timed-out error", async () => {
     const sb = await createSandbox()
     expect(sb.isOk()).toBe(true)
     if (!sb.isOk()) return
@@ -677,3 +677,281 @@ describe("timeout", () => {
     }
   })
 })
+
+// ── FIX 1: SBPL/argv metachar injection -- policy-invalid BEFORE spawn ────────
+
+describe("path metachar injection (FIX 1)", () => {
+  // Chars that must be rejected: double-quote, close-paren, newline, comma.
+  // NUL (char code 0) and CR are also covered but hard to express in test literals.
+  const PAREN = ")"
+  const DQUOTE = '"'
+  // LF and comma via string literals
+  const LF = String.fromCharCode(10)
+  const COMMA = ","
+
+  const BAD_CHARS: Array<[string, string]> = [
+    ["double-quote", DQUOTE],
+    ["close-paren", PAREN],
+    ["newline", LF],
+    ["comma", COMMA],
+  ]
+
+  // Exact PoC writePath from FIX 1 spec (SBPL injection).
+  const POC_WRITE_PATH = '/private/tmp/ws")) (allow file-write* (subpath "/private/tmp/escape'
+
+  it.each(BAD_CHARS)("readPaths with %s -> policy-invalid, no spawn", async (_, badChar) => {
+    const ws = await makeWorkspace()
+    const spawnSpy = vi
+      .spyOn(await import("./exec.js"), "spawnSandboxed")
+      .mockRejectedValue(new Error("spawnSandboxed must NOT be called for metachar path"))
+    try {
+      const sb = await createSandbox()
+      expect(sb.isOk()).toBe(true)
+      if (!sb.isOk()) return
+      const policy: SandboxPolicy = {
+        ...basePolicy(ws),
+        readPaths: [`${ws}${badChar}safe`],
+        writePaths: [ws],
+      }
+      const result = await sb.value.runCommand(["/bin/echo", "hi"], policy)
+      expect(result.isErr()).toBe(true)
+      if (!result.isErr()) return
+      expect(result.error.kind).toBe("policy-invalid")
+      expect(spawnSpy).not.toHaveBeenCalled()
+    } finally {
+      vi.restoreAllMocks()
+      await cleanup(ws)
+    }
+  })
+
+  it.each(BAD_CHARS)("writePaths with %s -> policy-invalid, no spawn", async (_, badChar) => {
+    const ws = await makeWorkspace()
+    const spawnSpy = vi
+      .spyOn(await import("./exec.js"), "spawnSandboxed")
+      .mockRejectedValue(new Error("spawnSandboxed must NOT be called for metachar path"))
+    try {
+      const sb = await createSandbox()
+      expect(sb.isOk()).toBe(true)
+      if (!sb.isOk()) return
+      const policy: SandboxPolicy = {
+        ...basePolicy(ws),
+        writePaths: [`${ws}${badChar}safe`],
+      }
+      const result = await sb.value.runCommand(["/bin/echo", "hi"], policy)
+      expect(result.isErr()).toBe(true)
+      if (!result.isErr()) return
+      expect(result.error.kind).toBe("policy-invalid")
+      expect(spawnSpy).not.toHaveBeenCalled()
+    } finally {
+      vi.restoreAllMocks()
+      await cleanup(ws)
+    }
+  })
+
+  it.each(BAD_CHARS)("cwd with %s -> policy-invalid, no spawn", async (_, badChar) => {
+    const ws = await makeWorkspace()
+    const spawnSpy = vi
+      .spyOn(await import("./exec.js"), "spawnSandboxed")
+      .mockRejectedValue(new Error("spawnSandboxed must NOT be called for metachar cwd"))
+    try {
+      const sb = await createSandbox()
+      expect(sb.isOk()).toBe(true)
+      if (!sb.isOk()) return
+      // cwd must pass isAbsolute + be within a granted path; inject bad char AFTER ws prefix
+      const badCwd = `${ws}${badChar}`
+      const policy: SandboxPolicy = {
+        readPaths: [ws],
+        writePaths: [ws],
+        allowNet: [],
+        env: {},
+        cwd: badCwd,
+        timeoutMs: 5_000,
+      }
+      const result = await sb.value.runCommand(["/bin/echo", "hi"], policy)
+      expect(result.isErr()).toBe(true)
+      if (!result.isErr()) return
+      expect(result.error.kind).toBe("policy-invalid")
+      expect(spawnSpy).not.toHaveBeenCalled()
+    } finally {
+      vi.restoreAllMocks()
+      await cleanup(ws)
+    }
+  })
+
+  it("PoC SBPL injection writePath -> policy-invalid and no spawn", async () => {
+    const ws = await makeWorkspace()
+    const spawnSpy = vi
+      .spyOn(await import("./exec.js"), "spawnSandboxed")
+      .mockRejectedValue(new Error("spawnSandboxed must NOT be called for PoC path"))
+    try {
+      const sb = await createSandbox()
+      expect(sb.isOk()).toBe(true)
+      if (!sb.isOk()) return
+      const policy: SandboxPolicy = {
+        readPaths: [ws],
+        writePaths: [POC_WRITE_PATH],
+        allowNet: [],
+        env: {},
+        cwd: ws,
+        timeoutMs: 5_000,
+      }
+      const result = await sb.value.runCommand(["/bin/echo", "hi"], policy)
+      expect(result.isErr()).toBe(true)
+      if (!result.isErr()) return
+      expect(result.error.kind).toBe("policy-invalid")
+      expect(spawnSpy).not.toHaveBeenCalled()
+    } finally {
+      vi.restoreAllMocks()
+      await cleanup(ws)
+    }
+  })
+})
+
+// ── FIX 2: allowNet strict validation ────────────────────────────────────────
+
+describe("allowNet validation (FIX 2)", () => {
+  async function runWithNet(net: string[]): Promise<{ isErr: boolean; kind?: string }> {
+    const ws = await makeWorkspace()
+    try {
+      const sb = await createSandbox()
+      if (!sb.isOk()) return { isErr: true, kind: "sandbox-unavailable" }
+      const policy: SandboxPolicy = { ...basePolicy(ws), allowNet: net }
+      const result = await sb.value.runCommand(["/bin/echo", "hi"], policy)
+      if (result.isErr()) return { isErr: true, kind: result.error.kind }
+      return { isErr: false }
+    } finally {
+      await cleanup(ws)
+    }
+  }
+
+  it('bare hostname "api.github.com" -> policy-invalid', async () => {
+    const r = await runWithNet(["api.github.com"])
+    expect(r.isErr).toBe(true)
+    expect(r.kind).toBe("policy-invalid")
+  })
+
+  it('"api.github.com:443" -> policy-invalid (Seatbelt cannot host-scope)', async () => {
+    const r = await runWithNet(["api.github.com:443"])
+    expect(r.isErr).toBe(true)
+    expect(r.kind).toBe("policy-invalid")
+  })
+
+  it('"evil.com,x.com" -> policy-invalid (comma metachar)', async () => {
+    const r = await runWithNet(["evil.com,x.com"])
+    expect(r.isErr).toBe(true)
+    expect(r.kind).toBe("policy-invalid")
+  })
+
+  it.skipIf(process.platform !== "darwin")('"*:443" -> accepted (profile compiles)', async () => {
+    const r = await runWithNet(["*:443"])
+    expect(r.isErr).toBe(false)
+  })
+
+  it.skipIf(process.platform !== "darwin")(
+    '"443" (port-only) -> accepted (profile compiles)',
+    async () => {
+      const r = await runWithNet(["443"])
+      expect(r.isErr).toBe(false)
+    },
+  )
+})
+
+// ── FIX 1 (Deno): comma in readPath widens --allow-read -> policy-invalid ────
+
+describe("Deno comma readPath widening (FIX 1)", () => {
+  it("readPath containing comma -> policy-invalid before Deno spawn", async () => {
+    const ws = await makeWorkspace()
+    const spawnSpy = vi
+      .spyOn(await import("./exec.js"), "spawnSandboxed")
+      .mockRejectedValue(new Error("spawnSandboxed must NOT be called for comma readPath"))
+    try {
+      const sb = await createSandbox()
+      expect(sb.isOk()).toBe(true)
+      if (!sb.isOk()) return
+      if (sb.value.capabilities().script !== "deno") return // gated: deno absent
+      const policy: SandboxPolicy = {
+        readPaths: [`${ws}/safe,/etc`], // comma widens Deno --allow-read
+        writePaths: [ws],
+        allowNet: [],
+        env: {},
+        cwd: ws,
+        timeoutMs: 5_000,
+      }
+      const result = await sb.value.runScript({ code: `console.log("hi")` }, policy)
+      expect(result.isErr()).toBe(true)
+      if (!result.isErr()) return
+      expect(result.error.kind).toBe("policy-invalid")
+      expect(spawnSpy).not.toHaveBeenCalled()
+    } finally {
+      vi.restoreAllMocks()
+      await cleanup(ws)
+    }
+  })
+})
+
+// ── FIX 3: symlinked writePath into secret tree -> exposure flagged ───────────
+
+describe.skipIf(process.platform === "win32")(
+  "symlinked writePath into secret tree (FIX 3)",
+  () => {
+    it("symlink whose realpath is inside JUNCTION_HOME -> policy-invalid", async () => {
+      // Set up a fake JUNCTION_HOME with a credential sub-directory.
+      const fakeHome = await mkdtemp(path.join(os.tmpdir(), "jx-fake-home-"))
+      const fakeJunction = path.join(fakeHome, ".junction")
+      await mkdir(fakeJunction, { recursive: true })
+      const realCred = path.join(fakeJunction, "credentials.enc.json")
+      await writeFile(realCred, "{}")
+
+      // Create a symlink that points INTO the credential tree.
+      const linkBase = await mkdtemp(path.join(os.tmpdir(), "jx-link-base-"))
+      const linkPath = path.join(linkBase, "cred-link")
+      await symlink(fakeJunction, linkPath)
+
+      try {
+        // Verify the symlink resolves into the fake secret tree.
+        const resolved = await realpath(linkPath)
+        expect(resolved).toBe(await realpath(fakeJunction))
+
+        // Verify symlink resolves correctly (realpath-aware invariant for FIX 3).
+        const resolvedLink = await realpath(linkPath)
+        expect(resolvedLink).toBe(await realpath(fakeJunction))
+
+        // Direct test: if a writePath symlinks into a secret, the policy must be invalid.
+        // We simulate this by constructing a policy where the symlinked path IS the secret
+        // target (which validatePolicy + grantedPathExposesSecrets catches after realpath).
+        // Use the real homedir's .junction as the secret target (always-denied list).
+        // Create a symlink into ~/.junction from a temp dir.
+        const dotJunction = path.join(os.homedir(), ".junction")
+        const linkToRealSecret = path.join(linkBase, "real-cred-link")
+        await symlink(dotJunction, linkToRealSecret).catch(() => {
+          // If ~/.junction doesn't exist the symlink still points there; that's fine for the test.
+        })
+
+        const ws = await makeWorkspace()
+        try {
+          const sb = await createSandbox()
+          expect(sb.isOk()).toBe(true)
+          if (!sb.isOk()) return
+          const policy: SandboxPolicy = {
+            readPaths: [ws],
+            writePaths: [linkToRealSecret], // symlink into secret tree
+            allowNet: [],
+            env: {},
+            cwd: ws,
+            timeoutMs: 5_000,
+          }
+          const result = await sb.value.runCommand(["/bin/echo", "hi"], policy)
+          // Must be policy-invalid -- the realpath of linkToRealSecret is inside ~/.junction.
+          expect(result.isErr()).toBe(true)
+          if (!result.isErr()) return
+          expect(result.error.kind).toBe("policy-invalid")
+        } finally {
+          await cleanup(ws)
+        }
+      } finally {
+        await cleanup(linkBase)
+        await cleanup(fakeHome)
+      }
+    })
+  },
+)

@@ -38,10 +38,6 @@ export async function probeCommandBackend(): Promise<"seatbelt" | "bubblewrap" |
   return commandBackendCache
 }
 
-async function resolvePaths(paths: readonly string[]): Promise<string[]> {
-  return Promise.all(paths.map((p) => realpath(p).catch(() => p)))
-}
-
 /**
  * Realpath each path, falling back to (realpath(parent) + leaf) when the path
  * itself does not exist yet (so a not-yet-created credential file under a
@@ -66,16 +62,29 @@ async function resolvePathsRobust(paths: readonly string[]): Promise<string[]> {
 
 /**
  * Seatbelt cannot enforce per-host egress. Reject any allowNet entry whose host
- * portion is not `*`/empty → policy-invalid (fail closed). Port-only ("*:443",
- * "443") is accepted; the profile widens it to "*:port".
+ * portion is not `*`/empty → policy-invalid (fail closed).
+ *
+ * Parse rule (central validation in validatePolicy already enforced strict shape):
+ *   - No colon → whole entry is the host; only "*" is allowed (bare port digits
+ *     were already validated centrally and pass through as port-only).
+ *   - Colon → host = before last colon; must be "" or "*".
+ *
+ * Port-only ("*:443", "443") is accepted; the profile widens to "(allow network*
+ * (remote ip "*:port"))".
  */
 function validateSeatbeltNet(policy: SandboxPolicy): SandboxError | null {
   for (const entry of policy.allowNet) {
-    const host = entry.includes(":") ? entry.slice(0, entry.lastIndexOf(":")) : ""
-    if (host !== "" && host !== "*") {
+    const colonIdx = entry.lastIndexOf(":")
+    const host = colonIdx === -1 ? entry : entry.slice(0, colonIdx)
+    // Bare port digits ("443") have no host component — host will be "443" (all digits).
+    // Those are port-only and safe. Only reject when host is a non-wildcard non-empty
+    // non-digit string (i.e., a real hostname).
+    const isPortOnly = colonIdx === -1 && /^\d+$/.test(host)
+    if (!isPortOnly && host !== "" && host !== "*") {
+      const port = colonIdx === -1 ? entry : entry.slice(colonIdx + 1)
       return {
         kind: "policy-invalid",
-        reason: `seatbelt cannot scope egress to host "${host}" — use a Deno-tier backend for per-host allowlisting, or pass a port-only entry ("*:${entry.slice(entry.lastIndexOf(":") + 1)}")`,
+        reason: `seatbelt cannot scope egress to host "${host}" — use a Deno-tier backend for per-host allowlisting, or pass a port-only entry ("*:${port}")`,
       }
     }
   }
@@ -84,8 +93,10 @@ function validateSeatbeltNet(policy: SandboxPolicy): SandboxError | null {
 
 async function generateProfile(policy: SandboxPolicy): Promise<string> {
   const alwaysDenied = getAlwaysDeniedPaths()
-  // Resolve all write paths to real paths (macOS symlink issue).
-  const realWritePaths = await resolvePaths(policy.writePaths)
+  // Resolve write paths robustly: falls back to realpath(parent)+basename when the
+  // path does not yet exist, so a not-yet-created dir under a symlinked prefix still
+  // resolves to its real location (aligns enforcement with the FIX-3 exposure check).
+  const realWritePaths = await resolvePathsRobust(policy.writePaths)
 
   // CONFIDENTIALITY BOUNDARY — must cover BOTH the logical path and its realpath.
   // The kernel matches deny-subpath on the REAL path; if JUNCTION_HOME is under a

@@ -25,6 +25,9 @@ export async function spawnSandboxed(
       env: opts.env,
       cwd: opts.cwd,
       shell: false,
+      // detached: true so sandbox-exec/bwrap and all their grandchildren form a
+      // process group — on timeout we SIGKILL the entire group, not just the wrapper.
+      detached: true,
       stdio: ["pipe", "pipe", "pipe"],
     })
 
@@ -43,7 +46,17 @@ export async function spawnSandboxed(
 
     const timer = setTimeout(() => {
       timedOut = true
-      child.kill("SIGKILL")
+      // Kill the entire process group to reap grandchildren orphaned by sandbox wrappers.
+      if (child.pid !== undefined) {
+        try {
+          process.kill(-child.pid, "SIGKILL")
+        } catch {
+          // Process group may have already exited; fall back to killing the wrapper.
+          child.kill("SIGKILL")
+        }
+      } else {
+        child.kill("SIGKILL")
+      }
     }, opts.timeoutMs)
 
     child.on("error", (err) => {

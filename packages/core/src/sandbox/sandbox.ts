@@ -4,7 +4,7 @@
 import path from "node:path"
 import { err, ok, ResultAsync } from "neverthrow"
 import type { SandboxError } from "../errors/index.js"
-import { grantedPathExposesSecrets, isPathWithin } from "./policy.js"
+import { grantedPathExposesSecrets, hasUnsafePathChars, isPathWithin } from "./policy.js"
 
 // Secret key patterns that must never appear in sandbox env.
 const SECRET_DENYLIST_EXACT = new Set(["JUNCTION_MASTER_KEY", "JUNCTION_MASTER_KEY_FILE"])
@@ -50,8 +50,51 @@ export interface Sandbox {
   capabilities(): SandboxCapabilities
 }
 
+/**
+ * Strict allowNet entry shape: host[:port] where
+ *   host ∈ { valid hostname/IPv4 chars [A-Za-z0-9._-]+, or "*", or "" }
+ *   port (if present) ∈ numeric string or "*"
+ * Returns null if valid, or an error reason string if not.
+ */
+function validateAllowNetEntry(entry: string): string | null {
+  // Reject metachars that could widen Deno argv or SBPL. Use charCodeAt for control
+  // chars (NUL=0, LF=10, CR=13) to avoid Biome noControlCharactersInRegex.
+  if (/[",()'\s]/.test(entry)) {
+    return `allowNet entry "${entry}" contains unsafe characters`
+  }
+  for (let i = 0; i < entry.length; i++) {
+    const c = entry.charCodeAt(i)
+    if (c === 0 || c === 10 || c === 13) {
+      return `allowNet entry contains unsafe control characters`
+    }
+  }
+  const colonIdx = entry.lastIndexOf(":")
+  if (colonIdx === -1) {
+    // Bare entry — treated as port-only (e.g. "443") or host-only.
+    // Only "*" is a valid bare host; numeric bare values are port-only.
+    const isPortOnly = /^\d+$/.test(entry)
+    const isWildcard = entry === "*"
+    if (!isPortOnly && !isWildcard) {
+      // Bare hostname — reject (not a safe allowNet shape).
+      return `allowNet entry "${entry}" is a bare hostname without port; use "*:port" for port-scoped allows`
+    }
+    return null
+  }
+  const host = entry.slice(0, colonIdx)
+  const port = entry.slice(colonIdx + 1)
+  // Host must be empty, "*", or valid hostname/IPv4 chars only.
+  if (host !== "" && host !== "*" && !/^[A-Za-z0-9._-]+$/.test(host)) {
+    return `allowNet entry "${entry}" has invalid host portion "${host}"`
+  }
+  // Port must be numeric or "*".
+  if (port !== "*" && !/^\d+$/.test(port)) {
+    return `allowNet entry "${entry}" has invalid port portion "${port}"`
+  }
+  return null
+}
+
 /** Validate a SandboxPolicy; returns a policy-invalid SandboxError or null. */
-export function validatePolicy(policy: SandboxPolicy): SandboxError | null {
+export async function validatePolicy(policy: SandboxPolicy): Promise<SandboxError | null> {
   for (const key of Object.keys(policy.env)) {
     if (SECRET_DENYLIST_EXACT.has(key)) {
       return { kind: "policy-invalid", reason: `env key "${key}" matches secret denylist` }
@@ -68,10 +111,24 @@ export function validatePolicy(policy: SandboxPolicy): SandboxError | null {
     if (!path.isAbsolute(p)) {
       return { kind: "policy-invalid", reason: `path not absolute: ${p}` }
     }
+    // Reject SBPL/argv metachar injection in paths (FIX 1).
+    if (hasUnsafePathChars(p)) {
+      return {
+        kind: "policy-invalid",
+        reason: `path contains unsafe characters (SBPL/argv injection risk): ${p}`,
+      }
+    }
   }
 
   if (!path.isAbsolute(policy.cwd)) {
     return { kind: "policy-invalid", reason: `cwd not absolute: ${policy.cwd}` }
+  }
+  // Reject SBPL/argv metachar injection in cwd (FIX 1).
+  if (hasUnsafePathChars(policy.cwd)) {
+    return {
+      kind: "policy-invalid",
+      reason: `cwd contains unsafe characters (SBPL/argv injection risk): ${policy.cwd}`,
+    }
   }
 
   // cwd must live within a granted read/write path (documented invariant).
@@ -79,10 +136,19 @@ export function validatePolicy(policy: SandboxPolicy): SandboxError | null {
     return { kind: "policy-invalid", reason: `cwd not within any read/write path: ${policy.cwd}` }
   }
 
+  // Central allowNet validation (FIX 2): strict shape check before any backend sees it.
+  for (const entry of policy.allowNet) {
+    const netErr = validateAllowNetEntry(entry)
+    if (netErr) {
+      return { kind: "policy-invalid", reason: netErr }
+    }
+  }
+
   // Structural defense (protects BOTH backends): refuse if a granted path is an
   // ancestor of a credential/secret dir — that would pull secrets into the sandbox.
   // bwrap has no deny primitive, so this containment check is its only guard.
-  const exposure = grantedPathExposesSecrets(grantedPaths)
+  // Both sides realpath-resolved (FIX 3) so symlinked paths into the secret tree are caught.
+  const exposure = await grantedPathExposesSecrets(grantedPaths)
   if (exposure.exposed) {
     return {
       kind: "policy-invalid",
@@ -124,34 +190,39 @@ export function createSandbox(): ResultAsync<Sandbox, SandboxError> {
         capabilities: () => caps,
 
         runCommand(argv, policy) {
-          const validErr = validatePolicy(policy)
-          if (validErr)
-            return new ResultAsync(Promise.resolve(err<SandboxResult, SandboxError>(validErr)))
-
-          if (caps.command === "seatbelt") return seatbeltMod.runWithSeatbelt(argv, policy)
-          if (caps.command === "bubblewrap") return bwrapMod.runWithBubblewrap(argv, policy)
-
-          return new ResultAsync(
-            Promise.resolve(
-              err<SandboxResult, SandboxError>({
-                kind: "unsupported-platform",
-                platform: process.platform,
-              }),
-            ),
+          return ResultAsync.fromPromise(validatePolicy(policy), (e) => e as SandboxError).andThen(
+            (validErr) => {
+              if (validErr)
+                return new ResultAsync(Promise.resolve(err<SandboxResult, SandboxError>(validErr)))
+              if (caps.command === "seatbelt") return seatbeltMod.runWithSeatbelt(argv, policy)
+              if (caps.command === "bubblewrap") return bwrapMod.runWithBubblewrap(argv, policy)
+              return new ResultAsync(
+                Promise.resolve(
+                  err<SandboxResult, SandboxError>({
+                    kind: "unsupported-platform",
+                    platform: process.platform,
+                  }),
+                ),
+              )
+            },
           )
         },
 
         runScript(script, policy) {
-          const validErr = validatePolicy(policy)
-          if (validErr)
-            return new ResultAsync(Promise.resolve(err<SandboxResult, SandboxError>(validErr)))
-
-          if (caps.script === "deno") return denoMod.runWithDeno(script, policy)
-
-          return new ResultAsync(
-            Promise.resolve(
-              err<SandboxResult, SandboxError>({ kind: "runtime-unavailable", runtime: "deno" }),
-            ),
+          return ResultAsync.fromPromise(validatePolicy(policy), (e) => e as SandboxError).andThen(
+            (validErr) => {
+              if (validErr)
+                return new ResultAsync(Promise.resolve(err<SandboxResult, SandboxError>(validErr)))
+              if (caps.script === "deno") return denoMod.runWithDeno(script, policy)
+              return new ResultAsync(
+                Promise.resolve(
+                  err<SandboxResult, SandboxError>({
+                    kind: "runtime-unavailable",
+                    runtime: "deno",
+                  }),
+                ),
+              )
+            },
           )
         },
       }
