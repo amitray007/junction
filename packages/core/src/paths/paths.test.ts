@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
+import { stat } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { describe, expect, it } from "vitest"
@@ -39,6 +40,20 @@ describe("paths", () => {
     })
   })
 
+  it("credentialsFile is credentials.enc.json inside home", async () => {
+    await withTempHome(async (home) => {
+      const p = getPaths()
+      expect(p.credentialsFile).toBe(path.join(home, "credentials.enc.json"))
+    })
+  })
+
+  it("masterKeyFile is master.key inside home", async () => {
+    await withTempHome(async (home) => {
+      const p = getPaths()
+      expect(p.masterKeyFile).toBe(path.join(home, "master.key"))
+    })
+  })
+
   it("cacheDir resolves to a non-empty string", async () => {
     await withTempHome(async () => {
       const p = getPaths()
@@ -54,6 +69,15 @@ describe("paths", () => {
       if (result.isOk()) {
         expect(result.value.home).toBe(home)
       }
+    })
+  })
+
+  it("ensureHome sets home dir mode to 0700 on POSIX", async () => {
+    if (process.platform === "win32") return
+    await withTempHome(async (home) => {
+      await ensureHome()
+      const s = await stat(home)
+      expect(s.mode & 0o777).toBe(0o700)
     })
   })
 })

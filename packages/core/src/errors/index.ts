@@ -14,3 +14,9 @@ export type DbError =
   | { kind: "constraint-violation"; cause: unknown }
   | { kind: "not-found"; entity: string; id: string }
   | { kind: "query-failed"; cause: unknown }
+
+export type CredentialError =
+  | { kind: "store-unavailable"; cause: unknown }
+  | { kind: "decrypt-failed"; cause: unknown }
+  | { kind: "key-unavailable"; cause: unknown }
+  | { kind: "io-failed"; cause: unknown }

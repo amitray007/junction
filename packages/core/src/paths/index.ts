@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { mkdir } from "node:fs/promises"
+import { chmod, mkdir } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import envPaths from "env-paths"
@@ -12,6 +12,8 @@ export type JunctionPaths = {
   configFile: string
   cacheDir: string
   dbFile: string
+  credentialsFile: string
+  masterKeyFile: string
 }
 
 export function resolveHome(): string {
@@ -27,13 +29,17 @@ export function getPaths(): JunctionPaths {
     configFile: path.join(home, "config.json"),
     cacheDir: envPaths("junction").cache,
     dbFile: path.join(home, "junction.db"),
+    credentialsFile: path.join(home, "credentials.enc.json"),
+    masterKeyFile: path.join(home, "master.key"),
   }
 }
 
 export function ensureHome(): ResultAsync<JunctionPaths, PathsError> {
   const home = resolveHome()
   return ResultAsync.fromPromise(
-    mkdir(home, { recursive: true }).then(() => getPaths()),
+    mkdir(home, { recursive: true })
+      .then(() => chmod(home, 0o700))
+      .then(() => getPaths()),
     (cause) => ({ kind: "home-unresolvable" as const, cause }),
   )
 }

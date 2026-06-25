@@ -2,7 +2,13 @@
 // `junction profile` — profile management commands. Currently: `list`.
 // Edge stays thin: calls core, formats output. No business logic here.
 
-import { createRepositories, type DbError, getDatabase, getPaths } from "@junction/core"
+import {
+  createRepositories,
+  type DbError,
+  getDatabase,
+  getPaths,
+  type Profile,
+} from "@junction/core"
 import { defineCommand } from "citty"
 import { consola } from "consola"
 
@@ -79,7 +85,7 @@ const listCommand = defineCommand({
       "  name              sources  endpoint",
       "  ----------------  -------  --------------------------------",
       ...profileList.map(
-        (p) =>
+        (p: Profile) =>
           `  ${p.name.padEnd(16)}  ${String(p.sources.length).padEnd(7)}  ${p.mcpEndpointPath}`,
       ),
     ]
