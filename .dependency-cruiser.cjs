@@ -13,35 +13,57 @@ module.exports = {
       },
     },
     {
-      name: "no-core-importing-edges",
+      // Increment 7 (structural app-vs-lib model — closes the enumeration gaps the
+      // inc-7 boundary review found). The topology:
+      //   APPS (composition roots): cli (package name "junction"), web. May import any
+      //     lib; must not import each other; nothing may import an app.
+      //   LIBS: every package that is NOT an app — core, mcp/server, mcp/client, AND any
+      //     package added later. A lib may import ONLY core (+ its own files).
+      //
+      // This rule is STRUCTURAL, not an enumeration: `from` = "any non-app package"
+      // (so a future package is automatically a governed lib), `to` = "any in-repo
+      // package except core and except the importer's own package". Therefore:
+      //   - core → anything-in-repo (incl. a new package): BLOCKED (core is a lib whose
+      //     only allowed target is core itself ⇒ core imports nothing in-repo).
+      //   - mcp/server → mcp/client (and reverse), mcp/* → cli/web: BLOCKED (peer lib / app).
+      //   - new-pkg → cli/web/mcp/*: BLOCKED (a new lib may only reach core).
+      //   - any-lib → core, any-lib → its own internal files: ALLOWED.
+      //   - apps (cli/web) are exempt as importers (from.pathNot) — they may import any lib.
+      // The cli is reached by name "junction" via tsconfig.depcruise.json paths, so its
+      // PATH packages/cli/ is what the regexes match.
+      name: "libs-import-only-core",
       comment:
-        "packages/core must not import from cli, web, or mcp — it is the dependency-free core.",
+        "A lib (any package that is not an app: core, mcp/server, mcp/client, or any " +
+        "future package) may import ONLY core and its own files — never an app (cli/web), " +
+        "never a peer lib. Apps are exempt as importers (they are composition roots).",
       severity: "error",
       from: {
-        path: "^packages/core/",
+        // Capture the importer's package dir ($1), including nested mcp/<sub>.
+        path: "^packages/(mcp/[^/]+|[^/]+)/",
+        // Apps are NOT libs — exempt them as importers.
+        pathNot: "^packages/(cli|web)/",
       },
       to: {
-        path: "^packages/(cli|web|mcp)/",
+        path: "^packages/",
+        // Allow importing core and the importer's own package; block everything else.
+        pathNot: "^packages/core/|^packages/$1/",
       },
     },
     {
-      // Fix #2: the original rule used ^packages/(cli|web|mcp)/ which captured
-      // only "mcp" for both packages/mcp/server/ and packages/mcp/client/, so
-      // pathNot "^packages/$1/" (= "^packages/mcp/") matched both sub-packages
-      // and let server<->client cross-imports slip through.
-      // Now each nested package is a distinct arm in the alternation so $1
-      // resolves to "mcp/server" or "mcp/client" and pathNot correctly excludes
-      // only intra-package edges.
-      name: "no-cross-edge-imports",
+      // Apps (cli, web) are composition roots — they may import any lib but NOT each
+      // other. One rule covers both directions: $1 captures the importing app, and
+      // to.pathNot excludes only the importer's own package, so cli→web and web→cli
+      // are both blocked while cli→cli / web→web (intra) stay allowed.
+      name: "apps-dont-import-apps",
       comment:
-        "cli, web, mcp/server, and mcp/client are peer edges — they must not import each other. " +
-        "Each is matched as a full path segment so mcp/server and mcp/client are distinct peers.",
+        "Apps (cli, web) are composition roots — they may import any lib but must not " +
+        "import each other.",
       severity: "error",
       from: {
-        path: "^packages/(cli|web|mcp/server|mcp/client)/",
+        path: "^packages/(cli|web)/",
       },
       to: {
-        path: "^packages/(cli|web|mcp/server|mcp/client)/",
+        path: "^packages/(cli|web)/",
         pathNot: "^packages/$1/",
       },
     },
@@ -57,7 +79,7 @@ module.exports = {
       //   - ^packages/$1/src/ : intra-package imports (same package, always OK)
       //   - /src/index\\.ts$  : imports to another package's top-level entry point
       //     (e.g. packages/core/src/index.ts reached via "@junction/core" tsconfig paths)
-      //     These are legitimate; no-cross-edge-imports handles direction enforcement.
+      //     These are legitimate; direction enforcement is handled by the boundary rules above.
       //   - /src/testing/index\\.ts$ : the ONE sanctioned subpath export convention
       //     (e.g. packages/core/src/testing/index.ts via "@junction/core/testing";
       //     docs/principles/modularity.md §5 — test helpers ship on a ./testing subpath).

@@ -3,13 +3,13 @@
 import { fileURLToPath } from "node:url"
 import { defineConfig } from "vitest/config"
 
-// Resolve @junction/core (and its /testing subpath) to SOURCE in tests, not the
-// built dist/. The package `exports` map points at dist/, which `pnpm verify`
-// does not build — so without this alias any test importing @junction/core would
-// run against stale/absent compiled output (and miss build-only assets like the
-// packaged migrations). Tests assert against source; the built bin is covered
-// separately by the child-process smoke tests.
+// Resolve @junction/* packages to SOURCE in tests, not the built dist/.
+// The packages' `exports` maps point at dist/, which `pnpm verify` does not
+// build — so without these aliases any test importing @junction/* would run
+// against stale/absent compiled output. Tests assert against source; the built
+// bin is covered separately by the child-process smoke tests.
 const coreSrc = fileURLToPath(new URL("./packages/core/src", import.meta.url))
+const mcpServerSrc = fileURLToPath(new URL("./packages/mcp/server/src", import.meta.url))
 
 export default defineConfig({
   test: {
@@ -19,6 +19,7 @@ export default defineConfig({
     alias: {
       "@junction/core/testing": `${coreSrc}/testing/index.ts`,
       "@junction/core": `${coreSrc}/index.ts`,
+      "@junction/mcp-server": `${mcpServerSrc}/index.ts`,
     },
   },
 })

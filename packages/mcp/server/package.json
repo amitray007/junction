@@ -3,5 +3,21 @@
   "version": "0.0.0",
   "private": true,
   "license": "AGPL-3.0-only",
-  "type": "module"
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsdown"
+  },
+  "dependencies": {
+    "@junction/core": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.29.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.0"
+  }
 }
