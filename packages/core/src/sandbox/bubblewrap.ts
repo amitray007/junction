@@ -14,11 +14,15 @@ const BWRAP = "bwrap"
 let commandBackendCache: "bubblewrap" | "none" | undefined
 
 async function probeUserns(): Promise<boolean> {
-  const result = await spawnSandboxed([BWRAP, "--ro-bind", "/usr", "/usr", "--", "/bin/true"], {
-    env: {},
-    cwd: "/",
-    timeoutMs: 5000,
-  })
+  // Probe must exec a binary that exists under a BOUND path. On merged-usr
+  // distros (Ubuntu noble) /bin is a symlink to /usr/bin, so binding only /usr
+  // and exec'ing "/bin/true" fails with "No such file or directory" even though
+  // the user namespace itself was created fine — a false negative. Use the real
+  // /usr/bin/true and also bind /bin so the merged-usr symlink resolves.
+  const result = await spawnSandboxed(
+    [BWRAP, "--ro-bind", "/usr", "/usr", "--ro-bind-try", "/bin", "/bin", "--", "/usr/bin/true"],
+    { env: {}, cwd: "/", timeoutMs: 5000 },
+  )
   return !isSpawnErr(result) && result.exitCode === 0
 }
 
