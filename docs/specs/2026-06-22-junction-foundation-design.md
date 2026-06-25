@@ -184,7 +184,7 @@ Committed choices so we never improvise a dependency mid-increment. **Nothing he
 | OAuth / token vault | **arctic** for the broker's per-provider token store | Per-provider `refreshAccessToken()`. junction owns its own encrypted token table. |
 | Persistence | **Drizzle ORM + better-sqlite3** | Code-first TS schema, single file, zero infra. Cheap swap to libsql later. |
 | Audit logging | **pino** (machine audit trail) + **consola** (human CLI output) | Don't conflate the two streams. |
-| Terminal UI | **OpenTUI** (React/Solid reconciler) | Full-screen interactive TUI dashboard (profiles/platforms/status). Layers *on top of* citty — bare `junction` launches the TUI; commands stay scriptable. Replaces @clack/prompts for rich interaction. Deferred to increment 9 to keep the CLI base lean. |
+| Terminal UI | **Ink** (React TUI, Node-native) | Full-screen interactive TUI dashboard (profiles/platforms/status). Layers *on top of* citty — bare `junction` launches the TUI; commands stay scriptable. Deferred to increment 9 to keep the CLI base lean. (OpenTUI deferred: Bun-only renderer; see `docs/futures/`.) |
 | Sandbox | see §6b | — |
 | License | **AGPL-3.0-only** | Copyleft with §13 network-use disclosure — defends a self-hostable broker against closed SaaS forks. Implication: any hosted junction (incl. ours) must offer Corresponding Source to network users (embed commit/version, surface a source link — broker increment). |
 | CI / versioning | **GitHub Actions** (`pnpm verify`, Node 20/22) + **Changesets** (tag/release only, **no npm publish**) + `main` ruleset + Dependabot + gitleaks | Set up at increment 0.75. Publishing deferred until a package is real; `private: true` makes "no publish" structural. |
@@ -240,7 +240,7 @@ Each increment is a complete, tested, runnable thing. The §7 workflow loop runs
 8. **Sandbox core** — the `Sandbox` interface + the Deno/bubblewrap impl (§6b), exercised by a trivial "run this, return output" test. *Proof:* a scoped Deno eval and a bubblewrapped command run and return output under restriction.
 
 **Phase E — Terminal UI**
-9. **OpenTUI dashboard** — bare `junction` launches a full-screen TUI (profiles, platforms, status), rendered over `core`. citty commands and `--json` paths remain for scripting/agents. *Proof:* the TUI lists profiles/platforms from the DB and reflects live state; `junction status --json` still works headless.
+9. **Ink TUI dashboard** — bare `junction` launches a full-screen TUI (profiles, platforms, status), rendered over `core` using **Ink** (Node-native React TUI; OpenTUI deferred — Bun-only renderer). citty commands and `--json` paths remain for scripting/agents. *Proof:* the TUI lists profiles/platforms from the DB and reflects live state; `junction status --json` still works headless.
 
 **After increment 8 the foundation is "ready"** (the spine + MCP shell + sandbox). Increment 9 (TUI) is a foundation-completing polish layer, not a feature. Only after that do we discuss the first real feature (connecting an actual platform — likely work-GitHub, the wedge), each re-justified as it comes up.
 

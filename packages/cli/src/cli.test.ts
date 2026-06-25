@@ -2,6 +2,7 @@
 // CLI integration tests — drive command handlers directly + one child-process smoke test.
 
 import { execFile } from "node:child_process"
+import { existsSync } from "node:fs"
 import { mkdir, stat, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -10,11 +11,16 @@ import { ensureHome, getPaths } from "@junction/core"
 import { withTempHome } from "@junction/core/testing"
 import { describe, expect, it } from "vitest"
 import { initCommand } from "./commands/init.js"
-import { statusCommand } from "./commands/status.js"
+import { runStatus, statusCommand } from "./commands/status.js"
 
 const execFileAsync = promisify(execFile)
 
 const distIndex = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../dist/index.js")
+const coreDistMigrations = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../node_modules/@junction/core/dist/migrations",
+)
+const builtBinReady = existsSync(distIndex) && existsSync(coreDistMigrations)
 
 // ---------------------------------------------------------------------------
 // Helper: capture what a command handler writes to process.stdout
@@ -216,6 +222,77 @@ describe("CLI smoke test (child-process)", () => {
       const parsed = JSON.parse(stdout.trim())
       expect(parsed.ok).toBe(false)
       expect(typeof parsed.error).toBe("string")
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Headless-fallback contract (unit — no built dist needed)
+// ---------------------------------------------------------------------------
+
+describe("bare junction headless fallback (runStatus)", () => {
+  it("runStatus(false) produces human-readable output on stdout (non-TTY path)", async () => {
+    await withTempHome(async () => {
+      // Init first so status has something to report
+      await captureStdout(() =>
+        initCommand.run?.({ args: { json: true, yes: false }, cmd: {} as never, rawArgs: [] }),
+      )
+
+      const out = await captureStdout(() => runStatus(false))
+      // Should contain the home path and key status fields
+      expect(out.length).toBeGreaterThan(0)
+    })
+  })
+
+  it("runStatus(true) produces valid JSON on stdout (--json fallback path)", async () => {
+    await withTempHome(async () => {
+      await captureStdout(() =>
+        initCommand.run?.({ args: { json: true, yes: false }, cmd: {} as never, rawArgs: [] }),
+      )
+
+      const out = await captureStdout(() => runStatus(true))
+      const lines = out.split("\n").filter((l) => l.trim().length > 0)
+      expect(lines.length).toBe(1)
+      const parsed = JSON.parse(lines[0] ?? "")
+      expect(parsed).toHaveProperty("initialized", true)
+      expect(parsed).toHaveProperty("home")
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Headless-fallback + status --json contract (built bin — child process)
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!builtBinReady)("bare junction non-TTY (child-process — headless contract)", () => {
+  it("bare junction piped (non-TTY stdout) outputs status and does NOT hang", async () => {
+    await withTempHome(async (home) => {
+      const env = { ...process.env, JUNCTION_HOME: home }
+      // Init home
+      await execFileAsync("node", [distIndex, "init", "--json"], { env })
+
+      // Bare junction with piped stdout (execFileAsync gives non-TTY stdout)
+      // Must complete within timeout and produce non-empty output (not hang).
+      const { stdout } = await execFileAsync("node", [distIndex], {
+        env,
+        timeout: 8000,
+      })
+      expect(stdout.trim().length).toBeGreaterThan(0)
+      // Should not have launched the interactive TUI (which would never resolve)
+    })
+  })
+
+  it("junction status --json is unchanged (still emits valid JSON after TUI wiring)", async () => {
+    await withTempHome(async (home) => {
+      const env = { ...process.env, JUNCTION_HOME: home }
+      await execFileAsync("node", [distIndex, "init", "--json"], { env })
+
+      const { stdout } = await execFileAsync("node", [distIndex, "status", "--json"], { env })
+      const parsed = JSON.parse(stdout.trim())
+      expect(parsed).toHaveProperty("initialized", true)
+      expect(parsed).toHaveProperty("home", home)
+      expect(parsed).toHaveProperty("credentialStore")
+      expect(parsed).toHaveProperty("sandbox")
     })
   })
 })

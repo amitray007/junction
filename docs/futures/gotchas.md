@@ -23,6 +23,10 @@ Non-obvious sharp edges we've already paid for. Each lists the **symptom** and t
 - **A zero-tool `McpServer` doesn't advertise the `tools` capability** → a client's `tools/list` returns `-32601 Method not found`, not an empty list. **Fix:** use the low-level `Server` with `capabilities:{tools:{}}` + an explicit `ListToolsRequestSchema` handler returning the (profile-driven) tool list — which is also the right model for junction.
 - **`stdout` on `junction mcp serve` is the MCP channel** — a single stray log line corrupts the JSON-RPC stream. **Fix:** all human/error output goes to **stderr**; never `console.log`/consola to stdout in the serve path.
 
+## TUI (inc 9)
+
+- **OpenTUI's native renderer is Bun-only under Node.** `@opentui/core` imports cleanly but calling `createCliRenderer()` or `createTestRenderer()` throws `"native FFI is not available for this runtime yet"` on Node 22/24 — the renderer uses `bun:ffi` internally, which is unavailable outside Bun. **Symptom:** import succeeds, first render call throws. **Fix:** use **Ink** for Node TUIs. Ink 5.x is pure ESM, renders entirely in Node, and has `ink-testing-library` for headless snapshot tests. The OpenTUI revisit-when entry tracks the trigger. (inc 9)
+
 ## Boundary tooling (inc 1.5 / 3 / 7)
 
 - **depcruise "green but blind":** resolving `@junction/*` through the `exports` map landed edges on the excluded `dist/`, so cross-package violations were silently invisible while the rules "passed". **Fix:** `tsconfig.depcruise.json` maps every specifier to `packages/*/src`, and the `cli` package (named `junction`, not `@junction/cli`) is mapped too so its boundary is governed.

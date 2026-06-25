@@ -20,3 +20,4 @@ Things we chose **not** to build/adopt yet, each with the **trigger** that shoul
 | **react-doctor / React Compiler / eslint-plugin-react-hooks** | The **web** increment | Frontend-only tooling; irrelevant until `@junction/web` has components. |
 | **Changesets publishing** | A package is actually **published** | Currently disabled (`private: true` + `changeset tag`); versioning works, publishing is intentionally off. |
 | **Credential key rotation** | Operator needs to rotate the master key | The encrypted store supports re-encrypt in principle; no `rotate` command yet. |
+| **OpenTUI (Node FFI)** | OpenTUI ships a Node-compatible native renderer | Increment 9 uses **Ink** for the TUI dashboard. OpenTUI's `bun:ffi`-backed renderer throws `"native FFI is not available for this runtime yet"` under Node. When OpenTUI ships a Node-safe renderer, consider migrating the TUI from Ink. See `docs/futures/gotchas.md` (OpenTUI) for the empirical finding. |
