@@ -13,6 +13,7 @@
 
 import type { Profile } from "@junction/core"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
+import type { McpServerHandlers } from "./server.js"
 import { createMcpServer } from "./server.js"
 
 /**
@@ -21,9 +22,12 @@ import { createMcpServer } from "./server.js"
  * Connects the server and awaits transport close (the process runs until the
  * MCP client disconnects or the process is killed). Returns a Promise that
  * resolves when the server closes.
+ *
+ * @param profile  - Profile being served (for server metadata and future audit).
+ * @param handlers - Injected tool handlers from the cli composition root.
  */
-export async function serveStdio(profile: Profile): Promise<void> {
-  const server = createMcpServer(profile)
+export async function serveStdio(profile: Profile, handlers: McpServerHandlers): Promise<void> {
+  const server = createMcpServer(profile, handlers)
   const transport = new StdioServerTransport()
   await server.connect(transport)
 }

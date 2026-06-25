@@ -161,6 +161,58 @@ printf '%s\n' \
 **CRITICAL:** stdout is the MCP channel — nothing except JSON-RPC frames may appear on stdout.
 Human-readable output always goes to stderr.
 
+## Profile proxy — full agent tool call (increment 12)
+
+`junction profile create` creates a named profile. `junction mcp serve --profile <name>` then
+serves it as a real proxy: namespaced tools (`<namespace>__<tool>`) are returned to agents, and
+tool calls are proxied upstream with the credential injected at call-time. The credential never
+reaches the agent.
+
+```bash
+# Create a named profile:
+junction profile create --name work --json
+# → {"ok":true,"id":"profile-work","name":"work","mcpEndpointPath":"/mcp/work"}
+
+# Full end-to-end flow (add platform + credential + source + serve):
+JUNCTION_HOME=/tmp/jt12 junction init --json
+JUNCTION_HOME=/tmp/jt12 junction platform add \
+  --id my-server --display-name "My Server" \
+  --transport http --url https://api.example.com/mcp/ \
+  --auth-header Authorization --json
+echo "my-bearer-token" | JUNCTION_HOME=/tmp/jt12 junction credential add \
+  --platform my-server --account work --kind bearer --token-stdin --json
+JUNCTION_HOME=/tmp/jt12 junction profile create --name work --json
+JUNCTION_HOME=/tmp/jt12 junction profile add-source \
+  --profile work --platform my-server --credential <credential-id> --namespace srv --json
+
+# Serve (proxy mode — tools come from the upstream MCP source):
+printf '%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}' \
+  '{"jsonrpc":"2.0","method":"notifications/initialized"}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
+  '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"srv__some_tool","arguments":{}}}' \
+  | JUNCTION_HOME=/tmp/jt12 node packages/cli/dist/index.js mcp serve --profile work
+# → tools/list returns ["srv__<tool>", ...]; tools/call proxies upstream and returns the result
+```
+
+**Architecture (injection, boundary-preserving):**
+- `mcp/server` takes injected `McpServerHandlers { listTools, callTool }` — it knows nothing about credentials.
+- `mcp/client` exports `createProfileProxy(sources, resolveSource)` — it knows nothing about the DB.
+- The **cli** is the composition root: it builds `resolveSource` (from repos + credential store),
+  creates the proxy, adapts `ResultAsync` → `Promise`, and passes the handlers to `serveStdio`.
+- Boundary: `mcp/server → core only`; `mcp/client → core only`; `cli → core + both mcp packages`.
+  `depcruise` enforces this; do **not** edit `.dependency-cruiser.cjs` to add `mcp/server → mcp/client`.
+
+**Per-source resilience:** `listTools` always returns Ok — failing sources are silently skipped.
+`callTool` propagates errors as safe MCP error responses (no secret in the message).
+
+**Credential discipline:** the secret flows `resolveSource → sessionFactory → transport` only.
+It is never stored on the proxy, never returned in any result, error, or log.
+`safeUpstreamMessage` (exported from `@junction/mcp-server`, used in cli) maps errors to safe strings.
+
+**toolFilter:** `allow`/`deny` lists on a source are applied to UPSTREAM tool names (the part
+after `__`). Set via `profile add-source --allow <tool> --deny <tool>` (repeatable flags).
+
 ## Enforcement
 
 - Git hooks (lefthook) run `pnpm verify` pre-commit — a failing verify blocks the commit.

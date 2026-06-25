@@ -3,4 +3,5 @@
 /** @junction/mcp-server — public API. */
 
 export { serveStdio } from "./serve.js"
-export { createMcpServer } from "./server.js"
+export type { McpServerHandlers } from "./server.js"
+export { createMcpServer, safeUpstreamMessage } from "./server.js"
