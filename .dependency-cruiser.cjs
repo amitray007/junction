@@ -13,76 +13,58 @@ module.exports = {
       },
     },
     {
-      name: "no-core-importing-edges",
+      // Increment 7 (structural app-vs-lib model — closes the enumeration gaps the
+      // inc-7 boundary review found). The topology:
+      //   APPS (composition roots): cli (package name "junction"), web. May import any
+      //     lib; must not import each other; nothing may import an app.
+      //   LIBS: every package that is NOT an app — core, mcp/server, mcp/client, AND any
+      //     package added later. A lib may import ONLY core (+ its own files).
+      //
+      // This rule is STRUCTURAL, not an enumeration: `from` = "any non-app package"
+      // (so a future package is automatically a governed lib), `to` = "any in-repo
+      // package except core and except the importer's own package". Therefore:
+      //   - core → anything-in-repo (incl. a new package): BLOCKED (core is a lib whose
+      //     only allowed target is core itself ⇒ core imports nothing in-repo).
+      //   - mcp/server → mcp/client (and reverse), mcp/* → cli/web: BLOCKED (peer lib / app).
+      //   - new-pkg → cli/web/mcp/*: BLOCKED (a new lib may only reach core).
+      //   - any-lib → core, any-lib → its own internal files: ALLOWED.
+      //   - apps (cli/web) are exempt as importers (from.pathNot) — they may import any lib.
+      // The cli is reached by name "junction" via tsconfig.depcruise.json paths, so its
+      // PATH packages/cli/ is what the regexes match.
+      name: "libs-import-only-core",
       comment:
-        "packages/core must not import from cli, web, or mcp — it is the dependency-free core.",
+        "A lib (any package that is not an app: core, mcp/server, mcp/client, or any " +
+        "future package) may import ONLY core and its own files — never an app (cli/web), " +
+        "never a peer lib. Apps are exempt as importers (they are composition roots).",
       severity: "error",
       from: {
-        path: "^packages/core/",
+        // Capture the importer's package dir ($1), including nested mcp/<sub>.
+        path: "^packages/(mcp/[^/]+|[^/]+)/",
+        // Apps are NOT libs — exempt them as importers.
+        pathNot: "^packages/(cli|web)/",
       },
       to: {
-        path: "^packages/(cli|web|mcp)/",
-      },
-    },
-    {
-      // Increment 7: app-vs-lib boundary model.
-      //
-      // APPS (composition roots): cli, web.
-      //   Apps may import any lib (core, mcp/server, mcp/client).
-      //   Apps are leaves — nothing may import an app.
-      //   Apps must NOT import each other.
-      //
-      // LIBS: core, mcp/server, mcp/client.
-      //   core: imports nothing in-repo (no-core-importing-edges above).
-      //   mcp/server, mcp/client: import ONLY core — never each other, never an app.
-      //
-      // This rule (no-lib-importing-non-core):
-      //   Forbids mcp/server and mcp/client from importing any in-repo package
-      //   except core. Blocks: mcp-server→cli, mcp-server→web, mcp-server→mcp-client,
-      //   mcp-client→cli, mcp-client→web, mcp-client→mcp-server.
-      //   The no-core-importing-edges rule already handles core→anything.
-      name: "no-lib-importing-non-core",
-      comment:
-        "Lib packages (mcp/server, mcp/client) may only import core within the repo — " +
-        "never an app (cli/web) and never a peer lib (mcp/client↔mcp/server). " +
-        "Intra-package imports (within the same mcp/server or mcp/client) are always allowed.",
-      severity: "error",
-      from: {
-        path: "^packages/(mcp/server|mcp/client)/",
-      },
-      to: {
-        // Target: any in-repo package except core AND except the same lib package itself.
-        // pathNot excludes:
-        //   - ^packages/core/             : core imports are always OK for libs
-        //   - ^packages/$1/               : intra-package (mcp/server→mcp/server, etc.)
         path: "^packages/",
+        // Allow importing core and the importer's own package; block everything else.
         pathNot: "^packages/core/|^packages/$1/",
       },
     },
     {
-      // Forbids apps from importing each other (cli→web, web→cli).
-      // cli and web may both import any lib (core, mcp/server, mcp/client).
-      name: "no-app-cross-imports",
+      // Apps (cli, web) are composition roots — they may import any lib but NOT each
+      // other. One rule covers both directions: $1 captures the importing app, and
+      // to.pathNot excludes only the importer's own package, so cli→web and web→cli
+      // are both blocked while cli→cli / web→web (intra) stay allowed.
+      name: "apps-dont-import-apps",
       comment:
-        "Apps (cli, web) are composition roots — they must not import each other. " +
-        "Each app may import any lib (core, mcp/server, mcp/client).",
+        "Apps (cli, web) are composition roots — they may import any lib but must not " +
+        "import each other.",
       severity: "error",
       from: {
-        path: "^packages/cli/",
+        path: "^packages/(cli|web)/",
       },
       to: {
-        path: "^packages/web/",
-      },
-    },
-    {
-      name: "no-app-cross-imports-web-to-cli",
-      comment: "Apps (cli, web) are composition roots — they must not import each other.",
-      severity: "error",
-      from: {
-        path: "^packages/web/",
-      },
-      to: {
-        path: "^packages/cli/",
+        path: "^packages/(cli|web)/",
+        pathNot: "^packages/$1/",
       },
     },
     {
