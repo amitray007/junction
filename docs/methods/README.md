@@ -32,6 +32,8 @@ A **method file** holds one increment's **spec + step-by-step implementation tog
 | **— Feature: "any source" breadth (OpenAPI/REST → GraphQL) —** | | | |
 | 14 | Source-provider abstraction + dispatch-by-kind (OpenAPI prep — refactor) | `14-source-provider-abstraction.md` | written |
 | 15 | OpenAPI/REST source provider — call any REST API as namespaced tools | `15-openapi-provider.md` | written |
+| 16 | Optional credentials — public/no-auth sources (any source type) | `16-optional-credentials.md` | written |
+| 17 | Large-spec selection (--tag/--path) + spec refresh | `17-*.md` | TBD |
 
 After increment 8 the foundation is "ready"; increment 9 (TUI) completes it. Features come after, each with its own method file.
 
