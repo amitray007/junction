@@ -57,6 +57,10 @@ Proof: against a live local no-auth OpenAPI server, `debug probe` lists `getGree
 - `pnpm build`; `pnpm depcruise` (0 errors); `pnpm quality` (0 clones — extracting the shared helpers should *reduce* duplication, not add). SPDX on new files.
 - **MANUAL QA (orchestrator) — via the CLI, no node script:** stand up the inc-16 local no-auth OpenAPI server; `platform add` it; `debug probe --platform pub` (no credential) → lists `getGreeting`; `debug call --platform pub --tool getGreeting --args '{}'` → real 200 body, no credential, no secret/URL in output. Repeat against a credentialed MCP source (everything-demo or a keyed source) → probe + call still work.
 
+### Caveat — `debug probe` is not a per-profile `serve` preview
+
+`debug probe` is **platform+credential** scoped, while `mcp serve`'s proxy is **profile+SourceRef** scoped. So probe's namespaced output can differ from what an agent sees through a profile: (a) it applies **no `toolFilter`** (the proxy filters raw names before namespacing — probe shows the full upstream set), and (b) it **derives** the namespace from `platformId`+account rather than the profile's **configured** `toolNamespace` (and since the ≤64 cut depends on namespace length, the skip outcome can differ). Both are inherent to probing a source in isolation and are surfaced honestly (the output prints the derived `Namespace:`). Probe answers "what tools does this source expose, and how would they namespace?", not "what exactly will profile X serve?".
+
 ### Out of scope
 
 - Profile-aware debug (debug operates on a platform+credential in isolation, not a profile's namespaced SourceRef). Large-spec `--tag/--path` selection + `platform refresh` (now increment 18). GraphQL provider (later). Any production/non-debug surface.
