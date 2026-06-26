@@ -7,7 +7,12 @@
 // The probe prints only tool names and counts — no credential values, ever.
 
 import type { UpstreamError } from "@junction/core"
-import { createCredentialStore, getPaths, ToolNamespaceSchema } from "@junction/core"
+import {
+  createCredentialStore,
+  getPaths,
+  namespaceToolName,
+  ToolNamespaceSchema,
+} from "@junction/core"
 import { connectSource } from "@junction/mcp-client"
 import { defineCommand } from "citty"
 import { consola } from "consola"
@@ -41,6 +46,8 @@ function formatUpstreamError(e: UpstreamError): string {
       return `upstream tool name contains MCP-illegal characters: "${e.name}"`
     case "timed-out":
       return `upstream timed out after ${e.ms}ms`
+    case "unsupported-source-kind":
+      return `platform kind "${e.platformKind}" is not yet supported`
     default: {
       // Exhaustiveness guard: compile error if a new UpstreamError kind is added without
       // a corresponding case here (docs/rules/typescript.md — switch + never).
@@ -160,7 +167,8 @@ const mcpProbeCommand = defineCommand({
     // ── 6. Connect + list tools ───────────────────────────────────────────
     // connectSource injects `secret` only into the transport. We NEVER log or
     // output the secret — below this point it is referenced only by connectSource.
-    const sessionResult = await connectSource(platform.connection, toolNamespace, secret)
+    // (increment 14: connectSource no longer takes toolNamespace — returns raw names)
+    const sessionResult = await connectSource(platform.connection, secret)
     if (sessionResult.isErr()) {
       reportUpstreamError(sessionResult.error, json)
       return
@@ -174,16 +182,29 @@ const mcpProbeCommand = defineCommand({
         return
       }
 
-      const { tools, skippedCount } = toolsResult.value
+      // Apply namespacing + ≤64 guard (increment 14: moved from session to here for probe).
+      // The core proxy does this automatically; the probe applies it manually.
+      const rawTools = toolsResult.value
+      const namespacedTools: Array<{ name: string }> = []
+      let skippedCount = 0
+      for (const t of rawTools) {
+        const nameResult = namespaceToolName(toolNamespace, t.name)
+        if (nameResult.isErr()) {
+          skippedCount++
+          continue
+        }
+        namespacedTools.push({ name: nameResult.value })
+      }
+
       // Output: namespaced tool names + count. NEVER the token.
       if (json) {
         process.stdout.write(
-          `${JSON.stringify({ ok: true, namespace: toolNamespace, count: tools.length, skippedCount, tools: tools.map((t) => t.name) })}\n`,
+          `${JSON.stringify({ ok: true, namespace: toolNamespace, count: namespacedTools.length, skippedCount, tools: namespacedTools.map((t) => t.name) })}\n`,
         )
       } else {
         consola.info(`Namespace: ${toolNamespace}`)
-        consola.info(`Tools (${tools.length}):`)
-        for (const t of tools) {
+        consola.info(`Tools (${namespacedTools.length}):`)
+        for (const t of namespacedTools) {
           process.stdout.write(`  ${t.name}\n`)
         }
         if (skippedCount > 0) {

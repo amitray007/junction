@@ -46,3 +46,4 @@ export type UpstreamError =
   | { kind: "namespace-too-long"; name: string }
   | { kind: "invalid-tool-name"; name: string }
   | { kind: "timed-out"; ms: number }
+  | { kind: "unsupported-source-kind"; platformKind: string }

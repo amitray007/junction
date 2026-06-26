@@ -1,46 +1,30 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// UpstreamSession — wraps a connected MCP Client with namespaced tool dispatch.
+// UpstreamSession — wraps a connected MCP Client with RAW tool dispatch.
 // createSession is exported so tests can inject a pre-connected Client
 // (e.g. via InMemoryTransport) without going through transport construction.
+//
+// RAW NAMES (increment 14): listTools returns upstream tool names WITHOUT any
+// namespace prefix. callTool accepts the RAW upstream name (no split/strip).
+// Namespacing, ≤64-guard, and toolFilter now live in core/src/sources/proxy.ts.
 
-import type { UpstreamError } from "@junction/core"
+import type { ProviderTool, ToolResult, UpstreamError } from "@junction/core"
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { err, ok, type Result, ResultAsync } from "neverthrow"
-import { namespaceToolName, splitNamespacedName } from "./helpers.js"
 
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
-export interface NamespacedTool {
-  name: string
-  description?: string | undefined
-  inputSchema: object
-}
-
-export interface ToolResult {
-  content: unknown
-  isError?: boolean | undefined
-}
-
-/** Result of listTools: the namespaced tools plus a count of skipped tools. */
-export interface ListToolsResult {
-  tools: NamespacedTool[]
-  /** Number of upstream tools whose namespaced names could not be built (skipped, not fatal). */
-  skippedCount: number
-}
-
 export interface UpstreamSession {
-  /** Upstream tools, each name prefixed with `<namespace>__`. Tools that
-   *  cannot be namespaced are skipped; skippedCount records how many. */
-  listTools(): ResultAsync<ListToolsResult, UpstreamError>
-  /** Call a `<namespace>__<tool>` — strips the prefix, routes upstream. */
-  callTool(name: string, args: Record<string, unknown>): ResultAsync<ToolResult, UpstreamError>
+  /** Raw upstream tools (no namespace prefix). */
+  listTools(): ResultAsync<ProviderTool[], UpstreamError>
+  /** Call the upstream with the raw tool name (no namespace splitting). */
+  callTool(rawName: string, args: Record<string, unknown>): ResultAsync<ToolResult, UpstreamError>
   close(): Promise<void>
 }
 
 // ---------------------------------------------------------------------------
-// Internal helpers (exported for use by connect.ts)
+// Internal helpers (exported for use by connect.ts and tests)
 // ---------------------------------------------------------------------------
 
 /** Default call/connect timeout. Recorded in docs/futures/revisit-when.md. */
@@ -110,33 +94,27 @@ function isAuthError(e: unknown): boolean {
  * Exported for testing: tests can inject a client connected via InMemoryTransport
  * without going through transport construction.
  * The `close` callback is called by `session.close()` (e.g. `() => client.close()`).
+ *
+ * RAW names: listTools returns raw upstream names; callTool takes a raw name
+ * and passes it directly to the upstream (no split/strip).
  */
 export function createSession(
   client: Client,
-  toolNamespace: string,
   closeFn: () => Promise<void>,
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
 ): UpstreamSession {
   return {
-    listTools(): ResultAsync<ListToolsResult, UpstreamError> {
-      const work = async (): Promise<Result<ListToolsResult, UpstreamError>> => {
+    listTools(): ResultAsync<ProviderTool[], UpstreamError> {
+      const work = async (): Promise<Result<ProviderTool[], UpstreamError>> => {
         try {
           const { tools } = await withTimeoutMs(client.listTools(), timeoutMs)
-          const result: NamespacedTool[] = []
-          let skippedCount = 0
-          for (const t of tools) {
-            const nameResult = namespaceToolName(toolNamespace, t.name)
-            if (nameResult.isErr()) {
-              skippedCount++
-              continue
-            }
-            result.push({
-              name: nameResult.value,
+          return ok(
+            tools.map((t) => ({
+              name: t.name,
               description: t.description,
               inputSchema: (t.inputSchema as object | undefined) ?? {},
-            })
-          }
-          return ok({ tools: result, skippedCount })
+            })),
+          )
         } catch (cause) {
           if (isTimeoutError(cause)) {
             return err({ kind: "timed-out" as const, ms: cause.ms } satisfies UpstreamError)
@@ -150,15 +128,14 @@ export function createSession(
       return new ResultAsync(work())
     },
 
-    callTool(name: string, args: Record<string, unknown>): ResultAsync<ToolResult, UpstreamError> {
+    callTool(
+      rawName: string,
+      args: Record<string, unknown>,
+    ): ResultAsync<ToolResult, UpstreamError> {
       const work = async (): Promise<Result<ToolResult, UpstreamError>> => {
-        const { namespace, tool } = splitNamespacedName(name)
-        if (namespace !== toolNamespace || !tool) {
-          return err({ kind: "tool-not-found" as const, name } satisfies UpstreamError)
-        }
         try {
           const result = await withTimeoutMs(
-            client.callTool({ name: tool, arguments: args }),
+            client.callTool({ name: rawName, arguments: args }),
             timeoutMs,
           )
           const isError =

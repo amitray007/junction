@@ -75,3 +75,11 @@ export { ProfileSchema } from "./schema/profile.js"
 export type { SourceRef, ToolFilter } from "./schema/source-ref.js"
 // SourceRef + ToolFilter
 export { SourceRefSchema, ToolFilterSchema } from "./schema/source-ref.js"
+
+// ---------------------------------------------------------------------------
+// Sources — ToolProvider interface, naming helpers, profile proxy
+// ---------------------------------------------------------------------------
+export { namespaceToolName, splitNamespacedName } from "./sources/naming.js"
+export type { ProviderTool, ToolProvider, ToolResult } from "./sources/provider.js"
+export type { ProfileProxy, ResolveProviderFn } from "./sources/proxy.js"
+export { createProfileProxy } from "./sources/proxy.js"
