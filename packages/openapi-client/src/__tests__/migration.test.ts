@@ -11,11 +11,11 @@ let tmpHome: string
 
 beforeEach(async () => {
   tmpHome = await mkdtemp(join(tmpdir(), "junction-openapi-test-"))
-  process.env["JUNCTION_HOME"] = tmpHome
+  process.env.JUNCTION_HOME = tmpHome
 })
 
 afterEach(async () => {
-  delete process.env["JUNCTION_HOME"]
+  delete process.env.JUNCTION_HOME
   await rm(tmpHome, { recursive: true, force: true })
 })
 

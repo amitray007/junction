@@ -385,7 +385,7 @@ describe("response byte cap", () => {
 describe("timeout", () => {
   it("returns timed-out for a non-responding endpoint", async () => {
     // Build a spec with a very short timeout by patching the operation
-    const schema = await getSchema()
+    const _schema = await getSchema()
     // We'll call getSlow but override the timeout via module — use a monkey-patch approach
     // by pointing to our local server's /slow endpoint. The test sets a short AbortController
     // externally via a custom connection that we can't directly control in the current API,
