@@ -109,24 +109,30 @@ must hit only comments and example strings.
 JUNCTION_STORE=file junction credential add ...   # use AES-256-GCM encrypted file store
 ```
 
-## MCP client — upstream connector (increment 11)
+## Debug a source — probe + call (increment 11, generalized in 17)
 
-`junction debug mcp-probe` connects to a platform's upstream MCP source, lists tools, and
-prints the **namespaced** names (`<namespace>__<tool>`). Token never appears in output.
+`junction debug probe` connects to **any** source (MCP or OpenAPI), lists tools, and prints
+both raw and **namespaced** names (`<namespace>__<tool>`). `junction debug call` invokes a
+single tool against any source and prints the result. Secret/URL never appear in output.
+`--credential` is optional (omit for public/no-auth sources). Both have `--json`.
 
 ```bash
 # List credentials to find the credential ID:
 JUNCTION_HOME=/tmp/jt10 junction credential list --platform github --json
 
-# Probe the upstream MCP source (replace <id> with the credential id):
-JUNCTION_HOME=/tmp/jt10 junction debug mcp-probe \
+# Probe any upstream source (replace <id> with the credential id; omit --credential if public):
+JUNCTION_HOME=/tmp/jt10 junction debug probe \
   --platform github --credential <id>
-# → prints github_work__list_issues, github_work__get_pull_request, ... + count
+# → github_work__list_issues  (raw: list_issues), ... + count
 
-# Machine-readable output:
-JUNCTION_HOME=/tmp/jt10 junction debug mcp-probe \
-  --platform github --credential <id> --json
-# → {"ok":true,"namespace":"github_work","count":N,"tools":["github_work__..."]}
+# Machine-readable:
+JUNCTION_HOME=/tmp/jt10 junction debug probe --platform github --credential <id> --json
+# → {"ok":true,"namespace":"github_work","count":N,"tools":[{"raw":"...","namespaced":"..."}]}
+
+# Invoke one tool (raw upstream name) against the source:
+JUNCTION_HOME=/tmp/jt10 junction debug call \
+  --platform github --credential <id> --tool list_issues --args '{"state":"open"}'
+# → {"ok":true,"content":[{"type":"text","text":"..."}],"isError":false}
 ```
 
 **Security invariants (enforced by tests):**
@@ -302,8 +308,8 @@ The Profiles panel now shows per-source rows beneath each profile, with ✓/✗ 
 
 ## Optional credentials — public/no-auth sources (increment 16)
 
-`--credential` is now optional in `add-source` and `mcp-probe`. Omit it to create a
-public/no-auth source that connects with `secret = null`.
+`--credential` is now optional in `add-source` and `debug probe`/`debug call`. Omit it to
+create a public/no-auth source that connects with `secret = null`.
 
 ```bash
 # Add a public (no-auth) OpenAPI source — no --credential needed:
@@ -316,11 +322,11 @@ JUNCTION_HOME=/tmp/jt16 junction profile show --name p --json
 # → {...,"sources":[{"namespace":"pub","platform":"pub","credentialAccount":"(none)","enabled":true}]}
 
 # Probe a public platform without a credential:
-JUNCTION_HOME=/tmp/jt16 junction debug mcp-probe --platform pub
-# → prints namespaced tools; secret = null (no auth header injected)
+JUNCTION_HOME=/tmp/jt16 junction debug probe --platform pub
+# → prints raw + namespaced tools; secret = null (no auth header injected)
 
 # With --credential still works unchanged (credentialed sources are byte-identical):
-JUNCTION_HOME=/tmp/jt16 junction debug mcp-probe --platform github --credential <id>
+JUNCTION_HOME=/tmp/jt16 junction debug probe --platform github --credential <id>
 ```
 
 **Auth-declared-but-no-credential warning (informative, not blocking):**

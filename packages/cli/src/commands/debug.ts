@@ -2,9 +2,8 @@
 // `junction debug` — source-agnostic debug utilities (non-production).
 //
 // Subcommands:
-//   probe     — connect to any source (MCP or OpenAPI) and list its tools.
-//   call      — invoke a single tool against any source and print the result.
-//   mcp-probe — deprecated alias for `probe`; kept for backward compatibility.
+//   probe — connect to any source (MCP or OpenAPI) and list its tools.
+//   call  — invoke a single tool against any source and print the result.
 //
 // SECURITY:
 //   The resolved secret (bearer token / API key) is passed only into buildProvider
@@ -103,7 +102,7 @@ function deriveProbeNamespace(platformId: string, profileName: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Shared probe logic (probe + deprecated mcp-probe both call this)
+// Shared probe logic (the probe subcommand calls this)
 // ---------------------------------------------------------------------------
 
 interface ProbeArgs {
@@ -198,7 +197,7 @@ async function runProbe(args: ProbeArgs): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Shared args for probe + mcp-probe (identical; extracted to avoid dup flag)
+// Args for the probe subcommand
 // ---------------------------------------------------------------------------
 
 const PROBE_ARGS = {
@@ -346,30 +345,6 @@ const callCommand = defineCommand({
 })
 
 // ---------------------------------------------------------------------------
-// mcp-probe — deprecated alias for `debug probe`
-// ---------------------------------------------------------------------------
-
-const mcpProbeCommand = defineCommand({
-  meta: {
-    name: "mcp-probe",
-    description:
-      "[DEPRECATED] Use `debug probe` instead. Connect to a platform's upstream MCP source and print the namespaced tool list.",
-  },
-  args: PROBE_ARGS,
-  async run({ args }) {
-    // Emit the deprecation note on stderr (not stdout — never pollutes JSON output).
-    process.stderr.write(
-      "junction debug mcp-probe is deprecated; use `junction debug probe` instead\n",
-    )
-    await runProbe({
-      platform: args.platform,
-      credential: args.credential,
-      json: args.json ?? false,
-    })
-  },
-})
-
-// ---------------------------------------------------------------------------
 // debug namespace
 // ---------------------------------------------------------------------------
 
@@ -381,6 +356,5 @@ export const debugCommand = defineCommand({
   subCommands: {
     probe: probeCommand,
     call: callCommand,
-    "mcp-probe": mcpProbeCommand,
   },
 })

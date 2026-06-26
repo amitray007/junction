@@ -11,7 +11,7 @@
 ### Goal
 
 A source-agnostic `debug` surface, built on `ToolProvider`:
-- **`debug probe --platform <id> [--credential <id>]`** — dispatch by `platform.kind`, list the source's tools (raw + namespaced) for **MCP and OpenAPI** (and any future kind). Replaces the MCP-only path; `mcp-probe` stays as a deprecated alias.
+- **`debug probe --platform <id> [--credential <id>]`** — dispatch by `platform.kind`, list the source's tools (raw + namespaced) for **MCP and OpenAPI** (and any future kind). Replaces the MCP-only `mcp-probe`, which is **removed** (debug is non-production, introduced this same increment — no back-compat owed).
 - **`debug call --platform <id> [--credential <id>] --tool <rawName> --args <json>`** — build the provider, invoke one tool, print the result. This is the missing capability: a faithful end-to-end test harness that exercises the **same** provider/auth path `mcp serve` uses, without serving.
 
 Proof: against a live local no-auth OpenAPI server, `debug probe` lists `getGreeting` and `debug call --tool getGreeting --args '{}'` returns the real 200 body — **with no credential** — and a credentialed MCP source still probes/calls as before.
@@ -35,7 +35,7 @@ Proof: against a live local no-auth OpenAPI server, `debug probe` lists `getGree
 3. **Refactor `mcp.ts resolveProvider`** to call `buildProvider` for the kind-dispatch+build, keeping everything else identical (SourceRef→platform resolve, credential/secret resolve, the auth-declared-but-no-credential warning, namespacing via the proxy, toolFilter, the per-source stderr "skipping" notes on a `buildProvider` error). **`mcp serve` must stay byte-identical.**
 4. **`debug probe`** (generic): platform + optional credential → `resolveCredentialSecret` → `buildProvider` → `listTools()` → derive namespace + apply `namespaceToolName` (≤64 guard) → print **both** raw and namespaced names (+ skipped count). `close()` in a `finally`.
 5. **`debug call`**: platform + optional credential + `--tool <rawName>` + `--args <json>` → `buildProvider` → `callTool(rawName, parsedArgs)` → print `ToolResult.content` + `isError`. `close()` in `finally`. `--args` defaults to `{}`; parse+validate as a JSON **object** (bad JSON / non-object → clean `invalid tool arguments` error, not a throw).
-6. **`mcp-probe` → deprecated alias** of `debug probe` (same handler; stderr note "mcp-probe is deprecated; use `debug probe`"). Keeps any existing scripts working; debug is non-production so churn is safe.
+6. **`mcp-probe` removed** — replaced wholesale by `debug probe`. Debug is non-production and `mcp-probe` was introduced this same increment, so no alias/back-compat is kept.
 
 ### Security / robustness invariants
 
@@ -52,7 +52,7 @@ Proof: against a live local no-auth OpenAPI server, `debug probe` lists `getGree
   - `resolveCredentialSecret`: no credential → `{secret:null, account:"public"}` (no store touch); present credential → secret + profileName; not-found / store-fail → mapped error.
   - `debug probe`: lists tools for an OpenAPI **and** an MCP source (in-memory MCP server); raw + namespaced both present; no-credential path works; closes the provider.
   - `debug call`: invokes a tool against a local OpenAPI source → real result; no-credential path; **assert no secret and no request URL in the output**; bad `--args` → clean error; provider closed even on call failure.
-  - `mcp-probe` alias still lists tools (+ emits the deprecation note).
+  - `mcp-probe` is gone (the `debug` namespace exposes only `probe` + `call`).
   - `mcp serve` regression: the existing serve/proxy tests still pass unchanged (byte-identical behavior after the `buildProvider` extraction).
 - `pnpm build`; `pnpm depcruise` (0 errors); `pnpm quality` (0 clones — extracting the shared helpers should *reduce* duplication, not add). SPDX on new files.
 - **MANUAL QA (orchestrator) — via the CLI, no node script:** stand up the inc-16 local no-auth OpenAPI server; `platform add` it; `debug probe --platform pub` (no credential) → lists `getGreeting`; `debug call --platform pub --tool getGreeting --args '{}'` → real 200 body, no credential, no secret/URL in output. Repeat against a credentialed MCP source (everything-demo or a keyed source) → probe + call still work.
@@ -81,11 +81,11 @@ Replace the inline kind-dispatch+build (the MCP/OpenAPI branches at `mcp.ts:227-
 
 - Add `probeCommand` (`debug probe`): args `platform` (required), `credential` (optional), `json`. Resolve secret via `resolveCredentialSecret`; `buildProvider`; `listTools`; derive namespace (reuse `deriveProbeNamespace`); namespace each tool (`namespaceToolName`, count skipped); print raw + namespaced (+ skipped). `close()` in `finally`. Reuse `formatUpstreamError`/`reportUpstreamError` (already exhaustive).
 - Add `callCommand` (`debug call`): args `platform` (required), `credential` (optional), `tool` (required, raw name), `args` (string JSON, default `"{}"`), `json`. Parse `args` → object (reject non-object/invalid → `invalid-args`-style error). `buildProvider`; `callTool(tool, parsed)`; print `content` + `isError`. `close()` in `finally`. NEVER print the secret.
-- Keep `mcpProbeCommand` as a thin deprecated alias → delegate to the probe handler; stderr note. Register `probe`, `call`, `mcp-probe` under `debugCommand.subCommands`.
+- Remove the old `mcp-probe` subcommand entirely. Register only `probe` + `call` under `debugCommand.subCommands`.
 
 ### Step 4 — tests + skill
 
-Per Proof-of-done. Update `junction-dev` skill: `debug probe` / `debug call` for any source (MCP + OpenAPI), with the no-credential examples; note `mcp-probe` is deprecated.
+Per Proof-of-done. Update `junction-dev` skill: `debug probe` / `debug call` for any source (MCP + OpenAPI), with the no-credential examples; `mcp-probe` is removed.
 
 ### Step 5 — verify, build, commit
 
@@ -103,7 +103,7 @@ Per Proof-of-done. Update `junction-dev` skill: `debug probe` / `debug call` for
 
 ## End-of-increment report (per CLAUDE.md)
 
-**Visually testable — YES:** `debug probe --platform <openapi-id>` lists tools and `debug call --platform <openapi-id> --tool <op> --args '{}'` returns a real response — for a public source with no credential, and for a credentialed MCP source. **QA'd by me:** drove `debug probe` + `debug call` via the built CLI against the live local no-auth OpenAPI server (no node script this time) and a credentialed source; confirmed no secret/URL in output, provider closed on every path, and `mcp serve` unchanged. **Checklist:** `buildProvider` source-agnostic dispatch (MCP+OpenAPI, asymmetry normalized), `resolveCredentialSecret` shared, `debug probe` any-kind (raw+namespaced), `debug call` any-kind (the new capability), `mcp-probe` deprecated alias, secret/URL never printed, `close()` in finally everywhere, `mcp serve` byte-identical, no new package edges, dedup not duplication.
+**Visually testable — YES:** `debug probe --platform <openapi-id>` lists tools and `debug call --platform <openapi-id> --tool <op> --args '{}'` returns a real response — for a public source with no credential, and for a credentialed MCP source. **QA'd by me:** drove `debug probe` + `debug call` via the built CLI against the live local no-auth OpenAPI server (no node script this time) and a credentialed source; confirmed no secret/URL in output, provider closed on every path, and `mcp serve` unchanged. **Checklist:** `buildProvider` source-agnostic dispatch (MCP+OpenAPI, asymmetry normalized), `resolveCredentialSecret` shared, `debug probe` any-kind (raw+namespaced), `debug call` any-kind (the new capability), `mcp-probe` removed, secret/URL never printed, `close()` in finally everywhere, `mcp serve` byte-identical, no new package edges, dedup not duplication.
 
 ## User test gate
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// debug command tests — probe (any source), call (any source), mcp-probe alias.
+// debug command tests — probe (any source) + call (any source).
 //
 // Strategy:
 //   OpenAPI paths: real local HTTP server + spec file written to the temp home dir.
@@ -526,70 +526,6 @@ describe("debug call — OpenAPI", () => {
 
       // close() must have been called even though callTool returned an error.
       expect(stubClose).toHaveBeenCalledTimes(1)
-    })
-  })
-})
-
-// ---------------------------------------------------------------------------
-// debug mcp-probe — deprecated alias
-// ---------------------------------------------------------------------------
-
-describe("debug mcp-probe (deprecated alias)", () => {
-  it("lists tools AND emits the deprecation note on stderr", async () => {
-    await withTempHome(async () => {
-      await setupMcpPlatform("test-mcp")
-
-      const { createMcpProvider } = await import("@junction/mcp-client")
-      const stubProvider: ToolProvider = {
-        listTools: () =>
-          new ResultAsync(
-            Promise.resolve(ok([{ name: "echo", inputSchema: { type: "object" as const } }])),
-          ),
-        callTool: () => new ResultAsync(Promise.resolve(ok({ content: [] }))),
-        close: vi.fn().mockResolvedValue(undefined),
-      }
-      vi.mocked(createMcpProvider).mockReturnValue(
-        new ResultAsync(Promise.resolve(ok(stubProvider))),
-      )
-
-      const mcpProbe = getSubCmd("mcp-probe")
-      let stdoutOut = ""
-      let stderrOut = ""
-
-      // Capture both streams simultaneously.
-      const stderrChunks: string[] = []
-      const stdoutChunks: string[] = []
-      const origStdout = process.stdout.write.bind(process.stdout)
-      const origStderr = process.stderr.write.bind(process.stderr)
-      process.stdout.write = ((chunk: string | Uint8Array) => {
-        stdoutChunks.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString())
-        return true
-      }) as NodeJS.WriteStream["write"]
-      process.stderr.write = ((chunk: string | Uint8Array) => {
-        stderrChunks.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString())
-        return true
-      }) as NodeJS.WriteStream["write"]
-
-      try {
-        await mcpProbe.run?.(ctx({ platform: "test-mcp", credential: undefined, json: true }))
-      } finally {
-        process.stdout.write = origStdout
-        process.stderr.write = origStderr
-      }
-
-      stdoutOut = stdoutChunks.join("")
-      stderrOut = stderrChunks.join("")
-
-      // Deprecation note must be on stderr.
-      expect(stderrOut).toContain("deprecated")
-      expect(stderrOut).toContain("debug probe")
-
-      // Tool listing should still work.
-      const parsed = JSON.parse(stdoutOut.trim())
-      expect(parsed.ok).toBe(true)
-      expect(parsed.tools.length).toBe(1)
-      const tool = (parsed.tools as Array<{ raw: string }>)[0]
-      expect(tool?.raw).toBe("echo")
     })
   })
 })
