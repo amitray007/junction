@@ -28,6 +28,7 @@ A **method file** holds one increment's **spec + step-by-step implementation tog
 | 10 | Generic MCP-source create/mutate ops + connection descriptor (Wedge A) | `10-source-create-ops.md` | written |
 | 11 | `@junction/mcp-client` — generic upstream connector + debug probe (Wedge B) | `11-mcp-client.md` | written |
 | 12 | Profile proxy — agent calls a real tool through a profile (Wedge C) | `12-profile-proxy.md` | written |
+| 13 | MCP source management + visibility (remove/enable/disable/show — goal #1) | `13-source-management.md` | written |
 
 After increment 8 the foundation is "ready"; increment 9 (TUI) completes it. Features come after, each with its own method file.
 

@@ -37,7 +37,7 @@ function makeSynthSnapshot(): DashboardSnapshot {
         id: "p1",
         name: "work",
         mcpEndpointPath: "/profiles/work/mcp",
-        sourceCount: 0,
+        sources: [],
       },
     ],
     platforms: [
@@ -262,6 +262,73 @@ describe("loadDashboardSnapshot (DB integration)", () => {
     expect(frame).toContain("work") // profile name
     expect(frame).toContain("GitHub") // platform displayName
     // secretRef must NEVER appear in any TUI frame
+    expect(frame).not.toContain(SECRET_REF)
+
+    unmount()
+  })
+
+  it("snapshot includes source rows with enabled state; no secretRef in frame", async () => {
+    const paths = getPaths()
+    const dbResult = await getDatabase(paths)
+    expect(dbResult.isOk()).toBe(true)
+    if (dbResult.isErr()) return
+
+    const repos = createRepositories(dbResult.value)
+
+    const platformId = newPlatformId()
+    const platformResult = await repos.platforms.create({
+      id: platformId,
+      kind: "mcp",
+      displayName: "MyPlatform",
+    })
+    expect(platformResult.isOk()).toBe(true)
+
+    const credId = newCredentialId()
+    const credResult = await repos.credentials.create({
+      id: credId,
+      platformId,
+      profileName: "work",
+      kind: "bearer",
+      secretRef: SECRET_REF, // must NOT appear in output
+    })
+    expect(credResult.isOk()).toBe(true)
+
+    const profileId = newProfileId()
+    const profileResult = await repos.profiles.create({
+      id: profileId,
+      name: "srctest",
+      mcpEndpointPath: "/profiles/srctest/mcp",
+      sources: [
+        { platformId, credentialId: credId, toolNamespace: "enabled_ns", enabled: true },
+        { platformId, credentialId: credId, toolNamespace: "disabled_ns", enabled: false },
+      ],
+    })
+    expect(profileResult.isOk()).toBe(true)
+
+    const result = await loadDashboardSnapshot(paths)
+    expect(result.isOk()).toBe(true)
+    if (result.isErr()) return
+
+    const snapshot = result.value
+    const profile = snapshot.profiles[0]
+    expect(profile).toBeDefined()
+    if (!profile) return
+
+    // Data loader must carry source metadata (no secretRef).
+    // Sources are ordered by toolNamespace ascending (disabled_ns < enabled_ns).
+    expect(profile.sources).toHaveLength(2)
+    expect(profile.sources[0]?.namespace).toBe("disabled_ns")
+    expect(profile.sources[0]?.enabled).toBe(false)
+    expect(profile.sources[1]?.namespace).toBe("enabled_ns")
+    expect(profile.sources[1]?.enabled).toBe(true)
+
+    // Render and verify frame — secretRef must NOT appear
+    const noop = async () => snapshot
+    const { lastFrame, unmount } = render(<App snapshot={snapshot} onReload={noop} />)
+    const frame = lastFrame()
+
+    expect(frame).toContain("enabled_ns")
+    expect(frame).toContain("disabled_ns")
     expect(frame).not.toContain(SECRET_REF)
 
     unmount()

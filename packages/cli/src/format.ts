@@ -13,6 +13,12 @@ import {
 } from "@junction/core"
 import { consola } from "consola"
 
+export type StatusCounts = {
+  platforms: number
+  credentials: number
+  profiles: number
+}
+
 export type StatusData = {
   home: string
   configFile: string
@@ -21,6 +27,7 @@ export type StatusData = {
   config: Config | null
   credentialStore: string
   sandbox: string
+  counts?: StatusCounts
 }
 
 /**
@@ -38,6 +45,12 @@ export function formatStatusHuman(data: StatusData): string {
   if (data.config !== null) {
     lines.push(`  version          ${data.config.version}`)
   }
+  if (data.counts !== undefined) {
+    const { platforms, credentials, profiles } = data.counts
+    lines.push(
+      `  sources          ${platforms} platform${platforms !== 1 ? "s" : ""} · ${credentials} credential${credentials !== 1 ? "s" : ""} · ${profiles} profile${profiles !== 1 ? "s" : ""}`,
+    )
+  }
   return lines.join("\n")
 }
 
@@ -53,6 +66,7 @@ export function formatStatusJson(data: StatusData): string {
     config: data.config,
     credentialStore: data.credentialStore,
     sandbox: data.sandbox,
+    ...(data.counts !== undefined ? { counts: data.counts } : {}),
   })
 }
 
@@ -125,6 +139,8 @@ export function formatDbError(e: DbError): string {
       return `database migration failed: ${String(e.cause)}`
     case "constraint-violation":
       return `constraint violation (check that referenced platform/credential/profile exists): ${String(e.cause)}`
+    case "in-use":
+      return `resource is in use by one or more sources — remove those sources first`
     case "duplicate-namespace":
       return `duplicate tool namespace "${e.namespace}" — already used by another source in this profile`
     case "query-failed":
@@ -148,6 +164,31 @@ export function formatCredentialError(e: CredentialError): string {
       return `credential store I/O failed: ${String(e.cause)}`
     case "invalid-input":
       return `invalid input: ${e.reason}`
+  }
+}
+
+/**
+ * Report an in-use error with a caller-supplied message (entity-specific wording).
+ * Extracted from the remove-credential / remove-platform pair to share the
+ * json / human branching + exitCode without duplicating the structure.
+ */
+export function reportInUseError(json: boolean, msg: string): void {
+  if (json) process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
+  else consola.error(msg)
+  process.exitCode = 1
+}
+
+/**
+ * Write a successful removal result in the appropriate format.
+ * Extracted from remove-credential / remove-platform to share the
+ * json/human branching without duplicating the ok:true + consola pattern.
+ * @param label - Entity label for the human message (e.g. "Credential", "Platform").
+ */
+export function reportIdRemoved(json: boolean, id: string, label: string): void {
+  if (json) {
+    process.stdout.write(`${JSON.stringify({ ok: true, id })}\n`)
+  } else {
+    consola.success(`${label} "${id}" removed`)
   }
 }
 

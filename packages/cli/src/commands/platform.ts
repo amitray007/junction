@@ -8,7 +8,7 @@ import { defineCommand } from "citty"
 import { consola } from "consola"
 import { collectRepeatableFlag, JSON_ARG } from "../args.js"
 import { openDb } from "../db.js"
-import { reportDbError } from "../format.js"
+import { reportDbError, reportIdRemoved, reportInUseError } from "../format.js"
 
 /** Report a string error in the appropriate format and set exitCode=1. */
 function reportError(msg: string, json: boolean): void {
@@ -158,6 +158,50 @@ const listCommand = defineCommand({
   },
 })
 
+// ---------------------------------------------------------------------------
+// platform remove — delete a platform (RESTRICT FK: fails if credentials reference it)
+// ---------------------------------------------------------------------------
+
+const removeCommand = defineCommand({
+  meta: {
+    name: "remove",
+    description: "Remove a platform (fails if credentials still reference it).",
+  },
+  args: {
+    id: {
+      type: "string",
+      description: "Platform ID",
+      required: true,
+    },
+    json: JSON_ARG,
+  },
+  async run({ args }) {
+    const json = args.json ?? false
+    const repos = await openDb(json)
+    if (!repos) return
+
+    // platforms.delete returns not-found when no row matches (checks .changes),
+    // and in-use when a FK RESTRICT fires (credentials or source_refs reference it).
+    const result = await repos.platforms.delete(args.id)
+    if (result.isErr()) {
+      const e = result.error
+      if (e.kind === "in-use") {
+        // platforms.id is RESTRICT-referenced by both credentials.platformId AND
+        // source_refs.platformId — so either a credential or a source ref can block removal.
+        reportInUseError(
+          json,
+          `platform "${args.id}" is in use by one or more credentials or sources; remove those first`,
+        )
+        return
+      }
+      reportDbError(e, json)
+      return
+    }
+
+    reportIdRemoved(json, args.id, "Platform")
+  },
+})
+
 export const platformCommand = defineCommand({
   meta: {
     name: "platform",
@@ -166,5 +210,6 @@ export const platformCommand = defineCommand({
   subCommands: {
     add: addCommand,
     list: listCommand,
+    remove: removeCommand,
   },
 })

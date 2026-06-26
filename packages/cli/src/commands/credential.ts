@@ -7,16 +7,53 @@
 import {
   addCredential,
   type Credential,
+  type CredentialStore,
   createCredentialStore,
   createRepositories,
   getDatabase,
   getPaths,
+  type Repositories,
+  removeCredential,
 } from "@junction/core"
 import { defineCommand } from "citty"
 import { consola } from "consola"
 import { JSON_ARG } from "../args.js"
 import { openDb } from "../db.js"
-import { formatCredentialError, reportCredentialError, reportDbError } from "../format.js"
+import {
+  formatCredentialError,
+  reportCredentialError,
+  reportDbError,
+  reportIdRemoved,
+  reportInUseError,
+} from "../format.js"
+
+// ---------------------------------------------------------------------------
+// Shared DB + store setup (used by both add and remove, which both need the store)
+// ---------------------------------------------------------------------------
+
+type DbAndStore = { repos: Repositories; store: CredentialStore }
+
+/**
+ * Open the DB and the credential store in parallel.
+ * On any failure: writes the error in the appropriate format and returns null.
+ * The caller MUST `return` immediately when null is returned.
+ */
+async function openDbAndStore(json: boolean): Promise<DbAndStore | null> {
+  const paths = getPaths()
+  const [dbResult, storeResult] = await Promise.all([
+    getDatabase(paths),
+    createCredentialStore(paths),
+  ])
+  if (dbResult.isErr()) {
+    reportDbError(dbResult.error, json)
+    return null
+  }
+  if (storeResult.isErr()) {
+    reportCredentialError(storeResult.error, json)
+    return null
+  }
+  return { repos: createRepositories(dbResult.value), store: storeResult.value }
+}
 
 const addCommand = defineCommand({
   meta: {
@@ -100,22 +137,9 @@ const addCommand = defineCommand({
       return
     }
 
-    const paths = getPaths()
-    const [dbResult, storeResult] = await Promise.all([
-      getDatabase(paths),
-      createCredentialStore(paths),
-    ])
-    if (dbResult.isErr()) {
-      reportDbError(dbResult.error, json)
-      return
-    }
-    if (storeResult.isErr()) {
-      reportCredentialError(storeResult.error, json)
-      return
-    }
-
-    const repos = createRepositories(dbResult.value)
-    const store = storeResult.value
+    const ctx = await openDbAndStore(json)
+    if (!ctx) return
+    const { repos, store } = ctx
 
     const result = await addCredential(
       { platformId: args.platform, account: args.account, kind: "bearer", secret },
@@ -170,7 +194,7 @@ const listCommand = defineCommand({
   args: {
     platform: {
       type: "string",
-      description: "Platform ID",
+      description: "Platform to list credentials for",
       required: true,
     },
     json: JSON_ARG,
@@ -225,6 +249,49 @@ const listCommand = defineCommand({
   },
 })
 
+// ---------------------------------------------------------------------------
+// credential remove — delete credential + secret (enforces RESTRICT FK)
+// ---------------------------------------------------------------------------
+
+const removeCommand = defineCommand({
+  meta: {
+    name: "remove",
+    description: "Remove a credential and delete its stored secret.",
+  },
+  args: {
+    id: {
+      type: "string",
+      description: "Credential ID",
+      required: true,
+    },
+    json: JSON_ARG,
+  },
+  async run({ args }) {
+    const json = args.json ?? false
+    const ctx = await openDbAndStore(json)
+    if (!ctx) return
+    const { repos, store } = ctx
+
+    const result = await removeCredential(args.id, store, repos.credentials)
+
+    if (result.isErr()) {
+      const e = result.error
+      if (e.kind === "in-use") {
+        // Give the user a clear, actionable message — no raw SQL error
+        reportInUseError(
+          json,
+          `credential "${args.id}" is in use by one or more sources; remove those sources first`,
+        )
+        return
+      }
+      reportDbError(e, json)
+      return
+    }
+
+    reportIdRemoved(json, args.id, "Credential")
+  },
+})
+
 export const credentialCommand = defineCommand({
   meta: {
     name: "credential",
@@ -233,6 +300,7 @@ export const credentialCommand = defineCommand({
   subCommands: {
     add: addCommand,
     list: listCommand,
+    remove: removeCommand,
   },
 })
 

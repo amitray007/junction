@@ -40,6 +40,7 @@ export {
   addCredential,
   type CredentialStore,
   createCredentialStore,
+  removeCredential,
 } from "./credentials/index.js"
 // Database + repositories
 export { type Db, getDatabase } from "./db/index.js"

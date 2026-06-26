@@ -249,3 +249,53 @@ junction profile list --json
 **Security:** the TUI never renders credential secret values — only metadata
 (displayName, kind, credentialCount per platform). `secretRef` is intentionally absent
 from every `DashboardSnapshot` type.
+
+## Source management — inspect, disable, remove (increment 13)
+
+Complete the create→inspect→disable→remove lifecycle for profile sources:
+
+```bash
+# Inspect a profile (shows name, mcpEndpointPath, and each source with enabled state):
+JUNCTION_HOME=/tmp/jt13 junction profile show --profile work --json
+# → {"id":"...","name":"work","mcpEndpointPath":"/profiles/work/mcp","sources":[{"namespace":"srv","enabled":true,"platformId":"...","account":"work"}]}
+
+# Disable a source (tools stop being served; credential + source retained):
+JUNCTION_HOME=/tmp/jt13 junction profile disable-source --profile work --namespace srv --json
+# → {"ok":true}
+
+# Re-enable a source:
+JUNCTION_HOME=/tmp/jt13 junction profile enable-source --profile work --namespace srv --json
+# → {"ok":true}
+
+# Remove a source (permanently unlinks it from the profile):
+JUNCTION_HOME=/tmp/jt13 junction profile remove-source --profile work --namespace srv --json
+# → {"ok":true}
+
+# Delete a profile by name (cascades — source_refs removed automatically):
+JUNCTION_HOME=/tmp/jt13 junction profile delete --profile work --json
+# → {"ok":true}
+
+# Remove a credential (RESTRICT: fails if still referenced by a source; secret deleted only on DB success):
+JUNCTION_HOME=/tmp/jt13 junction credential remove --id <credential-id> --json
+# → {"ok":true} on success
+# → {"ok":false,"error":"credential is in use by one or more sources — remove those sources first"} if in-use
+
+# Remove a platform (RESTRICT: fails if any credential references it):
+JUNCTION_HOME=/tmp/jt13 junction platform remove --id <platform-id> --json
+# → {"ok":true} on success
+# → {"ok":false,"error":"platform is in use — remove its credentials and sources first"} if in-use
+
+# Status now shows counts summary:
+JUNCTION_HOME=/tmp/jt13 junction status
+# includes: "sources  2 platforms · 3 credentials · 1 profiles"
+```
+
+**Security invariants (enforced by tests):**
+- `removeCredential` deletes the secret ONLY after a successful DB delete (RESTRICT = secret never orphaned).
+- `credential remove` while source still references it → clean "in-use" error, exit≠0, secret untouched.
+- `profile show` / `status` / dashboard NEVER expose `secretRef` — only IDs, namespace, enabled flag.
+- RESTRICT FK on `source_refs.credential_id` and `source_refs.platform_id` — no cascade deletes into credentials/platforms.
+
+**TUI dashboard (increment 13):**
+The Profiles panel now shows per-source rows beneath each profile, with ✓/✗ enabled/disabled glyphs.
+`sourceCount` removed from `DashboardProfile`; replaced with `sources: DashboardSource[]`.

@@ -1,10 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // `junction status` — report home path, config state, credential store backend, and sandbox.
 
-import { createCredentialStore, createSandbox, getPaths, type JunctionPaths } from "@junction/core"
+import {
+  createCredentialStore,
+  createRepositories,
+  createSandbox,
+  getDatabase,
+  getPaths,
+  type JunctionPaths,
+} from "@junction/core"
 import { defineCommand } from "citty"
 import { consola } from "consola"
-import { formatStatusHuman, formatStatusJson, loadConfigStateOrFail } from "../format.js"
+import {
+  formatStatusHuman,
+  formatStatusJson,
+  loadConfigStateOrFail,
+  type StatusCounts,
+} from "../format.js"
 
 /**
  * Resolve the credential-store backend label (exported for TUI data loader — DRY).
@@ -24,6 +36,23 @@ export async function resolveSandboxBackend(): Promise<string> {
   if (result.isErr()) return `unavailable (${result.error.kind})`
   const caps = result.value.capabilities()
   return `commands=${caps.command} · scripts=${caps.script}`
+}
+
+/** Load entity counts from the DB (best-effort — returns null if DB unavailable). */
+async function loadCounts(paths: JunctionPaths): Promise<StatusCounts | undefined> {
+  const dbResult = await getDatabase(paths)
+  if (dbResult.isErr()) return undefined
+  const repos = createRepositories(dbResult.value)
+  const [platformsResult, credentialsResult, profilesResult] = await Promise.all([
+    repos.platforms.list(),
+    repos.credentials.list(),
+    repos.profiles.list(),
+  ])
+  return {
+    platforms: platformsResult.isOk() ? platformsResult.value.length : 0,
+    credentials: credentialsResult.isOk() ? credentialsResult.value.length : 0,
+    profiles: profilesResult.isOk() ? profilesResult.value.length : 0,
+  }
 }
 
 /**
@@ -59,6 +88,8 @@ export async function runStatus(json: boolean): Promise<void> {
     return
   }
 
+  const counts = await loadCounts(paths)
+
   const data = {
     home: paths.home,
     configFile: paths.configFile,
@@ -67,6 +98,7 @@ export async function runStatus(json: boolean): Promise<void> {
     config: state.config,
     credentialStore,
     sandbox,
+    counts,
   }
 
   if (json) {
