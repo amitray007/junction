@@ -2,9 +2,11 @@
 // Integration tests: repositories against an in-memory SQLite DB.
 // Uses tmp file path so migrations can run (better-sqlite3 in-memory + migrate requires file path for migrator).
 
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { fileURLToPath } from "node:url"
+import Database from "better-sqlite3"
 import { sql } from "drizzle-orm"
 import { errAsync, okAsync } from "neverthrow"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
@@ -378,6 +380,83 @@ describe("repositories", () => {
     })
   })
 
+  // ---------------------------------------------------------------------------
+  // Migration 0004 — nullable credential_id (inc 16)
+  // ---------------------------------------------------------------------------
+  describe("migration 0004 — nullable credential_id", () => {
+    it("source_ref with NULL credential_id round-trips: undefined in SourceRef", async () => {
+      const platformId = newPlatformId()
+      const profileId = newProfileId()
+      await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
+      await repos.profiles.create({
+        id: profileId,
+        name: "m0004-null",
+        mcpEndpointPath: "/profiles/m0004-null/mcp",
+        sources: [],
+      })
+
+      // Insert directly with NULL credential_id to simulate pre-existing data
+      db.run(
+        sql`INSERT INTO source_refs (id, profile_id, platform_id, credential_id, tool_namespace, enabled)
+            VALUES ('sr_m0004_test', ${String(profileId)}, ${String(platformId)}, NULL, 'null_ns', 1)`,
+      )
+
+      const fetched = await repos.profiles.get(profileId)
+      expect(fetched.isOk()).toBe(true)
+      if (fetched.isOk()) {
+        const src = fetched.value.sources[0]
+        expect(src?.toolNamespace).toBe("null_ns")
+        // NULL DB value → undefined in SourceRef (not null, not the string "null")
+        expect(src?.credentialId).toBeUndefined()
+      }
+    })
+
+    it("a credentialed source round-trips through the post-0004 schema (FK + data intact)", async () => {
+      const platformId = newPlatformId()
+      const credId = newCredentialId()
+      const profileId = newProfileId()
+      await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
+      await repos.credentials.create({
+        id: credId,
+        platformId,
+        profileName: "work",
+        kind: "bearer" as const,
+        secretRef: "ref_m0004_cred",
+      })
+      await repos.profiles.create({
+        id: profileId,
+        name: "m0004-cred",
+        mcpEndpointPath: "/profiles/m0004-cred/mcp",
+        sources: [{ platformId, credentialId: credId, toolNamespace: "cred_ns", enabled: true }],
+      })
+
+      // Read back: credentialId must survive as-is (not lost by migration)
+      const fetched = await repos.profiles.get(profileId)
+      expect(fetched.isOk()).toBe(true)
+      if (fetched.isOk()) {
+        expect(fetched.value.sources[0]?.credentialId).toBe(credId)
+      }
+    })
+
+    it("(profile_id, tool_namespace) unique index exists after migration 0004", () => {
+      const indexes = db.all<{ name: string }>(
+        sql`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='source_refs'`,
+      )
+      const names = indexes.map((i) => i.name)
+      expect(names).toContain("source_refs_profile_ns_unique")
+    })
+
+    it("credential_id column is nullable after migration 0004", () => {
+      // PRAGMA table_info notnull=0 means nullable
+      const cols = db.all<{ name: string; notnull: number }>(
+        sql`SELECT name, "notnull" FROM pragma_table_info('source_refs')`,
+      )
+      const credCol = cols.find((c) => c.name === "credential_id")
+      expect(credCol).toBeDefined()
+      expect(credCol?.notnull).toBe(0) // 0 = nullable
+    })
+  })
+
   describe("migrations", () => {
     it("are idempotent — getDatabase twice on the same home is a no-op", async () => {
       // First getDatabase already ran in beforeEach and migrated the DB.
@@ -724,6 +803,131 @@ describe("repositories", () => {
       if (result.isErr()) {
         expect(result.error.kind).toBe("in-use")
       }
+    })
+
+    it("addSource without credentialId → NULL credential_id in DB, reads back as undefined", async () => {
+      const platformId = newPlatformId()
+      const profileId = newProfileId()
+      await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
+      await repos.profiles.create({
+        id: profileId,
+        name: "no-cred-source",
+        mcpEndpointPath: "/profiles/no-cred-source/mcp",
+        sources: [],
+      })
+
+      // addSource with no credentialId (public source)
+      const result = await repos.profiles.addSource(profileId, {
+        platformId,
+        toolNamespace: "public_ns",
+        enabled: true,
+      })
+      expect(result.isOk()).toBe(true)
+
+      // Read back: credentialId must be undefined, not null
+      const fetched = await repos.profiles.get(profileId)
+      expect(fetched.isOk()).toBe(true)
+      if (fetched.isOk()) {
+        const src = fetched.value.sources[0]
+        expect(src?.toolNamespace).toBe("public_ns")
+        expect(src?.credentialId).toBeUndefined()
+      }
+
+      // The raw DB column must be NULL
+      const rows = db.all<{ credential_id: string | null }>(
+        sql`SELECT credential_id FROM source_refs WHERE profile_id = ${profileId}`,
+      )
+      expect(rows[0]?.credential_id).toBeNull()
+    })
+
+    it("addSource with credentialId → credentialed source remains unchanged", async () => {
+      const platformId = newPlatformId()
+      const credId = newCredentialId()
+      const profileId = newProfileId()
+      await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
+      await repos.credentials.create({
+        id: credId,
+        platformId,
+        profileName: "work",
+        kind: "bearer" as const,
+        secretRef: "ref_credentialed_source",
+      })
+      await repos.profiles.create({
+        id: profileId,
+        name: "cred-source",
+        mcpEndpointPath: "/profiles/cred-source/mcp",
+        sources: [],
+      })
+
+      const result = await repos.profiles.addSource(profileId, {
+        platformId,
+        credentialId: credId,
+        toolNamespace: "cred_ns",
+        enabled: true,
+      })
+      expect(result.isOk()).toBe(true)
+
+      const fetched = await repos.profiles.get(profileId)
+      expect(fetched.isOk()).toBe(true)
+      if (fetched.isOk()) {
+        expect(fetched.value.sources[0]?.credentialId).toBe(credId)
+      }
+    })
+
+    it("RESTRICT FK: deleting a credential still referenced by a source_ref is blocked", async () => {
+      const platformId = newPlatformId()
+      const credId = newCredentialId()
+      const profileId = newProfileId()
+      await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
+      await repos.credentials.create({
+        id: credId,
+        platformId,
+        profileName: "work",
+        kind: "bearer" as const,
+        secretRef: "ref_restrict_test",
+      })
+      await repos.profiles.create({
+        id: profileId,
+        name: "restrict-test",
+        mcpEndpointPath: "/profiles/restrict-test/mcp",
+        sources: [{ platformId, credentialId: credId, toolNamespace: "ns", enabled: true }],
+      })
+
+      // Deleting the referenced credential must fail (RESTRICT FK)
+      const del = await repos.credentials.delete(credId)
+      expect(del.isErr()).toBe(true)
+      if (del.isErr()) expect(del.error.kind).toBe("in-use")
+    })
+
+    it("no-credential source does not block credential deletion (NULL is FK-exempt)", async () => {
+      const platformId = newPlatformId()
+      const credId = newCredentialId()
+      const profileId = newProfileId()
+      await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
+      await repos.credentials.create({
+        id: credId,
+        platformId,
+        profileName: "work",
+        kind: "bearer" as const,
+        secretRef: "ref_null_exempt",
+      })
+      await repos.profiles.create({
+        id: profileId,
+        name: "null-exempt-test",
+        mcpEndpointPath: "/profiles/null-exempt-test/mcp",
+        sources: [],
+      })
+
+      // Add a no-credential source (NULL FK)
+      await repos.profiles.addSource(profileId, {
+        platformId,
+        toolNamespace: "public_ns",
+        enabled: true,
+      })
+
+      // Deleting the unrelated credential must succeed (NULL FK is exempt)
+      const del = await repos.credentials.delete(credId)
+      expect(del.isOk()).toBe(true)
     })
   })
 
@@ -1411,5 +1615,93 @@ describe("repositories", () => {
         expect(result.error.kind).toBe("query-failed")
       }
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Migration 0004 — GENUINE cross-version data preservation (inc 16)
+//
+// The tests inside the `repositories` describe above run on a DB that was
+// migrated straight to HEAD (0000→0004) by getDatabase, so they can only seed
+// rows into the *post*-0004 schema — they prove the post-rebuild schema
+// round-trips, NOT that the table-rebuild preserves *pre-existing* data.
+//
+// This block closes that gap: it applies 0000→0003 (the schema BEFORE the
+// rebuild), seeds a credentialed source the old way, THEN applies 0004's
+// drop-and-recreate, and asserts the row survived with its credential intact.
+// ---------------------------------------------------------------------------
+describe("migration 0004 — cross-version data preservation", () => {
+  const migrationsDir = fileURLToPath(new URL("../db/migrations/", import.meta.url))
+
+  /** Apply one migration .sql file statement-by-statement (split on drizzle's breakpoint). */
+  async function applyMigration(rawDb: Database.Database, tag: string): Promise<void> {
+    const sqlText = await readFile(join(migrationsDir, `${tag}.sql`), "utf8")
+    for (const stmt of sqlText.split("--> statement-breakpoint")) {
+      const trimmed = stmt.trim()
+      if (trimmed.length > 0) rawDb.exec(trimmed)
+    }
+  }
+
+  it("preserves a pre-existing credentialed source row through the 0004 rebuild", async () => {
+    const rawDb = new Database(":memory:")
+    try {
+      rawDb.pragma("foreign_keys = ON")
+
+      // ── Build the PRE-rebuild schema exactly as a real 0003 DB would look ──
+      for (const tag of [
+        "0000_odd_amazoness",
+        "0001_illegal_kingpin",
+        "0002_natural_lady_bullseye",
+        "0003_add_openapi_column",
+      ]) {
+        await applyMigration(rawDb, tag)
+      }
+
+      // credential_id is NOT NULL at 0003 — seed a real credentialed source.
+      rawDb.exec(`
+        INSERT INTO platforms (id, kind, display_name) VALUES ('plat_legacy', 'mcp', 'Legacy');
+        INSERT INTO credentials (id, platform_id, profile_name, kind, secret_ref)
+          VALUES ('cred_legacy', 'plat_legacy', 'work', 'bearer', 'ref_legacy');
+        INSERT INTO profiles (id, name, mcp_endpoint_path)
+          VALUES ('prof_legacy', 'legacy', '/profiles/legacy/mcp');
+        INSERT INTO source_refs (id, profile_id, platform_id, credential_id, tool_namespace, enabled)
+          VALUES ('sr_legacy', 'prof_legacy', 'plat_legacy', 'cred_legacy', 'legacy_ns', 1);
+      `)
+
+      // ── The rebuild under test ──
+      await applyMigration(rawDb, "0004_neat_spirit")
+
+      // 1. The pre-existing row survived the drop-and-recreate with data intact.
+      const row = rawDb
+        .prepare("SELECT credential_id, tool_namespace, enabled FROM source_refs WHERE id = ?")
+        .get("sr_legacy") as
+        | { credential_id: string | null; tool_namespace: string; enabled: number }
+        | undefined
+      expect(row).toBeDefined()
+      expect(row?.credential_id).toBe("cred_legacy")
+      expect(row?.tool_namespace).toBe("legacy_ns")
+      expect(row?.enabled).toBe(1)
+
+      // 2. The column is now genuinely nullable — a no-credential source inserts.
+      rawDb.exec(
+        `INSERT INTO source_refs (id, profile_id, platform_id, credential_id, tool_namespace, enabled)
+           VALUES ('sr_public', 'prof_legacy', 'plat_legacy', NULL, 'public_ns', 1)`,
+      )
+      const publicRow = rawDb
+        .prepare("SELECT credential_id FROM source_refs WHERE id = ?")
+        .get("sr_public") as { credential_id: string | null } | undefined
+      expect(publicRow?.credential_id).toBeNull()
+
+      // 3. RESTRICT FK survived the rebuild: deleting an in-use credential is blocked.
+      expect(() => rawDb.exec("DELETE FROM credentials WHERE id = 'cred_legacy'")).toThrow()
+
+      // 4. The unique index survived the rebuild.
+      const indexes = rawDb
+        .prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='source_refs'")
+        .all() as Array<{ name: string }>
+      expect(indexes.map((i) => i.name)).toContain("source_refs_profile_ns_unique")
+    } finally {
+      rawDb.close()
+    }
   })
 })

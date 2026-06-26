@@ -138,8 +138,7 @@ const addSourceCommand = defineCommand({
     },
     credential: {
       type: "string",
-      description: "Credential ID",
-      required: true,
+      description: "Credential ID (optional — omit for public/no-auth sources)",
     },
     namespace: {
       type: "string",
@@ -162,19 +161,29 @@ const addSourceCommand = defineCommand({
     const denyList = collectRepeatableFlag(rawArgs, "--deny")
 
     await withResolvedProfile(args, async ({ json, profileId, namespace, repos }) => {
-      const sourceRef: SourceRef = {
+      // Build SourceRef input; credentialId is optional — absent for public/no-auth sources.
+      // We pass the raw object through addSource, which calls SourceRefSchema.parse() internally.
+      const credentialId =
+        args.credential !== undefined && args.credential !== ""
+          ? (args.credential as NonNullable<SourceRef["credentialId"]>)
+          : undefined
+
+      const toolFilter =
+        allowList.length > 0 || denyList.length > 0
+          ? {
+              allow: allowList.length > 0 ? allowList : undefined,
+              deny: denyList.length > 0 ? denyList : undefined,
+            }
+          : undefined
+
+      const sourceRefInput = {
         platformId: args.platform as SourceRef["platformId"],
-        credentialId: args.credential as SourceRef["credentialId"],
+        credentialId,
         toolNamespace: namespace,
-        enabled: true,
-        toolFilter:
-          allowList.length > 0 || denyList.length > 0
-            ? {
-                allow: allowList.length > 0 ? allowList : undefined,
-                deny: denyList.length > 0 ? denyList : undefined,
-              }
-            : undefined,
+        enabled: true as const,
+        toolFilter,
       }
+      const sourceRef = sourceRefInput as unknown as SourceRef
 
       const result = await repos.profiles.addSource(profileId, sourceRef)
       if (result.isErr()) {
@@ -220,8 +229,14 @@ const showCommand = defineCommand({
       }> = []
 
       for (const sr of profile.sources) {
-        const credResult = await repos.credentials.get(String(sr.credentialId))
-        const credentialAccount = credResult.isOk() ? credResult.value.profileName : "(unknown)"
+        // No credentialId → public/no-auth source; skip credentials.get entirely
+        let credentialAccount: string
+        if (sr.credentialId === undefined) {
+          credentialAccount = "(none)"
+        } else {
+          const credResult = await repos.credentials.get(String(sr.credentialId))
+          credentialAccount = credResult.isOk() ? credResult.value.profileName : "(unknown)"
+        }
         sources.push({
           namespace: sr.toolNamespace,
           platform: String(sr.platformId),

@@ -46,9 +46,11 @@ export const sourceRefs = sqliteTable(
     platformId: text("platform_id")
       .notNull()
       .references(() => platforms.id, { onDelete: "restrict" }),
-    credentialId: text("credential_id")
-      .notNull()
-      .references(() => credentials.id, { onDelete: "restrict" }),
+    // nullable: absent when source has no credential (public/no-auth source)
+    // RESTRICT still protects referenced credentials — NULL is FK-exempt
+    credentialId: text("credential_id").references(() => credentials.id, {
+      onDelete: "restrict",
+    }),
     toolNamespace: text("tool_namespace").notNull(),
     enabled: integer("enabled", { mode: "boolean" }).notNull(),
     /** JSON-serialized ToolFilter — optional; absent means expose all upstream tools */

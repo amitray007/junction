@@ -93,6 +93,31 @@ describe("valid entity parsing", () => {
     expect(result.success).toBe(true)
   })
 
+  it("SourceRef parses without credentialId (public/no-auth source)", () => {
+    const result = SourceRefSchema.safeParse({
+      platformId: newPlatformId(),
+      toolNamespace: "public_api",
+      enabled: true,
+    })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.credentialId).toBeUndefined()
+    }
+  })
+
+  it("SourceRef parses with credentialId (credentialed source — unchanged)", () => {
+    const result = SourceRefSchema.safeParse({
+      platformId: newPlatformId(),
+      credentialId: newCredentialId(),
+      toolNamespace: "github_work",
+      enabled: true,
+    })
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.data.credentialId).toBeTruthy()
+    }
+  })
+
   it("parses a Credential with optional oauthMeta", () => {
     const result = CredentialSchema.safeParse({
       id: newCredentialId(),
