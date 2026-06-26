@@ -80,3 +80,10 @@ Non-obvious sharp edges we've already paid for. Each lists the **symptom** and t
 
 - **Drizzle migration files must be packaged into `dist`** or runtime `migrate` can't find them. **Fix:** include the migrations folder in the build output.
 - **jscpd 5.x is broken** (silently scans a single file). **Fix:** pinned to 4.x.
+
+## GraphQL provider (inc 20)
+
+- **`drizzle-kit generate` is not available at the monorepo root** — `drizzle-kit` is only installed in `packages/core/node_modules`. Running `pnpm drizzle-kit generate` from root fails with "not found". **Fix:** write a temp config pointing at `packages/core/src/db/schema.ts`, then run `tsx node_modules/drizzle-kit/bin.cjs generate --config /path/to/temp.config.ts` from inside `packages/core/` using its local node_modules. Always verify the generated snapshot lands in `packages/core/src/db/migrations/meta/`.
+- **GraphQL introspection returns raw `__schema` JSON — `buildClientSchema` requires it wrapped as `{ data: { __schema } }`.** Passing the unwrapped object throws `"Cannot read properties of undefined"`. **Fix:** the introspection query body is `{ data: { __schema } }` (standard GraphQL response envelope); always pass `result.data` to `buildClientSchema`, not the top-level object.
+- **`parse("")` (empty string) throws a syntax error, not returning an empty document.** An empty `query` string sent to `graphql_query` or `graphql_mutation` should return `invalid-args`, which it does — but the code path goes through the `try/catch` around `parse`, not through the "no operation definitions" branch. Tests must cover empty input explicitly.
+- **TypeScript 6.x array-index narrowing: `defs[0]` is typed as `T | undefined` even after a `defs.length === 1` guard.** The narrowing that "defs has exactly one element therefore defs[0] is defined" is not emitted by TS6 strict mode. **Fix:** cast `defs[0] as OperationDefinitionNode` at the guarded return site. The guard above proves safety; the cast is load-bearing for compilation.

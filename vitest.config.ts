@@ -12,6 +12,7 @@ const coreSrc = fileURLToPath(new URL("./packages/core/src", import.meta.url))
 const mcpServerSrc = fileURLToPath(new URL("./packages/mcp/server/src", import.meta.url))
 const mcpClientSrc = fileURLToPath(new URL("./packages/mcp/client/src", import.meta.url))
 const openapiClientSrc = fileURLToPath(new URL("./packages/openapi-client/src", import.meta.url))
+const graphqlClientSrc = fileURLToPath(new URL("./packages/graphql-client/src", import.meta.url))
 
 export default defineConfig({
   // Configure esbuild to use the automatic React 17+ JSX runtime for .tsx test files.
@@ -30,6 +31,7 @@ export default defineConfig({
       "@junction/mcp-server": `${mcpServerSrc}/index.ts`,
       "@junction/mcp-client": `${mcpClientSrc}/index.ts`,
       "@junction/openapi-client": `${openapiClientSrc}/index.ts`,
+      "@junction/graphql-client": `${graphqlClientSrc}/index.ts`,
     },
   },
 })

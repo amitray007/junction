@@ -1074,3 +1074,118 @@ describe("platform refresh (unit)", () => {
     expect(platAfter.value.openapi?.maxTools).toBe(2)
   })
 })
+
+// ---------------------------------------------------------------------------
+// platform add — graphql (unit, direct command invocation)
+// ---------------------------------------------------------------------------
+
+describe("platform add — graphql (unit)", () => {
+  let home: string
+  let prevHome: string | undefined
+  let prevStore: string | undefined
+  let prevExitCode: number | undefined
+
+  // Local GraphQL endpoint whose introspection POST fails (introspection disabled),
+  // so add-time introspection degrades gracefully.
+  const gqlServer = createServer((req, res) => {
+    let body = ""
+    req.on("data", (c) => (body += c))
+    req.on("end", () => {
+      res.writeHead(200, { "content-type": "application/json" })
+      res.end(JSON.stringify({ errors: [{ message: "introspection is disabled" }] }))
+    })
+  })
+  let gqlPort = 0
+
+  beforeAll(
+    () =>
+      new Promise<void>((resolve) => {
+        gqlServer.listen(0, "127.0.0.1", () => {
+          gqlPort = (gqlServer.address() as AddressInfo).port
+          resolve()
+        })
+      }),
+  )
+  afterAll(() => new Promise<void>((resolve) => gqlServer.close(() => resolve())))
+
+  beforeEach(async () => {
+    prevHome = process.env.JUNCTION_HOME
+    prevStore = process.env.JUNCTION_STORE
+    prevExitCode = process.exitCode
+    home = await mkdtemp(join(tmpdir(), "junction-graphql-test-"))
+    process.env.JUNCTION_HOME = home
+    process.env.JUNCTION_STORE = "file"
+    process.exitCode = 0
+  })
+
+  afterEach(async () => {
+    if (prevHome === undefined) delete process.env.JUNCTION_HOME
+    else process.env.JUNCTION_HOME = prevHome
+    if (prevStore === undefined) delete process.env.JUNCTION_STORE
+    else process.env.JUNCTION_STORE = prevStore
+    process.exitCode = prevExitCode
+    await rm(home, { recursive: true, force: true })
+  })
+
+  it("rejects apiKey --auth-in query at add time and does not persist", async () => {
+    const add = getPlatformSubCmd("add")
+    const out = await captureStdout(
+      () =>
+        add.run?.(
+          ctx({
+            id: "gql-q",
+            kind: "graphql",
+            "display-name": "GQL Q",
+            endpoint: `http://127.0.0.1:${gqlPort}/graphql`,
+            "auth-scheme": "apiKey",
+            "auth-in": "query",
+            "auth-name": "key",
+            json: true,
+          }),
+        ) ?? Promise.resolve(),
+    )
+    expect(process.exitCode).toBe(1)
+    const parsed = JSON.parse(out.trim()) as { ok: boolean; error?: string }
+    expect(parsed.ok).toBe(false)
+    expect(parsed.error).toMatch(/auth-in query is not supported/)
+
+    const dbResult = await getDatabase(getPaths())
+    if (dbResult.isErr()) return
+    const repos = createRepositories(dbResult.value)
+    const list = await repos.platforms.list()
+    if (!list.isOk()) return
+    expect(list.value.find((p) => p.id === "gql-q")).toBeUndefined()
+  })
+
+  it("introspection disabled at add → platform still created with no cached SDL", async () => {
+    const add = getPlatformSubCmd("add")
+    const out = await captureStdout(
+      () =>
+        add.run?.(
+          ctx({
+            id: "gql-nointro",
+            kind: "graphql",
+            "display-name": "No Introspection",
+            endpoint: `http://127.0.0.1:${gqlPort}/graphql`,
+            json: true,
+          }),
+        ) ?? Promise.resolve(),
+    )
+    // Add succeeds (graceful degradation) — the source still works for query/mutation.
+    const parsed = JSON.parse(out.trim()) as {
+      ok: boolean
+      platform?: { graphql?: { schemaSdl?: string } }
+    }
+    expect(parsed.ok).toBe(true)
+    expect(parsed.platform?.graphql?.schemaSdl).toBeUndefined()
+
+    const dbResult = await getDatabase(getPaths())
+    if (dbResult.isErr()) return
+    const repos = createRepositories(dbResult.value)
+    const got = await repos.platforms.get("gql-nointro")
+    expect(got.isOk()).toBe(true)
+    if (!got.isOk()) return
+    expect(got.value.kind).toBe("graphql")
+    expect(got.value.graphql?.schemaSdl).toBeUndefined()
+  })
+})

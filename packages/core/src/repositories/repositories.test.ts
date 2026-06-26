@@ -1705,3 +1705,135 @@ describe("migration 0004 — cross-version data preservation", () => {
     }
   })
 })
+
+// ---------------------------------------------------------------------------
+// Migration 0005 — graphql column (inc 20)
+// ---------------------------------------------------------------------------
+describe("migration 0005 — graphql column", () => {
+  let db: Db
+  let repos: Repositories
+  let home: string
+  let prevHome: string | undefined
+
+  beforeEach(async () => {
+    prevHome = process.env.JUNCTION_HOME
+    home = await mkdtemp(join(tmpdir(), "junction-m0005-"))
+    process.env.JUNCTION_HOME = home
+    const result = await getDatabase(getPaths())
+    if (result.isErr()) throw result.error
+    db = result.value
+    repos = createRepositories(db)
+  })
+
+  afterEach(async () => {
+    if (prevHome === undefined) delete process.env.JUNCTION_HOME
+    else process.env.JUNCTION_HOME = prevHome
+    await rm(home, { recursive: true, force: true })
+  })
+
+  it("platforms table has a nullable graphql text column after migration 0005", () => {
+    const cols = db.all<{ name: string; notnull: number; type: string }>(
+      sql`SELECT name, "notnull", type FROM pragma_table_info('platforms')`,
+    )
+    const graphqlCol = cols.find((c) => c.name === "graphql")
+    expect(graphqlCol).toBeDefined()
+    expect(graphqlCol?.type.toLowerCase()).toBe("text")
+    expect(graphqlCol?.notnull).toBe(0) // 0 = nullable (additive, no default required)
+  })
+
+  it("round-trips a graphql platform with endpoint + bearer auth", async () => {
+    const platformId = newPlatformId()
+    const graphqlDescriptor = {
+      endpoint: "https://api.example.com/graphql",
+      auth: { scheme: "bearer" as const, header: "Authorization" },
+      defaultHeaders: { "User-Agent": "junction" },
+    }
+    const created = await repos.platforms.upsert({
+      id: platformId,
+      kind: "graphql" as const,
+      displayName: "My GraphQL API",
+      graphql: graphqlDescriptor,
+    })
+    expect(created.isOk()).toBe(true)
+
+    const fetched = await repos.platforms.get(platformId)
+    expect(fetched.isOk()).toBe(true)
+    if (!fetched.isOk()) return
+    expect(fetched.value.kind).toBe("graphql")
+    expect(fetched.value.graphql?.endpoint).toBe("https://api.example.com/graphql")
+    expect(fetched.value.graphql?.auth?.scheme).toBe("bearer")
+    expect(fetched.value.graphql?.defaultHeaders?.["User-Agent"]).toBe("junction")
+  })
+
+  it("round-trips a graphql platform with schemaSdl and maxQueryBytes", async () => {
+    const platformId = newPlatformId()
+    const created = await repos.platforms.upsert({
+      id: platformId,
+      kind: "graphql" as const,
+      displayName: "SDL Platform",
+      graphql: {
+        endpoint: "https://sdl.example.com/graphql",
+        schemaSdl: "type Query { viewer: User }\ntype User { login: String }",
+        maxQueryBytes: 50_000,
+      },
+    })
+    expect(created.isOk()).toBe(true)
+
+    const fetched = await repos.platforms.get(platformId)
+    expect(fetched.isOk()).toBe(true)
+    if (!fetched.isOk()) return
+    expect(fetched.value.graphql?.schemaSdl).toContain("type Query")
+    expect(fetched.value.graphql?.maxQueryBytes).toBe(50_000)
+  })
+
+  it("upsert replaces graphql descriptor on second call", async () => {
+    const platformId = newPlatformId()
+    await repos.platforms.upsert({
+      id: platformId,
+      kind: "graphql" as const,
+      displayName: "Changing GraphQL",
+      graphql: { endpoint: "https://old.example.com/graphql" },
+    })
+    await repos.platforms.upsert({
+      id: platformId,
+      kind: "graphql" as const,
+      displayName: "Changing GraphQL (v2)",
+      graphql: { endpoint: "https://new.example.com/graphql" },
+    })
+    const fetched = await repos.platforms.get(platformId)
+    expect(fetched.isOk()).toBe(true)
+    if (!fetched.isOk()) return
+    expect(fetched.value.graphql?.endpoint).toBe("https://new.example.com/graphql")
+  })
+
+  it("graphql column stores JSON and non-graphql platforms return undefined graphql", async () => {
+    const mcpId = newPlatformId()
+    const graphqlId = newPlatformId()
+
+    await repos.platforms.upsert({
+      id: mcpId,
+      kind: "mcp" as const,
+      displayName: "MCP Platform",
+    })
+    await repos.platforms.upsert({
+      id: graphqlId,
+      kind: "graphql" as const,
+      displayName: "GraphQL Platform",
+      graphql: { endpoint: "https://gql.example.com/graphql" },
+    })
+
+    // MCP platform must have undefined graphql (column is NULL)
+    const mcpFetched = await repos.platforms.get(mcpId)
+    expect(mcpFetched.isOk()).toBe(true)
+    if (mcpFetched.isOk()) expect(mcpFetched.value.graphql).toBeUndefined()
+
+    // GraphQL platform's raw DB column must be valid JSON
+    const rows = db.all<{ graphql: string | null }>(
+      sql`SELECT graphql FROM platforms WHERE id = ${graphqlId}`,
+    )
+    const raw = rows[0]?.graphql
+    expect(raw).not.toBeNull()
+    const parsed = JSON.parse(raw ?? "") as { endpoint: string }
+    expect(parsed.endpoint).toBe("https://gql.example.com/graphql")
+  })
+})

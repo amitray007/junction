@@ -4,6 +4,7 @@
 
 import { z } from "zod"
 
+import { GraphQlConnectionSchema } from "./graphql-connection.js"
 import { McpConnectionSchema } from "./mcp-connection.js"
 import { OpenApiConnectionSchema } from "./openapi-connection.js"
 import { PlatformIdSchema } from "./primitives.js"
@@ -41,6 +42,11 @@ export const PlatformSchema = z.object({
    * Meaningful when kind === "openapi". No vendor-specific fields.
    */
   openapi: OpenApiConnectionSchema.optional(),
+  /**
+   * Generic GraphQL connection descriptor.
+   * Meaningful when kind === "graphql". No vendor-specific fields.
+   */
+  graphql: GraphQlConnectionSchema.optional(),
 })
 
 export type Platform = z.infer<typeof PlatformSchema>
