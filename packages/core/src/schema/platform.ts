@@ -5,6 +5,7 @@
 import { z } from "zod"
 
 import { McpConnectionSchema } from "./mcp-connection.js"
+import { OpenApiConnectionSchema } from "./openapi-connection.js"
 import { PlatformIdSchema } from "./primitives.js"
 
 // ---------------------------------------------------------------------------
@@ -35,6 +36,11 @@ export const PlatformSchema = z.object({
    * connection details are DATA in this row, not code.
    */
   connection: McpConnectionSchema.optional(),
+  /**
+   * Generic OpenAPI/REST connection descriptor.
+   * Meaningful when kind === "openapi". No vendor-specific fields.
+   */
+  openapi: OpenApiConnectionSchema.optional(),
 })
 
 export type Platform = z.infer<typeof PlatformSchema>

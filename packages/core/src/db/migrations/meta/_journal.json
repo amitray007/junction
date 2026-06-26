@@ -22,6 +22,13 @@
       "when": 1782426252591,
       "tag": "0002_natural_lady_bullseye",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1782600000000,
+      "tag": "0003_add_openapi_column",
+      "breakpoints": true
     }
   ]
 }

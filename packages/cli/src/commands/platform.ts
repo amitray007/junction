@@ -3,7 +3,15 @@
 // SOURCE-AGNOSTIC: no vendor/GitHub-specific logic. Platforms are generic DATA rows.
 // Edge stays thin: calls core, formats output. No business logic here.
 
-import { type McpConnection, type Platform, PlatformSchema } from "@junction/core"
+import { mkdir, writeFile } from "node:fs/promises"
+import { join } from "node:path"
+import {
+  type McpConnection,
+  type OpenApiConnection,
+  OpenApiConnectionSchema,
+  type Platform,
+  PlatformSchema,
+} from "@junction/core"
 import { defineCommand } from "citty"
 import { consola } from "consola"
 import { collectRepeatableFlag, JSON_ARG } from "../args.js"
@@ -20,41 +28,81 @@ function reportError(msg: string, json: boolean): void {
 const addCommand = defineCommand({
   meta: {
     name: "add",
-    description: "Define or update a generic MCP source platform.",
+    description: "Define or update a platform (MCP or OpenAPI/REST source).",
   },
   args: {
     id: { type: "string", description: "Stable platform ID (e.g. my-mcp-server)", required: true },
-    kind: { type: "string", description: "Platform kind (default: mcp)", default: "mcp" },
+    kind: {
+      type: "string",
+      description: "Platform kind: mcp or openapi (default: mcp)",
+      default: "mcp",
+    },
     "display-name": {
       type: "string",
       description: "Human-readable name (e.g. My MCP Server)",
       required: true,
     },
+    // MCP transport flags
     transport: {
       type: "string",
-      description: "Transport: http (remote URL) or stdio (local command)",
-      required: true,
+      description: "[mcp] Transport: http (remote URL) or stdio (local command)",
     },
     // HTTP transport flags
-    url: { type: "string", description: "[http] Remote MCP server URL" },
+    url: { type: "string", description: "[mcp/http] Remote MCP server URL" },
     "auth-header": {
       type: "string",
-      description: "[http] HTTP header to carry the bearer token (default: Authorization)",
+      description: "[mcp/http] HTTP header to carry the bearer token (default: Authorization)",
     },
     // Stdio transport flags
-    command: { type: "string", description: "[stdio] Command to launch the MCP server (e.g. npx)" },
-    // --arg handled via rawArgs (repeatable)
+    command: {
+      type: "string",
+      description: "[mcp/stdio] Command to launch the MCP server (e.g. npx)",
+    },
     "token-env": {
       type: "string",
-      description: "[stdio] Env-var name the bearer token is injected into",
+      description: "[mcp/stdio] Env-var name the bearer token is injected into",
+    },
+    // OpenAPI flags
+    "spec-url": { type: "string", description: "[openapi] URL of the OpenAPI spec document" },
+    "base-url": { type: "string", description: "[openapi] Base URL override for API calls" },
+    "auth-scheme": {
+      type: "string",
+      description: "[openapi] Auth scheme: apiKey, bearer, or basic",
+    },
+    "auth-in": {
+      type: "string",
+      description: "[openapi/apiKey] Where to send the key: header, query, or cookie",
+    },
+    "auth-name": {
+      type: "string",
+      description: "[openapi/apiKey] Parameter name for the API key (e.g. X-API-Key)",
+    },
+    "auth-username": {
+      type: "string",
+      description: "[openapi/basic] Username for HTTP Basic auth",
+    },
+    "max-tools": {
+      type: "string",
+      description: "[openapi] Max operations to expose (default: 75)",
     },
     json: JSON_ARG,
   },
   async run({ args, rawArgs }) {
     const json = args.json ?? false
-    const transport = args.transport
+    const kind = args.kind ?? "mcp"
 
-    // Build the generic MCP connection descriptor from flags
+    if (kind === "openapi") {
+      await addOpenApiPlatform(args, rawArgs, json)
+      return
+    }
+
+    // MCP platform (original flow)
+    const transport = args.transport
+    if (!transport) {
+      reportError("--transport is required for mcp kind", json)
+      return
+    }
+
     let connection: McpConnection | undefined
     if (transport === "http") {
       if (!args.url) {
@@ -82,10 +130,9 @@ const addCommand = defineCommand({
       return
     }
 
-    // Validate the full platform shape via PlatformSchema (Zod — boundary validation)
     const parseResult = PlatformSchema.safeParse({
       id: args.id,
-      kind: args.kind ?? "mcp",
+      kind: "mcp",
       displayName: args["display-name"],
       connection,
     })
@@ -115,6 +162,196 @@ const addCommand = defineCommand({
   },
 })
 
+async function addOpenApiPlatform(
+  args: Record<string, unknown>,
+  _rawArgs: string[],
+  json: boolean,
+): Promise<void> {
+  const specUrl = args["spec-url"] as string | undefined
+  if (!specUrl) {
+    reportError("--spec-url is required for openapi kind", json)
+    return
+  }
+
+  // Lazy-import openapi-client (avoids load cost for non-openapi commands)
+  const { parseSpec, extractTools, countOperationsByTag } = await import("@junction/openapi-client")
+
+  // Fetch + parse + validate the spec
+  if (!json) consola.info(`Fetching spec from ${specUrl} …`)
+  const specResult = await parseSpec({ from: "url", url: specUrl })
+  if (specResult.isErr()) {
+    const e = specResult.error
+    reportError(
+      e.kind === "spec-fetch-failed"
+        ? `Failed to fetch spec: ${String((e as { cause: unknown }).cause)}`
+        : `Failed to parse spec: ${String((e as { cause: unknown }).cause)}`,
+      json,
+    )
+    return
+  }
+
+  const { schema } = specResult.value
+  const maxTools = args["max-tools"] ? parseInt(args["max-tools"] as string, 10) : 75
+
+  // Check operation count
+  const toolsResult = extractTools(schema, maxTools)
+  if (toolsResult.isErr()) {
+    const e = toolsResult.error
+    if (e.kind === "too-many-tools") {
+      const tags = countOperationsByTag(schema)
+      const tagLines = tags.map(({ tag, count }) => `  ${tag}: ${count}`).join("\n")
+      reportError(
+        `Spec has ${e.count} operations, exceeding the cap of ${e.cap}.\n` +
+          `Operations by tag:\n${tagLines}\n` +
+          `Narrow with selection (coming in a later release) or pick a smaller spec.`,
+        json,
+      )
+      return
+    }
+    reportError(`Failed to extract tools: ${e.kind}`, json)
+    return
+  }
+
+  // Build auth descriptor
+  let auth: OpenApiConnection["auth"]
+  const authScheme = args["auth-scheme"] as string | undefined
+
+  if (authScheme === "apiKey") {
+    const authIn = (args["auth-in"] as string | undefined) ?? "header"
+    const authName = args["auth-name"] as string | undefined
+    if (!authName) {
+      reportError("--auth-name is required for apiKey auth scheme", json)
+      return
+    }
+    if (authIn !== "header" && authIn !== "query" && authIn !== "cookie") {
+      reportError("--auth-in must be header, query, or cookie", json)
+      return
+    }
+    auth = { scheme: "apiKey", in: authIn, name: authName }
+  } else if (authScheme === "bearer") {
+    auth = { scheme: "bearer", header: "Authorization" }
+  } else if (authScheme === "basic") {
+    const username = args["auth-username"] as string | undefined
+    if (!username) {
+      reportError("--auth-username is required for basic auth scheme", json)
+      return
+    }
+    auth = { scheme: "basic", username }
+  } else if (authScheme) {
+    reportError(`Unknown auth scheme "${authScheme}". Must be apiKey, bearer, or basic.`, json)
+    return
+  } else {
+    // Try to derive auth from securitySchemes
+    auth = deriveAuthFromSpec(schema)
+  }
+
+  // Build the OpenAPI connection descriptor
+  const openapiParseResult = OpenApiConnectionSchema.safeParse({
+    spec: { from: "url", url: specUrl },
+    baseUrl: args["base-url"] as string | undefined,
+    auth,
+    maxTools,
+  })
+  if (!openapiParseResult.success) {
+    const msg = openapiParseResult.error.issues
+      .map((i: { message: string }) => i.message)
+      .join(", ")
+    reportError(`Invalid OpenAPI connection: ${msg}`, json)
+    return
+  }
+
+  const openapi = openapiParseResult.data
+
+  const platformParseResult = PlatformSchema.safeParse({
+    id: args.id as string,
+    kind: "openapi",
+    displayName: args["display-name"] as string,
+    openapi,
+  })
+  if (!platformParseResult.success) {
+    const msg = platformParseResult.error.issues
+      .map((i: { message: string }) => i.message)
+      .join(", ")
+    reportError(`Invalid platform: ${msg}`, json)
+    return
+  }
+
+  const platform: Platform = platformParseResult.data
+
+  const repos = await openDb(json)
+  if (!repos) return
+
+  // Cache the dereferenced spec to ~/.junction/openapi/<platformId>.json
+  const { getPaths } = await import("@junction/core")
+  const paths = getPaths()
+  const openapiCacheDir = join(paths.home, "openapi")
+  const cacheFile = join(openapiCacheDir, `${platform.id}.json`)
+
+  try {
+    await mkdir(openapiCacheDir, { recursive: true })
+    await writeFile(cacheFile, JSON.stringify(schema), "utf8")
+  } catch (cause) {
+    reportError(`Failed to cache spec: ${String(cause)}`, json)
+    return
+  }
+
+  const result = await repos.platforms.upsert(platform)
+  if (result.isErr()) {
+    reportDbError(result.error, json)
+    return
+  }
+
+  const toolCount = toolsResult.value.length
+  if (json) {
+    process.stdout.write(`${JSON.stringify({ ok: true, platform: result.value, toolCount })}\n`)
+  } else {
+    consola.success(
+      `Platform "${platform.displayName}" (${platform.id}) defined — kind: openapi, ${toolCount} operations`,
+    )
+    consola.info(`Spec cached to ${cacheFile}`)
+  }
+}
+
+/** Derive auth from the spec's securitySchemes (best-effort). */
+function deriveAuthFromSpec(schema: Record<string, unknown>): OpenApiConnection["auth"] {
+  const components = schema.components
+  if (components === null || typeof components !== "object") return undefined
+
+  const schemes = (components as Record<string, unknown>).securitySchemes
+  if (schemes === null || typeof schemes !== "object") return undefined
+
+  for (const [, scheme] of Object.entries(schemes as Record<string, unknown>)) {
+    if (scheme === null || typeof scheme !== "object") continue
+    const s = scheme as Record<string, unknown>
+
+    if (s.type === "apiKey") {
+      const location = s.in
+      const name = s.name
+      if (
+        typeof name === "string" &&
+        (location === "header" || location === "query" || location === "cookie")
+      ) {
+        return { scheme: "apiKey", in: location, name }
+      }
+    }
+
+    if (s.type === "http") {
+      const httpScheme = s.scheme
+      if (httpScheme === "bearer") return { scheme: "bearer", header: "Authorization" }
+      if (httpScheme === "basic") {
+        // Can't derive username from spec — caller must provide --auth-username
+        return undefined
+      }
+    }
+
+    if (s.type === "oauth2") {
+      return { scheme: "oauth2" }
+    }
+  }
+
+  return undefined
+}
+
 const listCommand = defineCommand({
   meta: {
     name: "list",
@@ -140,9 +377,7 @@ const listCommand = defineCommand({
     }
 
     if (platformList.length === 0) {
-      process.stdout.write(
-        'No platforms yet. Use "junction platform add" to define an MCP source.\n',
-      )
+      process.stdout.write('No platforms yet. Use "junction platform add" to define a source.\n')
       return
     }
 
@@ -150,7 +385,7 @@ const listCommand = defineCommand({
       "  id                      kind     transport  display name",
       "  ----------------------  -------  ---------  --------------------------------",
       ...platformList.map((p: Platform) => {
-        const transport = p.connection?.transport ?? "-"
+        const transport = p.connection?.transport ?? (p.openapi ? "openapi" : "-")
         return `  ${p.id.padEnd(22)}  ${p.kind.padEnd(7)}  ${transport.padEnd(9)}  ${p.displayName}`
       }),
     ]
@@ -205,7 +440,7 @@ const removeCommand = defineCommand({
 export const platformCommand = defineCommand({
   meta: {
     name: "platform",
-    description: "Manage MCP source platforms.",
+    description: "Manage source platforms (MCP, OpenAPI/REST).",
   },
   subCommands: {
     add: addCommand,

@@ -46,6 +46,13 @@ Non-obvious sharp edges we've already paid for. Each lists the **symptom** and t
 - **`process.exit()` truncates a `--json` write on a pipe.** **Fix:** set `process.exitCode` and `return`; let the event loop flush stdout.
 - **TS exhaustiveness `never`-guard via an `if`-chain (`const _x: never = e`) can break a clean `tsc -b` build** under some TS versions. **Fix:** use a `switch` with the `never` assignment in the `default` case.
 
+## OpenAPI provider (inc 15)
+
+- **`@scalar/openapi-parser` API is mixed sync/async.** `validate()` is async (returns `Promise<ValidateResult>`); `dereference()` and `upgradeFromTwoToThree()` are synchronous. Getting this backwards causes either unresolved promises or calling `.then` on a non-promise. **Fix:** `await validate(doc)`; call `dereference(doc)` and `upgradeFromTwoToThree(doc)` without `await`.
+- **apiKey-in-query: the request URL contains the secret.** The composed `URL.toString()` (with the key in its query string) must NEVER appear in a tool result, error message, log line, or any string derived from the response. **Fix:** `callOperation` returns only `"${status} ${statusText}\n${body}"` — no URL. The URL object is a local variable that leaves no trace in any output.
+- **OpenAPI 3.0 `nullable:true` is not valid JSON Schema.** JSON Schema doesn't have `nullable`; passing a 3.0 schema field with `nullable:true` unchanged to an agent will make validators reject the input. **Fix:** `normalizeSchema` in `tools.ts` recursively converts `{ type: T, nullable: true }` → `{ type: [T, "null"] }` (deleting `nullable`) before the schema is returned as `ProviderTool.inputSchema`.
+- **`@scalar/openapi-parser`'s `dereference()` only resolves refs available in the in-memory document.** Remote `$ref` URLs (e.g. `"$ref": "https://…/types.json"`) are NOT fetched — they remain unresolved stubs. **Fix accepted:** we use `dereference` in "offline" mode intentionally (no remote fetching during tool calls). If a spec uses external $refs, tools may have incomplete schemas. Document at `platform add` if verbose mode is added in inc 16.
+
 ## Packaging / deps
 
 - **Drizzle migration files must be packaged into `dist`** or runtime `migrate` can't find them. **Fix:** include the migrations folder in the build output.

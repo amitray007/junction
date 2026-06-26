@@ -32,9 +32,9 @@ export type SandboxError =
   | { kind: "timed-out"; timeoutMs: number }
 
 /**
- * Errors from connecting to or calling an upstream MCP source.
- * Consumed by the mcp-client package and by the CLI's debug formatter.
- * Defined in core so the CLI can import the type without depending on mcp-client.
+ * Errors from connecting to or calling an upstream source (MCP or OpenAPI/REST).
+ * Consumed by mcp-client, openapi-client, and the CLI's debug formatter.
+ * Defined in core so all packages can import the type without depending on each other.
  */
 export type UpstreamError =
   | { kind: "binary-not-found"; command: string }
@@ -47,3 +47,9 @@ export type UpstreamError =
   | { kind: "invalid-tool-name"; name: string }
   | { kind: "timed-out"; ms: number }
   | { kind: "unsupported-source-kind"; platformKind: string }
+  // OpenAPI/REST provider errors
+  | { kind: "spec-parse-failed"; cause: unknown }
+  | { kind: "spec-fetch-failed"; cause: unknown }
+  | { kind: "invalid-args"; reason: string }
+  | { kind: "response-too-large"; limit: number }
+  | { kind: "too-many-tools"; count: number; cap: number }

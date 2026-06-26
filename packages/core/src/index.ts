@@ -54,6 +54,13 @@ export { CredentialKind, CredentialSchema, OAuthMetaSchema } from "./schema/cred
 export type { McpConnection } from "./schema/mcp-connection.js"
 // McpConnection — generic MCP transport descriptor (http | stdio)
 export { McpConnectionSchema } from "./schema/mcp-connection.js"
+export type { OpenApiAuth, OpenApiConnection, SpecSource } from "./schema/openapi-connection.js"
+// OpenApiConnection — generic OpenAPI/REST source descriptor
+export {
+  OpenApiAuthSchema,
+  OpenApiConnectionSchema,
+  SpecSourceSchema,
+} from "./schema/openapi-connection.js"
 export type { Platform } from "./schema/platform.js"
 // Platform
 export { PlatformKind, PlatformSchema } from "./schema/platform.js"

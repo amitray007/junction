@@ -13,6 +13,8 @@ export const platforms = sqliteTable("platforms", {
   baseUrl: text("base_url"),
   /** JSON-serialized McpConnection — optional; meaningful when kind === "mcp" */
   connection: text("connection"),
+  /** JSON-serialized OpenApiConnection — optional; meaningful when kind === "openapi" */
+  openapi: text("openapi"),
 })
 
 export const credentials = sqliteTable("credentials", {
