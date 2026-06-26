@@ -5,15 +5,19 @@
 // InMemoryTransport.createLinkedPair() or construct transports without connecting.
 //
 // Test surface:
-//   (a) Pure helper unit tests  — namespaceToolName, splitNamespacedName
-//   (b) In-memory round-trip    — listTools prefixed, callTool stripped routing,
-//                                 tool-not-found, camelCase/hyphen/skip-too-long
+//   (a) Pure helper unit tests  — namespaceToolName, splitNamespacedName (now in core)
+//   (b) In-memory round-trip    — listTools returns RAW names, callTool passes raw name,
+//                                 camelCase/hyphen raw pass-through
 //   (c) Transport construction  — http bearer header, stdio env-merge
 //   (d) Sentinel secret discipline — token never in output / error / result
 //   (e) Timeout                 — hanging upstream → timed-out
 //   (f) Timer-cleanup unit test — withTimeoutMs clears timer on both settle paths
 //   (g) Credential point-#5     — axios-like cause never leaks Bearer tokens
+//
+// NOTE (increment 14): namespaceToolName / splitNamespacedName moved to @junction/core.
+// createSession no longer takes a toolNamespace parameter and returns RAW tool names.
 
+import { namespaceToolName, splitNamespacedName } from "@junction/core"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import {
   getDefaultEnvironment,
@@ -24,11 +28,10 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 import { Server } from "@modelcontextprotocol/sdk/server/index.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js"
 import { describe, expect, it, vi } from "vitest"
-import { namespaceToolName, splitNamespacedName } from "./helpers.js"
 import { createSession, withTimeoutMs } from "./session.js"
 
 // ---------------------------------------------------------------------------
-// (a) Pure helper unit tests
+// (a) Pure helper unit tests — namespaceToolName, splitNamespacedName (now in core)
 // ---------------------------------------------------------------------------
 
 describe("namespaceToolName", () => {
@@ -113,7 +116,7 @@ describe("splitNamespacedName", () => {
 })
 
 // ---------------------------------------------------------------------------
-// (b) In-memory round-trip — full session behaviour without network/spawn
+// (b) In-memory round-trip — RAW names (increment 14: no namespace prefix)
 // ---------------------------------------------------------------------------
 
 /** Stand up a tiny in-memory MCP Server with fake tools and connect a Client to it. */
@@ -155,91 +158,94 @@ async function makeInMemoryPair(
   }
 }
 
-describe("createSession — in-memory round-trip", () => {
-  it("listTools returns all upstream tools prefixed with namespace__", async () => {
+describe("createSession — in-memory round-trip (RAW names)", () => {
+  it("listTools returns all upstream tools with RAW names (no namespace prefix)", async () => {
     const { client, cleanup } = await makeInMemoryPair([
       { name: "list_issues" },
       { name: "get_pull_request" },
     ])
     try {
-      const session = createSession(client, "github_work", () => client.close())
+      // No toolNamespace param — session returns raw names
+      const session = createSession(client, () => client.close())
       const result = await session.listTools()
 
       expect(result.isOk()).toBe(true)
-      const { tools, skippedCount } = result._unsafeUnwrap()
-      expect(skippedCount).toBe(0)
+      const tools = result._unsafeUnwrap()
       expect(tools).toHaveLength(2)
-      expect(tools.map((t) => t.name)).toEqual([
-        "github_work__list_issues",
-        "github_work__get_pull_request",
-      ])
+      // RAW names — not prefixed
+      expect(tools.map((t) => t.name)).toEqual(["list_issues", "get_pull_request"])
     } finally {
       await cleanup()
     }
   })
 
-  it("listTools namespaces camelCase, hyphen, and snake_case upstream tools", async () => {
+  it("listTools returns camelCase, hyphen, and snake_case names as-is (raw)", async () => {
     const { client, cleanup } = await makeInMemoryPair([
       { name: "printEnv" },
       { name: "get-thing" },
       { name: "list_issues" },
     ])
     try {
-      const session = createSession(client, "ns", () => client.close())
+      const session = createSession(client, () => client.close())
       const result = await session.listTools()
 
       expect(result.isOk()).toBe(true)
-      const { tools, skippedCount } = result._unsafeUnwrap()
-      expect(skippedCount).toBe(0)
-      expect(tools.map((t) => t.name)).toEqual(["ns__printEnv", "ns__get-thing", "ns__list_issues"])
+      const tools = result._unsafeUnwrap()
+      // Session passes raw names through — the proxy will apply namespacing
+      expect(tools.map((t) => t.name)).toEqual(["printEnv", "get-thing", "list_issues"])
     } finally {
       await cleanup()
     }
   })
 
-  it("skips a too-long tool and returns the rest (not an error, skippedCount=1)", async () => {
-    const longTool = "b".repeat(61) // "ns__" + 61 = 65 chars > 64
+  it("listTools returns ALL tools including long-named ones (≤64 guard is in proxy now)", async () => {
+    const longTool = "b".repeat(61) // would be > 64 after namespacing — but session returns raw
     const { client, cleanup } = await makeInMemoryPair([{ name: "ok_tool" }, { name: longTool }])
     try {
-      const session = createSession(client, "ns", () => client.close())
+      const session = createSession(client, () => client.close())
       const result = await session.listTools()
 
       expect(result.isOk()).toBe(true)
-      const { tools, skippedCount } = result._unsafeUnwrap()
-      expect(skippedCount).toBe(1)
-      expect(tools).toHaveLength(1)
-      expect(tools[0]?.name).toBe("ns__ok_tool")
+      const tools = result._unsafeUnwrap()
+      // Session returns both tools raw — the ≤64 guard is enforced in core proxy
+      expect(tools).toHaveLength(2)
+      expect(tools.map((t) => t.name)).toEqual(["ok_tool", longTool])
     } finally {
       await cleanup()
     }
   })
 
-  it("callTool strips namespace prefix and routes to upstream stripped name", async () => {
+  it("callTool passes the raw name directly to upstream (no split/strip)", async () => {
     const calls: string[] = []
     const { client, cleanup } = await makeInMemoryPair([{ name: "list_issues" }], (name, _args) => {
       calls.push(name)
       return { routed: name }
     })
     try {
-      const session = createSession(client, "github_work", () => client.close())
-      const result = await session.callTool("github_work__list_issues", { state: "open" })
+      const session = createSession(client, () => client.close())
+      // Proxy has already stripped the namespace — session receives the raw name
+      const result = await session.callTool("list_issues", { state: "open" })
 
       expect(result.isOk()).toBe(true)
-      // Upstream received the STRIPPED name (no namespace prefix)
+      // Upstream received the raw name directly
       expect(calls).toEqual(["list_issues"])
     } finally {
       await cleanup()
     }
   })
 
-  it("callTool returns tool-not-found when namespace prefix does not match", async () => {
-    const { client, cleanup } = await makeInMemoryPair([{ name: "list_issues" }])
+  it("callTool passes any raw name to upstream (no namespace validation in session)", async () => {
+    const calls: string[] = []
+    const { client, cleanup } = await makeInMemoryPair([{ name: "list_issues" }], (name) => {
+      calls.push(name)
+      return { routed: name }
+    })
     try {
-      const session = createSession(client, "github_work", () => client.close())
-      const result = await session.callTool("wrong_ns__list_issues", {})
-
-      expect(result.isErr()).toBe(true)
-      expect(result._unsafeUnwrapErr().kind).toBe("tool-not-found")
+      const session = createSession(client, () => client.close())
+      // Session is now namespace-agnostic — it just forwards whatever name it receives
+      const result = await session.callTool("list_issues", {})
+      expect(result.isOk()).toBe(true)
+      expect(calls).toEqual(["list_issues"])
     } finally {
       await cleanup()
     }
@@ -347,9 +353,7 @@ describe("sentinel secret discipline", () => {
   it("sentinel token does not appear in listTools result, tool names, or errors", async () => {
     const { client, cleanup } = await makeInMemoryPair([{ name: "list_issues" }])
     try {
-      // Simulate passing the sentinel as the secret — in production it would be
-      // injected only into the transport; here we verify the session output is clean.
-      const session = createSession(client, "ns", () => client.close())
+      const session = createSession(client, () => client.close())
 
       const toolsResult = await session.listTools()
       expect(toolsResult.isOk()).toBe(true)
@@ -358,43 +362,18 @@ describe("sentinel secret discipline", () => {
       const serialized = JSON.stringify(toolsResult)
       expect(serialized).not.toContain(SENTINEL)
 
-      // Also verify callTool result does not contain sentinel
-      const callResult = await session.callTool("ns__list_issues", { secret: SENTINEL })
+      // Also verify callTool result does not contain sentinel when passed as arg
+      const callResult = await session.callTool("list_issues", { secret: SENTINEL })
       const callSerialized = JSON.stringify(callResult)
       // The sentinel was passed as an argument — it may appear in the echo result
       // from our test server. What we care about is that connectSource never puts
-      // the secret into results or errors on its own. Here we verify the session
-      // itself does not INJECT the sentinel into tool names or error kinds.
+      // the secret into results or errors on its own.
       expect(callSerialized).not.toContain(`${SENTINEL.split("_")[0]}_${SENTINEL.split("_")[1]}`)
-      // The real sentinel check: if the session were to inject the secret into
-      // error messages or tool names, those would contain the sentinel verbatim.
-      const { tools } = toolsResult._unsafeUnwrap()
+      // The real sentinel check: tool names must not contain the sentinel
+      const tools = toolsResult._unsafeUnwrap()
       for (const name of tools.map((t) => t.name)) {
         expect(name).not.toContain(SENTINEL)
       }
-    } finally {
-      await cleanup()
-    }
-  })
-
-  it("tool-not-found error does not contain the sentinel", async () => {
-    const { client, cleanup } = await makeInMemoryPair([{ name: "list_issues" }])
-    try {
-      const session = createSession(client, "ns", () => client.close())
-      const result = await session.callTool(`wrong__${SENTINEL}`, {})
-
-      expect(result.isErr()).toBe(true)
-      const e = result._unsafeUnwrapErr()
-      // The name field in tool-not-found may contain the input name — but the
-      // sentinel here is the tool name, not a token. The key invariant is that
-      // the session never injects a credential secret into errors.
-      // Verify the error kind is correct:
-      expect(e.kind).toBe("tool-not-found")
-      // And verify it doesn't contain any token-shaped content beyond what the caller passed
-      const serialized = JSON.stringify(e)
-      // The serialized error can reference the tool name (which contains the sentinel in this case)
-      // but NOT a credential token. This test proves the sentinel is not injected BY the session.
-      expect(serialized).toContain("tool-not-found")
     } finally {
       await cleanup()
     }
@@ -424,7 +403,7 @@ describe("timeout", () => {
 
     try {
       // Use a very short timeout so the test is fast
-      const session = createSession(client, "ns", () => client.close(), 50)
+      const session = createSession(client, () => client.close(), 50)
       const result = await session.listTools()
 
       expect(result.isErr()).toBe(true)
@@ -445,8 +424,6 @@ describe("withTimeoutMs — timer cleanup (MUST-FIX 1 regression)", () => {
     try {
       const p = Promise.resolve("done")
       const result = withTimeoutMs(p, 5_000)
-      // Attach the handler synchronously before microtasks run; no need for runAllTimersAsync
-      // since the resolve comes from a microtask, not a timer.
       await expect(result).resolves.toBe("done")
       expect(vi.getTimerCount()).toBe(0)
     } finally {
@@ -459,9 +436,6 @@ describe("withTimeoutMs — timer cleanup (MUST-FIX 1 regression)", () => {
     try {
       const p = Promise.reject(new Error("upstream fail"))
       const result = withTimeoutMs(p, 5_000)
-      // Attach the handler before yielding so the rejection is never "unhandled".
-      // Do NOT call vi.runAllTimersAsync() here — that processes microtasks first,
-      // leaving `result` rejected without a handler until the next await.
       await expect(result).rejects.toThrow("upstream fail")
       expect(vi.getTimerCount()).toBe(0)
     } finally {
@@ -491,25 +465,19 @@ describe("credential point-#5 — cause never leaks Bearer tokens via String()",
     const SENTINEL = "SENTINEL_BEARER_CALL_XYZ"
     const { client, cleanup } = await makeInMemoryPair([{ name: "test_tool" }])
     try {
-      const session = createSession(client, "ns", () => client.close(), 5_000)
+      const session = createSession(client, () => client.close(), 5_000)
       const axiosLike = Object.assign(new Error("upstream HTTP error"), {
         config: { headers: { Authorization: `Bearer ${SENTINEL}` } },
       })
       vi.spyOn(client, "callTool").mockRejectedValueOnce(axiosLike)
 
-      const result = await session.callTool("ns__test_tool", {})
+      const result = await session.callTool("test_tool", {})
       expect(result.isErr()).toBe(true)
       const e = result._unsafeUnwrapErr()
       // The error kind may be call-failed or auth-failed depending on error shape.
       // In either case, String(cause) must not expose the sentinel.
       if (e.kind === "call-failed") {
-        // String(cause) → "Error: <message>" — safe because Error.message
-        // does NOT include Object.assign-added properties like .config.headers.
-        // This is the invariant formatUpstreamError relies on (docs/futures/gotchas.md).
         expect(String(e.cause)).not.toContain(SENTINEL)
-        // NOTE: JSON.stringify(e) CAN surface SENTINEL when the cause has enumerable
-        // properties added via Object.assign (like axios-style .config.headers).
-        // This is why formatUpstreamError uses String(cause), never JSON.stringify(cause).
       }
     } finally {
       await cleanup()

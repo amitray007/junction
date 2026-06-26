@@ -7,6 +7,9 @@
 //   It NEVER appears in argv, tool arguments, results, logs, error .cause, or stdout/stderr.
 //   After transport construction the local reference is no longer held by this module.
 //
+// RAW NAMES (increment 14): the returned session lists/calls with raw upstream names.
+// Namespacing has moved to core/src/sources/proxy.ts.
+//
 // SOURCE-AGNOSTIC: zero vendor code. McpConnection is generic data; this file
 // knows only transports (http / stdio), not platforms.
 
@@ -74,19 +77,17 @@ function mapConnectError(
 
 /**
  * Connect to an upstream MCP source described by `connection` and return an
- * UpstreamSession whose tool names are all prefixed with `<toolNamespace>__`.
+ * UpstreamSession with RAW tool names (no namespace prefix applied here).
  *
  * The `secret` (bearer token / env-var value) is injected only into the
  * transport constructor and is never stored on the returned session or passed
  * through to any log or error.
  *
  * @param connection - Generic McpConnection descriptor (http | stdio).
- * @param toolNamespace - Namespace prefix applied to every upstream tool name.
  * @param secret - Resolved plaintext credential, or null if the source needs none.
  */
 export function connectSource(
   connection: McpConnection,
-  toolNamespace: string,
   secret: string | null,
 ): ResultAsync<UpstreamSession, UpstreamError> {
   const work = async (): Promise<Result<UpstreamSession, UpstreamError>> => {
@@ -159,7 +160,7 @@ export function connectSource(
 
     // Secret is no longer referenced after this point — it exists only inside
     // the transport's header/env, which is garbage-collected with the transport.
-    return ok(createSession(client, toolNamespace, () => client.close()))
+    return ok(createSession(client, () => client.close()))
   }
 
   return new ResultAsync(work())

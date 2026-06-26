@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Pure tool-name helpers — no transport, unit-testable in isolation.
 // SOURCE-AGNOSTIC: no vendor code. A namespace and tool name are data, not code.
+// Logic moved verbatim from mcp/client helpers (increment 14 relocation).
 
-import type { UpstreamError } from "@junction/core"
-import { err, ok, type Result } from "neverthrow"
+import type { UpstreamError } from "../errors/index.js"
+import { err, ok, type Result } from "../result/index.js"
 
 /** MCP tool-name charset and length limit per specification (`^[a-zA-Z0-9_-]{1,64}$`). */
 const MCP_TOOL_NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/

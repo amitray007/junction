@@ -80,6 +80,8 @@ export function safeUpstreamMessage(e: UpstreamError): string {
       return `tool name too long: ${e.name}`
     case "invalid-tool-name":
       return `invalid tool name: ${e.name}`
+    case "unsupported-source-kind":
+      return `platform kind "${e.platformKind}" is not yet supported`
   }
 }
 

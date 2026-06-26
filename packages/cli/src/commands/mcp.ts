@@ -8,33 +8,39 @@
 //
 // ARCHITECTURE — composition root (injection):
 //   cli is the app layer that wires libs together. mcp/server NEVER imports
-//   mcp/client; instead, the cli builds resolveSource (from repos + store),
-//   creates the ProfileProxy (mcp/client), adapts it to McpServerHandlers,
+//   mcp/client; instead, the cli builds resolveProvider (from repos + store),
+//   creates the ProfileProxy (core), adapts it to McpServerHandlers,
 //   and passes those handlers to createMcpServer (mcp/server). The boundary:
 //     mcp/server → core only
 //     mcp/client → core only
 //     cli → core + mcp/server + mcp/client   (app → libs)
 //
 // CREDENTIAL DISCIPLINE:
-//   The secret is fetched per-call inside resolveSource, injected only into
-//   connectSource (which puts it in the transport), and NEVER placed in any
-//   tool result, MCP response, error message, stderr note, or log.
+//   The secret is fetched per-call inside resolveProvider, passed to
+//   createMcpProvider (which injects it into the transport), and NEVER placed
+//   in any tool result, MCP response, error message, stderr note, or log.
+//
+// DISPATCH BY KIND (increment 14):
+//   resolveProvider switches on platform.kind:
+//     "mcp"     → build McpToolProvider via mcp/client
+//     other     → unsupported-source-kind error (skipped per-source gracefully)
+//   Future kinds (openapi/graphql) plug in here without touching the proxy.
 
 import {
   createCredentialStore,
+  createProfileProxy,
   createRepositories,
   deriveMcpEndpointPath,
   err,
   getDatabase,
   getPaths,
-  type McpConnection,
   ok,
   type Profile,
   ProfileIdSchema,
   type Result,
   ResultAsync,
   type SourceRef,
-  type ToolFilter,
+  type ToolProvider,
   type UpstreamError,
 } from "@junction/core"
 import { defineCommand } from "citty"
@@ -87,7 +93,7 @@ const serveCommand = defineCommand({
   async run({ args }) {
     // Lazy imports: mcp/server and mcp/client are only loaded when this command runs.
     // This avoids paying the import cost for every other CLI command.
-    const [{ serveStdio, safeUpstreamMessage }, { createProfileProxy }] = await Promise.all([
+    const [{ serveStdio, safeUpstreamMessage }, { createMcpProvider }] = await Promise.all([
       import("@junction/mcp-server"),
       import("@junction/mcp-client"),
     ])
@@ -143,23 +149,26 @@ const serveCommand = defineCommand({
     }
     const store = storeResult.isOk() ? storeResult.value : null
 
-    // ── Build resolveSource (injected into the proxy) ─────────────────────
+    // ── Build resolveProvider (injected into the proxy) ───────────────────
     //
-    // SECURITY: resolveSource writes stderr notes for skipped sources but NEVER
-    // leaks secret values. The secret is returned in the Ok value and flows only
-    // to connectSource (into the transport); it is never logged or serialized.
-    type ResolvedSourceShape = {
-      connection: McpConnection
-      secret: string | null
+    // SECURITY: resolveProvider writes stderr notes for skipped sources but NEVER
+    // leaks secret values. The secret is returned in the ToolProvider's transport
+    // and flows only to the upstream; it is never logged or serialized.
+    //
+    // DISPATCH BY KIND: switches on platform.kind so future source types plug in
+    // without touching the proxy. unsupported-source-kind → skipped per-source.
+
+    type ProviderResolution = {
+      provider: ToolProvider
       toolNamespace: string
-      toolFilter?: ToolFilter | undefined
+      toolFilter?: import("@junction/core").ToolFilter | undefined
     }
 
-    const resolveSource = (
+    const resolveProvider = (
       sourceRef: SourceRef,
-    ): ResultAsync<ResolvedSourceShape, UpstreamError> => {
-      const work = async (): Promise<Result<ResolvedSourceShape, UpstreamError>> => {
-        // Resolve the platform and its connection descriptor.
+    ): ResultAsync<ProviderResolution, UpstreamError> => {
+      const work = async (): Promise<Result<ProviderResolution, UpstreamError>> => {
+        // Resolve the platform.
         const platformResult = await repos.platforms.get(sourceRef.platformId)
         if (platformResult.isErr()) {
           process.stderr.write(
@@ -171,6 +180,18 @@ const serveCommand = defineCommand({
           } satisfies UpstreamError)
         }
         const platform = platformResult.value
+
+        // Dispatch by source kind — unsupported kinds are cleanly skipped.
+        if (platform.kind !== "mcp") {
+          process.stderr.write(
+            `junction mcp serve: source "${sourceRef.toolNamespace}": platform kind "${platform.kind}" not yet supported — skipping\n`,
+          )
+          return err({
+            kind: "unsupported-source-kind" as const,
+            platformKind: platform.kind,
+          } satisfies UpstreamError)
+        }
+
         if (platform.connection === undefined) {
           process.stderr.write(
             `junction mcp serve: source "${sourceRef.toolNamespace}": platform "${sourceRef.platformId}" has no connection descriptor — skipping\n`,
@@ -211,9 +232,17 @@ const serveCommand = defineCommand({
           secret = secretResult.value
         }
 
+        // Build the MCP ToolProvider (connects to upstream eagerly here).
+        const providerResult = await createMcpProvider(platform.connection, secret)
+        if (providerResult.isErr()) {
+          process.stderr.write(
+            `junction mcp serve: source "${sourceRef.toolNamespace}": connection failed — skipping\n`,
+          )
+          return err(providerResult.error)
+        }
+
         return ok({
-          connection: platform.connection,
-          secret,
+          provider: providerResult.value,
           toolNamespace: sourceRef.toolNamespace,
           toolFilter: sourceRef.toolFilter,
         })
@@ -221,8 +250,8 @@ const serveCommand = defineCommand({
       return new ResultAsync(work())
     }
 
-    // ── Build the profile proxy (mcp/client) ──────────────────────────────
-    const proxy = createProfileProxy(profile.sources, resolveSource)
+    // ── Build the profile proxy (core) ────────────────────────────────────
+    const proxy = createProfileProxy(profile.sources, resolveProvider)
 
     // ── Adapt proxy ResultAsync → Promise handlers for mcp/server ─────────
     const handlers = {
