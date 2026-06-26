@@ -1,24 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// `junction debug mcp-probe` — connect to an upstream MCP source in isolation
-// and print the namespaced tool list. Debug-only; clearly non-production.
+// `junction debug` — source-agnostic debug utilities (non-production).
 //
-// SECURITY: the resolved secret (bearer token) is passed directly to
-// connectSource and NEVER written to stdout, stderr, --json output, or logs.
-// The probe prints only tool names and counts — no credential values, ever.
+// Subcommands:
+//   probe — connect to any source (MCP or OpenAPI) and list its tools.
+//   call  — invoke a single tool against any source and print the result.
+//
+// SECURITY:
+//   The resolved secret (bearer token / API key) is passed only into buildProvider
+//   → transport/injectAuth and NEVER written to stdout, stderr, --json output, or logs.
+//   Probe prints tool names and counts only. Call prints upstream content + isError —
+//   the same bytes mcp serve would forward; no secret, no request URL, ever.
 
 import type { UpstreamError } from "@junction/core"
-import {
-  createCredentialStore,
-  getPaths,
-  namespaceToolName,
-  ToolNamespaceSchema,
-} from "@junction/core"
-import { connectSource } from "@junction/mcp-client"
+import { getPaths, namespaceToolName, ToolNamespaceSchema } from "@junction/core"
 import { defineCommand } from "citty"
 import { consola } from "consola"
 import { JSON_ARG } from "../args.js"
 import { openDb } from "../db.js"
 import { reportCredentialError, reportDbError } from "../format.js"
+import { buildProvider, resolveCredentialSecret } from "../providers.js"
 
 // ---------------------------------------------------------------------------
 // UpstreamError formatter (exhaustive — compile error on new kind)
@@ -102,14 +102,146 @@ function deriveProbeNamespace(platformId: string, profileName: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// mcp-probe subcommand
+// Shared probe logic (the probe subcommand calls this)
 // ---------------------------------------------------------------------------
 
-const mcpProbeCommand = defineCommand({
+interface ProbeArgs {
+  platform: string
+  credential?: string
+  json: boolean
+}
+
+async function runProbe(args: ProbeArgs): Promise<void> {
+  const { json } = args
+
+  const repos = await openDb(json)
+  if (!repos) return
+
+  const platformResult = await repos.platforms.get(args.platform)
+  if (platformResult.isErr()) {
+    reportDbError(platformResult.error, json)
+    return
+  }
+  const platform = platformResult.value
+
+  const paths = getPaths()
+
+  // ── Resolve credential + secret (skipped for public/no-auth platforms) ──
+  const secretResult = await resolveCredentialSecret(repos, paths, args.credential)
+  if (secretResult.isErr()) {
+    if (secretResult.error.kind === "db") reportDbError(secretResult.error.error, json)
+    else reportCredentialError(secretResult.error.error, json)
+    return
+  }
+  const { secret, account } = secretResult.value
+
+  // ── Derive namespace ────────────────────────────────────────────────────
+  const toolNamespace = deriveProbeNamespace(String(platform.id), account)
+
+  // ── Build provider + list tools ─────────────────────────────────────────
+  // secret flows only into buildProvider → transport/injectAuth. NEVER logged.
+  const providerResult = await buildProvider(platform, secret, paths)
+  if (providerResult.isErr()) {
+    reportUpstreamError(providerResult.error, json)
+    return
+  }
+  const provider = providerResult.value
+
+  try {
+    const toolsResult = await provider.listTools()
+    if (toolsResult.isErr()) {
+      reportUpstreamError(toolsResult.error, json)
+      return
+    }
+
+    // Apply namespacing + ≤64 guard — same rules as core proxy but for display.
+    const rawTools = toolsResult.value
+    const tools: Array<{ raw: string; namespaced: string }> = []
+    let skippedCount = 0
+    for (const t of rawTools) {
+      const nameResult = namespaceToolName(toolNamespace, t.name)
+      if (nameResult.isErr()) {
+        skippedCount++
+        continue
+      }
+      tools.push({ raw: t.name, namespaced: nameResult.value })
+    }
+
+    // Output: both raw and namespaced names + counts. NEVER the secret.
+    if (json) {
+      process.stdout.write(
+        `${JSON.stringify({
+          ok: true,
+          namespace: toolNamespace,
+          count: tools.length,
+          skippedCount,
+          tools,
+        })}\n`,
+      )
+    } else {
+      consola.info(`Namespace: ${toolNamespace}`)
+      consola.info(`Tools (${tools.length}):`)
+      for (const t of tools) {
+        process.stdout.write(`  ${t.namespaced}  (raw: ${t.raw})\n`)
+      }
+      if (skippedCount > 0) {
+        consola.warn(
+          `${skippedCount} tool(s) skipped (namespaced name exceeds 64 chars or contains MCP-illegal characters)`,
+        )
+      }
+    }
+  } finally {
+    // Always close the provider — leaked connection/timer is the inc-11 hang gotcha.
+    await provider.close()
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Args for the probe subcommand
+// ---------------------------------------------------------------------------
+
+const PROBE_ARGS = {
+  platform: {
+    type: "string" as const,
+    description: "Platform ID",
+    required: true as const,
+  },
+  credential: {
+    type: "string" as const,
+    description: "Credential ID (optional — omit for public/no-auth platforms)",
+  },
+  json: JSON_ARG,
+}
+
+// ---------------------------------------------------------------------------
+// probe subcommand
+// ---------------------------------------------------------------------------
+
+const probeCommand = defineCommand({
   meta: {
-    name: "mcp-probe",
+    name: "probe",
     description:
-      "Connect to a platform's upstream MCP source and print the namespaced tool list. Debug use only.",
+      "Connect to a platform's upstream source (MCP or OpenAPI) and print the tool list. Debug use only.",
+  },
+  args: PROBE_ARGS,
+  async run({ args }) {
+    await runProbe({
+      platform: args.platform,
+      credential: args.credential,
+      json: args.json ?? false,
+    })
+  },
+})
+
+// ---------------------------------------------------------------------------
+// call subcommand
+// ---------------------------------------------------------------------------
+
+const callCommand = defineCommand({
+  meta: {
+    name: "call",
+    description:
+      "Invoke a single tool against a platform source (MCP or OpenAPI) and print the result. Debug use only.",
   },
   args: {
     platform: {
@@ -121,112 +253,93 @@ const mcpProbeCommand = defineCommand({
       type: "string",
       description: "Credential ID (optional — omit for public/no-auth platforms)",
     },
+    tool: {
+      type: "string",
+      description: "Raw (un-namespaced) upstream tool name to invoke",
+      required: true,
+    },
+    args: {
+      type: "string",
+      description: 'Tool arguments as a JSON object string (default: "{}")',
+      default: "{}",
+    },
     json: JSON_ARG,
   },
-  async run({ args }) {
-    const json = args.json ?? false
+  async run({ args: cmdArgs }) {
+    const json = cmdArgs.json ?? false
 
-    // ── 1. Open DB ────────────────────────────────────────────────────────
+    // ── Parse --args as a JSON object ──────────────────────────────────────
+    let parsedArgs: Record<string, unknown>
+    try {
+      const raw = JSON.parse(cmdArgs.args ?? "{}") as unknown
+      if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+        reportUpstreamError(
+          { kind: "invalid-args", reason: "--args must be a JSON object, e.g. '{}'" },
+          json,
+        )
+        return
+      }
+      parsedArgs = raw as Record<string, unknown>
+    } catch (cause) {
+      reportUpstreamError({ kind: "invalid-args", reason: `invalid JSON: ${String(cause)}` }, json)
+      return
+    }
+
+    // ── Open DB + resolve platform ──────────────────────────────────────────
     const repos = await openDb(json)
     if (!repos) return
 
-    // ── 2. Load platform ──────────────────────────────────────────────────
-    const platformResult = await repos.platforms.get(args.platform)
+    const platformResult = await repos.platforms.get(cmdArgs.platform)
     if (platformResult.isErr()) {
       reportDbError(platformResult.error, json)
       return
     }
     const platform = platformResult.value
 
-    if (!platform.connection) {
-      const msg = `platform "${args.platform}" has no MCP connection configured`
-      if (json) process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
-      else consola.error(msg)
-      process.exitCode = 1
+    const paths = getPaths()
+
+    // ── Resolve credential + secret ─────────────────────────────────────────
+    const secretResult = await resolveCredentialSecret(repos, paths, cmdArgs.credential)
+    if (secretResult.isErr()) {
+      if (secretResult.error.kind === "db") reportDbError(secretResult.error.error, json)
+      else reportCredentialError(secretResult.error.error, json)
       return
     }
+    const { secret } = secretResult.value
 
-    // ── 3. Resolve credential + secret (skipped for public/no-auth platforms) ──
-    let secret: string | null = null
-    let probeAccount = "public"
-
-    if (args.credential !== undefined && args.credential !== "") {
-      const credResult = await repos.credentials.get(args.credential)
-      if (credResult.isErr()) {
-        reportDbError(credResult.error, json)
-        return
-      }
-      const credential = credResult.value
-
-      const paths = getPaths()
-      const storeResult = await createCredentialStore(paths)
-      if (storeResult.isErr()) {
-        reportCredentialError(storeResult.error, json)
-        return
-      }
-      const store = storeResult.value
-
-      const secretResult = await store.get(credential.secretRef)
-      if (secretResult.isErr()) {
-        reportCredentialError(secretResult.error, json)
-        return
-      }
-      secret = secretResult.value // string | null — SECRET handled below
-      probeAccount = credential.profileName
-    }
-
-    // ── 4. Derive namespace ───────────────────────────────────────────────
-    const toolNamespace = deriveProbeNamespace(String(platform.id), probeAccount)
-
-    // ── 5. Connect + list tools ───────────────────────────────────────────
-    // connectSource injects `secret` only into the transport. We NEVER log or
-    // output the secret — below this point it is referenced only by connectSource.
-    // (increment 14: connectSource no longer takes toolNamespace — returns raw names)
-    const sessionResult = await connectSource(platform.connection, secret)
-    if (sessionResult.isErr()) {
-      reportUpstreamError(sessionResult.error, json)
+    // ── Build provider + call tool ──────────────────────────────────────────
+    // secret flows only into buildProvider → transport/injectAuth. NEVER logged.
+    const providerResult = await buildProvider(platform, secret, paths)
+    if (providerResult.isErr()) {
+      reportUpstreamError(providerResult.error, json)
       return
     }
-    const session = sessionResult.value
+    const provider = providerResult.value
 
     try {
-      const toolsResult = await session.listTools()
-      if (toolsResult.isErr()) {
-        reportUpstreamError(toolsResult.error, json)
+      const callResult = await provider.callTool(cmdArgs.tool, parsedArgs)
+      if (callResult.isErr()) {
+        reportUpstreamError(callResult.error, json)
         return
       }
 
-      // Apply namespacing + ≤64 guard (increment 14: moved from session to here for probe).
-      // The core proxy does this automatically; the probe applies it manually.
-      const rawTools = toolsResult.value
-      const namespacedTools: Array<{ name: string }> = []
-      let skippedCount = 0
-      for (const t of rawTools) {
-        const nameResult = namespaceToolName(toolNamespace, t.name)
-        if (nameResult.isErr()) {
-          skippedCount++
-          continue
-        }
-        namespacedTools.push({ name: nameResult.value })
-      }
+      const { content, isError } = callResult.value
 
-      // Output: namespaced tool names + count. NEVER the token.
+      // Output: upstream content + isError. NEVER the secret or request URL.
+      // (OpenAPI provider already returns "status\nbody" with no URL — inc-15 guarantee.)
       if (json) {
         process.stdout.write(
-          `${JSON.stringify({ ok: true, namespace: toolNamespace, count: namespacedTools.length, skippedCount, tools: namespacedTools.map((t) => t.name) })}\n`,
+          `${JSON.stringify({ ok: true, content, isError: isError ?? false })}\n`,
         )
       } else {
-        consola.info(`Namespace: ${toolNamespace}`)
-        consola.info(`Tools (${namespacedTools.length}):`)
-        for (const t of namespacedTools) {
-          process.stdout.write(`  ${t.name}\n`)
+        if (isError === true) {
+          consola.error("Tool returned an error:")
         }
-        if (skippedCount > 0) {
-          consola.warn(`${skippedCount} tool(s) skipped (namespaced name exceeds MCP limits)`)
-        }
+        process.stdout.write(`${JSON.stringify(content, null, 2)}\n`)
       }
     } finally {
-      await session.close()
+      // Always close the provider — leaked connection/timer is the inc-11 hang gotcha.
+      await provider.close()
     }
   },
 })
@@ -241,6 +354,7 @@ export const debugCommand = defineCommand({
     description: "Debug utilities (non-production).",
   },
   subCommands: {
-    "mcp-probe": mcpProbeCommand,
+    probe: probeCommand,
+    call: callCommand,
   },
 })

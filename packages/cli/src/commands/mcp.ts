@@ -20,14 +20,13 @@
 //   createMcpProvider (which injects it into the transport), and NEVER placed
 //   in any tool result, MCP response, error message, stderr note, or log.
 //
-// DISPATCH BY KIND (increment 14):
-//   resolveProvider switches on platform.kind:
-//     "mcp"     → build McpToolProvider via mcp/client
+// DISPATCH BY KIND (increment 14/17):
+//   buildProvider (providers.ts) switches on platform.kind:
+//     "mcp"     → build McpToolProvider via mcp/client (lazy-imported)
+//     "openapi" → build OpenApiToolProvider via openapi-client (lazy-imported)
 //     other     → unsupported-source-kind error (skipped per-source gracefully)
-//   Future kinds (openapi/graphql) plug in here without touching the proxy.
+//   Future kinds (graphql) plug in there without touching the proxy or this file.
 
-import { readFile } from "node:fs/promises"
-import { join } from "node:path"
 import {
   createCredentialStore,
   createProfileProxy,
@@ -46,6 +45,7 @@ import {
   type UpstreamError,
 } from "@junction/core"
 import { defineCommand } from "citty"
+import { buildProvider } from "../providers.js"
 
 // ---------------------------------------------------------------------------
 // Default (synthetic) profile — used when no DB is available
@@ -93,12 +93,9 @@ const serveCommand = defineCommand({
     },
   },
   async run({ args }) {
-    // Lazy imports: mcp/server, mcp/client, and openapi-client are only loaded when
-    // this command runs. This avoids paying the import cost for every other CLI command.
-    const [{ serveStdio, safeUpstreamMessage }, { createMcpProvider }] = await Promise.all([
-      import("@junction/mcp-server"),
-      import("@junction/mcp-client"),
-    ])
+    // Lazy import: mcp/server is only loaded when this command runs.
+    // mcp/client and openapi-client are lazy-imported inside buildProvider (providers.ts).
+    const { serveStdio, safeUpstreamMessage } = await import("@junction/mcp-server")
 
     const profileName = args.profile
 
@@ -243,67 +240,24 @@ const serveCommand = defineCommand({
           }
         }
 
-        // ── MCP provider ────────────────────────────────────────────────────
-        if (platform.kind === "mcp") {
-          if (platform.connection === undefined) {
-            process.stderr.write(
-              `junction mcp serve: source "${sourceRef.toolNamespace}": platform "${sourceRef.platformId}" has no connection descriptor — skipping\n`,
-            )
-            return err({
-              kind: "connect-failed" as const,
-              cause: "platform has no connection descriptor",
-            } satisfies UpstreamError)
-          }
-
-          const providerResult = await createMcpProvider(platform.connection, secret)
-          if (providerResult.isErr()) {
-            process.stderr.write(
-              `junction mcp serve: source "${sourceRef.toolNamespace}": connection failed — skipping\n`,
-            )
-            return err(providerResult.error)
-          }
-
-          return ok({
-            provider: providerResult.value,
-            toolNamespace: sourceRef.toolNamespace,
-            toolFilter: sourceRef.toolFilter,
-          })
-        }
-
-        // ── OpenAPI provider ────────────────────────────────────────────────
-        if (platform.openapi === undefined) {
+        // ── Build the provider via the shared primitive (providers.ts) ─────
+        // buildProvider dispatches by kind (mcp/openapi/else), lazy-imports the
+        // right lib, and normalises the MCP/OpenAPI async asymmetry. It never
+        // writes stderr — we write the per-source skipping note on error here.
+        const providerResult = await buildProvider(platform, secret, paths)
+        if (providerResult.isErr()) {
+          // buildProvider returns the cause (e.g. missing connection/openapi descriptor,
+          // ENOENT on the cached spec path); surface it so the skip is diagnosable.
+          const cause =
+            "cause" in providerResult.error ? String(providerResult.error.cause ?? "") : ""
           process.stderr.write(
-            `junction mcp serve: source "${sourceRef.toolNamespace}": platform "${sourceRef.platformId}" has no openapi descriptor — skipping\n`,
+            `junction mcp serve: source "${sourceRef.toolNamespace}": connection failed — skipping${cause ? ` (${cause})` : ""}\n`,
           )
-          return err({
-            kind: "connect-failed" as const,
-            cause: "platform has no openapi descriptor",
-          } satisfies UpstreamError)
+          return err(providerResult.error)
         }
-
-        // Load the cached dereferenced spec (written by `platform add`)
-        const cacheFile = join(paths.home, "openapi", `${platform.id}.json`)
-        let cachedSchema: Record<string, unknown>
-        try {
-          const text = await readFile(cacheFile, "utf8")
-          cachedSchema = JSON.parse(text) as Record<string, unknown>
-        } catch (cause) {
-          process.stderr.write(
-            `junction mcp serve: source "${sourceRef.toolNamespace}": cached spec not found at ${cacheFile} — skipping\n`,
-          )
-          return err({ kind: "connect-failed" as const, cause } satisfies UpstreamError)
-        }
-
-        // Use the cached schema inline so we never re-fetch the spec URL at serve-time
-        const { createOpenApiProvider } = await import("@junction/openapi-client")
-        const openapiConnection = {
-          ...platform.openapi,
-          spec: { from: "inline" as const, document: cachedSchema },
-        }
-        const openapiProvider = createOpenApiProvider(openapiConnection, secret)
 
         return ok({
-          provider: openapiProvider,
+          provider: providerResult.value,
           toolNamespace: sourceRef.toolNamespace,
           toolFilter: sourceRef.toolFilter,
         })

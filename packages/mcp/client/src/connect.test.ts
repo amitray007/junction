@@ -487,7 +487,7 @@ describe("credential point-#5 — cause never leaks Bearer tokens via String()",
 })
 
 // ---------------------------------------------------------------------------
-// (h) debug mcp-probe unit — mock connectSource, check output never has token
+// (h) debug probe unit — mock connectSource, check output never has token
 // ---------------------------------------------------------------------------
 
 describe("debug probe — output never contains a token", () => {
