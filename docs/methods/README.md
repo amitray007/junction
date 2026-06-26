@@ -31,6 +31,7 @@ A **method file** holds one increment's **spec + step-by-step implementation tog
 | 13 | MCP source management + visibility (remove/enable/disable/show — goal #1) | `13-source-management.md` | written |
 | **— Feature: "any source" breadth (OpenAPI/REST → GraphQL) —** | | | |
 | 14 | Source-provider abstraction + dispatch-by-kind (OpenAPI prep — refactor) | `14-source-provider-abstraction.md` | written |
+| 15 | OpenAPI/REST source provider — call any REST API as namespaced tools | `15-openapi-provider.md` | written |
 
 After increment 8 the foundation is "ready"; increment 9 (TUI) completes it. Features come after, each with its own method file.
 
