@@ -6,6 +6,7 @@
   "references": [
     { "path": "../core" },
     { "path": "../mcp/client" },
-    { "path": "../openapi-client" }
+    { "path": "../openapi-client" },
+    { "path": "../graphql-client" }
   ]
 }

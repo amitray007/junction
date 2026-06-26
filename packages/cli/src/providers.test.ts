@@ -170,17 +170,36 @@ describe("buildProvider — unsupported kind", () => {
   it("returns unsupported-source-kind for an unrecognised platform.kind", async () => {
     await withTempHome(async () => {
       const paths = getPaths()
+      // "cli" is a valid PlatformKind but has no buildProvider implementation yet
       const platform = {
-        id: PlatformIdSchema.parse("gql-platform"),
-        kind: "graphql" as Platform["kind"],
-        displayName: "GraphQL Source",
+        id: PlatformIdSchema.parse("cli-platform"),
+        kind: "cli" as Platform["kind"],
+        displayName: "CLI Source",
       } as Platform
 
       const result = await buildProvider(platform, null, paths)
       expect(result.isErr()).toBe(true)
       if (result.isErr()) {
         expect(result.error.kind).toBe("unsupported-source-kind")
-        expect((result.error as { platformKind: string }).platformKind).toBe("graphql")
+        expect((result.error as { platformKind: string }).platformKind).toBe("cli")
+      }
+    })
+  })
+
+  it("returns connect-failed for a graphql platform without a descriptor", async () => {
+    await withTempHome(async () => {
+      const paths = getPaths()
+      const platform = {
+        id: PlatformIdSchema.parse("gql-platform"),
+        kind: "graphql" as Platform["kind"],
+        displayName: "GraphQL Source",
+        // no graphql descriptor
+      } as Platform
+
+      const result = await buildProvider(platform, null, paths)
+      expect(result.isErr()).toBe(true)
+      if (result.isErr()) {
+        expect(result.error.kind).toBe("connect-failed")
       }
     })
   })

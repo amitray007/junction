@@ -8,6 +8,7 @@ import { mapDbError } from "../db/errors.js"
 import type { Db } from "../db/index.js"
 import { platforms } from "../db/schema.js"
 import type { DbError } from "../errors/index.js"
+import { GraphQlConnectionSchema } from "../schema/graphql-connection.js"
 import { McpConnectionSchema } from "../schema/mcp-connection.js"
 import { OpenApiConnectionSchema } from "../schema/openapi-connection.js"
 import type { Platform } from "../schema/platform.js"
@@ -28,6 +29,9 @@ function rowToPlatform(row: typeof platforms.$inferSelect): Platform {
   if (row.openapi) {
     raw.openapi = OpenApiConnectionSchema.parse(JSON.parse(row.openapi) as unknown)
   }
+  if (row.graphql) {
+    raw.graphql = GraphQlConnectionSchema.parse(JSON.parse(row.graphql) as unknown)
+  }
   return PlatformSchema.parse(raw)
 }
 
@@ -41,6 +45,7 @@ function toPlatformRow(p: Platform) {
     baseUrl: p.baseUrl ?? null,
     connection: p.connection ? JSON.stringify(p.connection) : null,
     openapi: p.openapi ? JSON.stringify(p.openapi) : null,
+    graphql: p.graphql ? JSON.stringify(p.graphql) : null,
   }
 }
 
@@ -75,6 +80,7 @@ export function createPlatformsRepo(db: Db) {
               baseUrl: row.baseUrl,
               connection: row.connection,
               openapi: row.openapi,
+              graphql: row.graphql,
             },
           })
           .run()

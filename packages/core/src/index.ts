@@ -56,6 +56,9 @@ export { createRepositories, type Repositories } from "./repositories/index.js"
 export type { Credential, OAuthMeta } from "./schema/credential.js"
 // Credential
 export { CredentialKind, CredentialSchema, OAuthMetaSchema } from "./schema/credential.js"
+export type { GraphQlConnection } from "./schema/graphql-connection.js"
+// GraphQlConnection — generic GraphQL source descriptor
+export { GraphQlConnectionSchema } from "./schema/graphql-connection.js"
 export type { McpConnection } from "./schema/mcp-connection.js"
 // McpConnection — generic MCP transport descriptor (http | stdio)
 export { McpConnectionSchema } from "./schema/mcp-connection.js"

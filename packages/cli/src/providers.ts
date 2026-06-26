@@ -154,6 +154,18 @@ export function buildProvider(
       return ok(createOpenApiProvider(openapiConnection, secret))
     }
 
+    if (platform.kind === "graphql") {
+      if (platform.graphql === undefined) {
+        return err({
+          kind: "connect-failed" as const,
+          cause: "platform has no graphql descriptor",
+        } satisfies UpstreamError)
+      }
+      const { createGraphQlProvider } = await import("@junction/graphql-client")
+      // createGraphQlProvider returns ToolProvider (synchronous) — normalize to ResultAsync.
+      return ok(createGraphQlProvider(platform.graphql, secret))
+    }
+
     return err({
       kind: "unsupported-source-kind" as const,
       platformKind: platform.kind,

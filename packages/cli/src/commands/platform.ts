@@ -4,8 +4,10 @@
 // Edge stays thin: calls core, formats output. No business logic here.
 
 import { mkdir, readFile, writeFile } from "node:fs/promises"
-import { dirname, join } from "node:path"
+import { dirname } from "node:path"
 import {
+  type GraphQlConnection,
+  GraphQlConnectionSchema,
   type McpConnection,
   type OpenApiConnection,
   OpenApiConnectionSchema,
@@ -23,6 +25,72 @@ function reportError(msg: string, json: boolean): void {
   if (json) process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
   else consola.error(msg)
   process.exitCode = 1
+}
+
+/** Validate a PlatformSchema parse result, reporting errors on failure. */
+function parsePlatformResult(
+  parseResult: ReturnType<typeof PlatformSchema.safeParse>,
+  json: boolean,
+): Platform | null {
+  if (!parseResult.success) {
+    const msg = parseResult.error.issues.map((i: { message: string }) => i.message).join(", ")
+    reportError(`Invalid platform: ${msg}`, json)
+    return null
+  }
+  return parseResult.data
+}
+
+/** Open the DB, upsert the platform, and report any DB errors. */
+async function upsertPlatform(platform: Platform, json: boolean): Promise<Platform | null> {
+  const repos = await openDb(json)
+  if (!repos) return null
+  const result = await repos.platforms.upsert(platform)
+  if (result.isErr()) {
+    reportDbError(result.error, json)
+    return null
+  }
+  return result.value
+}
+
+/**
+ * Build the auth descriptor from shared --auth-scheme/--auth-in/--auth-name/--auth-username flags.
+ * Returns undefined if no scheme is given (caller may apply a source-specific fallback).
+ * Returns null if a validation error was reported (caller must return early).
+ */
+function buildPlatformAuth(
+  args: Record<string, unknown>,
+  json: boolean,
+): OpenApiConnection["auth"] | null | undefined {
+  const authScheme = args["auth-scheme"] as string | undefined
+  if (authScheme === "apiKey") {
+    const authIn = (args["auth-in"] as string | undefined) ?? "header"
+    const authName = args["auth-name"] as string | undefined
+    if (!authName) {
+      reportError("--auth-name is required for apiKey auth scheme", json)
+      return null
+    }
+    if (authIn !== "header" && authIn !== "query" && authIn !== "cookie") {
+      reportError("--auth-in must be header, query, or cookie", json)
+      return null
+    }
+    return { scheme: "apiKey", in: authIn, name: authName }
+  }
+  if (authScheme === "bearer") {
+    return { scheme: "bearer", header: "Authorization" }
+  }
+  if (authScheme === "basic") {
+    const username = args["auth-username"] as string | undefined
+    if (!username) {
+      reportError("--auth-username is required for basic auth scheme", json)
+      return null
+    }
+    return { scheme: "basic", username }
+  }
+  if (authScheme) {
+    reportError(`Unknown auth scheme "${authScheme}". Must be apiKey, bearer, or basic.`, json)
+    return null
+  }
+  return undefined // no scheme provided — caller applies source-specific fallback
 }
 
 /** Format a spec-fetch or spec-parse error for display. */
@@ -102,6 +170,16 @@ const addCommand = defineCommand({
       description:
         "[openapi] Include only operations whose path starts with this prefix (repeatable: --path /pet)",
     },
+    // GraphQL flags
+    endpoint: {
+      type: "string",
+      description: "[graphql] GraphQL endpoint URL",
+    },
+    header: {
+      type: "string",
+      description:
+        "[graphql] Extra request header in key=value form (repeatable: --header User-Agent=junction)",
+    },
     json: JSON_ARG,
   },
   async run({ args, rawArgs }) {
@@ -110,6 +188,11 @@ const addCommand = defineCommand({
 
     if (kind === "openapi") {
       await addOpenApiPlatform(args, rawArgs, json)
+      return
+    }
+
+    if (kind === "graphql") {
+      await addGraphQlPlatform(args, rawArgs, json)
       return
     }
 
@@ -147,33 +230,25 @@ const addCommand = defineCommand({
       return
     }
 
-    const parseResult = PlatformSchema.safeParse({
-      id: args.id,
-      kind: "mcp",
-      displayName: args["display-name"],
-      connection,
-    })
-    if (!parseResult.success) {
-      const msg = parseResult.error.issues.map((i: { message: string }) => i.message).join(", ")
-      reportError(`Invalid platform: ${msg}`, json)
-      return
-    }
-    const platform: Platform = parseResult.data
+    const platform = parsePlatformResult(
+      PlatformSchema.safeParse({
+        id: args.id,
+        kind: "mcp",
+        displayName: args["display-name"],
+        connection,
+      }),
+      json,
+    )
+    if (!platform) return
 
-    const repos = await openDb(json)
-    if (!repos) return
-
-    const result = await repos.platforms.upsert(platform)
-    if (result.isErr()) {
-      reportDbError(result.error, json)
-      return
-    }
+    const persisted = await upsertPlatform(platform, json)
+    if (!persisted) return
 
     if (json) {
-      process.stdout.write(`${JSON.stringify({ ok: true, platform: result.value })}\n`)
+      process.stdout.write(`${JSON.stringify({ ok: true, platform: persisted })}\n`)
     } else {
       consola.success(
-        `Platform "${platform.displayName}" (${platform.id}) defined — transport: ${transport}`,
+        `Platform "${persisted.displayName}" (${persisted.id}) defined — transport: ${transport}`,
       )
     }
   },
@@ -239,38 +314,11 @@ async function addOpenApiPlatform(
     return
   }
 
-  // Build auth descriptor
-  let auth: OpenApiConnection["auth"]
-  const authScheme = args["auth-scheme"] as string | undefined
-
-  if (authScheme === "apiKey") {
-    const authIn = (args["auth-in"] as string | undefined) ?? "header"
-    const authName = args["auth-name"] as string | undefined
-    if (!authName) {
-      reportError("--auth-name is required for apiKey auth scheme", json)
-      return
-    }
-    if (authIn !== "header" && authIn !== "query" && authIn !== "cookie") {
-      reportError("--auth-in must be header, query, or cookie", json)
-      return
-    }
-    auth = { scheme: "apiKey", in: authIn, name: authName }
-  } else if (authScheme === "bearer") {
-    auth = { scheme: "bearer", header: "Authorization" }
-  } else if (authScheme === "basic") {
-    const username = args["auth-username"] as string | undefined
-    if (!username) {
-      reportError("--auth-username is required for basic auth scheme", json)
-      return
-    }
-    auth = { scheme: "basic", username }
-  } else if (authScheme) {
-    reportError(`Unknown auth scheme "${authScheme}". Must be apiKey, bearer, or basic.`, json)
-    return
-  } else {
-    // Try to derive auth from securitySchemes
-    auth = deriveAuthFromSpec(schema)
-  }
+  // Build auth descriptor — shared flags; openapi falls back to spec's securitySchemes
+  const authBuilt = buildPlatformAuth(args, json)
+  if (authBuilt === null) return
+  const auth: OpenApiConnection["auth"] =
+    authBuilt === undefined ? deriveAuthFromSpec(schema) : authBuilt
 
   // Resolve base URL — relative servers resolved against the spec URL;
   // validates overrides; fails early if no base URL can be determined.
@@ -305,24 +353,16 @@ async function addOpenApiPlatform(
 
   const openapi = openapiParseResult.data
 
-  const platformParseResult = PlatformSchema.safeParse({
-    id: args.id as string,
-    kind: "openapi",
-    displayName: args["display-name"] as string,
-    openapi,
-  })
-  if (!platformParseResult.success) {
-    const msg = platformParseResult.error.issues
-      .map((i: { message: string }) => i.message)
-      .join(", ")
-    reportError(`Invalid platform: ${msg}`, json)
-    return
-  }
-
-  const platform: Platform = platformParseResult.data
-
-  const repos = await openDb(json)
-  if (!repos) return
+  const platform = parsePlatformResult(
+    PlatformSchema.safeParse({
+      id: args.id as string,
+      kind: "openapi",
+      displayName: args["display-name"] as string,
+      openapi,
+    }),
+    json,
+  )
+  if (!platform) return
 
   // Cache the dereferenced spec to ~/.junction/openapi/<platformId>.json
   const { getPaths, openapiSpecCacheFile } = await import("@junction/core")
@@ -337,21 +377,128 @@ async function addOpenApiPlatform(
     return
   }
 
-  const result = await repos.platforms.upsert(platform)
-  if (result.isErr()) {
-    reportDbError(result.error, json)
-    return
-  }
+  const persisted = await upsertPlatform(platform, json)
+  if (!persisted) return
 
   const toolCount = toolsResult.value.length
   if (json) {
-    process.stdout.write(`${JSON.stringify({ ok: true, platform: result.value, toolCount })}\n`)
+    process.stdout.write(`${JSON.stringify({ ok: true, platform: persisted, toolCount })}\n`)
   } else {
     consola.success(
-      `Platform "${platform.displayName}" (${platform.id}) defined — kind: openapi, ${toolCount} operations`,
+      `Platform "${persisted.displayName}" (${persisted.id}) defined — kind: openapi, ${toolCount} operations`,
     )
     consola.info(`Spec cached to ${cacheFile}`)
   }
+}
+
+// ---------------------------------------------------------------------------
+// addGraphQlPlatform — handle --kind graphql add path
+// ---------------------------------------------------------------------------
+
+async function addGraphQlPlatform(
+  args: Record<string, unknown>,
+  rawArgs: string[],
+  json: boolean,
+): Promise<void> {
+  const endpoint = args.endpoint as string | undefined
+  if (!endpoint) {
+    reportError("--endpoint is required for graphql kind", json)
+    return
+  }
+
+  // Validate endpoint URL
+  try {
+    new URL(endpoint)
+  } catch {
+    reportError(`--endpoint must be a valid URL: "${endpoint}"`, json)
+    return
+  }
+
+  // Build auth descriptor (reuses the same OpenAPI auth flags; no spec fallback for graphql)
+  const authBuilt = buildPlatformAuth(args, json)
+  if (authBuilt === null) return
+  const auth: GraphQlConnection["auth"] = authBuilt === undefined ? undefined : authBuilt
+
+  // apiKey-in-query is meaningless for a single GraphQL POST endpoint, and the
+  // provider would silently send the request unauthenticated. Reject it loudly at
+  // add-time rather than persist a config that never authenticates. (Use a header.)
+  if (auth?.scheme === "apiKey" && auth.in === "query") {
+    reportError(
+      "--auth-in query is not supported for graphql (single POST endpoint); use --auth-in header (or cookie)",
+      json,
+    )
+    return
+  }
+
+  // Collect repeatable --header key=value flags; seed with a sane User-Agent default
+  const rawHeaders = collectRepeatableFlag(rawArgs, "--header")
+  const defaultHeaders: Record<string, string> = { "User-Agent": "junction" }
+  for (const h of rawHeaders) {
+    const eqIdx = h.indexOf("=")
+    if (eqIdx < 1) {
+      reportError(`--header value must be in key=value form, got: "${h}"`, json)
+      return
+    }
+    defaultHeaders[h.slice(0, eqIdx)] = h.slice(eqIdx + 1)
+  }
+
+  // Build the descriptor stub (no SDL yet — introspect below)
+  const descriptorParseResult = GraphQlConnectionSchema.safeParse({
+    endpoint,
+    auth,
+    defaultHeaders,
+  })
+  if (!descriptorParseResult.success) {
+    const msg = descriptorParseResult.error.issues
+      .map((i: { message: string }) => i.message)
+      .join(", ")
+    reportError(`Invalid GraphQL connection: ${msg}`, json)
+    return
+  }
+  let graphql = descriptorParseResult.data
+
+  // Introspect to cache SDL at add-time (warn + proceed on failure)
+  if (!json) consola.info(`Introspecting schema at ${endpoint} …`)
+  const { introspectSchema } = await import("@junction/graphql-client")
+  const secret = null // no credential yet at add time — public introspection attempt
+  const sdlResult = await introspectSchema(graphql, secret)
+  if (sdlResult.isOk()) {
+    graphql = { ...graphql, schemaSdl: sdlResult.value }
+    if (!json) consola.success("Schema introspected and cached.")
+  } else {
+    consola.warn(
+      `Could not introspect schema (introspection may be disabled or require auth): ` +
+        `${String("cause" in sdlResult.error ? sdlResult.error.cause : sdlResult.error.kind)}. ` +
+        `graphql_schema will attempt live introspection at call time.`,
+    )
+  }
+
+  /* jscpd:ignore-start — parse+persist+report tail is structurally identical to the MCP and OpenAPI
+     add paths (same helpers, different kind/field); each function has distinct logic above this point.
+     Deferred until a 3rd add-platform function warrants a shared dispatcher. */
+  const platform = parsePlatformResult(
+    PlatformSchema.safeParse({
+      id: args.id as string,
+      kind: "graphql",
+      displayName: args["display-name"] as string,
+      graphql,
+    }),
+    json,
+  )
+  if (!platform) return
+
+  const persisted = await upsertPlatform(platform, json)
+  if (!persisted) return
+
+  if (json) {
+    process.stdout.write(`${JSON.stringify({ ok: true, platform: persisted })}\n`)
+  } else {
+    const sdlNote = graphql.schemaSdl ? " (SDL cached)" : " (no SDL cached)"
+    consola.success(
+      `Platform "${persisted.displayName}" (${persisted.id}) defined — kind: graphql${sdlNote}`,
+    )
+  }
+  /* jscpd:ignore-end */
 }
 
 /** Derive auth from the spec's securitySchemes (best-effort). */
