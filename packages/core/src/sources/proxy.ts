@@ -22,9 +22,17 @@
 //   deny is applied after allow; listed names are removed.
 //   isToolAllowed is used by BOTH list and call paths so the two cannot drift.
 //
+// FILTER-BEFORE-CONNECT (security + leak-free):
+//   callTool checks sourceRef.toolFilter BEFORE resolveProvider. resolveProvider eagerly
+//   connects (spawns child / opens a session), so a denied tool is rejected without ever
+//   connecting — no spawned child, no open transport, no event-loop leak.
+//   listTools skips sources whose allow:[] provably exposes nothing (no connect needed);
+//   non-empty allow or deny still requires listing actual tool names, so those still connect.
+//
 // NAMING + ≤64 GUARD:
 //   For each raw provider tool: apply toolFilter on raw name → namespaceToolName → skip if Err.
 //   The ≤64 guard is enforced here (not inside individual providers) — one place for all kinds.
+//   callTool replicates the same check so list and call agree on the skip set.
 //
 // LIFECYCLE v1 — connect-per-call + close:
 //   A new provider (session) is created for every listTools and callTool call by the
@@ -139,6 +147,16 @@ export function createProfileProxy(
         // provider is closed even if a sibling rejects.
         const perSource = await Promise.allSettled(
           enabledSources.map(async (sourceRef) => {
+            // ALLOW:[] SHORT-CIRCUIT: if allow is present and empty the source provably
+            // exposes nothing — skip connecting entirely. A non-empty allow or a deny list
+            // still requires listing actual upstream names to apply the filter, so connect.
+            if (
+              sourceRef.toolFilter?.allow !== undefined &&
+              sourceRef.toolFilter.allow.length === 0
+            ) {
+              return [] as ProviderTool[]
+            }
+
             // Resolve the source descriptor. Failure → return empty list for this source.
             const resolveResult = await resolveProvider(sourceRef)
             if (resolveResult.isErr()) return [] as ProviderTool[]
@@ -195,17 +213,26 @@ export function createProfileProxy(
           return err({ kind: "tool-not-found", name } satisfies UpstreamError)
         }
 
+        // FILTER BEFORE CONNECT (leak-free order): check toolFilter on the SourceRef BEFORE
+        // calling resolveProvider. resolveProvider eagerly connects (spawns child / opens session),
+        // so a denied tool must be rejected here — before any connection is made.
+        // Security semantics are unchanged: denied → tool-not-found (does not reveal existence).
+        if (!isToolAllowed(rawName, sourceRef.toolFilter)) {
+          return err({ kind: "tool-not-found", name } satisfies UpstreamError)
+        }
+
+        // LIST/CALL ≤64 AGREEMENT: if the namespaced name would be skipped at list time
+        // (too long or MCP-illegal characters), reject it here too — don't connect.
+        const nameCheck = namespaceToolName(namespace, rawName)
+        if (nameCheck.isErr()) {
+          return err({ kind: "tool-not-found", name } satisfies UpstreamError)
+        }
+
+        // Only connect for allowed tools with valid namespaced names.
         const resolveResult = await resolveProvider(sourceRef)
         if (resolveResult.isErr()) return err(resolveResult.error)
 
-        const { provider, toolFilter } = resolveResult.value
-
-        // Enforce toolFilter before dispatching — a denied tool must not be callable
-        // even if the agent knows the namespaced name (e.g. bypasses listTools).
-        // Returns tool-not-found (same as unknown tool) to avoid revealing the tool exists.
-        if (!isToolAllowed(rawName, toolFilter)) {
-          return err({ kind: "tool-not-found", name } satisfies UpstreamError)
-        }
+        const { provider } = resolveResult.value
 
         try {
           // provider.callTool receives the RAW name (already stripped by splitNamespacedName).

@@ -378,6 +378,161 @@ describe("createProfileProxy — toolFilter enforced on callTool", () => {
 })
 
 // ---------------------------------------------------------------------------
+// (d3) No-connect-on-deny: denied callTool must NOT call resolveProvider
+// ---------------------------------------------------------------------------
+
+describe("createProfileProxy — denied callTool never connects (leak-free)", () => {
+  /**
+   * Build a resolveProvider spy that counts how many times it is invoked.
+   * A denied tool must leave this count at zero.
+   */
+  function makeSpyResolveWithCount(
+    provider: ToolProvider,
+    toolNamespace: string,
+    toolFilter?: ToolFilter,
+  ): { resolve: ResolveProviderFn; callCount: () => number } {
+    let count = 0
+    const resolve: ResolveProviderFn = (_sr) => {
+      count++
+      return okAsync({ provider, toolNamespace, toolFilter })
+    }
+    return { resolve, callCount: () => count }
+  }
+
+  it("deny-list: resolveProvider is NOT called for a denied tool (no connection spawned)", async () => {
+    const { provider } = makeFakeProvider(["list_issues", "delete_repo"])
+    const filter: ToolFilter = { deny: ["delete_repo"] }
+    const { resolve, callCount } = makeSpyResolveWithCount(provider, "src", filter)
+
+    const proxy = createProfileProxy([makeSourceRef("src", filter)], resolve)
+
+    const result = await proxy.callTool("src__delete_repo", {})
+    expect(result.isErr()).toBe(true)
+    expect(result._unsafeUnwrapErr().kind).toBe("tool-not-found")
+    // Key assertion: no connection was opened (resolveProvider never called)
+    expect(callCount()).toBe(0)
+  })
+
+  it("allow-list-excluded: resolveProvider NOT called for a tool absent from allow list", async () => {
+    const { provider } = makeFakeProvider(["list_issues", "delete_repo"])
+    const filter: ToolFilter = { allow: ["list_issues"] }
+    const { resolve, callCount } = makeSpyResolveWithCount(provider, "src", filter)
+
+    const proxy = createProfileProxy([makeSourceRef("src", filter)], resolve)
+
+    const result = await proxy.callTool("src__delete_repo", {})
+    expect(result.isErr()).toBe(true)
+    expect(result._unsafeUnwrapErr().kind).toBe("tool-not-found")
+    expect(callCount()).toBe(0)
+  })
+
+  it("allow:[]: resolveProvider NOT called for any tool when allow list is empty", async () => {
+    const { provider } = makeFakeProvider(["list_issues"])
+    const filter: ToolFilter = { allow: [] }
+    const { resolve, callCount } = makeSpyResolveWithCount(provider, "src", filter)
+
+    const proxy = createProfileProxy([makeSourceRef("src", filter)], resolve)
+
+    const result = await proxy.callTool("src__list_issues", {})
+    expect(result.isErr()).toBe(true)
+    expect(result._unsafeUnwrapErr().kind).toBe("tool-not-found")
+    expect(callCount()).toBe(0)
+  })
+
+  it("allowed tool still calls resolveProvider and connects exactly once", async () => {
+    const calls: string[] = []
+    const { provider } = makeFakeProvider(["list_issues"], (n) => {
+      calls.push(n)
+      return { ok: true }
+    })
+    const filter: ToolFilter = { allow: ["list_issues"] }
+    const { resolve, callCount } = makeSpyResolveWithCount(provider, "src", filter)
+
+    const proxy = createProfileProxy([makeSourceRef("src", filter)], resolve)
+
+    const result = await proxy.callTool("src__list_issues", {})
+    expect(result.isOk()).toBe(true)
+    expect(calls).toEqual(["list_issues"])
+    // Allowed tool DID connect
+    expect(callCount()).toBe(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// (d4) listTools allow:[] short-circuit — skip connect for provably-empty sources
+// ---------------------------------------------------------------------------
+
+describe("createProfileProxy — listTools allow:[] skips resolveProvider", () => {
+  it("allow:[] source: resolveProvider NOT called; other sources still list", async () => {
+    const { provider: goodProvider } = makeFakeProvider(["tool_a"])
+    const { provider: emptyProvider } = makeFakeProvider(["tool_b"])
+    const emptyFilter: ToolFilter = { allow: [] }
+
+    let emptyResolveCount = 0
+    let goodResolveCount = 0
+
+    const sources = [makeSourceRef("empty", emptyFilter), makeSourceRef("good")]
+    const proxy = createProfileProxy(sources, (sr) => {
+      if (sr.toolNamespace === "empty") {
+        emptyResolveCount++
+        return okAsync({ provider: emptyProvider, toolNamespace: "empty", toolFilter: emptyFilter })
+      }
+      goodResolveCount++
+      return okAsync({ provider: goodProvider, toolNamespace: "good" })
+    })
+
+    const result = await proxy.listTools()
+    expect(result.isOk()).toBe(true)
+    const names = result._unsafeUnwrap().map((t) => t.name)
+    // "empty" source produces no tools
+    expect(names).toEqual(["good__tool_a"])
+    // "empty" source never connected
+    expect(emptyResolveCount).toBe(0)
+    // "good" source was connected normally
+    expect(goodResolveCount).toBe(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// (i2) callTool ≤64 agreement — skipped-at-list tools also blocked at callTool
+// ---------------------------------------------------------------------------
+
+describe("createProfileProxy — callTool ≤64 agreement (list/call skip set must match)", () => {
+  it("tool skipped at list time (namespaced name > 64 chars) returns tool-not-found from callTool", async () => {
+    // "ns__" + 61 chars = 65 > 64 — same tool skipped by listTools
+    const longTool = "b".repeat(61)
+    let resolveCallCount = 0
+    const { provider } = makeFakeProvider([longTool])
+
+    const proxy = createProfileProxy([makeSourceRef("ns")], (_sr) => {
+      resolveCallCount++
+      return okAsync({ provider, toolNamespace: "ns" })
+    })
+
+    const result = await proxy.callTool(`ns__${longTool}`, {})
+    expect(result.isErr()).toBe(true)
+    expect(result._unsafeUnwrapErr().kind).toBe("tool-not-found")
+    // Must not connect — invalid name is caught pre-connect
+    expect(resolveCallCount).toBe(0)
+  })
+
+  it("tool with MCP-illegal chars blocked at callTool without connecting", async () => {
+    let resolveCallCount = 0
+    const { provider } = makeFakeProvider(["bad name"])
+
+    const proxy = createProfileProxy([makeSourceRef("ns")], (_sr) => {
+      resolveCallCount++
+      return okAsync({ provider, toolNamespace: "ns" })
+    })
+
+    const result = await proxy.callTool("ns__bad name", {})
+    expect(result.isErr()).toBe(true)
+    expect(result._unsafeUnwrapErr().kind).toBe("tool-not-found")
+    expect(resolveCallCount).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // (g) Provider close() discipline
 // ---------------------------------------------------------------------------
 
