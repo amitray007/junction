@@ -3,8 +3,8 @@
 // SOURCE-AGNOSTIC: no vendor/GitHub-specific logic. Platforms are generic DATA rows.
 // Edge stays thin: calls core, formats output. No business logic here.
 
-import { mkdir, writeFile } from "node:fs/promises"
-import { join } from "node:path"
+import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { dirname, join } from "node:path"
 import {
   type McpConnection,
   type OpenApiConnection,
@@ -23,6 +23,13 @@ function reportError(msg: string, json: boolean): void {
   if (json) process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
   else consola.error(msg)
   process.exitCode = 1
+}
+
+/** Format a spec-fetch or spec-parse error for display. */
+function formatSpecError(e: { kind: string; cause?: unknown }): string {
+  return e.kind === "spec-fetch-failed"
+    ? `Failed to fetch spec: ${String(e.cause)}`
+    : `Failed to parse spec: ${String(e.cause)}`
 }
 
 const addCommand = defineCommand({
@@ -84,6 +91,16 @@ const addCommand = defineCommand({
     "max-tools": {
       type: "string",
       description: "[openapi] Max operations to expose (default: 75)",
+    },
+    tag: {
+      type: "string",
+      description:
+        "[openapi] Include only operations with this tag (repeatable: --tag pet --tag store)",
+    },
+    path: {
+      type: "string",
+      description:
+        "[openapi] Include only operations whose path starts with this prefix (repeatable: --path /pet)",
     },
     json: JSON_ARG,
   },
@@ -164,7 +181,7 @@ const addCommand = defineCommand({
 
 async function addOpenApiPlatform(
   args: Record<string, unknown>,
-  _rawArgs: string[],
+  rawArgs: string[],
   json: boolean,
 ): Promise<void> {
   const specUrl = args["spec-url"] as string | undefined
@@ -172,6 +189,18 @@ async function addOpenApiPlatform(
     reportError("--spec-url is required for openapi kind", json)
     return
   }
+
+  // Collect repeatable --tag / --path flags from rawArgs (same pattern as --allow/--deny)
+  const selectedTags = collectRepeatableFlag(rawArgs, "--tag")
+  const selectedPaths = collectRepeatableFlag(rawArgs, "--path")
+  // Build select only when at least one filter is active; absent means all operations.
+  const select =
+    selectedTags.length > 0 || selectedPaths.length > 0
+      ? {
+          ...(selectedTags.length > 0 ? { tags: selectedTags } : {}),
+          ...(selectedPaths.length > 0 ? { paths: selectedPaths } : {}),
+        }
+      : undefined
 
   // Lazy-import openapi-client (avoids load cost for non-openapi commands)
   const { parseSpec, extractTools, countOperationsByTag, resolveSpecBaseUrl } = await import(
@@ -182,32 +211,26 @@ async function addOpenApiPlatform(
   if (!json) consola.info(`Fetching spec from ${specUrl} …`)
   const specResult = await parseSpec({ from: "url", url: specUrl })
   if (specResult.isErr()) {
-    const e = specResult.error
-    reportError(
-      e.kind === "spec-fetch-failed"
-        ? `Failed to fetch spec: ${String((e as { cause: unknown }).cause)}`
-        : `Failed to parse spec: ${String((e as { cause: unknown }).cause)}`,
-      json,
-    )
+    reportError(formatSpecError(specResult.error), json)
     return
   }
 
   const { schema } = specResult.value
   const maxTools = args["max-tools"] ? parseInt(args["max-tools"] as string, 10) : 75
 
-  // Check operation count
-  const toolsResult = extractTools(schema, maxTools)
+  // Check operation count against cap (after applying the selection filter)
+  const toolsResult = extractTools(schema, maxTools, select)
   if (toolsResult.isErr()) {
     const e = toolsResult.error
     if (e.kind === "too-many-tools") {
-      const tags = countOperationsByTag(schema)
-      const tagLines = tags
+      const tagCounts = countOperationsByTag(schema)
+      const tagLines = tagCounts
         .map(({ tag, count }: { tag: string; count: number }) => `  ${tag}: ${count}`)
         .join("\n")
       reportError(
         `Spec has ${e.count} operations, exceeding the cap of ${e.cap}.\n` +
           `Operations by tag:\n${tagLines}\n` +
-          `Narrow with selection (coming in a later release) or pick a smaller spec.`,
+          `Narrow with --tag <name> and/or --path <prefix> to add a slice, or pick a smaller spec.`,
         json,
       )
       return
@@ -264,12 +287,13 @@ async function addOpenApiPlatform(
     return
   }
 
-  // Build the OpenAPI connection descriptor
+  // Build the OpenAPI connection descriptor (select persisted so runtime enforces the same slice)
   const openapiParseResult = OpenApiConnectionSchema.safeParse({
     spec: { from: "url", url: specUrl },
     baseUrl: baseUrlResult.value,
     auth,
     maxTools,
+    select,
   })
   if (!openapiParseResult.success) {
     const msg = openapiParseResult.error.issues
@@ -301,13 +325,12 @@ async function addOpenApiPlatform(
   if (!repos) return
 
   // Cache the dereferenced spec to ~/.junction/openapi/<platformId>.json
-  const { getPaths } = await import("@junction/core")
+  const { getPaths, openapiSpecCacheFile } = await import("@junction/core")
   const paths = getPaths()
-  const openapiCacheDir = join(paths.home, "openapi")
-  const cacheFile = join(openapiCacheDir, `${platform.id}.json`)
+  const cacheFile = openapiSpecCacheFile(paths, platform.id)
 
   try {
-    await mkdir(openapiCacheDir, { recursive: true })
+    await mkdir(dirname(cacheFile), { recursive: true })
     await writeFile(cacheFile, JSON.stringify(schema), "utf8")
   } catch (cause) {
     reportError(`Failed to cache spec: ${String(cause)}`, json)
@@ -370,6 +393,163 @@ function deriveAuthFromSpec(schema: Record<string, unknown>): OpenApiConnection[
 
   return undefined
 }
+
+// ---------------------------------------------------------------------------
+// platform refresh — re-pull an OpenAPI platform's spec from its stored URL
+// ---------------------------------------------------------------------------
+
+const refreshCommand = defineCommand({
+  meta: {
+    name: "refresh",
+    description: "Re-fetch an OpenAPI platform's spec from its stored URL and update the cache.",
+  },
+  args: {
+    id: { type: "string", description: "Platform ID to refresh", required: true },
+    json: JSON_ARG,
+  },
+  async run({ args }) {
+    const json = args.json ?? false
+    const id = args.id
+
+    const repos = await openDb(json)
+    if (!repos) return
+
+    // Load the platform
+    const platformResult = await repos.platforms.get(id)
+    if (platformResult.isErr()) {
+      const e = platformResult.error
+      if (e.kind === "not-found") {
+        reportError(`platform "${id}" not found`, json)
+      } else {
+        reportDbError(e, json)
+      }
+      return
+    }
+    const platform = platformResult.value
+
+    // Only openapi platforms can be refreshed
+    if (platform.kind !== "openapi" || !platform.openapi) {
+      reportError(
+        `refresh only applies to openapi platforms; "${id}" is kind "${platform.kind}"`,
+        json,
+      )
+      return
+    }
+
+    const openapi = platform.openapi
+
+    // Only specs added from a URL can be refreshed (inline/file have no URL to re-pull)
+    if (openapi.spec.from !== "url") {
+      reportError(
+        `cannot refresh a spec that wasn't added from a URL; "${id}" uses spec.from="${openapi.spec.from}"`,
+        json,
+      )
+      return
+    }
+
+    const specUrl = openapi.spec.url
+    const maxTools = openapi.maxTools ?? 75
+
+    // Lazy-import openapi-client
+    const { parseSpec, extractTools, countOperationsByTag, resolveSpecBaseUrl } = await import(
+      "@junction/openapi-client"
+    )
+
+    // Re-fetch + parse the spec
+    if (!json) consola.info(`Refreshing spec for "${id}" from ${specUrl} …`)
+    const specResult = await parseSpec({ from: "url", url: specUrl })
+    if (specResult.isErr()) {
+      reportError(formatSpecError(specResult.error), json)
+      return
+    }
+
+    const { schema: newSchema } = specResult.value
+
+    // Re-resolve base URL; fall back to the existing one on error so a working platform
+    // never breaks from a spec that drops or templates its servers on refresh.
+    const baseUrlResult = resolveSpecBaseUrl(newSchema, specUrl, undefined)
+    const baseUrl = baseUrlResult.isOk() ? baseUrlResult.value : openapi.baseUrl
+
+    // Re-extract tools (same select + maxTools as the stored descriptor).
+    // REFUSE if the refreshed spec would exceed the cap — never clobber a working platform.
+    const toolsResult = extractTools(newSchema, maxTools, openapi.select)
+    if (toolsResult.isErr()) {
+      const e = toolsResult.error
+      if (e.kind === "too-many-tools") {
+        const tagCounts = countOperationsByTag(newSchema)
+        const tagLines = tagCounts
+          .map(({ tag, count }: { tag: string; count: number }) => `  ${tag}: ${count}`)
+          .join("\n")
+        reportError(
+          `Refreshed spec has ${e.count} operations, exceeding the cap of ${e.cap}.\n` +
+            `Operations by tag:\n${tagLines}\n` +
+            `The existing spec and platform descriptor have been kept unchanged.`,
+          json,
+        )
+        return
+      }
+      reportError(`Failed to extract tools from refreshed spec: ${e.kind}`, json)
+      return
+    }
+
+    const newCount = toolsResult.value.length
+
+    const { getPaths, openapiSpecCacheFile } = await import("@junction/core")
+    const paths = getPaths()
+    const cacheFile = openapiSpecCacheFile(paths, platform.id)
+
+    // Compute old count from the cached spec for the delta report (best-effort)
+    let oldCount: number | null = null
+    try {
+      const oldSpec = JSON.parse(await readFile(cacheFile, "utf8")) as Record<string, unknown>
+      const oldToolsResult = extractTools(oldSpec, maxTools, openapi.select)
+      if (oldToolsResult.isOk()) oldCount = oldToolsResult.value.length
+    } catch {
+      // Cache missing or unreadable — delta reporting degrades gracefully
+    }
+
+    // Re-cache the refreshed spec
+    try {
+      await mkdir(dirname(cacheFile), { recursive: true })
+      await writeFile(cacheFile, JSON.stringify(newSchema), "utf8")
+    } catch (cause) {
+      reportError(`Failed to cache refreshed spec: ${String(cause)}`, json)
+      return
+    }
+
+    // Upsert with the refreshed descriptor (preserving auth, select, maxTools, displayName)
+    const updatedPlatform: Platform = {
+      ...platform,
+      openapi: { ...openapi, baseUrl },
+    }
+    const upsertResult = await repos.platforms.upsert(updatedPlatform)
+    if (upsertResult.isErr()) {
+      reportDbError(upsertResult.error, json)
+      return
+    }
+
+    if (json) {
+      process.stdout.write(
+        `${JSON.stringify({ ok: true, platform: upsertResult.value, oldCount, newCount })}\n`,
+      )
+    } else {
+      const delta =
+        oldCount !== null ? ` (${oldCount} → ${newCount} tools)` : ` (${newCount} tools)`
+      consola.success(`Platform "${platform.displayName}" (${platform.id}) refreshed${delta}`)
+      consola.info(`Spec cached to ${cacheFile}`)
+    }
+    // A refresh that yields zero tools is usually a stale selection (the chosen
+    // tag/path vanished upstream) rather than a healthy empty API — flag it.
+    if (newCount === 0) {
+      const hint =
+        openapi.select?.tags || openapi.select?.paths
+          ? " — the selected --tag/--path may no longer exist in the spec"
+          : ""
+      if (json) process.stderr.write(`warning: refreshed spec exposes 0 tools${hint}\n`)
+      else consola.warn(`Refreshed spec exposes 0 tools${hint}`)
+    }
+  },
+})
 
 const listCommand = defineCommand({
   meta: {
@@ -465,5 +645,6 @@ export const platformCommand = defineCommand({
     add: addCommand,
     list: listCommand,
     remove: removeCommand,
+    refresh: refreshCommand,
   },
 })

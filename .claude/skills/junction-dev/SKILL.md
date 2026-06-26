@@ -341,3 +341,55 @@ junction mcp serve: source "pub": platform "github" declares auth but no credent
 - No `store.get` call is made when `credentialId` is absent — the credential store is untouched.
 - RESTRICT FK on `credential_id` still blocks deleting a credential referenced by a credentialed source.
 - NULL `credential_id` in DB is FK-exempt — it does NOT reference any credential row.
+
+## Large-spec selection + `platform refresh` (increment 19)
+
+OpenAPI specs with more than `maxTools` (default 75) operations can be added as a slice using
+`--tag` and/or `--path` (both repeatable). The selection is persisted in the descriptor and
+re-applied at serve/debug time so agents see exactly the chosen slice.
+
+```bash
+# Attempt to add a large spec (e.g. 120 ops) — fails and shows per-tag counts:
+JUNCTION_HOME=/tmp/jt19 junction platform add --id big --kind openapi \
+  --display-name Big --spec-url <large-spec-url>
+# → error: Spec has N operations, exceeding the cap of 75.
+#          Operations by tag:
+#            pet: 20  store: 5  user: 10  …
+#          Narrow with --tag <name> and/or --path <prefix> to add a slice, or pick a smaller spec.
+
+# Add only the "pet" tag slice (--tag is repeatable; combine tags with multiple --tag flags):
+JUNCTION_HOME=/tmp/jt19 junction platform add --id big --kind openapi \
+  --display-name Big --spec-url <large-spec-url> --tag pet --json
+# → {"ok":true,"platform":{...,"openapi":{"select":{"tags":["pet"]},...}},"toolCount":20}
+
+# Add only ops under /pet path prefix (path-boundary match: /pet, /pet/{petId} but NOT /pets):
+JUNCTION_HOME=/tmp/jt19 junction platform add --id big --kind openapi \
+  --display-name Big --spec-url <large-spec-url> --path /pet --json
+
+# Combine --tag and --path (union semantics — match ANY criterion):
+JUNCTION_HOME=/tmp/jt19 junction platform add --id big --kind openapi \
+  --display-name Big --spec-url <large-spec-url> --tag store --path /user --json
+
+# Probe: only the selected tools are served
+JUNCTION_HOME=/tmp/jt19 junction debug probe --platform big
+# → only "pet" tools appear; store + user tools absent
+
+# Refresh a platform's spec from its stored URL (re-pulls, re-applies stored select + maxTools):
+JUNCTION_HOME=/tmp/jt19 junction platform refresh --id big --json
+# → {"ok":true,"oldCount":20,"newCount":21,"platform":{...}}
+#   (or refuses with an error if the refreshed spec would exceed the cap — never clobbers)
+```
+
+**Selection invariants (load-bearing):**
+- Selection is persisted in `OpenApiConnection.select` (stored in the `openapi` JSON column) and
+  re-applied at runtime so `listTools` (serve/probe) returns exactly the persisted slice.
+- `--tag` uses tag membership; `--path` uses path-boundary prefix match; together = union.
+- The cap (`maxTools`) applies to the *selected* count, not the full spec count.
+
+**`platform refresh` invariants:**
+- Only openapi platforms whose `spec.from === "url"` can be refreshed.
+- If the refreshed spec would exceed the cap (after selection), refresh REFUSES and leaves the
+  DB descriptor + cached spec file completely unchanged (no-clobber).
+- A fetch failure also leaves everything unchanged.
+- Base URL is re-resolved from the refreshed spec's `servers`; falls back to the existing stored
+  `baseUrl` if the new spec drops or templates its servers (so a working platform stays working).

@@ -11,13 +11,13 @@
 // NEVER logged, serialized, or returned in any output.
 
 import { readFile } from "node:fs/promises"
-import { join } from "node:path"
 import type { CredentialError, DbError } from "@junction/core"
 import {
   createCredentialStore,
   err,
   type JunctionPaths,
   ok,
+  openapiSpecCacheFile,
   type Platform,
   type Repositories,
   type Result,
@@ -135,7 +135,7 @@ export function buildProvider(
 
       // Load the cached dereferenced spec (written by `platform add`).
       // async readFile — no readFileSync (docs/rules/typescript.md + boundary guard).
-      const cacheFile = join(paths.home, "openapi", `${platform.id}.json`)
+      const cacheFile = openapiSpecCacheFile(paths, platform.id)
       let cachedSchema: Record<string, unknown>
       try {
         const text = await readFile(cacheFile, "utf8")
