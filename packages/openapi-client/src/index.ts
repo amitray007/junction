@@ -2,6 +2,8 @@
 // @junction/openapi-client public API — narrow barrel.
 // SOURCE-AGNOSTIC: generic OpenAPI/REST connector. No vendor code.
 
+export type { SpecBaseUrlError } from "./base-url.js"
+export { resolveSpecBaseUrl } from "./base-url.js"
 export { parseSpec } from "./parse.js"
 export { createOpenApiProvider } from "./provider.js"
 export { countOperationsByTag, extractTools } from "./tools.js"

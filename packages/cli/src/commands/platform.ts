@@ -174,7 +174,9 @@ async function addOpenApiPlatform(
   }
 
   // Lazy-import openapi-client (avoids load cost for non-openapi commands)
-  const { parseSpec, extractTools, countOperationsByTag } = await import("@junction/openapi-client")
+  const { parseSpec, extractTools, countOperationsByTag, resolveSpecBaseUrl } = await import(
+    "@junction/openapi-client"
+  )
 
   // Fetch + parse + validate the spec
   if (!json) consola.info(`Fetching spec from ${specUrl} …`)
@@ -199,7 +201,9 @@ async function addOpenApiPlatform(
     const e = toolsResult.error
     if (e.kind === "too-many-tools") {
       const tags = countOperationsByTag(schema)
-      const tagLines = tags.map(({ tag, count }) => `  ${tag}: ${count}`).join("\n")
+      const tagLines = tags
+        .map(({ tag, count }: { tag: string; count: number }) => `  ${tag}: ${count}`)
+        .join("\n")
       reportError(
         `Spec has ${e.count} operations, exceeding the cap of ${e.cap}.\n` +
           `Operations by tag:\n${tagLines}\n` +
@@ -245,10 +249,25 @@ async function addOpenApiPlatform(
     auth = deriveAuthFromSpec(schema)
   }
 
+  // Resolve base URL — relative servers resolved against the spec URL;
+  // validates overrides; fails early if no base URL can be determined.
+  const baseUrlResult = resolveSpecBaseUrl(schema, specUrl, args["base-url"] as string | undefined)
+  if (baseUrlResult.isErr()) {
+    const e = baseUrlResult.error
+    const msg =
+      e.kind === "no-base-url"
+        ? "could not determine a base URL from the spec's `servers`; pass --base-url"
+        : e.kind === "base-url-has-variables"
+          ? "the spec's server URL uses variables ({...}); pass --base-url"
+          : "--base-url must be an absolute http(s) URL"
+    reportError(msg, json)
+    return
+  }
+
   // Build the OpenAPI connection descriptor
   const openapiParseResult = OpenApiConnectionSchema.safeParse({
     spec: { from: "url", url: specUrl },
-    baseUrl: args["base-url"] as string | undefined,
+    baseUrl: baseUrlResult.value,
     auth,
     maxTools,
   })
