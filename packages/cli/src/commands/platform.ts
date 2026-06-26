@@ -158,6 +158,50 @@ const listCommand = defineCommand({
   },
 })
 
+// ---------------------------------------------------------------------------
+// platform remove — delete a platform (RESTRICT FK: fails if credentials reference it)
+// ---------------------------------------------------------------------------
+
+const removeCommand = defineCommand({
+  meta: {
+    name: "remove",
+    description: "Remove a platform (fails if credentials still reference it).",
+  },
+  args: {
+    id: {
+      type: "string",
+      description: "Platform ID",
+      required: true,
+    },
+    json: JSON_ARG,
+  },
+  async run({ args }) {
+    const json = args.json ?? false
+    const repos = await openDb(json)
+    if (!repos) return
+
+    const result = await repos.platforms.delete(args.id)
+    if (result.isErr()) {
+      const e = result.error
+      if (e.kind === "in-use") {
+        const msg = `platform "${args.id}" is in use by one or more credentials; remove those credentials first`
+        if (json) process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
+        else consola.error(msg)
+        process.exitCode = 1
+        return
+      }
+      reportDbError(e, json)
+      return
+    }
+
+    if (json) {
+      process.stdout.write(`${JSON.stringify({ ok: true, id: args.id })}\n`)
+    } else {
+      consola.success(`Platform "${args.id}" removed`)
+    }
+  },
+})
+
 export const platformCommand = defineCommand({
   meta: {
     name: "platform",
@@ -166,5 +210,6 @@ export const platformCommand = defineCommand({
   subCommands: {
     add: addCommand,
     list: listCommand,
+    remove: removeCommand,
   },
 })

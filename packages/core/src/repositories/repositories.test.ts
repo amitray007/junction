@@ -88,7 +88,7 @@ describe("repositories", () => {
       expect(fetched.isErr()).toBe(true)
     })
 
-    it("rejects deleting a platform that still has credentials (FK enforced)", async () => {
+    it("rejects deleting a platform that still has credentials (FK enforced → in-use)", async () => {
       const platformId = newPlatformId()
       await repos.platforms.create({ id: platformId, kind: "mcp" as const, displayName: "GitHub" })
       await repos.credentials.create({
@@ -101,7 +101,8 @@ describe("repositories", () => {
 
       const result = await repos.platforms.delete(platformId)
       expect(result.isErr()).toBe(true)
-      if (result.isErr()) expect(result.error.kind).toBe("constraint-violation")
+      // FK RESTRICT on platform_id → in-use (not generic constraint-violation)
+      if (result.isErr()) expect(result.error.kind).toBe("in-use")
     })
   })
 
@@ -293,7 +294,7 @@ describe("repositories", () => {
       expect(rows[0]?.foreign_keys).toBe(1)
     })
 
-    it("rejects a source_ref with a non-existent credential_id (FK enforced)", async () => {
+    it("rejects a source_ref with a non-existent credential_id (FK enforced → in-use)", async () => {
       const platformId = newPlatformId()
       await repos.platforms.create({ id: platformId, kind: "mcp" as const, displayName: "GitHub" })
 
@@ -311,7 +312,8 @@ describe("repositories", () => {
         ],
       })
       expect(result.isErr()).toBe(true)
-      if (result.isErr()) expect(result.error.kind).toBe("constraint-violation")
+      // FK violation on insert: SQLITE_CONSTRAINT_FOREIGNKEY → in-use
+      if (result.isErr()) expect(result.error.kind).toBe("in-use")
     })
 
     it("cascade then delete: deleting profile frees credential for deletion", async () => {
@@ -333,10 +335,10 @@ describe("repositories", () => {
         sources: [{ platformId, credentialId: credId, toolNamespace: "gh", enabled: true }],
       })
 
-      // Deleting the credential while source_ref references it must fail
+      // Deleting the credential while source_ref references it must fail (in-use)
       const failDel = await repos.credentials.delete(credId)
       expect(failDel.isErr()).toBe(true)
-      if (failDel.isErr()) expect(failDel.error.kind).toBe("constraint-violation")
+      if (failDel.isErr()) expect(failDel.error.kind).toBe("in-use")
 
       // Deleting the profile cascades its source_refs, then credential can be deleted
       await repos.profiles.delete(profileId)
@@ -687,7 +689,7 @@ describe("repositories", () => {
       expect(r2.isOk()).toBe(true)
     })
 
-    it("rejects addSource when the credentialId does not exist (FK)", async () => {
+    it("rejects addSource when the credentialId does not exist (FK → in-use)", async () => {
       const platformId = newPlatformId()
       const profileId = newProfileId()
       await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
@@ -705,8 +707,176 @@ describe("repositories", () => {
         enabled: true,
       })
       expect(result.isErr()).toBe(true)
+      // FK violation on insert: SQLITE_CONSTRAINT_FOREIGNKEY → in-use
       if (result.isErr()) {
-        expect(result.error.kind).toBe("constraint-violation")
+        expect(result.error.kind).toBe("in-use")
+      }
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // profiles.removeSource + profiles.setSourceEnabled (inc 13)
+  // ---------------------------------------------------------------------------
+  describe("profiles.removeSource", () => {
+    async function seedProfileWithSources() {
+      const platformId = newPlatformId()
+      const credId = newCredentialId()
+      const profileId = newProfileId()
+      await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
+      await repos.credentials.create({
+        id: credId,
+        platformId,
+        profileName: "work",
+        kind: "bearer" as const,
+        secretRef: "ref_rs_test",
+      })
+      await repos.profiles.create({
+        id: profileId,
+        name: "rs-test",
+        mcpEndpointPath: "/profiles/rs-test/mcp",
+        sources: [
+          { platformId, credentialId: credId, toolNamespace: "ns1", enabled: true },
+          { platformId, credentialId: credId, toolNamespace: "ns2", enabled: true },
+        ],
+      })
+      return { profileId, platformId, credId }
+    }
+
+    it("removes one source and leaves the other", async () => {
+      const { profileId } = await seedProfileWithSources()
+      const result = await repos.profiles.removeSource(profileId, "ns1")
+      expect(result.isOk()).toBe(true)
+
+      const fetched = await repos.profiles.get(profileId)
+      expect(fetched.isOk()).toBe(true)
+      if (fetched.isOk()) {
+        expect(fetched.value.sources.length).toBe(1)
+        expect(fetched.value.sources[0]?.toolNamespace).toBe("ns2")
+      }
+    })
+
+    it("returns not-found for a namespace that does not exist in the profile", async () => {
+      const { profileId } = await seedProfileWithSources()
+      const result = await repos.profiles.removeSource(profileId, "nonexistent")
+      expect(result.isErr()).toBe(true)
+      if (result.isErr()) {
+        expect(result.error.kind).toBe("not-found")
+        if (result.error.kind === "not-found") {
+          expect(result.error.entity).toBe("source")
+          expect(result.error.id).toBe("nonexistent")
+        }
+      }
+    })
+
+    it("removing a source does not affect other profiles", async () => {
+      const platformId = newPlatformId()
+      const credId = newCredentialId()
+      await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
+      await repos.credentials.create({
+        id: credId,
+        platformId,
+        profileName: "work",
+        kind: "bearer" as const,
+        secretRef: "ref_rs_cross",
+      })
+      const profileA = newProfileId()
+      const profileB = newProfileId()
+      await repos.profiles.create({
+        id: profileA,
+        name: "rs-a",
+        mcpEndpointPath: "/profiles/rs-a/mcp",
+        sources: [{ platformId, credentialId: credId, toolNamespace: "ns", enabled: true }],
+      })
+      await repos.profiles.create({
+        id: profileB,
+        name: "rs-b",
+        mcpEndpointPath: "/profiles/rs-b/mcp",
+        sources: [{ platformId, credentialId: credId, toolNamespace: "ns", enabled: true }],
+      })
+
+      await repos.profiles.removeSource(profileA, "ns")
+      const fetchedB = await repos.profiles.get(profileB)
+      expect(fetchedB.isOk()).toBe(true)
+      if (fetchedB.isOk()) {
+        // Profile B's source must be untouched
+        expect(fetchedB.value.sources.length).toBe(1)
+        expect(fetchedB.value.sources[0]?.toolNamespace).toBe("ns")
+      }
+    })
+  })
+
+  describe("profiles.setSourceEnabled", () => {
+    it("toggles enabled to false and reflects in get()", async () => {
+      const platformId = newPlatformId()
+      const credId = newCredentialId()
+      const profileId = newProfileId()
+      await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
+      await repos.credentials.create({
+        id: credId,
+        platformId,
+        profileName: "work",
+        kind: "bearer" as const,
+        secretRef: "ref_sse_test",
+      })
+      await repos.profiles.create({
+        id: profileId,
+        name: "sse-test",
+        mcpEndpointPath: "/profiles/sse-test/mcp",
+        sources: [{ platformId, credentialId: credId, toolNamespace: "myns", enabled: true }],
+      })
+
+      const disableResult = await repos.profiles.setSourceEnabled(profileId, "myns", false)
+      expect(disableResult.isOk()).toBe(true)
+
+      const fetched = await repos.profiles.get(profileId)
+      expect(fetched.isOk()).toBe(true)
+      if (fetched.isOk()) {
+        expect(fetched.value.sources[0]?.enabled).toBe(false)
+      }
+    })
+
+    it("re-enables a disabled source", async () => {
+      const platformId = newPlatformId()
+      const credId = newCredentialId()
+      const profileId = newProfileId()
+      await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
+      await repos.credentials.create({
+        id: credId,
+        platformId,
+        profileName: "work",
+        kind: "bearer" as const,
+        secretRef: "ref_sse_re",
+      })
+      await repos.profiles.create({
+        id: profileId,
+        name: "sse-re",
+        mcpEndpointPath: "/profiles/sse-re/mcp",
+        sources: [{ platformId, credentialId: credId, toolNamespace: "myns", enabled: false }],
+      })
+
+      const enableResult = await repos.profiles.setSourceEnabled(profileId, "myns", true)
+      expect(enableResult.isOk()).toBe(true)
+
+      const fetched = await repos.profiles.get(profileId)
+      expect(fetched.isOk()).toBe(true)
+      if (fetched.isOk()) {
+        expect(fetched.value.sources[0]?.enabled).toBe(true)
+      }
+    })
+
+    it("returns not-found for a namespace that does not exist", async () => {
+      const profileId = newProfileId()
+      await repos.profiles.create({
+        id: profileId,
+        name: "sse-nf",
+        mcpEndpointPath: "/profiles/sse-nf/mcp",
+        sources: [],
+      })
+
+      const result = await repos.profiles.setSourceEnabled(profileId, "ghost", false)
+      expect(result.isErr()).toBe(true)
+      if (result.isErr()) {
+        expect(result.error.kind).toBe("not-found")
       }
     })
   })
@@ -850,6 +1020,155 @@ describe("repositories", () => {
       expect(result.isErr()).toBe(true)
       // Best-effort cleanup must have been called
       expect(deleteCount).toBe(1)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // removeCredential helper — delete row + secret; RESTRICT guard (inc 13)
+  // ---------------------------------------------------------------------------
+  describe("removeCredential — secret cleanup + RESTRICT guard (security.md)", () => {
+    function buildMockStore(): CredentialStore & { _store: Map<string, string> } {
+      const _store = new Map<string, string>()
+      return {
+        backend: "encrypted-file" as const,
+        _store,
+        set: (ref, secret) => {
+          _store.set(ref, secret)
+          return okAsync(undefined)
+        },
+        get: (ref) => okAsync(_store.get(ref) ?? null),
+        delete: (ref) => {
+          _store.delete(ref)
+          return okAsync(undefined)
+        },
+      }
+    }
+
+    it("removes the DB row and deletes the secret from the store", async () => {
+      const { removeCredential } = await import("../credentials/remove-credential.js")
+      const platformId = newPlatformId()
+      await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
+
+      const store = buildMockStore()
+      const SENTINEL = "REMOVE_SENTINEL_secret_xyz"
+      // Pre-populate store with the secret
+      const secretRef = "ref_remove_test"
+      await store.set(secretRef, SENTINEL)
+
+      const credId = newCredentialId()
+      await repos.credentials.create({
+        id: credId,
+        platformId,
+        profileName: "work",
+        kind: "bearer" as const,
+        secretRef,
+      })
+
+      const result = await removeCredential(String(credId), store, repos.credentials)
+      expect(result.isOk()).toBe(true)
+
+      // DB row must be gone
+      const fetched = await repos.credentials.get(String(credId))
+      expect(fetched.isErr()).toBe(true)
+      if (fetched.isErr()) expect(fetched.error.kind).toBe("not-found")
+
+      // Secret must be gone from the store
+      const secretAfter = await store.get(secretRef)
+      expect(secretAfter.isOk()).toBe(true)
+      if (secretAfter.isOk()) expect(secretAfter.value).toBeNull()
+    })
+
+    it("RESTRICT (in-use): credential referenced by source_ref → in-use error + secret NOT deleted", async () => {
+      const { removeCredential } = await import("../credentials/remove-credential.js")
+      const platformId = newPlatformId()
+      const credId = newCredentialId()
+      const profileId = newProfileId()
+      await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
+
+      const store = buildMockStore()
+      const secretRef = "ref_inuse_secret"
+      const SECRET = "INUSE_SECRET_must_not_be_deleted"
+      await store.set(secretRef, SECRET)
+
+      await repos.credentials.create({
+        id: credId,
+        platformId,
+        profileName: "work",
+        kind: "bearer" as const,
+        secretRef,
+      })
+      await repos.profiles.create({
+        id: profileId,
+        name: "inuse-test",
+        mcpEndpointPath: "/profiles/inuse-test/mcp",
+        sources: [{ platformId, credentialId: credId, toolNamespace: "ns", enabled: true }],
+      })
+
+      const result = await removeCredential(String(credId), store, repos.credentials)
+      expect(result.isErr()).toBe(true)
+      if (result.isErr()) {
+        // Must be in-use (RESTRICT FK blocked the DB delete)
+        expect(result.error.kind).toBe("in-use")
+      }
+
+      // CRITICAL SECURITY: secret must still exist in the store (credential not deleted)
+      const secretAfter = await store.get(secretRef)
+      expect(secretAfter.isOk()).toBe(true)
+      if (secretAfter.isOk()) {
+        expect(secretAfter.value).toBe(SECRET)
+      }
+
+      // DB row must also still exist
+      const credAfter = await repos.credentials.get(String(credId))
+      expect(credAfter.isOk()).toBe(true)
+    })
+
+    it("not-found: attempting to remove a non-existent credential returns not-found", async () => {
+      const { removeCredential } = await import("../credentials/remove-credential.js")
+      const store = buildMockStore()
+      const result = await removeCredential("cred_nonexistent_id", store, repos.credentials)
+      expect(result.isErr()).toBe(true)
+      if (result.isErr()) expect(result.error.kind).toBe("not-found")
+    })
+
+    it("after remove-source the credential can be deleted and the secret is gone", async () => {
+      const { removeCredential } = await import("../credentials/remove-credential.js")
+      const platformId = newPlatformId()
+      const credId = newCredentialId()
+      const profileId = newProfileId()
+      await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
+
+      const store = buildMockStore()
+      const secretRef = "ref_lifecycle_secret"
+      const SECRET = "LIFECYCLE_SECRET_must_survive_remove_source"
+      await store.set(secretRef, SECRET)
+
+      await repos.credentials.create({
+        id: credId,
+        platformId,
+        profileName: "work",
+        kind: "bearer" as const,
+        secretRef,
+      })
+      await repos.profiles.create({
+        id: profileId,
+        name: "lifecycle-test",
+        mcpEndpointPath: "/profiles/lifecycle-test/mcp",
+        sources: [{ platformId, credentialId: credId, toolNamespace: "ns", enabled: true }],
+      })
+
+      // Remove the source first
+      const removeSourceResult = await repos.profiles.removeSource(profileId, "ns")
+      expect(removeSourceResult.isOk()).toBe(true)
+
+      // Now credential remove must succeed
+      const result = await removeCredential(String(credId), store, repos.credentials)
+      expect(result.isOk()).toBe(true)
+
+      // Secret must be gone
+      const secretAfter = await store.get(secretRef)
+      expect(secretAfter.isOk()).toBe(true)
+      if (secretAfter.isOk()) expect(secretAfter.value).toBeNull()
     })
   })
 

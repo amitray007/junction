@@ -11,6 +11,7 @@ import {
   createRepositories,
   getDatabase,
   getPaths,
+  removeCredential,
 } from "@junction/core"
 import { defineCommand } from "citty"
 import { consola } from "consola"
@@ -225,6 +226,65 @@ const listCommand = defineCommand({
   },
 })
 
+// ---------------------------------------------------------------------------
+// credential remove — delete credential + secret (enforces RESTRICT FK)
+// ---------------------------------------------------------------------------
+
+const removeCommand = defineCommand({
+  meta: {
+    name: "remove",
+    description: "Remove a credential and delete its stored secret.",
+  },
+  args: {
+    id: {
+      type: "string",
+      description: "Credential ID",
+      required: true,
+    },
+    json: JSON_ARG,
+  },
+  async run({ args }) {
+    const json = args.json ?? false
+    const paths = getPaths()
+
+    const [dbResult, storeResult] = await Promise.all([
+      getDatabase(paths),
+      createCredentialStore(paths),
+    ])
+    if (dbResult.isErr()) {
+      reportDbError(dbResult.error, json)
+      return
+    }
+    if (storeResult.isErr()) {
+      reportCredentialError(storeResult.error, json)
+      return
+    }
+
+    const repos = createRepositories(dbResult.value)
+    const result = await removeCredential(args.id, storeResult.value, repos.credentials)
+
+    if (result.isErr()) {
+      const e = result.error
+      if (e.kind === "in-use") {
+        // Give the user a clear, actionable message — no raw SQL error
+        const msg = `credential "${args.id}" is in use by one or more sources; remove those sources first`
+        if (json) process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
+        else consola.error(msg)
+        process.exitCode = 1
+        return
+      }
+      reportDbError(e, json)
+      return
+    }
+
+    if (json) {
+      process.stdout.write(`${JSON.stringify({ ok: true, id: args.id })}\n`)
+    } else {
+      consola.success(`Credential "${args.id}" removed and secret deleted`)
+    }
+  },
+})
+
 export const credentialCommand = defineCommand({
   meta: {
     name: "credential",
@@ -233,6 +293,7 @@ export const credentialCommand = defineCommand({
   subCommands: {
     add: addCommand,
     list: listCommand,
+    remove: removeCommand,
   },
 })
 

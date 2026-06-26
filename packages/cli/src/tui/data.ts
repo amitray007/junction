@@ -10,6 +10,7 @@ import {
   type Platform,
   type Profile,
   ResultAsync,
+  type SourceRef,
 } from "@junction/core"
 import { resolveCredentialBackend, resolveSandboxBackend } from "../commands/status.js"
 
@@ -25,11 +26,18 @@ export type DashboardStatus = {
   sandbox: string
 }
 
+export type DashboardSource = {
+  namespace: string
+  platformId: string
+  enabled: boolean
+}
+
 export type DashboardProfile = {
   id: string
   name: string
   mcpEndpointPath: string
-  sourceCount: number
+  /** Wired sources — NO secret or secretRef; only routing metadata. */
+  sources: DashboardSource[]
 }
 
 export type DashboardPlatform = {
@@ -113,7 +121,12 @@ async function buildSnapshot(paths: JunctionPaths): Promise<DashboardSnapshot> {
         id: p.id,
         name: p.name,
         mcpEndpointPath: p.mcpEndpointPath,
-        sourceCount: p.sources.length,
+        // Only routing metadata — NEVER secret or secretRef
+        sources: p.sources.map((sr: SourceRef) => ({
+          namespace: sr.toolNamespace,
+          platformId: String(sr.platformId),
+          enabled: sr.enabled,
+        })),
       }))
     : []
 

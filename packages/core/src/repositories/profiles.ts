@@ -3,7 +3,7 @@
 // source_refs have no independent lifecycle; managed only through this repo.
 // Profile create/delete are transactional (source_refs cascade on delete).
 
-import { eq } from "drizzle-orm"
+import { and, eq } from "drizzle-orm"
 import { errAsync, okAsync, type ResultAsync } from "neverthrow"
 import { mapDbError } from "../db/errors.js"
 import type { Db } from "../db/index.js"
@@ -17,6 +17,16 @@ import { SourceRefSchema, ToolFilterSchema } from "../schema/source-ref.js"
 
 // Sentinel symbols for custom transaction errors (avoids instanceof checks on plain Error)
 const _DUPLICATE_NS = Symbol("duplicate-namespace")
+const _SOURCE_NOT_FOUND = Symbol("source-not-found")
+
+function isSourceNotFound(cause: unknown): boolean {
+  return (
+    cause !== null &&
+    typeof cause === "object" &&
+    "_sentinel" in cause &&
+    (cause as { _sentinel: unknown })._sentinel === _SOURCE_NOT_FOUND
+  )
+}
 
 function reconstructProfile(
   profileRow: typeof profiles.$inferSelect,
@@ -204,6 +214,91 @@ export function createProfilesRepo(db: Db) {
         db.delete(profiles).where(eq(profiles.id, id)).run()
         return okAsync(undefined)
       } catch (cause) {
+        return errAsync(mapDbError(cause))
+      }
+    },
+
+    /**
+     * Remove a single SourceRef from a profile by its tool namespace.
+     * Transactional: verifies existence, then deletes.
+     * Returns not-found if the (profile, namespace) pair doesn't exist.
+     */
+    removeSource(profileId: string, toolNamespace: string): ResultAsync<void, DbError> {
+      try {
+        db.transaction((tx) => {
+          const existing = tx
+            .select({ id: sourceRefs.id })
+            .from(sourceRefs)
+            .where(
+              and(eq(sourceRefs.profileId, profileId), eq(sourceRefs.toolNamespace, toolNamespace)),
+            )
+            .get()
+          if (!existing) {
+            throw Object.assign(
+              new Error(`source not found: ${toolNamespace} in profile ${profileId}`),
+              { _sentinel: _SOURCE_NOT_FOUND, _namespace: toolNamespace },
+            )
+          }
+          tx.delete(sourceRefs)
+            .where(
+              and(eq(sourceRefs.profileId, profileId), eq(sourceRefs.toolNamespace, toolNamespace)),
+            )
+            .run()
+        })
+        return okAsync(undefined)
+      } catch (cause) {
+        if (isSourceNotFound(cause)) {
+          return errAsync({
+            kind: "not-found" as const,
+            entity: "source",
+            id: toolNamespace,
+          })
+        }
+        return errAsync(mapDbError(cause))
+      }
+    },
+
+    /**
+     * Toggle the enabled flag on a SourceRef.
+     * Transactional: verifies existence, then updates.
+     * Returns not-found if the (profile, namespace) pair doesn't exist.
+     */
+    setSourceEnabled(
+      profileId: string,
+      toolNamespace: string,
+      enabled: boolean,
+    ): ResultAsync<void, DbError> {
+      try {
+        db.transaction((tx) => {
+          const existing = tx
+            .select({ id: sourceRefs.id })
+            .from(sourceRefs)
+            .where(
+              and(eq(sourceRefs.profileId, profileId), eq(sourceRefs.toolNamespace, toolNamespace)),
+            )
+            .get()
+          if (!existing) {
+            throw Object.assign(
+              new Error(`source not found: ${toolNamespace} in profile ${profileId}`),
+              { _sentinel: _SOURCE_NOT_FOUND, _namespace: toolNamespace },
+            )
+          }
+          tx.update(sourceRefs)
+            .set({ enabled })
+            .where(
+              and(eq(sourceRefs.profileId, profileId), eq(sourceRefs.toolNamespace, toolNamespace)),
+            )
+            .run()
+        })
+        return okAsync(undefined)
+      } catch (cause) {
+        if (isSourceNotFound(cause)) {
+          return errAsync({
+            kind: "not-found" as const,
+            entity: "source",
+            id: toolNamespace,
+          })
+        }
         return errAsync(mapDbError(cause))
       }
     },

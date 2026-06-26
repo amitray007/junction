@@ -740,3 +740,80 @@ describe("createProfileProxy — disabled sources", () => {
     await close()
   })
 })
+
+// ---------------------------------------------------------------------------
+// (h) Enable/disable toggle end-to-end (inc 13)
+// ---------------------------------------------------------------------------
+
+describe("createProfileProxy — enable/disable toggle end-to-end", () => {
+  const cleanups: Array<() => Promise<void>> = []
+  afterEach(async () => {
+    for (const c of cleanups) await c()
+    cleanups.length = 0
+  })
+
+  it("disabling a source stops it from being served; re-enabling restores it", async () => {
+    const { session, close } = await makeInMemorySession("demo", [
+      { name: "get_thing" },
+      { name: "list_things" },
+    ])
+    cleanups.push(close)
+
+    const sessionMap = new Map([["demo", session]])
+
+    // Start with source enabled
+    const enabledSourceRef = makeSourceRef("demo", undefined, true)
+    const proxyEnabled = createProfileProxy(
+      [enabledSourceRef],
+      resolveOk("demo"),
+      makeSessionFactory(sessionMap),
+    )
+
+    const enabledResult = await proxyEnabled.listTools()
+    expect(enabledResult.isOk()).toBe(true)
+    // Both tools must be listed when source is enabled
+    const enabledTools = enabledResult._unsafeUnwrap().map((t) => t.name)
+    expect(enabledTools).toContain("demo__get_thing")
+    expect(enabledTools).toContain("demo__list_things")
+
+    // Simulate disable-source: create a new proxy with the same source marked disabled.
+    // (The proxy filters at construction time from the SourceRef list, so a new proxy
+    // models what happens after setSourceEnabled is persisted and mcp serve reloads.)
+    const disabledSourceRef = makeSourceRef("demo", undefined, false)
+    const proxyDisabled = createProfileProxy(
+      [disabledSourceRef],
+      resolveOk("demo"),
+      makeSessionFactory(sessionMap),
+    )
+
+    const disabledResult = await proxyDisabled.listTools()
+    expect(disabledResult.isOk()).toBe(true)
+    // No tools listed when source is disabled
+    expect(disabledResult._unsafeUnwrap()).toHaveLength(0)
+
+    // callTool on disabled source returns tool-not-found
+    const callResult = await proxyDisabled.callTool("demo__get_thing", {})
+    expect(callResult.isErr()).toBe(true)
+    expect(callResult._unsafeUnwrapErr().kind).toBe("tool-not-found")
+
+    // Re-enable: create a FRESH session — the proxy uses connect-per-call lifecycle,
+    // so the original session was already closed after proxyEnabled.listTools().
+    // A fresh session models what happens after the MCP server reconnects on re-enable.
+    const { session: session2, close: close2 } = await makeInMemorySession("demo", [
+      { name: "get_thing" },
+      { name: "list_things" },
+    ])
+    cleanups.push(close2)
+
+    const proxyReEnabled = createProfileProxy(
+      [makeSourceRef("demo", undefined, true)],
+      resolveOk("demo"),
+      makeSessionFactory(new Map([["demo", session2]])),
+    )
+    const reEnabledResult = await proxyReEnabled.listTools()
+    expect(reEnabledResult.isOk()).toBe(true)
+    const reEnabledTools = reEnabledResult._unsafeUnwrap().map((t) => t.name)
+    expect(reEnabledTools).toContain("demo__get_thing")
+    expect(reEnabledTools).toContain("demo__list_things")
+  })
+})

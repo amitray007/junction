@@ -13,6 +13,12 @@ import {
 } from "@junction/core"
 import { consola } from "consola"
 
+export type StatusCounts = {
+  platforms: number
+  credentials: number
+  profiles: number
+}
+
 export type StatusData = {
   home: string
   configFile: string
@@ -21,6 +27,7 @@ export type StatusData = {
   config: Config | null
   credentialStore: string
   sandbox: string
+  counts?: StatusCounts
 }
 
 /**
@@ -38,6 +45,12 @@ export function formatStatusHuman(data: StatusData): string {
   if (data.config !== null) {
     lines.push(`  version          ${data.config.version}`)
   }
+  if (data.counts !== undefined) {
+    const { platforms, credentials, profiles } = data.counts
+    lines.push(
+      `  sources          ${platforms} platform${platforms !== 1 ? "s" : ""} · ${credentials} credential${credentials !== 1 ? "s" : ""} · ${profiles} profile${profiles !== 1 ? "s" : ""}`,
+    )
+  }
   return lines.join("\n")
 }
 
@@ -53,6 +66,7 @@ export function formatStatusJson(data: StatusData): string {
     config: data.config,
     credentialStore: data.credentialStore,
     sandbox: data.sandbox,
+    ...(data.counts !== undefined ? { counts: data.counts } : {}),
   })
 }
 
@@ -125,6 +139,8 @@ export function formatDbError(e: DbError): string {
       return `database migration failed: ${String(e.cause)}`
     case "constraint-violation":
       return `constraint violation (check that referenced platform/credential/profile exists): ${String(e.cause)}`
+    case "in-use":
+      return `resource is in use by one or more sources — remove those sources first`
     case "duplicate-namespace":
       return `duplicate tool namespace "${e.namespace}" — already used by another source in this profile`
     case "query-failed":
