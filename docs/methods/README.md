@@ -33,8 +33,9 @@ A **method file** holds one increment's **spec + step-by-step implementation tog
 | 14 | Source-provider abstraction + dispatch-by-kind (OpenAPI prep — refactor) | `14-source-provider-abstraction.md` | written |
 | 15 | OpenAPI/REST source provider — call any REST API as namespaced tools | `15-openapi-provider.md` | written |
 | 16 | Optional credentials — public/no-auth sources (any source type) | `16-optional-credentials.md` | done |
-| 17 | Source-agnostic debug surface — probe + call any source kind | `17-source-agnostic-debug.md` | written |
-| 18 | Large-spec selection (--tag/--path) + spec refresh | `18-*.md` | TBD |
+| 17 | Source-agnostic debug surface — probe + call any source kind | `17-source-agnostic-debug.md` | done |
+| 18 | OpenAPI base-URL resolution (relative servers) + early validation | `18-openapi-base-url-resolution.md` | written |
+| 19 | Large-spec selection (--tag/--path) + spec refresh | `19-*.md` | TBD |
 
 After increment 8 the foundation is "ready"; increment 9 (TUI) completes it. Features come after, each with its own method file.
 
