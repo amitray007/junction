@@ -88,6 +88,19 @@ describe("repositories", () => {
       expect(fetched.isErr()).toBe(true)
     })
 
+    it("delete() returns not-found when the platform id does not exist", async () => {
+      // platforms.delete checks .changes === 0 and returns a typed not-found rather than
+      // silently returning Ok — so `platform remove --id bad-id` → exit≠0, not ok:true.
+      const missingId = newPlatformId()
+      const result = await repos.platforms.delete(missingId)
+      expect(result.isErr()).toBe(true)
+      if (result.isErr()) {
+        expect(result.error.kind).toBe("not-found")
+        expect(result.error.entity).toBe("platform")
+        expect(result.error.id).toBe(missingId)
+      }
+    })
+
     it("rejects deleting a platform that still has credentials (FK enforced → in-use)", async () => {
       const platformId = newPlatformId()
       await repos.platforms.create({ id: platformId, kind: "mcp" as const, displayName: "GitHub" })
@@ -879,6 +892,37 @@ describe("repositories", () => {
         expect(result.error.kind).toBe("not-found")
       }
     })
+
+    it("idempotent re-disable: disabling an already-disabled source returns ok", async () => {
+      const platformId = newPlatformId()
+      const credId = newCredentialId()
+      const profileId = newProfileId()
+      await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
+      await repos.credentials.create({
+        id: credId,
+        platformId,
+        profileName: "work",
+        kind: "bearer" as const,
+        secretRef: "ref_idempotent_disable",
+      })
+      await repos.profiles.create({
+        id: profileId,
+        name: "idem-disable",
+        mcpEndpointPath: "/profiles/idem-disable/mcp",
+        sources: [{ platformId, credentialId: credId, toolNamespace: "myns", enabled: false }],
+      })
+
+      // Disable an already-disabled source — must succeed, not error
+      const first = await repos.profiles.setSourceEnabled(profileId, "myns", false)
+      expect(first.isOk()).toBe(true)
+
+      // Value remains false
+      const fetched = await repos.profiles.get(profileId)
+      expect(fetched.isOk()).toBe(true)
+      if (fetched.isOk()) {
+        expect(fetched.value.sources[0]?.enabled).toBe(false)
+      }
+    })
   })
 
   // ---------------------------------------------------------------------------
@@ -1129,6 +1173,50 @@ describe("repositories", () => {
       const result = await removeCredential("cred_nonexistent_id", store, repos.credentials)
       expect(result.isErr()).toBe(true)
       if (result.isErr()) expect(result.error.kind).toBe("not-found")
+    })
+
+    it("reverse-orphan: store.delete failure after successful DB delete → result is still Ok", async () => {
+      // removeCredential swallows a store.delete failure after the DB row is gone (best-effort).
+      // This verifies that a stranded store entry doesn't surface as an error to the caller.
+      const { removeCredential } = await import("../credentials/remove-credential.js")
+      const platformId = newPlatformId()
+      await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
+
+      const secretRef = "ref_reverse_orphan"
+      const credId = newCredentialId()
+      await repos.credentials.create({
+        id: credId,
+        platformId,
+        profileName: "work",
+        kind: "bearer" as const,
+        secretRef,
+      })
+
+      // Store whose delete always returns an io-failed error
+      let deleteCalled = false
+      const failingStore: CredentialStore = {
+        backend: "encrypted-file" as const,
+        set: (_ref, _secret) => okAsync(undefined),
+        get: (_ref) => okAsync(null),
+        delete: (_ref) => {
+          deleteCalled = true
+          return errAsync({
+            kind: "io-failed" as const,
+            cause: new Error("simulated store failure"),
+          })
+        },
+      }
+
+      const result = await removeCredential(String(credId), failingStore, repos.credentials)
+
+      // Must resolve Ok — store.delete failure is best-effort, not propagated
+      expect(result.isOk()).toBe(true)
+      // store.delete must have been attempted
+      expect(deleteCalled).toBe(true)
+      // DB row must be gone
+      const fetched = await repos.credentials.get(String(credId))
+      expect(fetched.isErr()).toBe(true)
+      if (fetched.isErr()) expect(fetched.error.kind).toBe("not-found")
     })
 
     it("after remove-source the credential can be deleted and the secret is gone", async () => {

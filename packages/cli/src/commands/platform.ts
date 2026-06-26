@@ -8,7 +8,7 @@ import { defineCommand } from "citty"
 import { consola } from "consola"
 import { collectRepeatableFlag, JSON_ARG } from "../args.js"
 import { openDb } from "../db.js"
-import { reportDbError } from "../format.js"
+import { reportDbError, reportIdRemoved, reportInUseError } from "../format.js"
 
 /** Report a string error in the appropriate format and set exitCode=1. */
 function reportError(msg: string, json: boolean): void {
@@ -180,25 +180,25 @@ const removeCommand = defineCommand({
     const repos = await openDb(json)
     if (!repos) return
 
+    // platforms.delete returns not-found when no row matches (checks .changes),
+    // and in-use when a FK RESTRICT fires (credentials or source_refs reference it).
     const result = await repos.platforms.delete(args.id)
     if (result.isErr()) {
       const e = result.error
       if (e.kind === "in-use") {
-        const msg = `platform "${args.id}" is in use by one or more credentials; remove those credentials first`
-        if (json) process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
-        else consola.error(msg)
-        process.exitCode = 1
+        // platforms.id is RESTRICT-referenced by both credentials.platformId AND
+        // source_refs.platformId — so either a credential or a source ref can block removal.
+        reportInUseError(
+          json,
+          `platform "${args.id}" is in use by one or more credentials or sources; remove those first`,
+        )
         return
       }
       reportDbError(e, json)
       return
     }
 
-    if (json) {
-      process.stdout.write(`${JSON.stringify({ ok: true, id: args.id })}\n`)
-    } else {
-      consola.success(`Platform "${args.id}" removed`)
-    }
+    reportIdRemoved(json, args.id, "Platform")
   },
 })
 

@@ -167,6 +167,31 @@ export function formatCredentialError(e: CredentialError): string {
   }
 }
 
+/**
+ * Report an in-use error with a caller-supplied message (entity-specific wording).
+ * Extracted from the remove-credential / remove-platform pair to share the
+ * json / human branching + exitCode without duplicating the structure.
+ */
+export function reportInUseError(json: boolean, msg: string): void {
+  if (json) process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
+  else consola.error(msg)
+  process.exitCode = 1
+}
+
+/**
+ * Write a successful removal result in the appropriate format.
+ * Extracted from remove-credential / remove-platform to share the
+ * json/human branching without duplicating the ok:true + consola pattern.
+ * @param label - Entity label for the human message (e.g. "Credential", "Platform").
+ */
+export function reportIdRemoved(json: boolean, id: string, label: string): void {
+  if (json) {
+    process.stdout.write(`${JSON.stringify({ ok: true, id })}\n`)
+  } else {
+    consola.success(`${label} "${id}" removed`)
+  }
+}
+
 /** Report a DbError: write JSON or log + set exitCode=1. */
 export function reportDbError(e: DbError, json: boolean): void {
   const msg = formatDbError(e)

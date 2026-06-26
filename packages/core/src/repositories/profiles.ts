@@ -28,6 +28,59 @@ function isSourceNotFound(cause: unknown): boolean {
   )
 }
 
+/**
+ * Shared transaction helper for source mutations (removeSource, setSourceEnabled).
+ * Within a transaction: looks up the source_ref by (profileId, toolNamespace),
+ * throws the sentinel if absent, then applies the requested operation by the
+ * found row id (avoiding re-building the compound where clause in each caller).
+ *
+ * Uses a discriminated op union so the caller never needs to type the drizzle
+ * transaction object (SQLiteTransaction ≠ Db — they share query methods but differ
+ * structurally; passing `tx` through a callback would require a complex type extract).
+ *
+ * Returns a typed ResultAsync so both callers reduce to a single `return` expression.
+ */
+type SourceOp = { kind: "delete" } | { kind: "setEnabled"; enabled: boolean }
+
+function runSourceMutation(
+  db: Db,
+  profileId: string,
+  toolNamespace: string,
+  op: SourceOp,
+): ResultAsync<void, DbError> {
+  try {
+    db.transaction((tx) => {
+      const existing = tx
+        .select({ id: sourceRefs.id })
+        .from(sourceRefs)
+        .where(
+          and(eq(sourceRefs.profileId, profileId), eq(sourceRefs.toolNamespace, toolNamespace)),
+        )
+        .get()
+      if (!existing) {
+        throw Object.assign(
+          new Error(`source not found: ${toolNamespace} in profile ${profileId}`),
+          { _sentinel: _SOURCE_NOT_FOUND, _namespace: toolNamespace },
+        )
+      }
+      if (op.kind === "delete") {
+        tx.delete(sourceRefs).where(eq(sourceRefs.id, existing.id)).run()
+      } else {
+        tx.update(sourceRefs)
+          .set({ enabled: op.enabled })
+          .where(eq(sourceRefs.id, existing.id))
+          .run()
+      }
+    })
+    return okAsync(undefined)
+  } catch (cause) {
+    if (isSourceNotFound(cause)) {
+      return errAsync({ kind: "not-found" as const, entity: "source", id: toolNamespace })
+    }
+    return errAsync(mapDbError(cause))
+  }
+}
+
 function reconstructProfile(
   profileRow: typeof profiles.$inferSelect,
   sourceRefRows: (typeof sourceRefs.$inferSelect)[],
@@ -224,38 +277,7 @@ export function createProfilesRepo(db: Db) {
      * Returns not-found if the (profile, namespace) pair doesn't exist.
      */
     removeSource(profileId: string, toolNamespace: string): ResultAsync<void, DbError> {
-      try {
-        db.transaction((tx) => {
-          const existing = tx
-            .select({ id: sourceRefs.id })
-            .from(sourceRefs)
-            .where(
-              and(eq(sourceRefs.profileId, profileId), eq(sourceRefs.toolNamespace, toolNamespace)),
-            )
-            .get()
-          if (!existing) {
-            throw Object.assign(
-              new Error(`source not found: ${toolNamespace} in profile ${profileId}`),
-              { _sentinel: _SOURCE_NOT_FOUND, _namespace: toolNamespace },
-            )
-          }
-          tx.delete(sourceRefs)
-            .where(
-              and(eq(sourceRefs.profileId, profileId), eq(sourceRefs.toolNamespace, toolNamespace)),
-            )
-            .run()
-        })
-        return okAsync(undefined)
-      } catch (cause) {
-        if (isSourceNotFound(cause)) {
-          return errAsync({
-            kind: "not-found" as const,
-            entity: "source",
-            id: toolNamespace,
-          })
-        }
-        return errAsync(mapDbError(cause))
-      }
+      return runSourceMutation(db, profileId, toolNamespace, { kind: "delete" })
     },
 
     /**
@@ -268,39 +290,7 @@ export function createProfilesRepo(db: Db) {
       toolNamespace: string,
       enabled: boolean,
     ): ResultAsync<void, DbError> {
-      try {
-        db.transaction((tx) => {
-          const existing = tx
-            .select({ id: sourceRefs.id })
-            .from(sourceRefs)
-            .where(
-              and(eq(sourceRefs.profileId, profileId), eq(sourceRefs.toolNamespace, toolNamespace)),
-            )
-            .get()
-          if (!existing) {
-            throw Object.assign(
-              new Error(`source not found: ${toolNamespace} in profile ${profileId}`),
-              { _sentinel: _SOURCE_NOT_FOUND, _namespace: toolNamespace },
-            )
-          }
-          tx.update(sourceRefs)
-            .set({ enabled })
-            .where(
-              and(eq(sourceRefs.profileId, profileId), eq(sourceRefs.toolNamespace, toolNamespace)),
-            )
-            .run()
-        })
-        return okAsync(undefined)
-      } catch (cause) {
-        if (isSourceNotFound(cause)) {
-          return errAsync({
-            kind: "not-found" as const,
-            entity: "source",
-            id: toolNamespace,
-          })
-        }
-        return errAsync(mapDbError(cause))
-      }
+      return runSourceMutation(db, profileId, toolNamespace, { kind: "setEnabled", enabled })
     },
   }
 }

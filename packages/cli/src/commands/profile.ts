@@ -5,19 +5,18 @@
 // SECURITY: profile show NEVER includes secret or secretRef — only metadata.
 
 import {
-  createCredentialStore,
   deriveMcpEndpointPath,
-  getPaths,
   newProfileId,
   type Profile,
   ProfileNameSchema,
+  type Repositories,
   type SourceRef,
 } from "@junction/core"
 import { defineCommand } from "citty"
 import { consola } from "consola"
 import { collectRepeatableFlag, JSON_ARG } from "../args.js"
 import { openDb } from "../db.js"
-import { reportCredentialError, reportDbError } from "../format.js"
+import { reportDbError } from "../format.js"
 
 const createCommand = defineCommand({
   meta: {
@@ -123,7 +122,8 @@ const listCommand = defineCommand({
 const addSourceCommand = defineCommand({
   meta: {
     name: "add-source",
-    description: "Add an MCP source to a profile.",
+    description:
+      "Add an MCP source to a profile (takes effect the next time the profile is served).",
   },
   args: {
     profile: {
@@ -157,59 +157,36 @@ const addSourceCommand = defineCommand({
     json: JSON_ARG,
   },
   async run({ args, rawArgs }) {
-    const json = args.json ?? false
-    const paths = getPaths()
-
-    // Collect repeatable --allow / --deny flags from rawArgs
+    // Collect repeatable --allow / --deny flags from rawArgs before entering the callback
     const allowList = collectRepeatableFlag(rawArgs, "--allow")
     const denyList = collectRepeatableFlag(rawArgs, "--deny")
 
-    const repos = await openDb(json)
-    if (!repos) return
+    await withResolvedProfile(args, async ({ json, profileId, namespace, repos }) => {
+      const sourceRef: SourceRef = {
+        platformId: args.platform as SourceRef["platformId"],
+        credentialId: args.credential as SourceRef["credentialId"],
+        toolNamespace: namespace,
+        enabled: true,
+        toolFilter:
+          allowList.length > 0 || denyList.length > 0
+            ? {
+                allow: allowList.length > 0 ? allowList : undefined,
+                deny: denyList.length > 0 ? denyList : undefined,
+              }
+            : undefined,
+      }
 
-    const storeResult = await createCredentialStore(paths)
-    if (storeResult.isErr()) {
-      reportCredentialError(storeResult.error, json)
-      return
-    }
-
-    // Resolve profile by name
-    const profileResult = await repos.profiles.getByName(args.profile)
-    if (profileResult.isErr()) {
-      reportDbError(profileResult.error, json)
-      return
-    }
-    const profile = profileResult.value
-
-    const sourceRef: SourceRef = {
-      platformId: args.platform as SourceRef["platformId"],
-      credentialId: args.credential as SourceRef["credentialId"],
-      toolNamespace: args.namespace,
-      enabled: true,
-      toolFilter:
-        allowList.length > 0 || denyList.length > 0
-          ? {
-              allow: allowList.length > 0 ? allowList : undefined,
-              deny: denyList.length > 0 ? denyList : undefined,
-            }
-          : undefined,
-    }
-
-    const result = await repos.profiles.addSource(profile.id, sourceRef)
-    if (result.isErr()) {
-      reportDbError(result.error, json)
-      return
-    }
-
-    if (json) {
-      process.stdout.write(
-        `${JSON.stringify({ ok: true, profileName: args.profile, namespace: args.namespace })}\n`,
+      const result = await repos.profiles.addSource(profileId, sourceRef)
+      if (result.isErr()) {
+        reportDbError(result.error, json)
+        return
+      }
+      reportSourceOk(
+        json,
+        { profileName: args.profile, namespace },
+        `Source "${namespace}" added to profile "${args.profile}" (platform: ${args.platform}; takes effect the next time the profile is served)`,
       )
-    } else {
-      consola.success(
-        `Source "${args.namespace}" added to profile "${args.profile}" (platform: ${args.platform})`,
-      )
-    }
+    })
   },
 })
 
@@ -231,60 +208,127 @@ const showCommand = defineCommand({
     json: JSON_ARG,
   },
   async run({ args }) {
-    const json = args.json ?? false
-    const repos = await openDb(json)
-    if (!repos) return
+    await withNamedProfile(args, async ({ json, profile, repos }) => {
+      // Build source view: for each SourceRef, join platform + credential metadata.
+      // NEVER include secret or secretRef — only account label (credential.profileName).
+      const sources: Array<{
+        namespace: string
+        platform: string
+        credentialAccount: string
+        enabled: boolean
+        toolFilter?: { allow?: string[]; deny?: string[] }
+      }> = []
 
-    const profileResult = await repos.profiles.getByName(args.name)
-    if (profileResult.isErr()) {
-      reportDbError(profileResult.error, json)
-      return
-    }
-    const profile = profileResult.value
+      for (const sr of profile.sources) {
+        const credResult = await repos.credentials.get(String(sr.credentialId))
+        const credentialAccount = credResult.isOk() ? credResult.value.profileName : "(unknown)"
+        sources.push({
+          namespace: sr.toolNamespace,
+          platform: String(sr.platformId),
+          credentialAccount,
+          enabled: sr.enabled,
+          ...(sr.toolFilter !== undefined ? { toolFilter: sr.toolFilter } : {}),
+        })
+      }
 
-    // Build source view: for each SourceRef, join platform + credential metadata.
-    // NEVER include secret or secretRef — only account label (credential.profileName).
-    const sources: Array<{
-      namespace: string
-      platform: string
-      credentialAccount: string
-      enabled: boolean
-      toolFilter?: { allow?: string[]; deny?: string[] }
-    }> = []
+      if (json) {
+        process.stdout.write(
+          `${JSON.stringify({ ok: true, profile: { id: profile.id, name: profile.name, mcpEndpointPath: profile.mcpEndpointPath }, sources })}\n`,
+        )
+        return
+      }
 
-    for (const sr of profile.sources) {
-      const credResult = await repos.credentials.get(String(sr.credentialId))
-      const credentialAccount = credResult.isOk() ? credResult.value.profileName : "(unknown)"
-      sources.push({
-        namespace: sr.toolNamespace,
-        platform: String(sr.platformId),
-        credentialAccount,
-        enabled: sr.enabled,
-        ...(sr.toolFilter !== undefined ? { toolFilter: sr.toolFilter } : {}),
-      })
-    }
-
-    if (json) {
-      process.stdout.write(
-        `${JSON.stringify({ ok: true, profile: { id: profile.id, name: profile.name, mcpEndpointPath: profile.mcpEndpointPath }, sources })}\n`,
+      process.stdout.write(`Profile: ${profile.name}  (${profile.mcpEndpointPath})\n`)
+      if (sources.length === 0) {
+        process.stdout.write('  No sources. Use "junction profile add-source" to add one.\n')
+        return
+      }
+      const header = "  namespace         platform              account           enabled"
+      const divider = "  ----------------  --------------------  ----------------  -------"
+      const rows = sources.map(
+        (s) =>
+          `  ${s.namespace.padEnd(16)}  ${s.platform.padEnd(20)}  ${s.credentialAccount.padEnd(16)}  ${s.enabled ? "yes" : "no"}`,
       )
-      return
-    }
-
-    process.stdout.write(`Profile: ${profile.name}  (${profile.mcpEndpointPath})\n`)
-    if (sources.length === 0) {
-      process.stdout.write('  No sources. Use "junction profile add-source" to add one.\n')
-      return
-    }
-    const header = "  namespace         platform              account           enabled"
-    const divider = "  ----------------  --------------------  ----------------  -------"
-    const rows = sources.map(
-      (s) =>
-        `  ${s.namespace.padEnd(16)}  ${s.platform.padEnd(20)}  ${s.credentialAccount.padEnd(16)}  ${s.enabled ? "yes" : "no"}`,
-    )
-    process.stdout.write(`${[header, divider, ...rows].join("\n")}\n`)
+      process.stdout.write(`${[header, divider, ...rows].join("\n")}\n`)
+    })
   },
 })
+
+// ---------------------------------------------------------------------------
+// Shared helpers for profile subcommands
+// ---------------------------------------------------------------------------
+
+/** Context passed to source-subcommand callbacks (add/remove/enable/disable). */
+type SourceCtx = {
+  json: boolean
+  profileId: string
+  namespace: string
+  repos: Repositories
+}
+
+/** Context passed to profile-level callbacks (show, delete). */
+type ProfileCtx = {
+  json: boolean
+  profile: Profile
+  repos: Repositories
+}
+
+/**
+ * Open the DB, resolve a profile by name (used with `--profile` + `--namespace` args),
+ * and call `action` with the resolved context.
+ * Eliminates the repeated openDb + getByName boilerplate for source subcommands.
+ */
+async function withResolvedProfile(
+  args: { profile: string; namespace: string; json?: boolean | null },
+  action: (ctx: SourceCtx) => Promise<void>,
+): Promise<void> {
+  const json = args.json ?? false
+  const repos = await openDb(json)
+  if (!repos) return
+
+  const profileResult = await repos.profiles.getByName(args.profile)
+  if (profileResult.isErr()) {
+    reportDbError(profileResult.error, json)
+    return
+  }
+  await action({ json, profileId: profileResult.value.id, namespace: args.namespace, repos })
+}
+
+/**
+ * Open the DB, resolve a profile by name (used with `--name` args, e.g. show, delete),
+ * and call `action` with the resolved context.
+ */
+async function withNamedProfile(
+  args: { name: string; json?: boolean | null },
+  action: (ctx: ProfileCtx) => Promise<void>,
+): Promise<void> {
+  const json = args.json ?? false
+  const repos = await openDb(json)
+  if (!repos) return
+
+  const profileResult = await repos.profiles.getByName(args.name)
+  if (profileResult.isErr()) {
+    reportDbError(profileResult.error, json)
+    return
+  }
+  await action({ json, profile: profileResult.value, repos })
+}
+
+/**
+ * Write a source-operation success message in the appropriate format.
+ * Extracted from add/remove/toggle to eliminate the repeated json/human branching.
+ */
+function reportSourceOk(
+  json: boolean,
+  jsonPayload: Record<string, unknown>,
+  humanMsg: string,
+): void {
+  if (json) {
+    process.stdout.write(`${JSON.stringify({ ok: true, ...jsonPayload })}\n`)
+  } else {
+    consola.success(humanMsg)
+  }
+}
 
 // ---------------------------------------------------------------------------
 // profile remove-source
@@ -293,7 +337,8 @@ const showCommand = defineCommand({
 const removeSourceCommand = defineCommand({
   meta: {
     name: "remove-source",
-    description: "Remove an MCP source from a profile.",
+    description:
+      "Remove an MCP source from a profile (takes effect the next time the profile is served).",
   },
   args: {
     profile: {
@@ -309,30 +354,18 @@ const removeSourceCommand = defineCommand({
     json: JSON_ARG,
   },
   async run({ args }) {
-    const json = args.json ?? false
-    const repos = await openDb(json)
-    if (!repos) return
-
-    const profileResult = await repos.profiles.getByName(args.profile)
-    if (profileResult.isErr()) {
-      reportDbError(profileResult.error, json)
-      return
-    }
-    const profile = profileResult.value
-
-    const result = await repos.profiles.removeSource(profile.id, args.namespace)
-    if (result.isErr()) {
-      reportDbError(result.error, json)
-      return
-    }
-
-    if (json) {
-      process.stdout.write(
-        `${JSON.stringify({ ok: true, profileName: args.profile, namespace: args.namespace })}\n`,
+    await withResolvedProfile(args, async ({ json, profileId, namespace, repos }) => {
+      const result = await repos.profiles.removeSource(profileId, namespace)
+      if (result.isErr()) {
+        reportDbError(result.error, json)
+        return
+      }
+      reportSourceOk(
+        json,
+        { profileName: args.profile, namespace },
+        `Source "${namespace}" removed from profile "${args.profile}" (takes effect the next time the profile is served)`,
       )
-    } else {
-      consola.success(`Source "${args.namespace}" removed from profile "${args.profile}"`)
-    }
+    })
   },
 })
 
@@ -341,11 +374,11 @@ const removeSourceCommand = defineCommand({
 // ---------------------------------------------------------------------------
 
 function makeToggleCommand(enabled: boolean) {
-  const action = enabled ? "enable" : "disable"
+  const verb = enabled ? "enable" : "disable"
   return defineCommand({
     meta: {
-      name: `${action}-source`,
-      description: `${enabled ? "Enable" : "Disable"} an MCP source in a profile (toggle enabled flag).`,
+      name: `${verb}-source`,
+      description: `${enabled ? "Enable" : "Disable"} an MCP source in a profile (takes effect the next time the profile is served).`,
     },
     args: {
       profile: {
@@ -361,32 +394,18 @@ function makeToggleCommand(enabled: boolean) {
       json: JSON_ARG,
     },
     async run({ args }) {
-      const json = args.json ?? false
-      const repos = await openDb(json)
-      if (!repos) return
-
-      const profileResult = await repos.profiles.getByName(args.profile)
-      if (profileResult.isErr()) {
-        reportDbError(profileResult.error, json)
-        return
-      }
-      const profile = profileResult.value
-
-      const result = await repos.profiles.setSourceEnabled(profile.id, args.namespace, enabled)
-      if (result.isErr()) {
-        reportDbError(result.error, json)
-        return
-      }
-
-      if (json) {
-        process.stdout.write(
-          `${JSON.stringify({ ok: true, profileName: args.profile, namespace: args.namespace, enabled })}\n`,
+      await withResolvedProfile(args, async ({ json, profileId, namespace, repos }) => {
+        const result = await repos.profiles.setSourceEnabled(profileId, namespace, enabled)
+        if (result.isErr()) {
+          reportDbError(result.error, json)
+          return
+        }
+        reportSourceOk(
+          json,
+          { profileName: args.profile, namespace, enabled },
+          `Source "${namespace}" in profile "${args.profile}" ${enabled ? "enabled" : "disabled"} (takes effect the next time the profile is served)`,
         )
-      } else {
-        consola.success(
-          `Source "${args.namespace}" in profile "${args.profile}" ${enabled ? "enabled" : "disabled"}`,
-        )
-      }
+      })
     },
   })
 }
@@ -406,35 +425,25 @@ const deleteCommand = defineCommand({
   args: {
     name: {
       type: "string",
-      description: "Profile name",
+      description: "Name of the profile to delete",
       required: true,
     },
     json: JSON_ARG,
   },
   async run({ args }) {
-    const json = args.json ?? false
-    const repos = await openDb(json)
-    if (!repos) return
+    await withNamedProfile(args, async ({ json, profile, repos }) => {
+      const result = await repos.profiles.delete(profile.id)
+      if (result.isErr()) {
+        reportDbError(result.error, json)
+        return
+      }
 
-    // Look up by name so we can pass the id to delete
-    const profileResult = await repos.profiles.getByName(args.name)
-    if (profileResult.isErr()) {
-      reportDbError(profileResult.error, json)
-      return
-    }
-    const profile = profileResult.value
-
-    const result = await repos.profiles.delete(profile.id)
-    if (result.isErr()) {
-      reportDbError(result.error, json)
-      return
-    }
-
-    if (json) {
-      process.stdout.write(`${JSON.stringify({ ok: true, name: args.name })}\n`)
-    } else {
-      consola.success(`Profile "${args.name}" deleted (sources cascaded)`)
-    }
+      if (json) {
+        process.stdout.write(`${JSON.stringify({ ok: true, name: args.name })}\n`)
+      } else {
+        consola.success(`Profile "${args.name}" deleted (sources cascaded)`)
+      }
+    })
   },
 })
 

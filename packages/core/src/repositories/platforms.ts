@@ -99,7 +99,12 @@ export function createPlatformsRepo(db: Db) {
 
     delete(id: string): ResultAsync<void, DbError> {
       try {
-        db.delete(platforms).where(eq(platforms.id, id)).run()
+        const result = db.delete(platforms).where(eq(platforms.id, id)).run()
+        // changes === 0 means no row matched — surface as typed not-found rather
+        // than silently returning Ok. FK RESTRICT violations throw (caught below).
+        if (result.changes === 0) {
+          return errAsync({ kind: "not-found" as const, entity: "platform", id })
+        }
         return okAsync(undefined)
       } catch (cause) {
         return errAsync(mapDbError(cause))
