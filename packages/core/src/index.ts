@@ -13,7 +13,12 @@ export {
 } from "./config/index.js"
 export type { ConfigError, PathsError, UpstreamError } from "./errors/index.js"
 export { getLogger, type Logger, setLogger } from "./logging/index.js"
-export { ensureHome, getPaths, type JunctionPaths } from "./paths/index.js"
+export {
+  ensureHome,
+  getPaths,
+  type JunctionPaths,
+  openapiSpecCacheFile,
+} from "./paths/index.js"
 export { err, ok, type Result, ResultAsync } from "./result/index.js"
 export const VERSION = "0.0.0"
 
@@ -54,11 +59,17 @@ export { CredentialKind, CredentialSchema, OAuthMetaSchema } from "./schema/cred
 export type { McpConnection } from "./schema/mcp-connection.js"
 // McpConnection — generic MCP transport descriptor (http | stdio)
 export { McpConnectionSchema } from "./schema/mcp-connection.js"
-export type { OpenApiAuth, OpenApiConnection, SpecSource } from "./schema/openapi-connection.js"
+export type {
+  OpenApiAuth,
+  OpenApiConnection,
+  OpenApiSelect,
+  SpecSource,
+} from "./schema/openapi-connection.js"
 // OpenApiConnection — generic OpenAPI/REST source descriptor
 export {
   OpenApiAuthSchema,
   OpenApiConnectionSchema,
+  OpenApiSelectSchema,
   SpecSourceSchema,
 } from "./schema/openapi-connection.js"
 export type { Platform } from "./schema/platform.js"

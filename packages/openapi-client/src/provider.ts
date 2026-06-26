@@ -32,7 +32,9 @@ export function createOpenApiProvider(
 
   return {
     listTools() {
-      return parsedSpec.andThen(({ schema }) => extractTools(schema, cap))
+      // Pass the stored selection so serve/debug expose exactly the persisted slice —
+      // not the full cached spec. This is the runtime enforcement of the add-time filter.
+      return parsedSpec.andThen(({ schema }) => extractTools(schema, cap, connection.select))
     },
 
     callTool(rawName: string, args: Record<string, unknown>) {

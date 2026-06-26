@@ -6,6 +6,24 @@
 import { z } from "zod"
 
 // ---------------------------------------------------------------------------
+// OpenApiSelectSchema — optional operation filter (tag/path slice)
+// ---------------------------------------------------------------------------
+
+/**
+ * Operation selection — filters the spec to a subset of operations.
+ * Absent (or with both arrays empty) ⇒ all operations exposed (today's default behaviour).
+ * Tags and paths are union semantics: an operation matches if it satisfies ANY criterion.
+ */
+export const OpenApiSelectSchema = z.object({
+  /** Include only operations whose tags list includes any of these tag names. */
+  tags: z.array(z.string().min(1)).optional(),
+  /** Include only operations whose path starts with one of these prefixes (path-boundary match). */
+  paths: z.array(z.string().min(1)).optional(),
+})
+
+export type OpenApiSelect = z.infer<typeof OpenApiSelectSchema>
+
+// ---------------------------------------------------------------------------
 // SpecSource — where the OpenAPI document lives
 // ---------------------------------------------------------------------------
 
@@ -83,6 +101,12 @@ export const OpenApiConnectionSchema = z.object({
   defaultHeaders: z.record(z.string(), z.string()).optional(),
   /** Maximum number of operations to expose as tools. Default: 75. */
   maxTools: z.number().int().positive().optional(),
+  /**
+   * Optional filter to a slice of the spec's operations.
+   * Absent ⇒ all operations (existing behaviour).
+   * Selection is persisted and re-applied at runtime so serve/debug expose exactly this slice.
+   */
+  select: OpenApiSelectSchema.optional(),
 })
 
 export type OpenApiConnection = z.infer<typeof OpenApiConnectionSchema>

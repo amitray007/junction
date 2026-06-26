@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Tests for spec parsing + tool extraction.
+// Tests for spec parsing + tool extraction (including selection filtering).
 // Uses an inline spec (no network) per docs/rules/testing.md.
 
 import { describe, expect, it } from "vitest"
 import { parseSpec } from "../parse.js"
-import { extractTools } from "../tools.js"
+import { extractTools, operationMatchesSelection } from "../tools.js"
 
 // ---------------------------------------------------------------------------
 // Minimal 3-operation spec (inline)
@@ -174,5 +174,234 @@ describe("extractTools", () => {
     const names = result.value.map((t) => t.name)
     expect(names).toContain("doThing")
     expect(names).toContain("doThing_2")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Spec used for selection tests — 6 operations across 3 tags + 1 untagged
+// ---------------------------------------------------------------------------
+
+// pet×3 (/pet GET+POST, /pet/{petId} GET), store×1, user×1, untagged×1
+const TAGGED_SPEC = {
+  openapi: "3.0.3",
+  info: { title: "Tagged API", version: "1.0.0" },
+  paths: {
+    "/pet": {
+      get: {
+        operationId: "listPets",
+        tags: ["pet"],
+        summary: "List pets",
+        responses: { "200": { description: "ok" } },
+      },
+      post: {
+        operationId: "createPet",
+        tags: ["pet"],
+        summary: "Create pet",
+        responses: { "201": { description: "created" } },
+      },
+    },
+    "/pet/{petId}": {
+      get: {
+        operationId: "getPet",
+        tags: ["pet"],
+        summary: "Get pet",
+        responses: { "200": { description: "ok" } },
+      },
+    },
+    "/store/inventory": {
+      get: {
+        operationId: "getInventory",
+        tags: ["store"],
+        summary: "Get inventory",
+        responses: { "200": { description: "ok" } },
+      },
+    },
+    "/user": {
+      post: {
+        operationId: "createUser",
+        tags: ["user"],
+        summary: "Create user",
+        responses: { "201": { description: "created" } },
+      },
+    },
+    "/noop": {
+      get: {
+        operationId: "noopGet",
+        // no tags — untagged operation
+        summary: "Untagged op",
+        responses: { "200": { description: "ok" } },
+      },
+    },
+  },
+} as Record<string, unknown>
+
+// ---------------------------------------------------------------------------
+// operationMatchesSelection — edge cases
+// ---------------------------------------------------------------------------
+
+describe("operationMatchesSelection", () => {
+  it("absent select (both arrays undefined) → true for any operation", () => {
+    expect(operationMatchesSelection("/pet", { operationId: "x", tags: ["pet"] }, {})).toBe(true)
+  })
+
+  it("empty arrays → true for any operation", () => {
+    expect(
+      operationMatchesSelection(
+        "/pet",
+        { operationId: "x", tags: ["pet"] },
+        { tags: [], paths: [] },
+      ),
+    ).toBe(true)
+  })
+
+  it("tag match: operation tag in select.tags → true", () => {
+    expect(operationMatchesSelection("/pet", { tags: ["pet", "v2"] }, { tags: ["pet"] })).toBe(true)
+  })
+
+  it("tag match: no intersection → false", () => {
+    expect(
+      operationMatchesSelection("/store/inventory", { tags: ["store"] }, { tags: ["pet"] }),
+    ).toBe(false)
+  })
+
+  it("tag match: untagged op with tags filter → false", () => {
+    expect(operationMatchesSelection("/noop", { operationId: "noopGet" }, { tags: ["pet"] })).toBe(
+      false,
+    )
+  })
+
+  it("path match: exact prefix → true", () => {
+    expect(operationMatchesSelection("/pet", { operationId: "x" }, { paths: ["/pet"] })).toBe(true)
+  })
+
+  it("path match: nested path → true", () => {
+    expect(
+      operationMatchesSelection("/pet/{petId}", { operationId: "x" }, { paths: ["/pet"] }),
+    ).toBe(true)
+  })
+
+  it("path /pet does NOT match /pets — path-boundary prefix", () => {
+    // '/pets'.startsWith('/pet') is true, but '/pets'[4] === 's' ≠ '/', so no match
+    expect(operationMatchesSelection("/pets", { operationId: "x" }, { paths: ["/pet"] })).toBe(
+      false,
+    )
+  })
+
+  it("tag + path union: matches if EITHER criterion hits", () => {
+    // tags=["store"], path=["/user"] — /store/inventory matches by tag, /user by path
+    expect(
+      operationMatchesSelection(
+        "/store/inventory",
+        { tags: ["store"] },
+        { tags: ["store"], paths: ["/user"] },
+      ),
+    ).toBe(true)
+    expect(
+      operationMatchesSelection("/user", { tags: ["user"] }, { tags: ["store"], paths: ["/user"] }),
+    ).toBe(true)
+    // /pet/123 has pet tag — doesn't match store tag or /user path prefix
+    expect(
+      operationMatchesSelection(
+        "/pet/123",
+        { tags: ["pet"] },
+        { tags: ["store"], paths: ["/user"] },
+      ),
+    ).toBe(false)
+  })
+
+  it("multiple tags filter — matches any listed tag", () => {
+    expect(operationMatchesSelection("/pet", { tags: ["pet"] }, { tags: ["pet", "store"] })).toBe(
+      true,
+    )
+    expect(
+      operationMatchesSelection(
+        "/store/inventory",
+        { tags: ["store"] },
+        { tags: ["pet", "store"] },
+      ),
+    ).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// extractTools — selection parameter
+// ---------------------------------------------------------------------------
+
+describe("extractTools — selection", () => {
+  it("no select → all operations included (6)", () => {
+    const result = extractTools(TAGGED_SPEC)
+    expect(result.isOk()).toBe(true)
+    if (!result.isOk()) return
+    expect(result.value.length).toBe(6)
+  })
+
+  it("empty select (both absent) → all operations", () => {
+    const result = extractTools(TAGGED_SPEC, 75, {})
+    expect(result.isOk()).toBe(true)
+    if (!result.isOk()) return
+    expect(result.value.length).toBe(6)
+  })
+
+  it("tag-only filter → only pet operations (3)", () => {
+    const result = extractTools(TAGGED_SPEC, 75, { tags: ["pet"] })
+    expect(result.isOk()).toBe(true)
+    if (!result.isOk()) return
+    const names = result.value.map((t) => t.name)
+    expect(names).toEqual(expect.arrayContaining(["listPets", "createPet", "getPet"]))
+    expect(names).not.toContain("getInventory")
+    expect(names).not.toContain("createUser")
+    expect(names).not.toContain("noopGet")
+    expect(result.value.length).toBe(3)
+  })
+
+  it("path-prefix filter → /pet and /pet/{petId} only (3)", () => {
+    const result = extractTools(TAGGED_SPEC, 75, { paths: ["/pet"] })
+    expect(result.isOk()).toBe(true)
+    if (!result.isOk()) return
+    const names = result.value.map((t) => t.name)
+    expect(names).toEqual(expect.arrayContaining(["listPets", "createPet", "getPet"]))
+    expect(names).not.toContain("getInventory")
+    expect(result.value.length).toBe(3)
+  })
+
+  it("tag + path union → store + user (2)", () => {
+    const result = extractTools(TAGGED_SPEC, 75, { tags: ["store"], paths: ["/user"] })
+    expect(result.isOk()).toBe(true)
+    if (!result.isOk()) return
+    const names = result.value.map((t) => t.name)
+    expect(names).toContain("getInventory")
+    expect(names).toContain("createUser")
+    expect(names).not.toContain("listPets")
+    expect(result.value.length).toBe(2)
+  })
+
+  it("selected count (3 pet) under cap=4 passes while full count (6) is over cap=4", () => {
+    const result = extractTools(TAGGED_SPEC, 4, { tags: ["pet"] })
+    expect(result.isOk()).toBe(true)
+    if (!result.isOk()) return
+    expect(result.value.length).toBe(3)
+  })
+
+  it("full count (6) over cap=4 without selection → too-many-tools", () => {
+    const result = extractTools(TAGGED_SPEC, 4)
+    expect(result.isErr()).toBe(true)
+    if (!result.isErr()) return
+    expect(result.error.kind).toBe("too-many-tools")
+    if (result.error.kind !== "too-many-tools") return
+    expect(result.error.count).toBe(6)
+    expect(result.error.cap).toBe(4)
+  })
+
+  it("untagged op excluded when tag filter is active", () => {
+    const result = extractTools(TAGGED_SPEC, 75, { tags: ["pet"] })
+    if (!result.isOk()) return
+    expect(result.value.map((t) => t.name)).not.toContain("noopGet")
+  })
+
+  it("non-matching tag/path excluded", () => {
+    const result = extractTools(TAGGED_SPEC, 75, { tags: ["unknown-tag"] })
+    expect(result.isOk()).toBe(true)
+    if (!result.isOk()) return
+    expect(result.value.length).toBe(0)
   })
 })

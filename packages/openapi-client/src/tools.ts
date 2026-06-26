@@ -2,7 +2,7 @@
 // tools.ts — derive ProviderTool[] from a dereferenced OpenAPI schema.
 // SOURCE-AGNOSTIC: no vendor-specific logic.
 
-import type { ProviderTool, UpstreamError } from "@junction/core"
+import type { OpenApiSelect, ProviderTool, UpstreamError } from "@junction/core"
 import { err, ok, type Result } from "neverthrow"
 import { deriveNameFromMethodPath, sanitizeOperationId } from "./naming.js"
 
@@ -160,6 +160,51 @@ function buildInputSchema(op: OpenApiOperation): object {
 }
 
 // ---------------------------------------------------------------------------
+// operationMatchesSelection — internal filter helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns true when the operation at `path` should be included given `select`.
+ *
+ * Rules (all union — match ANY criterion):
+ * - select absent or both arrays empty → include ALL (unchanged behaviour).
+ * - tags: operation.tags intersects select.tags (membership).
+ * - paths: path starts with a prefix from select.paths at a path boundary
+ *   (exact match, or next char is `/`), so `/pet` matches `/pet` and `/pet/{petId}`
+ *   but NOT `/pets`.
+ */
+export function operationMatchesSelection(
+  path: string,
+  operation: OpenApiOperation,
+  select: OpenApiSelect,
+): boolean {
+  const hasTags = (select.tags?.length ?? 0) > 0
+  const hasPaths = (select.paths?.length ?? 0) > 0
+
+  // No active filters → include ALL
+  if (!hasTags && !hasPaths) return true
+
+  // Tag match: operation.tags ∩ select.tags is non-empty
+  if (hasTags) {
+    const opTags = Array.isArray(operation.tags)
+      ? (operation.tags as unknown[]).filter((t): t is string => typeof t === "string")
+      : []
+    if (opTags.some((t) => select.tags?.includes(t) === true)) return true
+  }
+
+  // Path match: path starts with any prefix at a path boundary
+  if (hasPaths) {
+    for (const prefix of select.paths ?? []) {
+      if (!path.startsWith(prefix)) continue
+      // Accept exact match, or the next char after the prefix must be "/"
+      if (path.length === prefix.length || path[prefix.length] === "/") return true
+    }
+  }
+
+  return false
+}
+
+// ---------------------------------------------------------------------------
 // extractTools
 // ---------------------------------------------------------------------------
 
@@ -167,10 +212,15 @@ function buildInputSchema(op: OpenApiOperation): object {
  * Extract ProviderTool[] from a dereferenced OpenAPI schema.
  * Returns raw (un-namespaced) tool names.
  * Returns too-many-tools if the operation count exceeds cap.
+ *
+ * When `select` is provided (and has at least one tag or path), only matching
+ * operations are included. The cap is checked against the *selected* count, so
+ * a spec over the cap can still be added as a sub-cap slice.
  */
 export function extractTools(
   schema: Record<string, unknown>,
   cap = DEFAULT_MAX_TOOLS,
+  select?: OpenApiSelect,
 ): Result<ProviderTool[], UpstreamError> {
   const paths = schema.paths
   if (paths === null || typeof paths !== "object") {
@@ -191,6 +241,9 @@ export function extractTools(
       if (typeof op !== "object") continue
 
       const operation = op as OpenApiOperation
+
+      // Apply selection filter when provided
+      if (select && !operationMatchesSelection(path, operation, select)) continue
 
       // Derive tool name
       let name: string

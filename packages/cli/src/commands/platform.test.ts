@@ -7,7 +7,7 @@
 
 import { execFile } from "node:child_process"
 import { existsSync } from "node:fs"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { createServer } from "node:http"
 import type { AddressInfo } from "node:net"
 import { tmpdir } from "node:os"
@@ -85,17 +85,104 @@ function makeVariableServersSpec() {
   }
 }
 
+/**
+ * Multi-tag spec: 5 ops across pet(3), store(1), user(1).
+ * Total > maxTools=3 → refused without --tag; pet slice (3) fits.
+ */
+function makeTaggedSpec(port: number) {
+  return {
+    openapi: "3.0.0",
+    info: { title: "Tagged API", version: "1.0.0" },
+    servers: [{ url: `http://127.0.0.1:${port}` }],
+    paths: {
+      "/pet": {
+        get: {
+          operationId: "listPets",
+          tags: ["pet"],
+          summary: "List pets",
+          responses: { "200": { description: "ok" } },
+        },
+        post: {
+          operationId: "createPet",
+          tags: ["pet"],
+          summary: "Create pet",
+          responses: { "201": { description: "created" } },
+        },
+      },
+      "/pet/{petId}": {
+        get: {
+          operationId: "getPet",
+          tags: ["pet"],
+          summary: "Get pet",
+          parameters: [{ name: "petId", in: "path", required: true, schema: { type: "string" } }],
+          responses: { "200": { description: "ok" } },
+        },
+      },
+      "/store/inventory": {
+        get: {
+          operationId: "getInventory",
+          tags: ["store"],
+          summary: "Get inventory",
+          responses: { "200": { description: "ok" } },
+        },
+      },
+      "/user": {
+        post: {
+          operationId: "createUser",
+          tags: ["user"],
+          summary: "Create user",
+          responses: { "201": { description: "created" } },
+        },
+      },
+    },
+  }
+}
+
+/** Single-op spec — used in refresh no-clobber test (maxTools=1 → 3-op refresh is over cap). */
+function makeThreeOpsSpec(port: number) {
+  return {
+    openapi: "3.0.0",
+    info: { title: "Three Ops API", version: "1.0.0" },
+    servers: [{ url: `http://127.0.0.1:${port}` }],
+    paths: {
+      "/a": {
+        get: { operationId: "opA", summary: "Op A", responses: { "200": { description: "ok" } } },
+      },
+      "/b": {
+        get: { operationId: "opB", summary: "Op B", responses: { "200": { description: "ok" } } },
+      },
+      "/c": {
+        get: { operationId: "opC", summary: "Op C", responses: { "200": { description: "ok" } } },
+      },
+    },
+  }
+}
+
+// Dynamic overrides allow tests to swap what a URL returns between add and refresh.
+const dynamicSpecs = new Map<string, object>()
+
 const specServer = createServer((req, res) => {
   const url = new URL(req.url ?? "/", `http://localhost:${specPort}`)
-  const specs: Record<string, object> = {
-    "/relative.json": makeRelativeServersSpec(),
-    "/noservers.json": makeNoServersSpec(),
-    "/variables.json": makeVariableServersSpec(),
-  }
-  const spec = specs[url.pathname]
-  if (spec) {
+
+  // Dynamic overrides take precedence (used by refresh tests)
+  const dynamic = dynamicSpecs.get(url.pathname)
+  if (dynamic !== undefined) {
     res.writeHead(200, { "Content-Type": "application/json" })
-    res.end(JSON.stringify(spec))
+    res.end(JSON.stringify(dynamic))
+    return
+  }
+
+  const specs: Record<string, () => object> = {
+    "/relative.json": makeRelativeServersSpec,
+    "/noservers.json": makeNoServersSpec,
+    "/variables.json": makeVariableServersSpec,
+    "/tagged.json": () => makeTaggedSpec(specPort),
+    "/three-ops.json": () => makeThreeOpsSpec(specPort),
+  }
+  const factory = specs[url.pathname]
+  if (factory) {
+    res.writeHead(200, { "Content-Type": "application/json" })
+    res.end(JSON.stringify(factory()))
     return
   }
   res.writeHead(404)
@@ -136,8 +223,8 @@ async function captureStdout(fn: () => Promise<void>): Promise<string> {
 }
 
 /** Minimal citty run context — matches what citty passes to run(). */
-function ctx<T extends Record<string, unknown>>(argValues: T) {
-  return { args: argValues, cmd: {} as never, rawArgs: [] as string[] }
+function ctx<T extends Record<string, unknown>>(argValues: T, rawArgs: string[] = []) {
+  return { args: argValues, cmd: {} as never, rawArgs }
 }
 
 /** Access a subcommand's run function from platformCommand. */
@@ -645,5 +732,345 @@ describe.skipIf(!builtBinReady)("platform commands (built bin, child process)", 
       expect(parsed.ok).toBe(false)
       expect(parsed.error).toContain("in use")
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// platform add — --tag / --path selection (unit, direct command invocation)
+// ---------------------------------------------------------------------------
+
+describe("platform add — openapi selection (unit)", () => {
+  let home: string
+  let prevHome: string | undefined
+  let prevStore: string | undefined
+  let prevExitCode: number | undefined
+
+  beforeEach(async () => {
+    prevHome = process.env.JUNCTION_HOME
+    prevStore = process.env.JUNCTION_STORE
+    prevExitCode = process.exitCode
+    home = await mkdtemp(join(tmpdir(), "junction-selection-test-"))
+    process.env.JUNCTION_HOME = home
+    process.env.JUNCTION_STORE = "file"
+    process.exitCode = 0
+  })
+
+  afterEach(async () => {
+    if (prevHome === undefined) delete process.env.JUNCTION_HOME
+    else process.env.JUNCTION_HOME = prevHome
+    if (prevStore === undefined) delete process.env.JUNCTION_STORE
+    else process.env.JUNCTION_STORE = prevStore
+    process.exitCode = prevExitCode
+    await rm(home, { recursive: true, force: true })
+  })
+
+  it(">cap spec without --tag → refused with tag breakdown + --tag/--path guidance", async () => {
+    const add = getPlatformSubCmd("add")
+    const specUrl = `http://127.0.0.1:${specPort}/tagged.json`
+
+    // tagged.json has 5 ops; maxTools=3 → refused without selection
+    const out = await captureStdout(
+      () =>
+        add.run?.(
+          ctx(
+            {
+              id: "big-plat",
+              kind: "openapi",
+              "display-name": "Big",
+              "spec-url": specUrl,
+              "base-url": undefined,
+              "auth-scheme": undefined,
+              "auth-in": undefined,
+              "auth-name": undefined,
+              "auth-username": undefined,
+              "max-tools": "3",
+              json: true,
+            },
+            [],
+          ),
+        ) ?? Promise.resolve(),
+    )
+
+    expect(process.exitCode).toBe(1)
+    const parsed = JSON.parse(out.trim()) as { ok: boolean; error?: string }
+    expect(parsed.ok).toBe(false)
+    // message should name tags + guide to --tag/--path
+    expect(parsed.error).toMatch(/exceeding the cap/)
+    expect(parsed.error).toMatch(/--tag/)
+    expect(parsed.error).toMatch(/--path/)
+    expect(parsed.error).toMatch(/pet/)
+  })
+
+  it("--tag pet → adds only the 3 pet ops; select persisted in the descriptor", async () => {
+    const add = getPlatformSubCmd("add")
+    const specUrl = `http://127.0.0.1:${specPort}/tagged.json`
+
+    const out = await captureStdout(
+      () =>
+        add.run?.(
+          ctx(
+            {
+              id: "pet-plat",
+              kind: "openapi",
+              "display-name": "Pet",
+              "spec-url": specUrl,
+              "base-url": undefined,
+              "auth-scheme": undefined,
+              "auth-in": undefined,
+              "auth-name": undefined,
+              "auth-username": undefined,
+              "max-tools": "3",
+              json: true,
+            },
+            ["--tag", "pet"],
+          ),
+        ) ?? Promise.resolve(),
+    )
+
+    expect(process.exitCode).toBe(0)
+    const parsed = JSON.parse(out.trim()) as {
+      ok: boolean
+      platform?: { openapi?: { select?: { tags?: string[] } } }
+      toolCount?: number
+    }
+    expect(parsed.ok).toBe(true)
+    expect(parsed.toolCount).toBe(3)
+    // Selection must be persisted in the descriptor
+    expect(parsed.platform?.openapi?.select?.tags).toEqual(["pet"])
+
+    // Verify DB state directly
+    const dbResult = await getDatabase(getPaths())
+    expect(dbResult.isOk()).toBe(true)
+    if (dbResult.isErr()) return
+    const repos = createRepositories(dbResult.value)
+    const list = await repos.platforms.list()
+    expect(list.isOk()).toBe(true)
+    if (!list.isOk()) return
+    const plat = list.value.find((p) => p.id === "pet-plat")
+    expect(plat?.openapi?.select?.tags).toEqual(["pet"])
+  })
+
+  it("--path /pet → adds only ops under /pet prefix", async () => {
+    const add = getPlatformSubCmd("add")
+    const specUrl = `http://127.0.0.1:${specPort}/tagged.json`
+
+    const out = await captureStdout(
+      () =>
+        add.run?.(
+          ctx(
+            {
+              id: "path-plat",
+              kind: "openapi",
+              "display-name": "Path",
+              "spec-url": specUrl,
+              "base-url": undefined,
+              "auth-scheme": undefined,
+              "auth-in": undefined,
+              "auth-name": undefined,
+              "auth-username": undefined,
+              "max-tools": "3",
+              json: true,
+            },
+            ["--path", "/pet"],
+          ),
+        ) ?? Promise.resolve(),
+    )
+
+    expect(process.exitCode).toBe(0)
+    const parsed = JSON.parse(out.trim()) as {
+      ok: boolean
+      platform?: { openapi?: { select?: { paths?: string[] } } }
+      toolCount?: number
+    }
+    expect(parsed.ok).toBe(true)
+    expect(parsed.toolCount).toBe(3)
+    expect(parsed.platform?.openapi?.select?.paths).toEqual(["/pet"])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// platform refresh (unit, direct command invocation)
+// ---------------------------------------------------------------------------
+
+describe("platform refresh (unit)", () => {
+  let home: string
+  let prevHome: string | undefined
+  let prevStore: string | undefined
+  let prevExitCode: number | undefined
+
+  beforeEach(async () => {
+    prevHome = process.env.JUNCTION_HOME
+    prevStore = process.env.JUNCTION_STORE
+    prevExitCode = process.exitCode
+    home = await mkdtemp(join(tmpdir(), "junction-refresh-test-"))
+    process.env.JUNCTION_HOME = home
+    process.env.JUNCTION_STORE = "file"
+    process.exitCode = 0
+    dynamicSpecs.clear()
+  })
+
+  afterEach(async () => {
+    if (prevHome === undefined) delete process.env.JUNCTION_HOME
+    else process.env.JUNCTION_HOME = prevHome
+    if (prevStore === undefined) delete process.env.JUNCTION_STORE
+    else process.env.JUNCTION_STORE = prevStore
+    process.exitCode = prevExitCode
+    dynamicSpecs.clear()
+    await rm(home, { recursive: true, force: true })
+  })
+
+  it("non-openapi platform → error (kind mismatch)", async () => {
+    const refresh = getPlatformSubCmd("refresh")
+    const dbResult = await getDatabase(getPaths())
+    expect(dbResult.isOk()).toBe(true)
+    if (dbResult.isErr()) return
+    const repos = createRepositories(dbResult.value)
+
+    // Insert an MCP platform directly
+    await repos.platforms.upsert({
+      id: "mcp-plat" as Parameters<typeof repos.platforms.upsert>[0]["id"],
+      kind: "mcp",
+      displayName: "MCP Platform",
+      connection: {
+        transport: "http",
+        url: "https://api.example.com/mcp/",
+        auth: { scheme: "bearer", header: "Authorization" },
+      },
+    })
+
+    const out = await captureStdout(
+      () => refresh.run?.(ctx({ id: "mcp-plat", json: true })) ?? Promise.resolve(),
+    )
+    expect(process.exitCode).toBe(1)
+    const parsed = JSON.parse(out.trim()) as { ok: boolean; error?: string }
+    expect(parsed.ok).toBe(false)
+    expect(parsed.error).toMatch(/openapi/)
+  })
+
+  it("from:inline spec → error (cannot refresh inline)", async () => {
+    const refresh = getPlatformSubCmd("refresh")
+    const dbResult = await getDatabase(getPaths())
+    expect(dbResult.isOk()).toBe(true)
+    if (dbResult.isErr()) return
+    const repos = createRepositories(dbResult.value)
+
+    // Insert an openapi platform with inline spec
+    await repos.platforms.upsert({
+      id: "inline-plat" as Parameters<typeof repos.platforms.upsert>[0]["id"],
+      kind: "openapi",
+      displayName: "Inline Platform",
+      openapi: {
+        spec: {
+          from: "inline",
+          document: { openapi: "3.0.0", info: { title: "t", version: "1" }, paths: {} },
+        },
+        baseUrl: "https://api.example.com",
+      },
+    })
+
+    const out = await captureStdout(
+      () => refresh.run?.(ctx({ id: "inline-plat", json: true })) ?? Promise.resolve(),
+    )
+    expect(process.exitCode).toBe(1)
+    const parsed = JSON.parse(out.trim()) as { ok: boolean; error?: string }
+    expect(parsed.ok).toBe(false)
+    expect(parsed.error).toMatch(/URL/)
+  })
+
+  it("from:url platform → re-fetches and reports tool count", async () => {
+    // Set up: add a platform from three-ops.json
+    const add = getPlatformSubCmd("add")
+    const specUrl = `http://127.0.0.1:${specPort}/three-ops.json`
+
+    const addOut = await captureStdout(
+      () =>
+        add.run?.(
+          ctx({
+            id: "refresh-plat",
+            kind: "openapi",
+            "display-name": "Refresh Test",
+            "spec-url": specUrl,
+            "base-url": undefined,
+            "auth-scheme": undefined,
+            "auth-in": undefined,
+            "auth-name": undefined,
+            "auth-username": undefined,
+            "max-tools": undefined,
+            json: true,
+          }),
+        ) ?? Promise.resolve(),
+    )
+    expect(process.exitCode).toBe(0)
+    const addParsed = JSON.parse(addOut.trim()) as { ok: boolean }
+    expect(addParsed.ok).toBe(true)
+
+    // Now refresh
+    const refresh = getPlatformSubCmd("refresh")
+    const out = await captureStdout(
+      () => refresh.run?.(ctx({ id: "refresh-plat", json: true })) ?? Promise.resolve(),
+    )
+
+    expect(process.exitCode).toBe(0)
+    const parsed = JSON.parse(out.trim()) as {
+      ok: boolean
+      newCount?: number
+      oldCount?: number | null
+    }
+    expect(parsed.ok).toBe(true)
+    expect(parsed.newCount).toBe(3)
+    // Old count is read from the cache (3 ops), so delta should be 3 → 3
+    expect(parsed.oldCount).toBe(3)
+  })
+
+  it("refreshed spec over cap → refuses, leaves DB descriptor and cache file unchanged", async () => {
+    // Setup: directly insert a platform with maxTools=2 pointing to a URL that will
+    // return 3 ops when refreshed (3 > 2 → over cap → no-clobber)
+    const dbResult = await getDatabase(getPaths())
+    expect(dbResult.isOk()).toBe(true)
+    if (dbResult.isErr()) return
+    const repos = createRepositories(dbResult.value)
+
+    const specUrl = `http://127.0.0.1:${specPort}/three-ops.json`
+    const platformId = "clobber-test" as Parameters<typeof repos.platforms.upsert>[0]["id"]
+
+    await repos.platforms.upsert({
+      id: platformId,
+      kind: "openapi",
+      displayName: "Clobber Test",
+      openapi: {
+        spec: { from: "url", url: specUrl },
+        baseUrl: `http://127.0.0.1:${specPort}`,
+        maxTools: 2, // 3 ops > cap=2 → refresh must refuse
+      },
+    })
+
+    // Write a sentinel cache file so we can verify it's NOT overwritten
+    const cacheDir = join(home, "openapi")
+    const cacheFile = join(cacheDir, `${platformId}.json`)
+    const sentinelContent = '{"sentinel":"original"}'
+    await mkdir(cacheDir, { recursive: true })
+    await writeFile(cacheFile, sentinelContent, "utf8")
+
+    // Run refresh — must refuse because 3 ops > maxTools=2
+    const refresh = getPlatformSubCmd("refresh")
+    const out = await captureStdout(
+      () => refresh.run?.(ctx({ id: platformId, json: true })) ?? Promise.resolve(),
+    )
+
+    expect(process.exitCode).toBe(1)
+    const parsed = JSON.parse(out.trim()) as { ok: boolean; error?: string }
+    expect(parsed.ok).toBe(false)
+    expect(parsed.error).toMatch(/exceeding the cap/)
+    expect(parsed.error).toMatch(/unchanged/)
+
+    // Cache file must be the original sentinel — NOT overwritten
+    const cacheAfter = await readFile(cacheFile, "utf8")
+    expect(cacheAfter).toBe(sentinelContent)
+
+    // DB descriptor must be unchanged (maxTools still 2)
+    const platAfter = await repos.platforms.get(platformId)
+    expect(platAfter.isOk()).toBe(true)
+    if (!platAfter.isOk()) return
+    expect(platAfter.value.openapi?.maxTools).toBe(2)
   })
 })

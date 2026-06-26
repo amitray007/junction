@@ -34,6 +34,15 @@ export function getPaths(): JunctionPaths {
   }
 }
 
+/**
+ * Path to a cached, dereferenced OpenAPI spec for a platform.
+ * Single source of truth for the `<home>/openapi/<id>.json` location — used by
+ * `platform add`/`refresh` (write) and the provider builder (read).
+ */
+export function openapiSpecCacheFile(paths: JunctionPaths, platformId: string): string {
+  return path.join(paths.home, "openapi", `${platformId}.json`)
+}
+
 export function ensureHome(): ResultAsync<JunctionPaths, PathsError> {
   const home = resolveHome()
   return ResultAsync.fromPromise(
