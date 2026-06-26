@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 // http.ts — execute a single OpenAPI operation as an HTTP request.
 // SECURITY-CRITICAL: credential injected ONLY into the HTTP request.
 // No secret in tool results, errors, logs, or URLs surfaced anywhere.
@@ -74,6 +74,12 @@ function resolveBaseUrl(
 
   // Only allow http / https
   if (!/^https?:\/\//i.test(url)) return null
+  // Validate parseable (catches malformed hosts that pass the regex)
+  try {
+    new URL(url)
+  } catch {
+    return null
+  }
   return url.replace(/\/$/, "")
 }
 
@@ -185,8 +191,11 @@ export function callOperation(
   secret: string | null,
   operationName: string,
   args: Record<string, unknown>,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
 ): ResultAsync<ToolResult, UpstreamError> {
-  return new ResultAsync(callOperationAsync(schema, connection, secret, operationName, args))
+  return new ResultAsync(
+    callOperationAsync(schema, connection, secret, operationName, args, timeoutMs),
+  )
 }
 
 async function callOperationAsync(
@@ -195,6 +204,7 @@ async function callOperationAsync(
   secret: string | null,
   operationName: string,
   args: Record<string, unknown>,
+  timeoutMs: number,
 ) {
   // Find the operation in the schema
   const found = findOperation(schema, operationName)
@@ -306,9 +316,22 @@ async function callOperationAsync(
   // NOTE: we do NOT log or return this URL — it may contain an apiKey-in-query secret
   const fullUrl = `${baseUrl}${resolvedPath}${queryString ? `?${queryString}` : ""}`
 
-  // Execute with timeout and byte cap
+  // Pre-flight URL validation — catch malformed URLs BEFORE fetch, so a TypeError carrying
+  // the full URL (which may include an apiKey-in-query secret) never becomes an error cause.
+  try {
+    new URL(fullUrl)
+  } catch {
+    return err<ToolResult, UpstreamError>({
+      kind: "call-failed",
+      cause: "invalid request URL",
+    })
+  }
+
+  // Execute with timeout and byte cap.
+  // Timer stays armed through the FULL body read — not just until headers arrive —
+  // to guard against a slowloris that sends headers instantly then dribbles the body.
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS)
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
 
   try {
     const res = await fetch(fullUrl, {
@@ -319,7 +342,7 @@ async function callOperationAsync(
       redirect: "manual",
     })
 
-    clearTimeout(timer)
+    // Do NOT clearTimeout here — keep timer armed through the body read.
 
     // Stream response with byte cap
     const reader = res.body?.getReader()
@@ -360,7 +383,6 @@ async function callOperationAsync(
       isError: res.status >= 400,
     })
   } catch (cause) {
-    clearTimeout(timer)
     // Check if aborted (timeout)
     if (
       cause !== null &&
@@ -368,8 +390,15 @@ async function callOperationAsync(
       "name" in cause &&
       (cause as { name: unknown }).name === "AbortError"
     ) {
-      return err<ToolResult, UpstreamError>({ kind: "timed-out", ms: DEFAULT_TIMEOUT_MS })
+      return err<ToolResult, UpstreamError>({ kind: "timed-out", ms: timeoutMs })
     }
-    return err<ToolResult, UpstreamError>({ kind: "call-failed", cause })
+    // SECURITY: do NOT use cause.message — a fetch TypeError may embed the full URL
+    // which can contain an apiKey-in-query secret.
+    return err<ToolResult, UpstreamError>({
+      kind: "call-failed",
+      cause: cause instanceof Error ? cause.constructor.name : "unknown",
+    })
+  } finally {
+    clearTimeout(timer)
   }
 }

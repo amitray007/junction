@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 // naming.ts — shared operation-name helpers for tools.ts and http.ts.
 
 /** Sanitize an operationId to ^[a-zA-Z0-9_-]{1,64}$. */

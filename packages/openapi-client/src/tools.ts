@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 // tools.ts — derive ProviderTool[] from a dereferenced OpenAPI schema.
 // SOURCE-AGNOSTIC: no vendor-specific logic.
 

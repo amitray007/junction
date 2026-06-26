@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 // HTTP executor tests — local node:http server (NO network in CI).
 // Covers: request assembly, credential injection, path-injection guard,
 // byte-cap, timeout, and 200/4xx status mapping.
@@ -10,7 +10,7 @@
 import { createServer } from "node:http"
 import type { AddressInfo } from "node:net"
 import type { OpenApiConnection } from "@junction/core"
-import { afterAll, beforeAll, describe, expect, it } from "vitest"
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest"
 import { callOperation } from "../http.js"
 import { parseSpec } from "../parse.js"
 
@@ -99,6 +99,20 @@ const testServer = createServer((req, res) => {
   // GET /slow — never responds (timeout test)
   if (path === "/slow" && req.method === "GET") {
     // Don't respond — let the timeout fire
+    return
+  }
+
+  // GET /slowloris — sends headers + a few bytes, then stalls body delivery (slowloris)
+  if (path === "/slowloris" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "application/json", "Transfer-Encoding": "chunked" })
+    res.write('{"par') // partial JSON — then stall; never call res.end()
+    return
+  }
+
+  // GET /large-spec — returns > 10 MB body (for spec byte-cap test)
+  if (path === "/large-spec" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "application/json" })
+    res.end(Buffer.alloc(11 * 1_048_576, 120)) // 11 MB of 'x' bytes (0x78)
     return
   }
 
@@ -404,4 +418,145 @@ describe("timeout", () => {
       expect(e.name).toBe("AbortError")
     }
   }, 5000)
+})
+
+// ---------------------------------------------------------------------------
+// Slowloris guard (body-stream timeout)
+// ---------------------------------------------------------------------------
+
+describe("slowloris body-stall guard", () => {
+  it("returns timed-out when server stalls the body after sending headers", async () => {
+    const extraPaths = {
+      "/slowloris": {
+        get: {
+          operationId: "getSlowloris",
+          responses: { "200": { description: "ok" } },
+        },
+      },
+    }
+    const schema = await getSchema(extraPaths)
+    const startMs = Date.now()
+    // Pass a 200 ms timeout — timer must stay armed through the body read
+    const result = await callOperation(
+      schema,
+      makeConnection(),
+      null,
+      "getSlowloris",
+      {},
+      200, // timeoutMs override
+    )
+    const elapsedMs = Date.now() - startMs
+
+    expect(result.isErr()).toBe(true)
+    if (!result.isErr()) return
+    expect(result.error.kind).toBe("timed-out")
+    if (result.error.kind !== "timed-out") return
+    expect(result.error.ms).toBe(200)
+    // Must resolve within a generous bound, not hang indefinitely
+    expect(elapsedMs).toBeLessThan(3000)
+  }, 8000)
+})
+
+// ---------------------------------------------------------------------------
+// Error-path secret guard
+// ---------------------------------------------------------------------------
+
+describe("error-path secret guard", () => {
+  it("apiKey-in-query: secret absent from call-failed error (malformed base URL)", async () => {
+    // "http://bad host" passes /^https?:\/\// but fails new URL() → triggers our
+    // pre-fetch validation, returning call-failed WITHOUT the URL (and thus no secret) in cause.
+    const schema = await getSchema()
+    const conn = makeConnection({
+      baseUrl: "http://bad host:99999",
+      auth: { scheme: "apiKey", in: "query", name: "api_key" },
+    })
+    const result = await callOperation(schema, conn, SENTINEL_SECRET, "echoPost", { body: {} })
+    expect(result.isErr()).toBe(true)
+    if (!result.isErr()) return
+    expect(JSON.stringify(result.error)).not.toContain(SENTINEL_SECRET)
+    expect(String(result.error.cause ?? "")).not.toContain(SENTINEL_SECRET)
+  })
+
+  it("basic-auth: encoded credential absent from call-failed error (malformed base URL)", async () => {
+    const schema = await getSchema()
+    const conn = makeConnection({
+      baseUrl: "http://bad host:99999",
+      auth: { scheme: "basic", username: "testuser" },
+    })
+    const result = await callOperation(schema, conn, SENTINEL_SECRET, "echoPost", { body: {} })
+    expect(result.isErr()).toBe(true)
+    if (!result.isErr()) return
+    const encodedBasic = Buffer.from(`testuser:${SENTINEL_SECRET}`).toString("base64")
+    expect(JSON.stringify(result.error)).not.toContain(SENTINEL_SECRET)
+    expect(JSON.stringify(result.error)).not.toContain(encodedBasic)
+    expect(String(result.error.cause ?? "")).not.toContain(encodedBasic)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Oversized spec byte cap
+// ---------------------------------------------------------------------------
+
+describe("spec fetch byte cap", () => {
+  it("returns spec-fetch-failed for a spec body exceeding 10 MB", async () => {
+    // The test server's /large-spec endpoint returns 11 MB of 'x' bytes
+    const result = await parseSpec({
+      from: "url",
+      url: `http://127.0.0.1:${serverPort}/large-spec`,
+    })
+    expect(result.isErr()).toBe(true)
+    if (!result.isErr()) return
+    expect(result.error.kind).toBe("spec-fetch-failed")
+    if (result.error.kind !== "spec-fetch-failed") return
+    expect(String(result.error.cause ?? "")).toContain("cap")
+  }, 10_000)
+})
+
+// ---------------------------------------------------------------------------
+// Remote-$ref not fetched (pins @scalar no-fetch behavior)
+// ---------------------------------------------------------------------------
+
+describe("remote-$ref isolation", () => {
+  it("does NOT fetch remote $ref URLs during parse", async () => {
+    const specWithRemoteRef = {
+      openapi: "3.0.3",
+      info: { title: "Test", version: "1.0.0" },
+      paths: {
+        "/test": {
+          get: {
+            operationId: "getTest",
+            responses: {
+              "200": {
+                description: "ok",
+                content: {
+                  "application/json": {
+                    schema: { $ref: "https://attacker.example/schema.json" },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    }
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
+    fetchSpy.mockClear()
+
+    const result = await parseSpec({ from: "inline", document: specWithRemoteRef })
+
+    const remoteRefCalls = fetchSpy.mock.calls.filter(([url]) =>
+      String(url).includes("attacker.example"),
+    )
+    fetchSpy.mockRestore()
+
+    // The dereferencer must NOT have fetched the remote $ref URL — the only network
+    // calls permitted are to the spec URL itself (inline here, so none at all).
+    expect(remoteRefCalls.length).toBe(0)
+    // Whether parse succeeds or fails (scalar may error on unresolvable $ref) is
+    // secondary — the invariant is that no outbound HTTP to attacker.example occurred.
+    if (result.isErr()) {
+      expect(result.error.kind).not.toBe("spec-fetch-failed")
+    }
+  })
 })

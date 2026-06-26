@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 // @junction/openapi-client public API — narrow barrel.
 // SOURCE-AGNOSTIC: generic OpenAPI/REST connector. No vendor code.
 

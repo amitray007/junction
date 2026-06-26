@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 // Tests: migration 0003 applies on 0000-0002 and openapi descriptor round-trips.
 
 import { mkdtemp, rm } from "node:fs/promises"

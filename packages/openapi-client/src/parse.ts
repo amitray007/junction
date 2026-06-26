@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 // parse.ts — fetch/read/inline an OpenAPI spec, validate, dereference.
 // Returns the resolved schema document or a typed UpstreamError.
 // SOURCE-AGNOSTIC: no vendor-specific code.
@@ -19,6 +19,7 @@ export interface ParsedSpec {
 }
 
 const SPEC_FETCH_TIMEOUT_MS = 30_000
+const SPEC_BYTE_CAP = 10 * 1_048_576 // 10 MB — specs are large but not gigabytes
 
 // ---------------------------------------------------------------------------
 // parseSpec
@@ -59,7 +60,32 @@ async function parseSpecAsync(
           cause: `HTTP ${res.status} fetching spec`,
         })
       }
-      raw = (await res.json()) as Record<string, unknown>
+      // Stream with byte cap — res.json() would read an unbounded body into memory
+      const reader = res.body?.getReader()
+      if (!reader) {
+        return err<ParsedSpec, UpstreamError>({
+          kind: "spec-fetch-failed",
+          cause: "no response body",
+        })
+      }
+      const specChunks: Uint8Array[] = []
+      let specBytes = 0
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        if (value) {
+          specBytes += value.byteLength
+          if (specBytes > SPEC_BYTE_CAP) {
+            reader.cancel().catch(() => {})
+            return err<ParsedSpec, UpstreamError>({
+              kind: "spec-fetch-failed",
+              cause: `spec exceeds ${SPEC_BYTE_CAP} byte cap`,
+            })
+          }
+          specChunks.push(value)
+        }
+      }
+      raw = JSON.parse(Buffer.concat(specChunks).toString("utf8")) as Record<string, unknown>
     } catch (cause) {
       return err<ParsedSpec, UpstreamError>({ kind: "spec-fetch-failed", cause })
     } finally {

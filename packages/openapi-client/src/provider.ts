@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 // provider.ts — createOpenApiProvider: wraps parse + tools + http as a ToolProvider.
 // SOURCE-AGNOSTIC: no vendor-specific code.
 
@@ -26,14 +26,17 @@ export function createOpenApiProvider(
   secret: string | null,
 ): ToolProvider {
   const cap = connection.maxTools ?? 75
+  // Parse once — both listTools and callTool chain on the same promise so the spec
+  // is validated and dereferenced only once per provider lifetime.
+  const parsedSpec = parseSpec(connection.spec)
 
   return {
     listTools() {
-      return parseSpec(connection.spec).andThen(({ schema }) => extractTools(schema, cap))
+      return parsedSpec.andThen(({ schema }) => extractTools(schema, cap))
     },
 
     callTool(rawName: string, args: Record<string, unknown>) {
-      return parseSpec(connection.spec).andThen(({ schema }) =>
+      return parsedSpec.andThen(({ schema }) =>
         callOperation(schema, connection, secret, rawName, args),
       )
     },
