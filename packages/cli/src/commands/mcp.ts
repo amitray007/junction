@@ -194,34 +194,53 @@ const serveCommand = defineCommand({
           } satisfies UpstreamError)
         }
 
-        // ── Resolve credential (common to all kinds) ────────────────────────
-        const credResult = await repos.credentials.get(sourceRef.credentialId)
-        if (credResult.isErr()) {
-          process.stderr.write(
-            `junction mcp serve: source "${sourceRef.toolNamespace}": credential "${sourceRef.credentialId}" not found — skipping\n`,
-          )
-          return err({
-            kind: "connect-failed" as const,
-            cause: credResult.error,
-          } satisfies UpstreamError)
-        }
-        const credential = credResult.value
-
-        // Resolve the plaintext secret from the store.
-        // If store is null (store unavailable), secret is null (no auth).
+        // ── Resolve credential (skip entirely when no credentialId — public source) ──────
         let secret: string | null = null
-        if (store !== null) {
-          const secretResult = await store.get(credential.secretRef)
-          if (secretResult.isErr()) {
+        if (sourceRef.credentialId === undefined) {
+          // No credential attached — public/no-auth source. secret stays null.
+          // Warn on stderr if the platform declares auth (informative, not blocking).
+          const authDeclared =
+            (platform.kind === "mcp" &&
+              platform.connection !== undefined &&
+              (platform.connection.transport === "http"
+                ? platform.connection.auth !== undefined
+                : platform.connection.tokenEnvVar !== undefined)) ||
+            (platform.kind === "openapi" &&
+              platform.openapi !== undefined &&
+              platform.openapi.auth !== undefined)
+          if (authDeclared) {
             process.stderr.write(
-              `junction mcp serve: source "${sourceRef.toolNamespace}": credential store read failed — skipping\n`,
+              `junction mcp serve: source "${sourceRef.toolNamespace}": platform "${sourceRef.platformId}" declares auth but no credential is attached — calls may be unauthorized\n`,
+            )
+          }
+        } else {
+          const credResult = await repos.credentials.get(sourceRef.credentialId)
+          if (credResult.isErr()) {
+            process.stderr.write(
+              `junction mcp serve: source "${sourceRef.toolNamespace}": credential "${sourceRef.credentialId}" not found — skipping\n`,
             )
             return err({
               kind: "connect-failed" as const,
-              cause: secretResult.error,
+              cause: credResult.error,
             } satisfies UpstreamError)
           }
-          secret = secretResult.value
+          const credential = credResult.value
+
+          // Resolve the plaintext secret from the store.
+          // If store is null (store unavailable), secret is null (no auth).
+          if (store !== null) {
+            const secretResult = await store.get(credential.secretRef)
+            if (secretResult.isErr()) {
+              process.stderr.write(
+                `junction mcp serve: source "${sourceRef.toolNamespace}": credential store read failed — skipping\n`,
+              )
+              return err({
+                kind: "connect-failed" as const,
+                cause: secretResult.error,
+              } satisfies UpstreamError)
+            }
+            secret = secretResult.value
+          }
         }
 
         // ── MCP provider ────────────────────────────────────────────────────

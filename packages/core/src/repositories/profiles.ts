@@ -91,7 +91,8 @@ function reconstructProfile(
     mcpEndpointPath: profileRow.mcpEndpointPath,
     sources: sourceRefRows.map((sr) => ({
       platformId: sr.platformId,
-      credentialId: sr.credentialId,
+      // NULL DB value → undefined in schema (optional credentialId — public source)
+      credentialId: sr.credentialId ?? undefined,
       toolNamespace: sr.toolNamespace,
       enabled: sr.enabled,
       // Validate JSON on read — boundary validation per docs/rules/data.md
@@ -136,7 +137,8 @@ export function createProfilesRepo(db: Db) {
                 id: newSourceRefId(),
                 profileId: validated.id,
                 platformId: sr.platformId,
-                credentialId: sr.credentialId,
+                // undefined → NULL in Drizzle; absent when no-auth source
+                credentialId: sr.credentialId ?? null,
                 toolNamespace: sr.toolNamespace,
                 enabled: sr.enabled,
                 toolFilter: sr.toolFilter ? JSON.stringify(sr.toolFilter) : null,
@@ -177,13 +179,15 @@ export function createProfilesRepo(db: Db) {
               _namespace: validatedSr.toolNamespace,
             })
           }
-          // FK constraints (profileId, platformId, credentialId) enforced by SQLite
+          // FK constraints (profileId, platformId) enforced by SQLite;
+          // credentialId FK only applies when present — NULL is FK-exempt
           tx.insert(sourceRefs)
             .values({
               id: newSourceRefId(),
               profileId,
               platformId: validatedSr.platformId,
-              credentialId: validatedSr.credentialId,
+              // undefined → NULL in Drizzle; absent when no-auth source
+              credentialId: validatedSr.credentialId ?? null,
               toolNamespace: validatedSr.toolNamespace,
               enabled: validatedSr.enabled,
               toolFilter: validatedSr.toolFilter ? JSON.stringify(validatedSr.toolFilter) : null,

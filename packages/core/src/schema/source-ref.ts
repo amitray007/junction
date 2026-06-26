@@ -33,8 +33,8 @@ export type ToolFilter = z.infer<typeof ToolFilterSchema>
 export const SourceRefSchema = z.object({
   /** FK → Platform */
   platformId: PlatformIdSchema,
-  /** FK → Credential */
-  credentialId: CredentialIdSchema,
+  /** FK → Credential — optional; absent means no-auth (public source) */
+  credentialId: CredentialIdSchema.optional(),
   /**
    * Collision-free tool namespace for this source within the profile.
    * Convention: lowercase alphanumeric + underscores (^[a-z0-9_]+$).

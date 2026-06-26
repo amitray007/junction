@@ -299,3 +299,39 @@ JUNCTION_HOME=/tmp/jt13 junction status
 **TUI dashboard (increment 13):**
 The Profiles panel now shows per-source rows beneath each profile, with ✓/✗ enabled/disabled glyphs.
 `sourceCount` removed from `DashboardProfile`; replaced with `sources: DashboardSource[]`.
+
+## Optional credentials — public/no-auth sources (increment 16)
+
+`--credential` is now optional in `add-source` and `mcp-probe`. Omit it to create a
+public/no-auth source that connects with `secret = null`.
+
+```bash
+# Add a public (no-auth) OpenAPI source — no --credential needed:
+JUNCTION_HOME=/tmp/jt16 junction profile add-source \
+  --profile p --platform pub --namespace pub --json
+# → {"ok":true,"profileName":"p","namespace":"pub"}
+
+# profile show: account column shows "(none)" for credential-less sources:
+JUNCTION_HOME=/tmp/jt16 junction profile show --name p --json
+# → {...,"sources":[{"namespace":"pub","platform":"pub","credentialAccount":"(none)","enabled":true}]}
+
+# Probe a public platform without a credential:
+JUNCTION_HOME=/tmp/jt16 junction debug mcp-probe --platform pub
+# → prints namespaced tools; secret = null (no auth header injected)
+
+# With --credential still works unchanged (credentialed sources are byte-identical):
+JUNCTION_HOME=/tmp/jt16 junction debug mcp-probe --platform github --credential <id>
+```
+
+**Auth-declared-but-no-credential warning (informative, not blocking):**
+When `--credential` is omitted but the platform declares auth (MCP `connection.auth` or
+OpenAPI `openapi.auth`), a warning is written to **stderr only** (stdout is the MCP channel):
+```
+junction mcp serve: source "pub": platform "github" declares auth but no credential is attached — calls may be unauthorized
+```
+
+**Security invariants:**
+- `secret = null` → `injectAuth` short-circuits; no auth header sent (already verified in openapi-client tests).
+- No `store.get` call is made when `credentialId` is absent — the credential store is untouched.
+- RESTRICT FK on `credential_id` still blocks deleting a credential referenced by a credentialed source.
+- NULL `credential_id` in DB is FK-exempt — it does NOT reference any credential row.

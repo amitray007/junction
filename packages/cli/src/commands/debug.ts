@@ -119,8 +119,7 @@ const mcpProbeCommand = defineCommand({
     },
     credential: {
       type: "string",
-      description: "Credential ID",
-      required: true,
+      description: "Credential ID (optional — omit for public/no-auth platforms)",
     },
     json: JSON_ARG,
   },
@@ -147,34 +146,39 @@ const mcpProbeCommand = defineCommand({
       return
     }
 
-    // ── 3. Load credential ────────────────────────────────────────────────
-    const credResult = await repos.credentials.get(args.credential)
-    if (credResult.isErr()) {
-      reportDbError(credResult.error, json)
-      return
+    // ── 3. Resolve credential + secret (skipped for public/no-auth platforms) ──
+    let secret: string | null = null
+    let probeAccount = "public"
+
+    if (args.credential !== undefined && args.credential !== "") {
+      const credResult = await repos.credentials.get(args.credential)
+      if (credResult.isErr()) {
+        reportDbError(credResult.error, json)
+        return
+      }
+      const credential = credResult.value
+
+      const paths = getPaths()
+      const storeResult = await createCredentialStore(paths)
+      if (storeResult.isErr()) {
+        reportCredentialError(storeResult.error, json)
+        return
+      }
+      const store = storeResult.value
+
+      const secretResult = await store.get(credential.secretRef)
+      if (secretResult.isErr()) {
+        reportCredentialError(secretResult.error, json)
+        return
+      }
+      secret = secretResult.value // string | null — SECRET handled below
+      probeAccount = credential.profileName
     }
-    const credential = credResult.value
 
-    // ── 4. Resolve secret ─────────────────────────────────────────────────
-    const paths = getPaths()
-    const storeResult = await createCredentialStore(paths)
-    if (storeResult.isErr()) {
-      reportCredentialError(storeResult.error, json)
-      return
-    }
-    const store = storeResult.value
+    // ── 4. Derive namespace ───────────────────────────────────────────────
+    const toolNamespace = deriveProbeNamespace(String(platform.id), probeAccount)
 
-    const secretResult = await store.get(credential.secretRef)
-    if (secretResult.isErr()) {
-      reportCredentialError(secretResult.error, json)
-      return
-    }
-    const secret = secretResult.value // string | null — SECRET handled below
-
-    // ── 5. Derive namespace ───────────────────────────────────────────────
-    const toolNamespace = deriveProbeNamespace(String(platform.id), credential.profileName)
-
-    // ── 6. Connect + list tools ───────────────────────────────────────────
+    // ── 5. Connect + list tools ───────────────────────────────────────────
     // connectSource injects `secret` only into the transport. We NEVER log or
     // output the secret — below this point it is referenced only by connectSource.
     // (increment 14: connectSource no longer takes toolNamespace — returns raw names)
