@@ -348,4 +348,152 @@ describe.skipIf(!builtBinReady)("credential commands (built bin, child process)"
       expect(JSON.stringify(cred)).not.toContain("my-secret-token")
     })
   })
+
+  // ---------------------------------------------------------------------------
+  // credential remove — success + in-use RESTRICT guard
+  // ---------------------------------------------------------------------------
+  it("credential remove --id removes the credential and exits 0", async () => {
+    await withTempHome(async (home) => {
+      const env = { ...process.env, JUNCTION_HOME: home, JUNCTION_STORE: "file" }
+
+      await execFileAsync(
+        "node",
+        [
+          distIndex,
+          "platform",
+          "add",
+          "--id",
+          "rm-plat",
+          "--display-name",
+          "Remove Plat",
+          "--transport",
+          "http",
+          "--url",
+          "https://api.example.com/mcp/",
+          "--json",
+        ],
+        { env },
+      )
+
+      const addResult = await new Promise<{ stdout: string }>((resolve) => {
+        const child = execFile(
+          "node",
+          [
+            distIndex,
+            "credential",
+            "add",
+            "--platform",
+            "rm-plat",
+            "--account",
+            "work",
+            "--kind",
+            "bearer",
+            "--token-stdin",
+            "--json",
+          ],
+          { env },
+          (_err, stdout) => resolve({ stdout }),
+        )
+        child.stdin?.write("remove-test-token")
+        child.stdin?.end()
+      })
+
+      const credId = (JSON.parse(addResult.stdout.trim()) as { credential: { id: string } })
+        .credential.id
+
+      const rmResult = await runCmd(["credential", "remove", "--id", credId, "--json"], env)
+      expect(rmResult.exitCode).toBe(0)
+      const parsed = JSON.parse(rmResult.stdout.trim()) as { ok: boolean; id?: string }
+      expect(parsed.ok).toBe(true)
+      expect(parsed.id).toBe(credId)
+
+      // verify it's gone from list
+      const listAfter = await runCmd(["credential", "list", "--platform", "rm-plat", "--json"], env)
+      const remaining = JSON.parse(listAfter.stdout.trim()) as unknown[]
+      expect(remaining).toHaveLength(0)
+    })
+  })
+
+  it("credential remove --id while source references it → in-use error, exit 1, secret NOT deleted", async () => {
+    await withTempHome(async (home) => {
+      const env = { ...process.env, JUNCTION_HOME: home, JUNCTION_STORE: "file" }
+
+      // Setup: platform + credential + profile + source
+      await execFileAsync(
+        "node",
+        [
+          distIndex,
+          "platform",
+          "add",
+          "--id",
+          "inuse-plat",
+          "--display-name",
+          "InUse",
+          "--transport",
+          "http",
+          "--url",
+          "https://api.example.com/mcp/",
+          "--json",
+        ],
+        { env },
+      )
+      const addResult = await new Promise<{ stdout: string }>((resolve) => {
+        const child = execFile(
+          "node",
+          [
+            distIndex,
+            "credential",
+            "add",
+            "--platform",
+            "inuse-plat",
+            "--account",
+            "work",
+            "--kind",
+            "bearer",
+            "--token-stdin",
+            "--json",
+          ],
+          { env },
+          (_err, stdout) => resolve({ stdout }),
+        )
+        child.stdin?.write("inuse-test-token")
+        child.stdin?.end()
+      })
+      const credId = (JSON.parse(addResult.stdout.trim()) as { credential: { id: string } })
+        .credential.id
+
+      await execFileAsync(
+        "node",
+        [distIndex, "profile", "create", "--name", "inuse-prof", "--json"],
+        {
+          env,
+        },
+      )
+      await execFileAsync(
+        "node",
+        [
+          distIndex,
+          "profile",
+          "add-source",
+          "--profile",
+          "inuse-prof",
+          "--platform",
+          "inuse-plat",
+          "--credential",
+          credId,
+          "--namespace",
+          "srv",
+          "--json",
+        ],
+        { env },
+      )
+
+      // Now try to remove — should fail with in-use
+      const rmResult = await runCmd(["credential", "remove", "--id", credId, "--json"], env)
+      expect(rmResult.exitCode).toBe(1)
+      const parsed = JSON.parse(rmResult.stdout.trim()) as { ok: boolean; error?: string }
+      expect(parsed.ok).toBe(false)
+      expect(parsed.error).toContain("in use")
+    })
+  })
 })

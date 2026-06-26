@@ -6,9 +6,7 @@
 
 import {
   createCredentialStore,
-  createRepositories,
   deriveMcpEndpointPath,
-  getDatabase,
   getPaths,
   newProfileId,
   type Profile,
@@ -415,17 +413,8 @@ const deleteCommand = defineCommand({
   },
   async run({ args }) {
     const json = args.json ?? false
-    const paths = getPaths()
-
-    const dbResult = await getDatabase(paths)
-    if (dbResult.isErr()) {
-      const msg = `database error: ${String(dbResult.error)}`
-      if (json) process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
-      else consola.error(msg)
-      process.exitCode = 1
-      return
-    }
-    const repos = createRepositories(dbResult.value)
+    const repos = await openDb(json)
+    if (!repos) return
 
     // Look up by name so we can pass the id to delete
     const profileResult = await repos.profiles.getByName(args.name)

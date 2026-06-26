@@ -206,4 +206,112 @@ describe.skipIf(!builtBinReady)("platform commands (built bin, child process)", 
       expect(parsed).toEqual([])
     })
   })
+
+  // ---------------------------------------------------------------------------
+  // platform remove — success + in-use RESTRICT guard
+  // ---------------------------------------------------------------------------
+  it("platform remove --id removes the platform and exits 0", async () => {
+    await withTempHome(async (home) => {
+      const env = { ...process.env, JUNCTION_HOME: home, JUNCTION_STORE: "file" }
+
+      await execFileAsync(
+        "node",
+        [
+          distIndex,
+          "platform",
+          "add",
+          "--id",
+          "to-remove",
+          "--display-name",
+          "To Remove",
+          "--transport",
+          "http",
+          "--url",
+          "https://api.example.com/mcp/",
+          "--json",
+        ],
+        { env },
+      )
+
+      const { stdout } = await execFileAsync(
+        "node",
+        [distIndex, "platform", "remove", "--id", "to-remove", "--json"],
+        { env },
+      )
+      const parsed = JSON.parse(stdout.trim()) as { ok: boolean; id?: string }
+      expect(parsed.ok).toBe(true)
+      expect(parsed.id).toBe("to-remove")
+
+      // verify it's gone from list
+      const listAfter = await execFileAsync("node", [distIndex, "platform", "list", "--json"], {
+        env,
+      })
+      const remaining = JSON.parse(listAfter.stdout.trim()) as unknown[]
+      expect(remaining).toHaveLength(0)
+    })
+  })
+
+  it("platform remove --id while credential references it → in-use error, exit 1", async () => {
+    await withTempHome(async (home) => {
+      const env = { ...process.env, JUNCTION_HOME: home, JUNCTION_STORE: "file" }
+
+      await execFileAsync(
+        "node",
+        [
+          distIndex,
+          "platform",
+          "add",
+          "--id",
+          "inuse-plat",
+          "--display-name",
+          "InUse Plat",
+          "--transport",
+          "http",
+          "--url",
+          "https://api.example.com/mcp/",
+          "--json",
+        ],
+        { env },
+      )
+
+      await new Promise<void>((resolve) => {
+        const child = execFile(
+          "node",
+          [
+            distIndex,
+            "credential",
+            "add",
+            "--platform",
+            "inuse-plat",
+            "--account",
+            "work",
+            "--kind",
+            "bearer",
+            "--token-stdin",
+            "--json",
+          ],
+          { env },
+          () => resolve(),
+        )
+        child.stdin?.write("dummy-token")
+        child.stdin?.end()
+      })
+
+      // Try to remove the platform — should fail because credential references it
+      const result = await new Promise<{ stdout: string; exitCode: number }>((resolve) => {
+        execFile(
+          "node",
+          [distIndex, "platform", "remove", "--id", "inuse-plat", "--json"],
+          { env },
+          (err, stdout) => {
+            resolve({ stdout, exitCode: (err as { code?: number } | null)?.code ?? 0 })
+          },
+        )
+      })
+      expect(result.exitCode).toBe(1)
+      const parsed = JSON.parse(result.stdout.trim()) as { ok: boolean; error?: string }
+      expect(parsed.ok).toBe(false)
+      expect(parsed.error).toContain("in use")
+    })
+  })
 })
