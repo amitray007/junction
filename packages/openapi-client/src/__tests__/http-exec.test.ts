@@ -18,7 +18,8 @@ import { parseSpec } from "../parse.js"
 // Sentinel secret — must never appear in any output
 // ---------------------------------------------------------------------------
 
-const SENTINEL_SECRET = "s3cr3t-sentinel-abc123"
+// Fixed fake test sentinel, never a real credential.
+const SENTINEL_SECRET = "s3cr3t-sentinel-abc123" // gitleaks:allow
 
 // ---------------------------------------------------------------------------
 // Local test server
