@@ -48,6 +48,16 @@ function formatUpstreamError(e: UpstreamError): string {
       return `upstream timed out after ${e.ms}ms`
     case "unsupported-source-kind":
       return `platform kind "${e.platformKind}" is not yet supported`
+    case "spec-parse-failed":
+      return `openapi spec parse failed: ${String(e.cause)}`
+    case "spec-fetch-failed":
+      return `openapi spec fetch failed: ${String(e.cause)}`
+    case "invalid-args":
+      return `invalid tool arguments: ${e.reason}`
+    case "response-too-large":
+      return `upstream response exceeded ${e.limit} byte limit`
+    case "too-many-tools":
+      return `spec has too many operations (${e.count}); cap is ${e.cap}`
     default: {
       // Exhaustiveness guard: compile error if a new UpstreamError kind is added without
       // a corresponding case here (docs/rules/typescript.md — switch + never).

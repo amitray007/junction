@@ -1,0 +1,12 @@
+# gitleaks configuration — extends the default ruleset.
+# https://github.com/gitleaks/gitleaks
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Fake test sentinels — deliberately high-entropy constants used to prove a credential never reaches tool output. Never real secrets."
+regexes = [
+  # openapi-client credential-leak test sentinel (http-exec.test.ts).
+  '''s3cr3t-sentinel-abc123''',
+]

@@ -26,6 +26,8 @@
 //     other     → unsupported-source-kind error (skipped per-source gracefully)
 //   Future kinds (openapi/graphql) plug in here without touching the proxy.
 
+import { readFile } from "node:fs/promises"
+import { join } from "node:path"
 import {
   createCredentialStore,
   createProfileProxy,
@@ -91,8 +93,8 @@ const serveCommand = defineCommand({
     },
   },
   async run({ args }) {
-    // Lazy imports: mcp/server and mcp/client are only loaded when this command runs.
-    // This avoids paying the import cost for every other CLI command.
+    // Lazy imports: mcp/server, mcp/client, and openapi-client are only loaded when
+    // this command runs. This avoids paying the import cost for every other CLI command.
     const [{ serveStdio, safeUpstreamMessage }, { createMcpProvider }] = await Promise.all([
       import("@junction/mcp-server"),
       import("@junction/mcp-client"),
@@ -181,8 +183,8 @@ const serveCommand = defineCommand({
         }
         const platform = platformResult.value
 
-        // Dispatch by source kind — unsupported kinds are cleanly skipped.
-        if (platform.kind !== "mcp") {
+        // ── Dispatch by kind — unsupported kinds are cleanly skipped ──────
+        if (platform.kind !== "mcp" && platform.kind !== "openapi") {
           process.stderr.write(
             `junction mcp serve: source "${sourceRef.toolNamespace}": platform kind "${platform.kind}" not yet supported — skipping\n`,
           )
@@ -192,17 +194,7 @@ const serveCommand = defineCommand({
           } satisfies UpstreamError)
         }
 
-        if (platform.connection === undefined) {
-          process.stderr.write(
-            `junction mcp serve: source "${sourceRef.toolNamespace}": platform "${sourceRef.platformId}" has no connection descriptor — skipping\n`,
-          )
-          return err({
-            kind: "connect-failed" as const,
-            cause: "platform has no connection descriptor",
-          } satisfies UpstreamError)
-        }
-
-        // Resolve the credential's secretRef.
+        // ── Resolve credential (common to all kinds) ────────────────────────
         const credResult = await repos.credentials.get(sourceRef.credentialId)
         if (credResult.isErr()) {
           process.stderr.write(
@@ -232,17 +224,67 @@ const serveCommand = defineCommand({
           secret = secretResult.value
         }
 
-        // Build the MCP ToolProvider (connects to upstream eagerly here).
-        const providerResult = await createMcpProvider(platform.connection, secret)
-        if (providerResult.isErr()) {
-          process.stderr.write(
-            `junction mcp serve: source "${sourceRef.toolNamespace}": connection failed — skipping\n`,
-          )
-          return err(providerResult.error)
+        // ── MCP provider ────────────────────────────────────────────────────
+        if (platform.kind === "mcp") {
+          if (platform.connection === undefined) {
+            process.stderr.write(
+              `junction mcp serve: source "${sourceRef.toolNamespace}": platform "${sourceRef.platformId}" has no connection descriptor — skipping\n`,
+            )
+            return err({
+              kind: "connect-failed" as const,
+              cause: "platform has no connection descriptor",
+            } satisfies UpstreamError)
+          }
+
+          const providerResult = await createMcpProvider(platform.connection, secret)
+          if (providerResult.isErr()) {
+            process.stderr.write(
+              `junction mcp serve: source "${sourceRef.toolNamespace}": connection failed — skipping\n`,
+            )
+            return err(providerResult.error)
+          }
+
+          return ok({
+            provider: providerResult.value,
+            toolNamespace: sourceRef.toolNamespace,
+            toolFilter: sourceRef.toolFilter,
+          })
         }
 
+        // ── OpenAPI provider ────────────────────────────────────────────────
+        if (platform.openapi === undefined) {
+          process.stderr.write(
+            `junction mcp serve: source "${sourceRef.toolNamespace}": platform "${sourceRef.platformId}" has no openapi descriptor — skipping\n`,
+          )
+          return err({
+            kind: "connect-failed" as const,
+            cause: "platform has no openapi descriptor",
+          } satisfies UpstreamError)
+        }
+
+        // Load the cached dereferenced spec (written by `platform add`)
+        const cacheFile = join(paths.home, "openapi", `${platform.id}.json`)
+        let cachedSchema: Record<string, unknown>
+        try {
+          const text = await readFile(cacheFile, "utf8")
+          cachedSchema = JSON.parse(text) as Record<string, unknown>
+        } catch (cause) {
+          process.stderr.write(
+            `junction mcp serve: source "${sourceRef.toolNamespace}": cached spec not found at ${cacheFile} — skipping\n`,
+          )
+          return err({ kind: "connect-failed" as const, cause } satisfies UpstreamError)
+        }
+
+        // Use the cached schema inline so we never re-fetch the spec URL at serve-time
+        const { createOpenApiProvider } = await import("@junction/openapi-client")
+        const openapiConnection = {
+          ...platform.openapi,
+          spec: { from: "inline" as const, document: cachedSchema },
+        }
+        const openapiProvider = createOpenApiProvider(openapiConnection, secret)
+
         return ok({
-          provider: providerResult.value,
+          provider: openapiProvider,
           toolNamespace: sourceRef.toolNamespace,
           toolFilter: sourceRef.toolFilter,
         })

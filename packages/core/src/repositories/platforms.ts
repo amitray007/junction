@@ -9,6 +9,7 @@ import type { Db } from "../db/index.js"
 import { platforms } from "../db/schema.js"
 import type { DbError } from "../errors/index.js"
 import { McpConnectionSchema } from "../schema/mcp-connection.js"
+import { OpenApiConnectionSchema } from "../schema/openapi-connection.js"
 import type { Platform } from "../schema/platform.js"
 import { PlatformSchema } from "../schema/platform.js"
 
@@ -24,6 +25,9 @@ function rowToPlatform(row: typeof platforms.$inferSelect): Platform {
     // Validate JSON on read — boundary validation per docs/rules/data.md
     raw.connection = McpConnectionSchema.parse(JSON.parse(row.connection) as unknown)
   }
+  if (row.openapi) {
+    raw.openapi = OpenApiConnectionSchema.parse(JSON.parse(row.openapi) as unknown)
+  }
   return PlatformSchema.parse(raw)
 }
 
@@ -36,6 +40,7 @@ function toPlatformRow(p: Platform) {
     specUrl: p.specUrl ?? null,
     baseUrl: p.baseUrl ?? null,
     connection: p.connection ? JSON.stringify(p.connection) : null,
+    openapi: p.openapi ? JSON.stringify(p.openapi) : null,
   }
 }
 
@@ -69,6 +74,7 @@ export function createPlatformsRepo(db: Db) {
               specUrl: row.specUrl,
               baseUrl: row.baseUrl,
               connection: row.connection,
+              openapi: row.openapi,
             },
           })
           .run()

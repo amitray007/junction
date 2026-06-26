@@ -46,7 +46,7 @@ importers:
         version: 6.0.3
       vitest:
         specifier: ^4.1.9
-        version: 4.1.9(@types/node@22.20.0)(vite@7.3.5(@types/node@22.20.0)(tsx@4.22.4))
+        version: 4.1.9(@types/node@22.20.0)(vite@7.3.5(@types/node@22.20.0)(tsx@4.22.4)(yaml@2.9.0))
 
   packages/cli:
     dependencies:
@@ -62,6 +62,9 @@ importers:
       '@junction/mcp-server':
         specifier: workspace:*
         version: link:../mcp/server
+      '@junction/openapi-client':
+        specifier: workspace:*
+        version: link:../openapi-client
       citty:
         specifier: ^0.2.0
         version: 0.2.2
@@ -149,6 +152,22 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@4.4.3)
+    devDependencies:
+      '@types/node':
+        specifier: ^22.20.0
+        version: 22.20.0
+
+  packages/openapi-client:
+    dependencies:
+      '@junction/core':
+        specifier: workspace:*
+        version: link:../core
+      '@scalar/openapi-parser':
+        specifier: ^0.28.8
+        version: 0.28.8
+      neverthrow:
+        specifier: 'catalog:'
+        version: 8.2.0
     devDependencies:
       '@types/node':
         specifier: ^22.20.0
@@ -1354,6 +1373,26 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@scalar/helpers@0.9.0':
+    resolution: {integrity: sha512-M34CLRCttqC1bXthI/QSzQj0s5C6nrU2PFWf/vOT3RpycbiGDGQbqR+5RfFzpOIQvRqbHfNdcRbeiZBw+vCbkQ==}
+    engines: {node: '>=22'}
+
+  '@scalar/json-magic@0.12.17':
+    resolution: {integrity: sha512-Vw2nrUDIjhvMP6vxFtkiiFlabJ6SyTtfn1BsOxgnr1hIB+/rkngMguiDzl5em21VjyfFGIoADia+QWKM2hdcdA==}
+    engines: {node: '>=22'}
+
+  '@scalar/openapi-parser@0.28.8':
+    resolution: {integrity: sha512-BO98D3TLfKNL80UnE1sIAmI6DQRmOaH0AHnlAooTn1sQjNbRDaeHyRO53EEjo7HjFEdHeQtiRzoXmMB4jvt8AA==}
+    engines: {node: '>=22'}
+
+  '@scalar/openapi-types@0.9.1':
+    resolution: {integrity: sha512-gkGhSkxSzADaBiNg+ZAbJuwj+ZUmzP2Pg9CWZ7ZP+0fck2WjPeDDM7aAbouAm0aQQMF9xBjSPXSA9a/qTHYaTw==}
+    engines: {node: '>=22'}
+
+  '@scalar/openapi-upgrader@0.2.9':
+    resolution: {integrity: sha512-D5b0rGLLZgmkO9mdW2j/ND1KBlH1u3RCpr87HPxv9P9ZSr6PtM5iLqFOJq0ACiaHjY2mikCrxgDmnUEhTzRpHQ==}
+    engines: {node: '>=22'}
+
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
 
@@ -1451,6 +1490,14 @@ packages:
     resolution: {integrity: sha512-UVJyE9MttOsBQIDKw1skb9nAwQuR5wuGD3+82K6JgJlm/Y+KI92oNsMNGZCYdDsVtRHSak0pcV5Dno5+4jh9sw==}
     engines: {node: '>=0.4.0'}
     hasBin: true
+
+  ajv-draft-04@1.0.0:
+    resolution: {integrity: sha512-mv00Te6nmYbRp5DCwclxtt7yV/joXJPGS7nM+97GdxvuttCOfgI3K4U25zboyeX0O+myI8ERluxQe5wljMmVIw==}
+    peerDependencies:
+      ajv: ^8.5.0
+    peerDependenciesMeta:
+      ajv:
+        optional: true
 
   ajv-formats@3.0.1:
     resolution: {integrity: sha512-8iUql50EUR+uUcdRQ3HDqa6EVyo3docL8g5WJ3FNcWmu62IbkGUue/pEyLBW8VGKKucTPgqeks4fIU1DA4yowQ==}
@@ -2310,6 +2357,10 @@ packages:
   jsonfile@6.2.1:
     resolution: {integrity: sha512-zwOTdL3rFQ/lRdBnntKVOX6k5cKJwEc1HdilT71BWEu7J41gXIB2MRp+vxduPSwZJPWBxEzv4yH1wYLJGUHX4Q==}
 
+  jsonpointer@5.0.1:
+    resolution: {integrity: sha512-p/nXbhSEcu3pZRdkW1OfJhpsVtW1gd4Wa1fnQc9YLiTfAjn0312eMKimbdIQzuZl9aa9xUGaRlP9T/CJE/ditQ==}
+    engines: {node: '>=0.10.0'}
+
   jstransformer@1.0.0:
     resolution: {integrity: sha512-C9YK3Rf8q6VAPDCCU9fnqo3mAfOH6vUGnMcP4AQAYIEpWtfGLpwOTmZ+igtdK5y+VvI2n3CyYSzy4Qh34eq24A==}
 
@@ -2370,6 +2421,10 @@ packages:
   lefthook@2.1.9:
     resolution: {integrity: sha512-bwDaIOViTktE8kJLf9jP0p+H2/RDTlFFlc43Am2YgUsX22hI6Sq4RbzsrecwzY5y+MHTipOH7WsmWSEniePHWQ==}
     hasBin: true
+
+  leven@4.1.0:
+    resolution: {integrity: sha512-KZ9W9nWDT7rF7Dazg8xyLHGLrmpgq2nVNFUckhqdW3szVP6YhCpp/RAnpmVExA9JvrMynjwSLVrEj3AepHR6ew==}
+    engines: {node: ^12.20.0 || ^14.13.1 || >=16.0.0}
 
   locate-path@5.0.0:
     resolution: {integrity: sha512-t7hw9pI+WvuwNJXwk5zVHpyhIqzg2qTlklJOf0mVxGSbe3Fp2VieZcduNYjaLDoy6p9uGpQEGWG87WpMKlNq8g==}
@@ -3242,6 +3297,11 @@ packages:
         optional: true
       utf-8-validate:
         optional: true
+
+  yaml@2.9.0:
+    resolution: {integrity: sha512-2AvhNX3mb8zd6Zy7INTtSpl1F15HW6Wnqj0srWlkKLcpYl/gMIMJiyuGq2KeI2YFxUPjdlB+3Lc10seMLtL4cA==}
+    engines: {node: '>= 14.6'}
+    hasBin: true
 
   yoga-layout@3.2.1:
     resolution: {integrity: sha512-0LPOt3AxKqMdFBZA3HBAt/t/8vIKq7VaQYbuA8WxCgung+p9TVyKRYdpvCb80HcdTN2NkbIKbhNwKUfm3tQywQ==}
@@ -4133,6 +4193,33 @@ snapshots:
   '@rollup/rollup-win32-x64-msvc@4.62.2':
     optional: true
 
+  '@scalar/helpers@0.9.0': {}
+
+  '@scalar/json-magic@0.12.17':
+    dependencies:
+      '@scalar/helpers': 0.9.0
+      pathe: 2.0.3
+      yaml: 2.9.0
+
+  '@scalar/openapi-parser@0.28.8':
+    dependencies:
+      '@scalar/helpers': 0.9.0
+      '@scalar/json-magic': 0.12.17
+      '@scalar/openapi-types': 0.9.1
+      '@scalar/openapi-upgrader': 0.2.9
+      ajv: 8.20.0
+      ajv-draft-04: 1.0.0(ajv@8.20.0)
+      ajv-formats: 3.0.1(ajv@8.20.0)
+      jsonpointer: 5.0.1
+      leven: 4.1.0
+      yaml: 2.9.0
+
+  '@scalar/openapi-types@0.9.1': {}
+
+  '@scalar/openapi-upgrader@0.2.9':
+    dependencies:
+      '@scalar/openapi-types': 0.9.1
+
   '@standard-schema/spec@1.1.0': {}
 
   '@tybys/wasm-util@0.10.2':
@@ -4182,13 +4269,13 @@ snapshots:
       chai: 6.2.2
       tinyrainbow: 3.1.0
 
-  '@vitest/mocker@4.1.9(vite@7.3.5(@types/node@22.20.0)(tsx@4.22.4))':
+  '@vitest/mocker@4.1.9(vite@7.3.5(@types/node@22.20.0)(tsx@4.22.4)(yaml@2.9.0))':
     dependencies:
       '@vitest/spy': 4.1.9
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 7.3.5(@types/node@22.20.0)(tsx@4.22.4)
+      vite: 7.3.5(@types/node@22.20.0)(tsx@4.22.4)(yaml@2.9.0)
 
   '@vitest/pretty-format@4.1.9':
     dependencies:
@@ -4236,6 +4323,10 @@ snapshots:
   acorn@7.4.1: {}
 
   acorn@8.16.0: {}
+
+  ajv-draft-04@1.0.0(ajv@8.20.0):
+    optionalDependencies:
+      ajv: 8.20.0
 
   ajv-formats@3.0.1(ajv@8.20.0):
     optionalDependencies:
@@ -5076,6 +5167,8 @@ snapshots:
     optionalDependencies:
       graceful-fs: 4.2.11
 
+  jsonpointer@5.0.1: {}
+
   jstransformer@1.0.0:
     dependencies:
       is-promise: 2.2.2
@@ -5125,6 +5218,8 @@ snapshots:
       lefthook-openbsd-x64: 2.1.9
       lefthook-windows-arm64: 2.1.9
       lefthook-windows-x64: 2.1.9
+
+  leven@4.1.0: {}
 
   locate-path@5.0.0:
     dependencies:
@@ -5865,7 +5960,7 @@ snapshots:
 
   vary@1.1.2: {}
 
-  vite@7.3.5(@types/node@22.20.0)(tsx@4.22.4):
+  vite@7.3.5(@types/node@22.20.0)(tsx@4.22.4)(yaml@2.9.0):
     dependencies:
       esbuild: 0.27.7
       fdir: 6.5.0(picomatch@4.0.4)
@@ -5877,11 +5972,12 @@ snapshots:
       '@types/node': 22.20.0
       fsevents: 2.3.3
       tsx: 4.22.4
+      yaml: 2.9.0
 
-  vitest@4.1.9(@types/node@22.20.0)(vite@7.3.5(@types/node@22.20.0)(tsx@4.22.4)):
+  vitest@4.1.9(@types/node@22.20.0)(vite@7.3.5(@types/node@22.20.0)(tsx@4.22.4)(yaml@2.9.0)):
     dependencies:
       '@vitest/expect': 4.1.9
-      '@vitest/mocker': 4.1.9(vite@7.3.5(@types/node@22.20.0)(tsx@4.22.4))
+      '@vitest/mocker': 4.1.9(vite@7.3.5(@types/node@22.20.0)(tsx@4.22.4)(yaml@2.9.0))
       '@vitest/pretty-format': 4.1.9
       '@vitest/runner': 4.1.9
       '@vitest/snapshot': 4.1.9
@@ -5898,7 +5994,7 @@ snapshots:
       tinyexec: 1.2.4
       tinyglobby: 0.2.17
       tinyrainbow: 3.1.0
-      vite: 7.3.5(@types/node@22.20.0)(tsx@4.22.4)
+      vite: 7.3.5(@types/node@22.20.0)(tsx@4.22.4)(yaml@2.9.0)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 22.20.0
@@ -5945,6 +6041,8 @@ snapshots:
   wrappy@1.0.2: {}
 
   ws@8.21.0: {}
+
+  yaml@2.9.0: {}
 
   yoga-layout@3.2.1: {}
 

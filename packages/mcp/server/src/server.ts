@@ -82,6 +82,16 @@ export function safeUpstreamMessage(e: UpstreamError): string {
       return `invalid tool name: ${e.name}`
     case "unsupported-source-kind":
       return `platform kind "${e.platformKind}" is not yet supported`
+    case "spec-parse-failed":
+      return "openapi source: spec could not be parsed"
+    case "spec-fetch-failed":
+      return "openapi source: spec could not be fetched"
+    case "invalid-args":
+      return `invalid tool arguments: ${e.reason}`
+    case "response-too-large":
+      return `upstream response exceeded size limit (${e.limit} bytes)`
+    case "too-many-tools":
+      return `spec has too many operations (${e.count}); cap is ${e.cap}`
   }
 }
 

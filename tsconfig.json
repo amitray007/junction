@@ -4,6 +4,7 @@
     { "path": "packages/core" },
     { "path": "packages/mcp/server" },
     { "path": "packages/mcp/client" },
+    { "path": "packages/openapi-client" },
     { "path": "packages/cli" },
     { "path": "packages/web" }
   ]

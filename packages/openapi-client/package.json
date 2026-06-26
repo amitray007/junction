@@ -1,0 +1,24 @@
+{
+  "name": "@junction/openapi-client",
+  "version": "0.0.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsdown"
+  },
+  "dependencies": {
+    "@junction/core": "workspace:*",
+    "@scalar/openapi-parser": "^0.28.8",
+    "neverthrow": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.0"
+  }
+}
