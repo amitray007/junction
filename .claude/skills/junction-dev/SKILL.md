@@ -36,6 +36,22 @@ pnpm -F @junction/core build
 - Junction's home is `~/.junction` (override with `JUNCTION_HOME`).
 - **In tests, always set `JUNCTION_HOME=<tmpdir>`** to isolate filesystem state.
 
+## Testing surfaces — the stable `./junction` launcher vs throwaway QA homes
+
+Two distinct flows; keep them separate:
+
+- **Manual / dev testing → `./junction`** (repo-root launcher). Runs the *built* CLI against a **stable** dev home so your setup persists between commands:
+  ```bash
+  pnpm build                      # build first (./junction runs dist/, not src/)
+  ./junction init                 # one-time (per /tmp/jtest lifetime)
+  ./junction platform list
+  ./junction web                  # localhost dashboard on the same home
+  JUNCTION_HOME=~/.junction ./junction status   # override → your real vault
+  ```
+  Defaults `JUNCTION_HOME=/tmp/jtest` (override via the env var). **`/tmp` is cleared on reboot** → re-run `./junction init`, or point `JUNCTION_HOME` at a persistent path. Rebuild after any source change: `pnpm build`.
+
+- **Orchestrator QA (per increment) → ephemeral `/tmp/jtNN`.** During automated QA of increment NN, use a fresh `JUNCTION_HOME=/tmp/jtNN` (e.g. `/tmp/jt22`) — isolated and disposable, so QA never pollutes the stable `/tmp/jtest` dev home. These are created/torn down per QA run, not committed.
+
 ## CLI (once increment 3 lands)
 
 ```bash
