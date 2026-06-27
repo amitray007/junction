@@ -7,6 +7,12 @@
 
 _Last updated: 2026-06-27 (after increment 22 + dev tooling)._
 
+<!-- STATE-done-through: 22 -->
+<!-- ^ Machine-readable freshness marker. Bump it to the highest increment marked
+     `done` in docs/methods/README.md whenever you complete one. The `docs:check`
+     gate (in `pnpm verify`) FAILS if this lags the map — so the memory can't go
+     stale silently. Bumping it = "I logged this increment" (also add a §7 entry). -->
+
 ---
 
 ## 1. Snapshot — where we are right now
@@ -71,5 +77,5 @@ Each increment may run in its own session. At each increment **boundary**:
 
 ## 7. Session log (newest first — append a terse entry per increment/session)
 
-- **2026-06-27 — increment 22 (web shell) + dev tooling.** Shipped the `@junction/web` TanStack Start read-only dashboard (PR #36): server-only core via `createServerFn`, localhost-only + Host-guard, `junction web` spawns the built server (artifact dep, no cli↔web edge), credentials metadata-only. Review caught + fixed a real reliability bug (per-request DB connection/migration leak → home-keyed memo) + hardening (clean 403, body cap, security headers, stream errors). Added `./junction` launcher (#37) defaulting to a persistent repo-local `.junction` home (#38). Established `docs/STATE.md` + the `junction-handover` skill (this flow). **Next: increment 23.**
+- **2026-06-27 — increment 22 (web shell) + dev tooling.** Shipped the `@junction/web` TanStack Start read-only dashboard (PR #36): server-only core via `createServerFn`, localhost-only + Host-guard, `junction web` spawns the built server (artifact dep, no cli↔web edge), credentials metadata-only. Review caught + fixed a real reliability bug (per-request DB connection/migration leak → home-keyed memo) + hardening (clean 403, body cap, security headers, stream errors). Added `./junction` launcher (#37) defaulting to a persistent repo-local `.junction` home (#38). Established `docs/STATE.md` + the `junction-handover` skill + a **`docs:check` gate in `pnpm verify`** (the `STATE-done-through` marker must match the map's highest `done` — memory can't go stale silently). **Next: increment 23.**
 - _(Earlier 16–21 history is in the git log + `docs/methods/README.md` status column + `docs/futures/`.)_
