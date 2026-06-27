@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# ./junction — dev launcher for the junction CLI.
+#
+# Runs the BUILT CLI against a stable dev JUNCTION_HOME so manual testing uses one
+# consistent setup (instead of a fresh /tmp/jtNN each time).
+#
+#   ./junction <command>            e.g.  ./junction platform list
+#   ./junction web                  launches the localhost dashboard
+#   JUNCTION_HOME=~/.junction ./junction status     # override the home (real vault)
+#
+# Defaults JUNCTION_HOME to /tmp/jtest. NOTE: /tmp is cleared on reboot — re-run
+# `./junction init` after a restart, or point JUNCTION_HOME at a persistent path.
+#
+# Rebuild after changing source:  pnpm build   (this runs dist/, not src/)
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CLI="$ROOT/packages/cli/dist/index.js"
+
+if [[ ! -f "$CLI" ]]; then
+  echo "junction: CLI is not built. Run \`pnpm build\` first." >&2
+  exit 1
+fi
+
+export JUNCTION_HOME="${JUNCTION_HOME:-/tmp/jtest}"
+exec node "$CLI" "$@"

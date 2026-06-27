@@ -45,6 +45,24 @@ for the full architecture and stack decisions.
 
 ---
 
+## Local development & testing
+
+```bash
+pnpm install
+pnpm build          # build all packages
+pnpm verify         # the gate: typecheck + lint + tests
+
+# the ./junction launcher runs the built CLI against a stable dev home (/tmp/jtest):
+./junction init
+./junction platform list
+./junction web      # localhost dashboard
+
+JUNCTION_HOME=~/.junction ./junction status   # point at your real vault instead
+```
+
+`./junction` runs `dist/`, so rebuild (`pnpm build`) after changing source. See the
+`junction-dev` skill for the full surface.
+
 ## Contributing
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md).
