@@ -37,7 +37,7 @@ A **method file** holds one increment's **spec + step-by-step implementation tog
 | 18 | OpenAPI base-URL resolution (relative servers) + early validation | `18-openapi-base-url-resolution.md` | done |
 | 19 | Large-spec selection (--tag/--path) + `platform refresh` | `19-large-spec-selection-refresh.md` | done |
 | 20 | GraphQL source provider (query/mutation/schema tools) | `20-graphql-provider.md` | done |
-| 21 | Sandboxed code-execution source (`cli` kind — wires inc-8 sandbox) | `21-sandboxed-cli-source.md` | written |
+| 21 | Sandboxed code-execution source (`cli` kind) + true Seatbelt read confinement | `21-sandboxed-cli-source.md` | done |
 
 After increment 8 the foundation is "ready"; increment 9 (TUI) completes it. Features come after, each with its own method file.
 
