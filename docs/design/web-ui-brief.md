@@ -83,8 +83,10 @@ ARIA via Radix, labelled forms + inline errors, reduced-motion, no color-only st
    for the system + components; `impeccable:typeset` (type), `impeccable:colorize`
    (palette), `impeccable:animate` (motion), `impeccable:polish`/`delight` (refine).
 3. **Animations:** **emilkowalski/skills** (https://github.com/emilkowalski/skills)
-   — *not currently installed*; install it for this increment (or apply its
-   transition/animation principles directly). It's the reference for motion smoothness.
+   — **installed** (global, via the `skills` CLI → `~/.agents/skills`, symlinked into
+   `~/.claude/skills`). Two skills: **`emil-design-eng`** (UI polish + animation
+   decisions — auto-invocable) and **`review-animations`** (strict motion review —
+   explicit-invoke). The reference for motion smoothness; invoke during build + review.
 4. **QA:** `impeccable:critique` (UX scoring) + `design-review` (visual/a11y audit) +
    browser dogfooding via the gstack `browse` skill (screenshots, before/after diffs,
    responsive checks). `junction-web-reviewer` for code-level design/a11y rules.
