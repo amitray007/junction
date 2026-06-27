@@ -39,15 +39,18 @@ A **method file** holds one increment's **spec + step-by-step implementation tog
 | 20 | GraphQL source provider (query/mutation/schema tools) | `20-graphql-provider.md` | done |
 | 21 | Sandboxed code-execution source (`cli` kind) + true Seatbelt read confinement | `21-sandboxed-cli-source.md` | done |
 | **— Feature: Web UI → connect-once via OAuth → secured via audit (planned route) —** | | | |
-| 22 | Web shell + localhost server (read-only dashboard) | `22-web-shell.md` | written |
-| 23 | Web management: platforms + credentials (+ credential rotation) | — | planned |
-| 24 | Web management: profiles + sources + per-profile MCP endpoint | — | planned |
-| 25 | Web: probe + call (in-browser debug surface) | — | planned |
+| 22 | Web shell + localhost server (read-only dashboard) | `22-web-shell.md` | done |
+| 23 | Web: credentials management + **rotation** (core `rotateCredential` + CLI `credential rotate`) | — | planned |
+| 24 | Web: platform management (+ extract platform add/refresh orchestration `cli → core`) | — | planned |
+| 25 | Web: profile management (sources + toolFilter editor + per-profile MCP endpoint) | — | planned |
+| 26 | Web: probe + call (in-browser debug surface) | — | planned |
 | ~ | Distribution — publish `junction` + `junction install` story | — | planned |
-| 26 | OAuth vault (arctic) — connect OAuth platforms; token refresh | — | planned |
-| 27 | Audit (pino) — structured tool-call / credential-use log | — | planned |
-| 28 | Security & ops hardening — vault backup/recovery + master-key rotation + tool-poisoning mitigation + deferred CI security tooling (knip, type-coverage, semgrep, CodeQL, secret-scan, SPDX CI gate) | — | planned |
-| 29+ | Code-mode — QuickJS-WASM over the `ToolProvider` proxy (the fast execution path; "base solid" trigger) | — | planned |
+| 27 | OAuth vault (arctic) — connect OAuth platforms; token refresh | — | planned |
+| 28 | Audit (pino) — structured tool-call / credential-use log | — | planned |
+| 29 | Security & ops hardening — vault backup/recovery + master-key rotation + tool-poisoning mitigation + deferred CI security tooling (knip, type-coverage, semgrep, CodeQL, secret-scan, SPDX CI gate) | — | planned |
+| 30 | Code-mode — QuickJS-WASM over the `ToolProvider` proxy (the fast execution path; "base solid" trigger) | — | planned |
+
+> **Re-slice note (inc 23+):** the Web UI was split — credentials (23, clean: core cred ops exist) before platforms (24, which needs the `cli → core` spec-parse extraction). Shifts later numbers +1. Live state + plan: `docs/STATE.md`.
 
 After increment 8 the foundation is "ready"; increment 9 (TUI) completes it. Features come after, each with its own method file.
 

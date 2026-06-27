@@ -2,6 +2,8 @@
 
 Junction is a self-hosted, single-user **broker**: the one place you connect your platform accounts once, so any AI agent can reach that data through MCP / CLI / API — granular, profiled, sandboxed, secured.
 
+> 📍 **New session? Read [`docs/STATE.md`](docs/STATE.md) FIRST** — the living project memory: current state, how we work, the recurring traps, the plan, and a session log. Keep it current (the `junction-handover` skill; it's the last step of every increment).
+
 - **Idea / pain / landscape:** `docs/idea.md`
 - **Foundation design (source of truth):** `docs/specs/2026-06-22-junction-foundation-design.md`
 - **Coding guardrails (read before writing any code):** `docs/rules/` — per-language rules, enforced by hooks + review agents.
@@ -69,9 +71,14 @@ Every increment follows this loop (gates at step 4 and step 8):
 5. **Agent QA / tests.**
 6. **Background review** (compound-engineering + junction's custom reviewers).
 7. **Ask the user to test.**
-8. **User approves** → next increment.
+8. **User approves** → ship (PR → CI → merge).
+9. **Log it** → end-of-increment report + maintain `docs/futures/` + **update `docs/STATE.md`** (snapshot + session-log entry; mark the increment `done` in the method map). See the `junction-handover` skill.
 
 `docs/workflow.md` names the exact tool to use at each step.
+
+### Sessions — continue vs. new (cross-session continuity)
+
+Each increment may run in its own session. **At each increment boundary**, judge context load: **default to continuing here**; if context is heavy (long session / several increments done / context summarized), finish + merge the current increment, run step 9 (update `docs/STATE.md`), and **recommend the user start the next increment in a fresh session** — handing them `docs/STATE.md` as the lossless entry point. The user decides. A brand-new session **reads `docs/STATE.md` first** to resume (see the `junction-handover` skill).
 
 ### End-of-increment report (always)
 
