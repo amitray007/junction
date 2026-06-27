@@ -17,6 +17,8 @@ export const platforms = sqliteTable("platforms", {
   openapi: text("openapi"),
   /** JSON-serialized GraphQlConnection — optional; meaningful when kind === "graphql" */
   graphql: text("graphql"),
+  /** JSON-serialized CliConnection — optional; meaningful when kind === "cli" */
+  cli: text("cli"),
 })
 
 export const credentials = sqliteTable("credentials", {

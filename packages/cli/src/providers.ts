@@ -166,6 +166,19 @@ export function buildProvider(
       return ok(createGraphQlProvider(platform.graphql, secret))
     }
 
+    if (platform.kind === "cli") {
+      if (platform.cli === undefined) {
+        return err({
+          kind: "connect-failed" as const,
+          cause: "platform has no cli descriptor",
+        } satisfies UpstreamError)
+      }
+      // createCliProvider is in core (no separate package). Import lazily to
+      // match the pattern for other kinds; core is already loaded so no extra cost.
+      const { createCliProvider } = await import("@junction/core")
+      return ok(createCliProvider(platform.cli, secret))
+    }
+
     return err({
       kind: "unsupported-source-kind" as const,
       platformKind: platform.kind,

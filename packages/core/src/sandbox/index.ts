@@ -7,4 +7,4 @@ export type {
   SandboxPolicy,
   SandboxResult,
 } from "./sandbox.js"
-export { createSandbox } from "./sandbox.js"
+export { createSandbox, validatePolicy } from "./sandbox.js"

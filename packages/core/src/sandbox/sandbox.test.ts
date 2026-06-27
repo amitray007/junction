@@ -8,7 +8,11 @@ import os from "node:os"
 import path from "node:path"
 import { promisify } from "node:util"
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest"
-import { probeCommandBackend as probeBwrapBackend } from "./bubblewrap.js"
+import {
+  buildBwrapArgv,
+  buildBwrapEnv,
+  probeCommandBackend as probeBwrapBackend,
+} from "./bubblewrap.js"
 import { probeScriptBackend } from "./deno.js"
 import { createSandbox, type SandboxPolicy } from "./index.js"
 import { _resetCapabilitiesCache } from "./sandbox.js"
@@ -104,6 +108,30 @@ describe.skipIf(process.platform !== "darwin")("Seatbelt", () => {
     const outsideResult = await execFileAsync("cat", [allowedFile]).catch(() => null)
     expect(outsideResult).not.toBeNull()
     expect(outsideResult?.stdout).toContain("hello-allowed")
+  })
+
+  it("TRUE read confinement: a file OUTSIDE readPaths (not a credential) is denied", async () => {
+    // inc 21: reads are deny-default (bsd.sb supplies system reads); only readPaths
+    // are readable. Before this, the profile broad-allowed reads and only denied
+    // ~/.junction — so /etc/hosts (a non-credential file outside readPaths) WAS
+    // readable. It must now be denied, while a file inside readPaths still reads.
+    const sb = await createSandbox()
+    expect(sb.isOk()).toBe(true)
+    if (!sb.isOk()) return
+    const policy = basePolicy(ws)
+
+    // /etc/hosts exists, is outside readPaths, and is NOT a junction credential.
+    const denied = await sb.value.runCommand(["/bin/cat", "/etc/hosts"], policy)
+    expect(denied.isOk()).toBe(true)
+    if (denied.isOk()) expect(denied.value.exitCode).not.toBe(0) // Operation not permitted
+
+    // A file INSIDE readPaths still reads (loader survived deny-default via bsd.sb).
+    const allowed = await sb.value.runCommand(["/bin/cat", allowedFile], policy)
+    expect(allowed.isOk()).toBe(true)
+    if (allowed.isOk()) {
+      expect(allowed.value.exitCode).toBe(0)
+      expect(allowed.value.stdout).toContain("hello-allowed")
+    }
   })
 
   it("denied credential path is blocked via BOTH its logical and realpath (symlink bypass)", async () => {
@@ -404,6 +432,28 @@ describe("bubblewrap", async () => {
         process.env.JUNCTION_MASTER_KEY = original
       }
     }
+  })
+})
+
+// ── bubblewrap argv (pure, cross-platform): secret must NOT land in argv ──────
+describe("bubblewrap argv construction", () => {
+  it("credential value goes to the env, never into the bwrap argv (no /proc/cmdline leak)", () => {
+    const SENTINEL = "s3cr3t-bwrap-sentinel-zzz"
+    const policy: SandboxPolicy = {
+      readPaths: ["/work"],
+      writePaths: [],
+      allowNet: [],
+      env: { GH_PAT: SENTINEL, PATH: "/usr/bin:/bin" },
+      cwd: "/work",
+      timeoutMs: 5_000,
+    }
+    const argv = buildBwrapArgv(["/bin/echo", "hi"], policy)
+    // The secret VALUE must not appear anywhere in argv (it would be in `ps`/cmdline).
+    expect(argv.some((a) => a.includes(SENTINEL))).toBe(false)
+    // No --setenv at all (env is forwarded via the spawn env, not argv).
+    expect(argv).not.toContain("--setenv")
+    // The secret IS forwarded via the env map.
+    expect(buildBwrapEnv(policy).GH_PAT).toBe(SENTINEL)
   })
 })
 

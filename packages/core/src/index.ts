@@ -31,7 +31,7 @@ export type {
 // ---------------------------------------------------------------------------
 // Sandbox — OS-level code-execution isolation (Seatbelt / bubblewrap / Deno)
 // ---------------------------------------------------------------------------
-export { createSandbox } from "./sandbox/index.js"
+export { createSandbox, validatePolicy } from "./sandbox/index.js"
 
 // ---------------------------------------------------------------------------
 // Data model — entity schemas, types, ID generators, convention helpers
@@ -53,6 +53,21 @@ export type { CredentialError, DbError, SandboxError } from "./errors/index.js"
 // ID generators — ids/ is the sole generator; see ids/index.ts for the swap-point comment
 export { newCredentialId, newPlatformId, newProfileId } from "./ids/index.js"
 export { createRepositories, type Repositories } from "./repositories/index.js"
+export type {
+  CliArg,
+  CliArgvSegment,
+  CliConnection,
+  CliPolicy,
+  CliTool,
+} from "./schema/cli-connection.js"
+// CliConnection — sandboxed CLI source descriptor
+export {
+  CliArgSchema,
+  CliArgvSegmentSchema,
+  CliConnectionSchema,
+  CliPolicySchema,
+  CliToolSchema,
+} from "./schema/cli-connection.js"
 export type { Credential, OAuthMeta } from "./schema/credential.js"
 // Credential
 export { CredentialKind, CredentialSchema, OAuthMetaSchema } from "./schema/credential.js"
@@ -96,9 +111,10 @@ export { ProfileSchema } from "./schema/profile.js"
 export type { SourceRef, ToolFilter } from "./schema/source-ref.js"
 // SourceRef + ToolFilter
 export { SourceRefSchema, ToolFilterSchema } from "./schema/source-ref.js"
-
+// CLI provider — sandboxed code-execution source (inc 21)
+export { createCliProvider } from "./sources/cli/provider.js"
 // ---------------------------------------------------------------------------
-// Sources — ToolProvider interface, naming helpers, profile proxy
+// Sources — ToolProvider interface, naming helpers, profile proxy, providers
 // ---------------------------------------------------------------------------
 export { namespaceToolName, splitNamespacedName } from "./sources/naming.js"
 export type { ProviderTool, ToolProvider, ToolResult } from "./sources/provider.js"

@@ -6,6 +6,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname } from "node:path"
 import {
+  CliConnectionSchema,
   type GraphQlConnection,
   GraphQlConnectionSchema,
   type McpConnection,
@@ -180,6 +181,12 @@ const addCommand = defineCommand({
       description:
         "[graphql] Extra request header in key=value form (repeatable: --header User-Agent=junction)",
     },
+    // CLI flags
+    descriptor: {
+      type: "string",
+      description:
+        "[cli] JSON descriptor string (CliConnectionSchema). Use --descriptor '$(cat file.json)'",
+    },
     json: JSON_ARG,
   },
   async run({ args, rawArgs }) {
@@ -193,6 +200,11 @@ const addCommand = defineCommand({
 
     if (kind === "graphql") {
       await addGraphQlPlatform(args, rawArgs, json)
+      return
+    }
+
+    if (kind === "cli") {
+      await addCliPlatform(args, json)
       return
     }
 
@@ -496,6 +508,106 @@ async function addGraphQlPlatform(
     const sdlNote = graphql.schemaSdl ? " (SDL cached)" : " (no SDL cached)"
     consola.success(
       `Platform "${persisted.displayName}" (${persisted.id}) defined — kind: graphql${sdlNote}`,
+    )
+  }
+  /* jscpd:ignore-end */
+}
+
+// ---------------------------------------------------------------------------
+// addCliPlatform — handle --kind cli add path
+// ---------------------------------------------------------------------------
+
+async function addCliPlatform(args: Record<string, unknown>, json: boolean): Promise<void> {
+  const descriptorStr = args.descriptor as string | undefined
+  if (!descriptorStr) {
+    reportError(
+      "--descriptor is required for cli kind. Pass the CliConnectionSchema JSON inline:\n" +
+        "  --descriptor '{\"tools\":[...]}'\n" +
+        '  --descriptor "$(cat cli-descriptor.json)"',
+      json,
+    )
+    return
+  }
+
+  // Parse the JSON string
+  let raw: unknown
+  try {
+    raw = JSON.parse(descriptorStr) as unknown
+  } catch (cause) {
+    reportError(`--descriptor is not valid JSON: ${String(cause)}`, json)
+    return
+  }
+
+  // Validate against CliConnectionSchema
+  const cliParseResult = CliConnectionSchema.safeParse(raw)
+  if (!cliParseResult.success) {
+    const msg = cliParseResult.error.issues.map((i: { message: string }) => i.message).join(", ")
+    reportError(`Invalid CLI descriptor: ${msg}`, json)
+    return
+  }
+  const cli = cliParseResult.data
+
+  // Probe sandbox capabilities — warn if no backend, but allow the add.
+  // The descriptor is portable data; it may be served on a host that has a backend.
+  const { createSandbox, validatePolicy } = await import("@junction/core")
+  const sbResult = await createSandbox()
+  if (sbResult.isOk()) {
+    const caps = sbResult.value.capabilities()
+    if (caps.command === "none") {
+      if (json) {
+        process.stderr.write(
+          "warning: no sandbox backend available on this host (Seatbelt / bubblewrap not found). " +
+            "The platform will be stored but callTool will fail closed until a backend is present.\n",
+        )
+      } else {
+        consola.warn(
+          "No sandbox backend available on this host (Seatbelt on macOS, bubblewrap on Linux). " +
+            "The cli platform will be stored but tool calls will refuse until a backend is present.",
+        )
+      }
+    }
+  }
+
+  // Dry-run validatePolicy for each tool — catch metachar / credential-dir exposure at add-time.
+  for (const tool of cli.tools) {
+    const policy = {
+      cwd: tool.policy.cwd,
+      readPaths: [...new Set([tool.policy.cwd, ...tool.policy.readPaths])],
+      writePaths: tool.policy.writePaths,
+      allowNet: tool.policy.allowNet,
+      timeoutMs: tool.policy.timeoutMs,
+      env: tool.policy.envAllow ?? {},
+    }
+    const policyErr = await validatePolicy(policy)
+    if (policyErr) {
+      // validatePolicy only emits "policy-invalid" errors; narrow to extract `.reason`.
+      const reason = policyErr.kind === "policy-invalid" ? policyErr.reason : policyErr.kind
+      reportError(`Tool "${tool.name}" has an invalid policy: ${reason}`, json)
+      return
+    }
+  }
+
+  /* jscpd:ignore-start — parse+persist+report tail mirrors the MCP/OpenAPI/GraphQL add paths */
+  const platform = parsePlatformResult(
+    PlatformSchema.safeParse({
+      id: args.id as string,
+      kind: "cli",
+      displayName: args["display-name"] as string,
+      cli,
+    }),
+    json,
+  )
+  if (!platform) return
+
+  const persisted = await upsertPlatform(platform, json)
+  if (!persisted) return
+
+  const toolCount = cli.tools.length
+  if (json) {
+    process.stdout.write(`${JSON.stringify({ ok: true, platform: persisted, toolCount })}\n`)
+  } else {
+    consola.success(
+      `Platform "${persisted.displayName}" (${persisted.id}) defined — kind: cli, ${toolCount} tool(s)`,
     )
   }
   /* jscpd:ignore-end */
