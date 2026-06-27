@@ -6,8 +6,17 @@ Junction is a self-hosted, single-user **broker**: the one place you connect you
 - **Foundation design (source of truth):** `docs/specs/2026-06-22-junction-foundation-design.md`
 - **Coding guardrails (read before writing any code):** `docs/rules/` — per-language rules, enforced by hooks + review agents.
 - **Design principles (modularity & DRY):** `docs/principles/` — where code lives, when to factor, when to keep duplicated.
+- **Behaviours (how we decide):** `docs/behaviours/` — correctness/security over speed, architecture over expedience, decisions held loosely. Read before recommending any solution.
 - **Per-increment method files:** `docs/methods/` (see Operating Model below)
 - **Forward-looking register:** `docs/futures/` — deprecations we knowingly depend on (+ forward paths), "revisit-when" deferred decisions (+ triggers), and known gotchas. **Maintain it as you go** (see convention below).
+
+---
+
+## Decision behaviours (non-negotiable — see `docs/behaviours/`)
+
+1. **Correctness/security over speed.** Never move forward on a quick solution unless we are *sure* it carries no critical/high-severity issue — ideally verified, not assumed. If unsure, investigate/test/escalate first; if the proper fix is hard, **stop and surface it** rather than patch the symptom.
+2. **Architecture over expedience.** When choosing between a quick fix and a rewrite / logical rework, recommend and prefer the **better architectural decision** — fix the root cause, not the symptom — even when it's slower.
+3. **Hold decisions loosely.** Never be dogmatically attached to one option. Present trade-offs + a recommendation (not an ultimatum); surface genuine, outcome-changing decisions to the user with options; stay open to changing course on new evidence, even mid-build.
 
 ---
 
