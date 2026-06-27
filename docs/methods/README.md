@@ -40,17 +40,18 @@ A **method file** holds one increment's **spec + step-by-step implementation tog
 | 21 | Sandboxed code-execution source (`cli` kind) + true Seatbelt read confinement | `21-sandboxed-cli-source.md` | done |
 | **— Feature: Web UI → connect-once via OAuth → secured via audit (planned route) —** | | | |
 | 22 | Web shell + localhost server (read-only dashboard) | `22-web-shell.md` | done |
-| 23 | Web: credentials management + **rotation** (core `rotateCredential` + CLI `credential rotate`) | — | planned |
-| 24 | Web: platform management (+ extract platform add/refresh orchestration `cli → core`) | — | planned |
-| 25 | Web: profile management (sources + toolFilter editor + per-profile MCP endpoint) | — | planned |
-| 26 | Web: probe + call (in-browser debug surface) | — | planned |
+| 23 | Web quality foundation — `docs/rules/web.md` + Biome React domain (hooks rules) + happy-dom/Testing-Library component harness + `junction-web-reviewer` agent + CI web gate (`vite build` + client-bundle leak-grep) + web testing standard | — | planned |
+| 24 | Web: credentials management + **rotation** (core `rotateCredential` + CLI `credential rotate`) | — | planned |
+| 25 | Web: platform management (+ extract platform add/refresh orchestration `cli → core`) | — | planned |
+| 26 | Web: profile management (sources + toolFilter editor + per-profile MCP endpoint) | — | planned |
+| 27 | Web: probe + call (in-browser debug surface) | — | planned |
 | ~ | Distribution — publish `junction` + `junction install` story | — | planned |
-| 27 | OAuth vault (arctic) — connect OAuth platforms; token refresh | — | planned |
-| 28 | Audit (pino) — structured tool-call / credential-use log | — | planned |
-| 29 | Security & ops hardening — vault backup/recovery + master-key rotation + tool-poisoning mitigation + deferred CI security tooling (knip, type-coverage, semgrep, CodeQL, secret-scan, SPDX CI gate) | — | planned |
-| 30 | Code-mode — QuickJS-WASM over the `ToolProvider` proxy (the fast execution path; "base solid" trigger) | — | planned |
+| 28 | OAuth vault (arctic) — connect OAuth platforms; token refresh | — | planned |
+| 29 | Audit (pino) — structured tool-call / credential-use log | — | planned |
+| 30 | Security & ops hardening — vault backup/recovery + master-key rotation + tool-poisoning mitigation + deferred CI security tooling (knip, type-coverage, semgrep, CodeQL, secret-scan, SPDX CI gate) | — | planned |
+| 31 | Code-mode — QuickJS-WASM over the `ToolProvider` proxy (the fast execution path; "base solid" trigger) | — | planned |
 
-> **Re-slice note (inc 23+):** the Web UI was split — credentials (23, clean: core cred ops exist) before platforms (24, which needs the `cli → core` spec-parse extraction). Shifts later numbers +1. Live state + plan: `docs/STATE.md`.
+> **Re-slice note (inc 23+):** the Web UI was split — a **quality foundation (23)** lands *before* the mutation increments (rules + lint + component-test harness + web reviewer + CI gate); then credentials (24, clean: core cred ops exist) before platforms (25, which needs the `cli → core` spec-parse extraction). Numbers shift accordingly. **Inc-23 decisions:** component tests = happy-dom + Testing Library; browser dogfooding = gstack `browse` skill (Vercel agent-browser is an optional, swappable richer layer — not a gate); CI gates = `vite build` + client-bundle leak-grep. Live state + plan: `docs/STATE.md`.
 
 After increment 8 the foundation is "ready"; increment 9 (TUI) completes it. Features come after, each with its own method file.
 
