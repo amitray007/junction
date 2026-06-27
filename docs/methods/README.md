@@ -39,7 +39,7 @@ A **method file** holds one increment's **spec + step-by-step implementation tog
 | 20 | GraphQL source provider (query/mutation/schema tools) | `20-graphql-provider.md` | done |
 | 21 | Sandboxed code-execution source (`cli` kind) + true Seatbelt read confinement | `21-sandboxed-cli-source.md` | done |
 | **— Feature: Web UI → connect-once via OAuth → secured via audit (planned route) —** | | | |
-| 22 | Web shell + localhost server (read-only dashboard) | `22-web-shell.md` | planned |
+| 22 | Web shell + localhost server (read-only dashboard) | `22-web-shell.md` | written |
 | 23 | Web management: platforms + credentials (+ credential rotation) | — | planned |
 | 24 | Web management: profiles + sources + per-profile MCP endpoint | — | planned |
 | 25 | Web: probe + call (in-browser debug surface) | — | planned |
