@@ -10,8 +10,9 @@
 #   ./junction web                  launches the localhost dashboard
 #   JUNCTION_HOME=~/.junction ./junction status     # override the home (real vault)
 #
-# Defaults JUNCTION_HOME to /tmp/jtest. NOTE: /tmp is cleared on reboot — re-run
-# `./junction init` after a restart, or point JUNCTION_HOME at a persistent path.
+# Defaults JUNCTION_HOME to <repo>/.junction — a persistent, gitignored dev home
+# (survives reboots, mirrors the production ~/.junction layout). Override with the
+# env var to point at your real vault or a throwaway path.
 #
 # Rebuild after changing source:  pnpm build   (this runs dist/, not src/)
 set -euo pipefail
@@ -24,5 +25,5 @@ if [[ ! -f "$CLI" ]]; then
   exit 1
 fi
 
-export JUNCTION_HOME="${JUNCTION_HOME:-/tmp/jtest}"
+export JUNCTION_HOME="${JUNCTION_HOME:-$ROOT/.junction}"
 exec node "$CLI" "$@"
