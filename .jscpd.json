@@ -11,6 +11,7 @@
     "**/drizzle/**",
     "**/*.d.ts",
     "**/migrations/meta/**",
-    "**/package.json"
+    "**/package.json",
+    "**/web/src/server/data.server.ts"
   ]
 }

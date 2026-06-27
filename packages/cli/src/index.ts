@@ -9,6 +9,7 @@ import { mcpCommand } from "./commands/mcp.js"
 import { platformCommand } from "./commands/platform.js"
 import { profileCommand } from "./commands/profile.js"
 import { runStatus, statusCommand } from "./commands/status.js"
+import { webCommand } from "./commands/web.js"
 
 const main = defineCommand({
   meta: {
@@ -24,6 +25,7 @@ const main = defineCommand({
     profile: profileCommand,
     status: statusCommand,
     debug: debugCommand,
+    web: webCommand,
   },
 })
 
