@@ -17,6 +17,7 @@
     "@junction/mcp-server": "workspace:*",
     "@junction/graphql-client": "workspace:*",
     "@junction/openapi-client": "workspace:*",
+    "@junction/web": "workspace:*",
     "citty": "^0.2.0",
     "consola": "^3.0.0",
     "ink": "^7.1.0",

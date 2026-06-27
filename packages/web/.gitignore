@@ -1,0 +1,5 @@
+.output/
+.nitro/
+.tanstack/
+routeTree.gen.ts
+dist/

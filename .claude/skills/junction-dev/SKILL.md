@@ -342,6 +342,35 @@ junction mcp serve: source "pub": platform "github" declares auth but no credent
 - RESTRICT FK on `credential_id` still blocks deleting a credential referenced by a credentialed source.
 - NULL `credential_id` in DB is FK-exempt — it does NOT reference any credential row.
 
+## Web dashboard (increment 22)
+
+`junction web` launches the local read-only dashboard on `http://127.0.0.1:4321`. The web package must be built first.
+
+```bash
+# Build everything (includes the web Nitro server):
+pnpm build
+
+# Launch the dashboard (opens browser automatically):
+JUNCTION_HOME=/tmp/jt22 junction web
+
+# Custom port, no browser open:
+JUNCTION_HOME=/tmp/jt22 junction web --port 8080 --no-open
+
+# Dev mode (hot-reload, no CLI spawn needed):
+pnpm --filter @junction/web dev
+```
+
+**Architecture:**
+- `junction web` resolves the built server entry via `import.meta.resolve("@junction/web/server")` (artifact dep — not a code import) and spawns it as a subprocess bound to `127.0.0.1`.
+- All core data access goes through `createServerFn` in `packages/web/src/server/data.functions.ts`; core is imported only in `*.server.ts`.
+- Client bundle must never contain `better-sqlite3`/`@napi-rs/keyring`/core DB code — verified by `grep -rl "better-sqlite3\|napi-rs/keyring\|CREATE TABLE\|drizzle" packages/web/.output/public`.
+- Read-only (no mutations); no auth; loopback-only (`HOST=127.0.0.1`); Host header guard in every server function.
+
+**Typecheck + verify:**
+```bash
+pnpm verify          # includes pnpm --filter @junction/web typecheck (tsr generate + tsc --noEmit)
+```
+
 ## Large-spec selection + `platform refresh` (increment 19)
 
 OpenAPI specs with more than `maxTools` (default 75) operations can be added as a slice using
