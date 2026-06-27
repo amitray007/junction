@@ -13,6 +13,20 @@ export const Route = createRootRoute({
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: "Junction" },
     ],
+    // Inline SVG favicon. serve.mjs forwards every request to the SSR handler and
+    // does NOT serve static files, so a public/favicon.ico would 404; declaring the
+    // icon here stops the browser's /favicon.ico probe (the startup warning's cause).
+    links: [
+      {
+        rel: "icon",
+        type: "image/svg+xml",
+        href:
+          "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E" +
+          "%3Crect width='32' height='32' rx='6' fill='%231f2937'/%3E" +
+          "%3Ctext x='16' y='22' font-family='system-ui,sans-serif' font-size='18' " +
+          "font-weight='700' fill='%23fff' text-anchor='middle'%3EJ%3C/text%3E%3C/svg%3E",
+      },
+    ],
   }),
   component: RootComponent,
 })
