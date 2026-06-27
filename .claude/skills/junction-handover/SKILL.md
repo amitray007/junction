@@ -15,13 +15,16 @@ This is the final step of the per-increment loop, alongside the end-of-increment
 After an increment is merged:
 
 1. **Update `docs/STATE.md`:**
+   - **Bump the freshness marker** `<!-- STATE-done-through: N -->` to the increment you just finished. **This is gate-enforced** — `pnpm verify` runs `docs:check`, which FAILS if this marker lags the highest `done` increment in `docs/methods/README.md`. So you cannot mark an increment done + pass the gate without doing this. (Prose can't satisfy it — it's a machine-readable marker.)
    - **§1 Snapshot** — bump "last merged" PR, the increment count, and the **immediate next**.
-   - **§7 Session log** — prepend a terse entry: `YYYY-MM-DD — increment NN (name).` + what shipped, any notable review fix, and "Next: NN+1." Keep it to a few lines.
+   - **§7 Session log** — prepend a terse entry: `YYYY-MM-DD — increment NN (name).` + what shipped, any notable review fix, and "Next: NN+1." Keep it to a few lines. (`docs:check` also nudges that §7 mentions the latest increment.)
    - **§3 Traps** — if a NEW recurring trap bit this increment, add it (and to `docs/futures/gotchas.md`).
    - **§4 Plan** — if the route/slicing changed, reconcile with `docs/methods/README.md`.
 2. **Keep the registers current** (already part of the loop): `docs/futures/{gotchas,revisit-when,deprecations}.md`.
-3. **Mark the increment `done`** in `docs/methods/README.md`.
-4. Commit these doc updates (with the increment, or as a small follow-up).
+3. **Mark the increment `done`** in `docs/methods/README.md` (this is what the marker is checked against).
+4. Commit these doc updates (with the increment, or as a small follow-up). The pre-commit/pre-push gate (`docs:check` inside `pnpm verify`) blocks the commit if STATE.md is stale or malformed.
+
+**Why a gate, not just this skill:** instructions are advisory — an agent can skip them. The `docs:check` gate gives the memory teeth: structure + freshness are mechanically enforced on every commit/push/CI. (It can't judge entry *quality* — that stays your discipline via this checklist.)
 
 Keep it terse — this is a running memory, not prose. The git log + the method files hold the detail; STATE.md holds the *orientation*.
 

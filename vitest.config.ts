@@ -22,6 +22,12 @@ export default defineConfig({
     jsx: "automatic",
   },
   test: {
+    // Generous timeouts: several suites are "built bin, child-process" integration
+    // tests that spawn `node packages/cli/dist/index.js`. The 5s default is too tight
+    // when the whole suite runs concurrently under load (e.g. the pre-push hook),
+    // causing flaky timeouts. 20s gives headroom without masking genuinely-hung tests.
+    testTimeout: 20_000,
+    hookTimeout: 20_000,
     // Only run source tests; never compiled output or deps.
     include: ["packages/**/src/**/*.test.ts", "packages/**/src/**/*.test.tsx"],
     exclude: ["**/node_modules/**", "**/dist/**"],
