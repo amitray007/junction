@@ -52,7 +52,8 @@ pnpm install
 pnpm build          # build all packages
 pnpm verify         # the gate: typecheck + lint + tests
 
-# the ./junction launcher runs the built CLI against a stable dev home (/tmp/jtest):
+# the ./junction launcher runs the built CLI against a persistent, gitignored
+# dev home (<repo>/.junction):
 ./junction init
 ./junction platform list
 ./junction web      # localhost dashboard

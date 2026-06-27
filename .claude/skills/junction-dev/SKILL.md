@@ -48,7 +48,7 @@ Two distinct flows; keep them separate:
   ./junction web                  # localhost dashboard on the same home
   JUNCTION_HOME=~/.junction ./junction status   # override → your real vault
   ```
-  Defaults `JUNCTION_HOME=/tmp/jtest` (override via the env var). **`/tmp` is cleared on reboot** → re-run `./junction init`, or point `JUNCTION_HOME` at a persistent path. Rebuild after any source change: `pnpm build`.
+  Defaults `JUNCTION_HOME=<repo>/.junction` — a **persistent, gitignored** dev home (survives reboots, mirrors the production `~/.junction` layout). Override via the env var (e.g. `~/.junction` for your real vault, or `/tmp/jtNN` for a throwaway). Rebuild after any source change: `pnpm build`.
 
 - **Orchestrator QA (per increment) → ephemeral `/tmp/jtNN`.** During automated QA of increment NN, use a fresh `JUNCTION_HOME=/tmp/jtNN` (e.g. `/tmp/jt22`) — isolated and disposable, so QA never pollutes the stable `/tmp/jtest` dev home. These are created/torn down per QA run, not committed.
 
