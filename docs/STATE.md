@@ -18,9 +18,9 @@ _Last updated: 2026-06-27 (after increment 22 + dev tooling)._
 ## 1. Snapshot — where we are right now
 
 - **On `main`:** increments 0–22 + dev tooling. junction brokers **MCP · OpenAPI/REST · GraphQL · sandboxed-CLI** sources, with multi-account credentials, profiles (namespacing + toolFilter), a per-profile MCP serve endpoint, an OS sandbox (Seatbelt/bwrap/Deno) with true read-confinement, a TUI dashboard, and a **read-only web dashboard** (`junction web`).
-- **Latest merged:** PR #38 (`./junction` home → repo-local `.junction`). `main` is clean; **no open PRs**; no in-flight branches.
-- **Immediate next:** **increment 23 — Web credentials management + rotation** (the re-sliced plan below). Not started.
-- **The plan lives in** `docs/methods/README.md` (the increment map, Tier-1 sequence 23→30) and `docs/futures/revisit-when.md` (Tier-2 trigger-deferred).
+- **Latest merged:** PR #41 (workflow.md builder-brief + verification discipline). `main` is clean; **no open PRs**; no in-flight branches.
+- **Immediate next:** **increment 23 — Web quality foundation** (rules + Biome React domain + happy-dom/Testing-Library component harness + `junction-web-reviewer` + CI web gate + testing standard). Lands *before* the web mutation increments. Not started — **write the method file first.**
+- **The plan lives in** `docs/methods/README.md` (the increment map, Tier-1 sequence 23→31) and `docs/futures/revisit-when.md` (Tier-2 trigger-deferred).
 
 ## 2. How we work (the operating loop) — don't reinvent it
 
@@ -50,15 +50,16 @@ See `docs/methods/README.md` for the canonical table. Summary of what's NEXT:
 
 | # | Increment | Note |
 |---|---|---|
-| **23** | Web credentials management + **rotation** | first web write-path; `rotateCredential` in core + `credential rotate` CLI (core cred ops already exist → clean) |
-| 24 | Web platform management | includes extracting platform add/refresh orchestration **`cli → core`** so web+cli share it |
-| 25 | Web profile management | sources / toolFilter editor / copy MCP endpoint |
-| 26 | Web probe + call | in-browser debug surface |
+| **23** | **Web quality foundation** | `docs/rules/web.md` + Biome React domain (hooks rules, scoped to web) + happy-dom/Testing-Library component harness + `junction-web-reviewer` agent + CI web gate (`vite build` + client-bundle leak-grep) + web testing standard. **Lands before the mutation increments.** Decisions: happy-dom+Testing-Library; browser dogfooding via gstack `browse` (Vercel agent-browser = optional swappable layer); CI gates = `vite build` + leak-grep. |
+| 24 | Web credentials management + **rotation** | first web write-path; `rotateCredential` in core + `credential rotate` CLI (core cred ops already exist → clean) |
+| 25 | Web platform management | includes extracting platform add/refresh orchestration **`cli → core`** so web+cli share it |
+| 26 | Web profile management | sources / toolFilter editor / copy MCP endpoint |
+| 27 | Web probe + call | in-browser debug surface |
 | ~ | Distribution | publish `junction` + `junction install` |
-| 27 | OAuth vault (arctic) | the big "connect once" expansion + token refresh; uses inc-22's callback-ready server |
-| 28 | Audit (pino) | structured tool-call / credential-use log |
-| 29 | Security & ops hardening | vault backup/recovery, master-key rotation, tool-poisoning mitigation, deferred CI security tooling |
-| 30 | Code-mode (QuickJS over the proxy) | the fast in-process execution path; "base solid" trigger |
+| 28 | OAuth vault (arctic) | the big "connect once" expansion + token refresh; uses inc-22's callback-ready server |
+| 29 | Audit (pino) | structured tool-call / credential-use log |
+| 30 | Security & ops hardening | vault backup/recovery, master-key rotation, tool-poisoning mitigation, deferred CI security tooling |
+| 31 | Code-mode (QuickJS over the proxy) | the fast in-process execution path; "base solid" trigger |
 
 **Tier-2 (trigger-deferred, NOT scheduled):** `docs/futures/revisit-when.md` — sandbox refinements (bwrap egress, per-profile HOME, warm-pool, microVM), networked mode (Streamable-HTTP + better-auth + AGPL §13), SSRF egress, GraphQL cost limiting, live config reload, per-field GraphQL tools.
 
@@ -78,5 +79,5 @@ Each increment may run in its own session. At each increment **boundary**:
 
 ## 7. Session log (newest first — append a terse entry per increment/session)
 
-- **2026-06-27 — increment 22 (web shell) + dev tooling.** Shipped the `@junction/web` TanStack Start read-only dashboard (PR #36): server-only core via `createServerFn`, localhost-only + Host-guard, `junction web` spawns the built server (artifact dep, no cli↔web edge), credentials metadata-only. Review caught + fixed a real reliability bug (per-request DB connection/migration leak → home-keyed memo) + hardening (clean 403, body cap, security headers, stream errors). Added `./junction` launcher (#37) defaulting to a persistent repo-local `.junction` home (#38). Established `docs/STATE.md` + the `junction-handover` skill + a **`docs:check` gate in `pnpm verify`** (the `STATE-done-through` marker must match the map's highest `done` — memory can't go stale silently). **Next: increment 23.**
+- **2026-06-27 — increment 22 (web shell) + dev tooling.** Shipped the `@junction/web` TanStack Start read-only dashboard (PR #36): server-only core via `createServerFn`, localhost-only + Host-guard, `junction web` spawns the built server (artifact dep, no cli↔web edge), credentials metadata-only. Review caught + fixed a real reliability bug (per-request DB connection/migration leak → home-keyed memo) + hardening (clean 403, body cap, security headers, stream errors). Added `./junction` launcher (#37) defaulting to a persistent repo-local `.junction` home (#38). Established `docs/STATE.md` + the `junction-handover` skill + a **`docs:check` gate in `pnpm verify`** (the `STATE-done-through` marker must match the map's highest `done` — memory can't go stale silently). Also: bumped vitest timeouts to 20s (flaky child-process gate under load, #40); captured the **builder-brief template + verification discipline** in `docs/workflow.md` (#41). **Decided inc 23 = Web quality foundation** (rules + Biome React domain + happy-dom/Testing-Library + `junction-web-reviewer` + CI web gate), ahead of the web mutation increments; web mutation work shifts to 24+. **Next: write the inc-23 method file, then build (fresh session recommended).**
 - _(Earlier 16–21 history is in the git log + `docs/methods/README.md` status column + `docs/futures/`.)_
