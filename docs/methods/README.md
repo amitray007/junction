@@ -38,8 +38,26 @@ A **method file** holds one increment's **spec + step-by-step implementation tog
 | 19 | Large-spec selection (--tag/--path) + `platform refresh` | `19-large-spec-selection-refresh.md` | done |
 | 20 | GraphQL source provider (query/mutation/schema tools) | `20-graphql-provider.md` | done |
 | 21 | Sandboxed code-execution source (`cli` kind) + true Seatbelt read confinement | `21-sandboxed-cli-source.md` | done |
+| **— Feature: Web UI → connect-once via OAuth → secured via audit (planned route) —** | | | |
+| 22 | Web shell + localhost server (read-only dashboard) | `22-web-shell.md` | planned |
+| 23 | Web management: platforms + credentials (+ credential rotation) | — | planned |
+| 24 | Web management: profiles + sources + per-profile MCP endpoint | — | planned |
+| 25 | Web: probe + call (in-browser debug surface) | — | planned |
+| ~ | Distribution — publish `junction` + `junction install` story | — | planned |
+| 26 | OAuth vault (arctic) — connect OAuth platforms; token refresh | — | planned |
+| 27 | Audit (pino) — structured tool-call / credential-use log | — | planned |
+| 28 | Security & ops hardening — vault backup/recovery + master-key rotation + tool-poisoning mitigation + deferred CI security tooling (knip, type-coverage, semgrep, CodeQL, secret-scan, SPDX CI gate) | — | planned |
+| 29+ | Code-mode — QuickJS-WASM over the `ToolProvider` proxy (the fast execution path; "base solid" trigger) | — | planned |
 
 After increment 8 the foundation is "ready"; increment 9 (TUI) completes it. Features come after, each with its own method file.
+
+## Planned route (Tier 1) vs trigger-deferred (Tier 2)
+
+The table above is the **Tier-1 planned sequence** — what we intend to build, in order. It stays lean and goal-directed: Web UI (22–25) → distribution → **connect-once via OAuth (26)** → **secured via audit (27)** → security/ops hardening (28) → **code-mode (29)** once the base is solid.
+
+Everything else we've weighed — bwrap egress, per-profile HOME isolation, Seatbelt warm-pool / light mode, microVM tier, sandboxing untrusted MCP binaries, SSRF egress for OpenAPI, GraphQL cost limiting, warm-pool sessions, live config reload, networked mode (Streamable-HTTP + better-auth + AGPL §13), per-field GraphQL tools — is **Tier 2: trigger-deferred**, parked in `docs/futures/revisit-when.md`. Those are NOT scheduled; each activates only when its recorded trigger fires. This is deliberate forward-memory, not a backlog to burn down.
+
+**Cross-cutting decisions baked into increment 22** (so the rest builds cleanly): localhost-only (no auth — single-user); the web is a **management** surface, not a second agent API (MCP stays the agent API); the HTTP server is **callback-ready** so OAuth (26) adds a redirect route rather than a new server; `cli`/`web` are sibling apps (no cross-import — `junction web` spawns the web server; both import `core` only).
 
 ## Carry-forward notes (raised in review, actioned at the noted increment)
 
