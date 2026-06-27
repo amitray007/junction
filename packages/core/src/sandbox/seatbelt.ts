@@ -91,12 +91,27 @@ function validateSeatbeltNet(policy: SandboxPolicy): SandboxError | null {
   return null
 }
 
-async function generateProfile(policy: SandboxPolicy): Promise<string> {
+async function generateProfile(policy: SandboxPolicy, binaryPath?: string): Promise<string> {
   const alwaysDenied = getAlwaysDeniedPaths()
   // Resolve write paths robustly: falls back to realpath(parent)+basename when the
   // path does not yet exist, so a not-yet-created dir under a symlinked prefix still
   // resolves to its real location (aligns enforcement with the FIX-3 exposure check).
   const realWritePaths = await resolvePathsRobust(policy.writePaths)
+
+  // READ CONFINEMENT (inc 21): true deny-default reads. `(deny default)` +
+  // importing Apple's base profile (bsd.sb) gives the loader exactly the system
+  // reads it needs (dyld shared cache, frameworks, /etc/passwd, …) WITHOUT a
+  // fragile hand-rolled allowlist — the piece inc 8 lacked when a manual
+  // deny-all-read SIGABRTed the loader. On top of that we allow ONLY the policy's
+  // read/write paths + cwd + the binary's own directory. Reads anywhere else
+  // (~/.ssh, ~/.aws, /tmp/other, …) are denied. cover BOTH logical + realpath for
+  // symlinked prefixes (e.g. /tmp → /private/tmp). The binary dir must be readable
+  // or a non-system binary (e.g. Homebrew) cannot be loaded.
+  const readSources = [policy.cwd, ...policy.readPaths, ...policy.writePaths]
+  if (binaryPath !== undefined) readSources.push(path.dirname(binaryPath))
+  const realReadSources = await resolvePathsRobust(readSources)
+  const readablePaths = [...new Set([...readSources, ...realReadSources])]
+  const readLines = readablePaths.map((p) => `(allow file-read* (subpath "${p}"))`).join("\n")
 
   // CONFIDENTIALITY BOUNDARY — must cover BOTH the logical path and its realpath.
   // The kernel matches deny-subpath on the REAL path; if JUNCTION_HOME is under a
@@ -126,17 +141,22 @@ async function generateProfile(policy: SandboxPolicy): Promise<string> {
           }),
         ].join("\n")
 
+  // Order matters (SBPL is last-match-wins):
+  //   deny default → import system reads → allow readPaths → allow writePaths →
+  //   deny credential dir LAST (so it wins even if an operator readPath overlaps it,
+  //   defense-in-depth atop the add-time exposure check).
   return [
     "(version 1)",
     "(deny default)",
+    '(import "/System/Library/Sandbox/Profiles/bsd.sb")',
     "(allow process-fork)",
     "(allow process-exec*)",
     "(allow sysctl-read)",
     "(allow mach-lookup)",
-    "(allow file-read*)",
     netLines,
-    denyLines,
+    readLines,
     writeLines,
+    denyLines,
   ]
     .filter(Boolean)
     .join("\n")
@@ -151,7 +171,7 @@ export function runWithSeatbelt(
       const netErr = validateSeatbeltNet(policy)
       if (netErr) return err<SandboxResult, SandboxError>(netErr)
 
-      const profile = await generateProfile(policy)
+      const profile = await generateProfile(policy, argv[0])
       const tmpDir = await mkdtemp(path.join(os.tmpdir(), "jx-sb-"))
       const realTmpDir = await realpath(tmpDir)
       const profilePath = path.join(realTmpDir, "profile.sb")

@@ -170,18 +170,36 @@ describe("buildProvider — unsupported kind", () => {
   it("returns unsupported-source-kind for an unrecognised platform.kind", async () => {
     await withTempHome(async () => {
       const paths = getPaths()
-      // "cli" is a valid PlatformKind but has no buildProvider implementation yet
+      // "custom" is a valid PlatformKind but has no buildProvider implementation yet
       const platform = {
-        id: PlatformIdSchema.parse("cli-platform"),
-        kind: "cli" as Platform["kind"],
-        displayName: "CLI Source",
+        id: PlatformIdSchema.parse("custom-platform"),
+        kind: "custom" as Platform["kind"],
+        displayName: "Custom Source",
       } as Platform
 
       const result = await buildProvider(platform, null, paths)
       expect(result.isErr()).toBe(true)
       if (result.isErr()) {
         expect(result.error.kind).toBe("unsupported-source-kind")
-        expect((result.error as { platformKind: string }).platformKind).toBe("cli")
+        expect((result.error as { platformKind: string }).platformKind).toBe("custom")
+      }
+    })
+  })
+
+  it("returns connect-failed for a cli platform without a descriptor", async () => {
+    await withTempHome(async () => {
+      const paths = getPaths()
+      // "cli" kind is implemented — a platform missing the cli descriptor → connect-failed
+      const platform = {
+        id: PlatformIdSchema.parse("cli-nodesc"),
+        kind: "cli" as Platform["kind"],
+        displayName: "CLI No Desc",
+      } as Platform
+
+      const result = await buildProvider(platform, null, paths)
+      expect(result.isErr()).toBe(true)
+      if (result.isErr()) {
+        expect(result.error.kind).toBe("connect-failed")
       }
     })
   })

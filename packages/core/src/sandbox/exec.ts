@@ -6,7 +6,17 @@ import { err, ok, ResultAsync } from "neverthrow"
 import type { SandboxError } from "../errors/index.js"
 import type { SandboxPolicy, SandboxResult } from "./sandbox.js"
 
-/** Spawn argv[0] with argv.slice(1), collect stdout/stderr, enforce timeout→SIGKILL. */
+/**
+ * Hard ceiling on combined stdout+stderr bytes collected per spawn.
+ * When exceeded the child is SIGKILLed (same mechanism as the timeout) and the
+ * result is returned with truncated output and outputCapped:true.
+ * Mirrors RESPONSE_BYTE_CAP in openapi-client/http.ts (1 MB).
+ */
+export const SPAWN_OUTPUT_BYTE_CAP = 1_048_576 // 1 MB
+
+/** Spawn argv[0] with argv.slice(1), collect stdout/stderr, enforce timeout→SIGKILL.
+ *  Also enforces an output byte cap — a flood no longer OOMs junction.
+ */
 export async function spawnSandboxed(
   argv: readonly string[],
   opts: {
@@ -21,6 +31,8 @@ export async function spawnSandboxed(
 
   return new Promise<SandboxResult | { _err: SandboxError }>((resolve) => {
     let timedOut = false
+    let outputCapped = false
+    let outBytes = 0
     const child = spawn(cmd, args, {
       env: opts.env,
       cwd: opts.cwd,
@@ -34,19 +46,9 @@ export async function spawnSandboxed(
     const stdoutChunks: Buffer[] = []
     const stderrChunks: Buffer[] = []
 
-    child.stdout.on("data", (chunk: Buffer) => stdoutChunks.push(chunk))
-    child.stderr.on("data", (chunk: Buffer) => stderrChunks.push(chunk))
-
-    if (opts.stdin !== undefined) {
-      child.stdin.write(opts.stdin)
-      child.stdin.end()
-    } else {
-      child.stdin.end()
-    }
-
-    const timer = setTimeout(() => {
-      timedOut = true
-      // Kill the entire process group to reap grandchildren orphaned by sandbox wrappers.
+    // Shared SIGKILL helper — mirrors the timeout path exactly so both code paths
+    // kill the full process group, not just the sandbox wrapper.
+    function killGroup(): void {
       if (child.pid !== undefined) {
         try {
           process.kill(-child.pid, "SIGKILL")
@@ -57,6 +59,41 @@ export async function spawnSandboxed(
       } else {
         child.kill("SIGKILL")
       }
+    }
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      if (outputCapped) return
+      outBytes += chunk.length
+      if (outBytes > SPAWN_OUTPUT_BYTE_CAP) {
+        outputCapped = true
+        killGroup()
+        // Do not push this chunk — output is truncated to what was collected before the cap.
+        return
+      }
+      stdoutChunks.push(chunk)
+    })
+
+    child.stderr.on("data", (chunk: Buffer) => {
+      if (outputCapped) return
+      outBytes += chunk.length
+      if (outBytes > SPAWN_OUTPUT_BYTE_CAP) {
+        outputCapped = true
+        killGroup()
+        return
+      }
+      stderrChunks.push(chunk)
+    })
+
+    if (opts.stdin !== undefined) {
+      child.stdin.write(opts.stdin)
+      child.stdin.end()
+    } else {
+      child.stdin.end()
+    }
+
+    const timer = setTimeout(() => {
+      timedOut = true
+      killGroup()
     }, opts.timeoutMs)
 
     child.on("error", (err) => {
@@ -75,6 +112,7 @@ export async function spawnSandboxed(
         stderr: Buffer.concat(stderrChunks).toString("utf8"),
         exitCode: code ?? 1,
         timedOut: false,
+        outputCapped,
       })
     })
   })

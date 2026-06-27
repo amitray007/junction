@@ -86,7 +86,7 @@ export async function probeCommandBackend(): Promise<"bubblewrap" | "none"> {
   return commandBackendCache
 }
 
-function buildBwrapArgv(argv: readonly string[], policy: SandboxPolicy): string[] {
+export function buildBwrapArgv(argv: readonly string[], policy: SandboxPolicy): string[] {
   // bwrapBinPath is always set by probeCommandBackend before runWithBubblewrap is
   // ever reachable — probeCommandBackend sets it or returns "none" (which blocks
   // the bubblewrap code path entirely). The fallback to "bwrap" is unreachable in
@@ -97,7 +97,11 @@ function buildBwrapArgv(argv: readonly string[], policy: SandboxPolicy): string[
     "--unshare-all",
     "--die-with-parent",
     "--new-session",
-    "--clearenv",
+    // NOTE: no --clearenv. The child env is controlled by the explicit `env:` we
+    // pass to spawn() in runWithBubblewrap (Node's `env` REPLACES the environment —
+    // no process.env inheritance), so bwrap forwards exactly that scrubbed allowlist.
+    // We deliberately do NOT use `--setenv KEY VALUE`, which would place the
+    // credential VALUE in bwrap's argv → readable via /proc/<pid>/cmdline and `ps`.
     // Minimal system bindings so binaries can load.
     "--ro-bind",
     "/usr",
@@ -131,11 +135,9 @@ function buildBwrapArgv(argv: readonly string[], policy: SandboxPolicy): string[
 
   args.push("--chdir", policy.cwd)
 
-  // Explicit env via --setenv.
-  args.push("--setenv", "PATH", "/usr/bin:/bin")
-  for (const [k, v] of Object.entries(policy.env)) {
-    args.push("--setenv", k, v)
-  }
+  // Env is forwarded via the spawn `env:` allowlist (see runWithBubblewrap) — NOT
+  // via --setenv, so no value (incl. a credential) lands in argv. PATH is non-secret
+  // and supplied through the same env map.
 
   // Network: --unshare-all already covers net; no --share-net added.
 
@@ -143,10 +145,17 @@ function buildBwrapArgv(argv: readonly string[], policy: SandboxPolicy): string[
   return args
 }
 
+/** Env the bwrap child receives — the policy allowlist plus a non-secret PATH. */
+export function buildBwrapEnv(policy: SandboxPolicy): Record<string, string> {
+  return { PATH: "/usr/bin:/bin", ...policy.env }
+}
+
 export function runWithBubblewrap(
   argv: readonly string[],
   policy: SandboxPolicy,
 ): ResultAsync<SandboxResult, SandboxError> {
-  // env is {} — bwrap re-injects the allowlist via --clearenv + --setenv.
-  return runSandboxed(buildBwrapArgv(argv, policy), policy, {})
+  // Spawn bwrap with an EXPLICIT env (Node replaces, never inherits process.env);
+  // with no --clearenv, bwrap forwards exactly this scrubbed allowlist to the child.
+  // Credential values reach the child via the environment, never via argv.
+  return runSandboxed(buildBwrapArgv(argv, policy), policy, buildBwrapEnv(policy))
 }

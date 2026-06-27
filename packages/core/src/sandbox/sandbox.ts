@@ -31,6 +31,13 @@ export interface SandboxResult {
   stderr: string
   exitCode: number
   timedOut: boolean
+  /**
+   * True when the combined stdout+stderr exceeded the output byte cap and the
+   * child was SIGKILLed before it finished. The returned stdout/stderr are
+   * truncated to whatever was collected before the cap was hit.
+   * Added in inc 21 (exec.ts OOM hardening).
+   */
+  outputCapped?: boolean
 }
 
 export type SandboxCapabilities = {

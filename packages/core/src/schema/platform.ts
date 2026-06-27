@@ -4,6 +4,7 @@
 
 import { z } from "zod"
 
+import { CliConnectionSchema } from "./cli-connection.js"
 import { GraphQlConnectionSchema } from "./graphql-connection.js"
 import { McpConnectionSchema } from "./mcp-connection.js"
 import { OpenApiConnectionSchema } from "./openapi-connection.js"
@@ -47,6 +48,12 @@ export const PlatformSchema = z.object({
    * Meaningful when kind === "graphql". No vendor-specific fields.
    */
   graphql: GraphQlConnectionSchema.optional(),
+  /**
+   * Sandboxed CLI source descriptor.
+   * Meaningful when kind === "cli". Declares operator-fixed commands run through
+   * createSandbox() — never a raw shell. No vendor-specific fields.
+   */
+  cli: CliConnectionSchema.optional(),
 })
 
 export type Platform = z.infer<typeof PlatformSchema>
