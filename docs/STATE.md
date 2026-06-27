@@ -32,6 +32,7 @@ Full detail in `CLAUDE.md`. The essentials a new agent must internalize:
 - **Gates:** `pnpm verify` (tsc + Biome + Vitest) is THE gate; CI also runs depcruise + quality + gitleaks on both Node 20 & 22. `main` is branch-protected (PR-only, require-up-to-date).
 - **Behaviours** (`docs/behaviours/`): correctness/security over speed · architecture over expedience · hold decisions loosely (recommend, surface real decisions to the user). These are non-negotiable.
 - **Dev/test:** `./junction <cmd>` runs the built CLI against the persistent repo-local `.junction` home (gitignored). Orchestrator QA uses **ephemeral `/tmp/jtNN` per increment** (isolated, disposable). Rebuild after source changes: `pnpm build`.
+- **Two high-leverage details live in `docs/workflow.md`:** the **builder-brief template** (what a good delegation contains — read-first / exact-changes / hard-invariants / do-NOT / report-back) and the **verification discipline** (drive the real built artifact, right instrument, adversarial e2e for security increments). Don't delegate or QA without them.
 
 ## 3. Session-critical traps — these bit us repeatedly; do NOT relearn them
 
