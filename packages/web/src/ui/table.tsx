@@ -45,7 +45,7 @@ export function TableHead({ className, ...props }: ThHTMLAttributes<HTMLTableCel
         "h-[var(--row-height-header)]",
         "px-[var(--cell-padding-x)] py-[var(--cell-padding-y)]",
         "text-left align-middle",
-        "text-[var(--text-eyebrow)] font-medium uppercase tracking-[0.08em]",
+        "text-[var(--text-eyebrow)] font-medium uppercase tracking-[var(--tracking-eyebrow)]",
         "text-[var(--muted)]",
         "whitespace-nowrap",
         className,

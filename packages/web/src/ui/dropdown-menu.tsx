@@ -97,7 +97,7 @@ export function DropdownMenuLabel({
     <DropdownMenuPrimitive.Label
       className={cn(
         "px-2 py-1.5",
-        "text-[var(--text-eyebrow)] font-medium uppercase tracking-[0.08em] text-[var(--muted)]",
+        "text-[var(--text-eyebrow)] font-medium uppercase tracking-eyebrow text-[var(--muted)]",
         inset && "pl-8",
         className,
       )}

@@ -48,13 +48,17 @@ Self-host via the `geist` npm package (no runtime CDN). Departure Mono is self-h
 
 ### Type scale (px)
 
-| Role | Size | Weight | Notes |
-|---|---|---|---|
-| Page title | 20 | 600 | tracking `-0.01em` |
-| Section heading | 15 | 600 | |
-| Body / table cell | 13 | 400 | line-height 1.5 — the power-tool register (sub-14 base) |
-| Mono / IDs | 12.5 | 400/500 | Geist Mono, tabular for numbers |
-| Eyebrow / label | 11 | 500 | Geist Mono, uppercase, `0.08em` |
+| Role | Token | Size | Weight | Notes |
+|---|---|---|---|---|
+| Page title | `--text-page-title` | 20 | 600 | tracking `--tracking-tight` (`-0.01em`) |
+| Section heading | `--text-section` | 15 | 600 | |
+| Body / table cell | `--text-body` | 13 | 400 | line-height 1.5 — the power-tool register (sub-14 base) |
+| Mono / IDs | `--text-mono` | 12.5 | 400/500 | Geist Mono, tabular for numbers |
+| Eyebrow / label | `--text-eyebrow` | 11 | 500 | Geist Mono, uppercase, tracking `--tracking-eyebrow` (`0.08em`) |
+| Stat count | `--text-stat` | 28 | 700 | Geist Mono, dashboard stat cards; tabular-nums |
+| Hero / 404 | `--text-hero` | 64 | 700 | Geist Mono, large muted decorative numbers only |
+
+**Tracking tokens:** `--tracking-tight: -0.01em` (page titles) · `--tracking-eyebrow: 0.08em` (eyebrow labels).
 
 ---
 
@@ -144,11 +148,14 @@ The semantic mapping every credential/platform/profile/source state renders thro
 
 | Badge | Token | Meaning (where used) |
 |---|---|---|
-| **CONNECTED** | ok | credential valid · source live · platform reachable |
+| **CONFIGURED** | configured (neutral: `--muted` on `--surface-2`) | credential stored but **not live-validated** yet (all creds in inc 23–27; probe lands inc 28) |
+| **CONNECTED** | ok | credential valid · source live · platform reachable (reserved for live-probe result, inc 28+) |
 | **NO AUTH** | info | public / no-auth source (optional-credential sources, inc 16) |
 | **EXPIRING** | warning | token near expiry / degraded (OAuth, inc 28) |
 | **AUTH FAILED** | error | credential invalid / source unreachable |
 | **DISABLED** | disabled | profile source toggled off · credential unused |
+
+**Note on CONFIGURED vs CONNECTED:** CONNECTED asserts liveness ("credential valid AND source reachable"). Until inc 28 adds live health probing, all stored credentials show CONFIGURED — a neutral state that says "this credential was added successfully" without overstating. The `configured` cva variant uses `--muted` text on `--surface-2` bg (same as `disabled` surface but with `--muted` rather than `--status-disabled-fg`).
 
 ## The ONE memorable detail — the live status rail (DECIDED)
 

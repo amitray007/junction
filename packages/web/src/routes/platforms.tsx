@@ -20,7 +20,7 @@ function PlatformsPage() {
         style={{
           fontSize: "var(--text-page-title)",
           fontWeight: 600,
-          letterSpacing: "-0.01em",
+          letterSpacing: "var(--tracking-tight)",
           color: "var(--fg)",
         }}
       >
