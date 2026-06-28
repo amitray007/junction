@@ -131,6 +131,33 @@
   --z-overlay: 60;   /* Modals / sheet backdrops */
 }
 
+/* ─── Sidebar collapse — CSS source of truth ────────────────────────────── */
+/* html[data-sidebar] is set by SIDEBAR_SCRIPT pre-hydration, by getSidebarInitialState()
+   during SSR, and by the toggle handler in sidebar.tsx on every toggle.
+   --sidebar-current is the SINGLE token both the sidebar width and the content
+   margin-left (AppShellMain in __root.tsx) read — so they always move together. */
+
+html[data-sidebar="expanded"] {
+  --sidebar-current: var(--sidebar-width);
+}
+
+html[data-sidebar="collapsed"] {
+  --sidebar-current: var(--sidebar-width-icon);
+}
+
+/* ─── Reduced-motion: zero sidebar + content layout transitions ──────────── */
+/* The sidebar <aside> uses transition-[width] and AppShellMain uses
+   transition: margin-left in inline styles. Gate both here so users who prefer
+   reduced motion get an instant toggle with no sliding animation. */
+@media (prefers-reduced-motion: reduce) {
+  aside[aria-label="Main navigation"] {
+    transition: none !important;
+  }
+  #shell-main {
+    transition: none !important;
+  }
+}
+
 /* Dark mode — system-aware + data-theme="dark" manual override */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {

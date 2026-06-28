@@ -10,6 +10,7 @@ import {
   Scripts,
   useRouterState,
 } from "@tanstack/react-router"
+import { getRequest } from "@tanstack/react-start/server"
 import type { ReactNode } from "react"
 import { Toaster } from "sonner"
 import { SIDEBAR_COOKIE, SIDEBAR_SCRIPT, Sidebar, type SidebarState } from "../ui/sidebar.js"
@@ -44,7 +45,7 @@ export const Route = createRootRoute({
     ],
     // Inline scripts run BEFORE React hydration:
     // 1. THEME_SCRIPT: reads localStorage → sets data-theme on <html> (no theme flash).
-    // 2. SIDEBAR_SCRIPT: reads cookie → sets data-sidebar on <body> (no width flash).
+    // 2. SIDEBAR_SCRIPT: reads cookie → sets data-sidebar on <html> (no width flash).
     scripts: [{ children: THEME_SCRIPT }, { children: SIDEBAR_SCRIPT }],
   }),
   component: RootComponent,
@@ -66,21 +67,19 @@ const STATIC_RAIL_SEGMENTS = [
   { id: "ph-3", state: "disabled" as const, label: "source" },
 ]
 
-// Read the sidebar cookie during SSR so the initial render matches the persisted
-// state — preventing a width flash before hydration (mirrors THEME_SCRIPT).
+// Read the sidebar cookie during SSR so the initial render emits the correct
+// data-sidebar attribute on <html> — preventing a width flash before hydration
+// (same pattern as THEME_SCRIPT for theme). Uses the real TanStack Start server
+// API: getRequest() is available in SSR context and throws on the client, so
+// the try/catch guarantees safe fallback to "expanded" on the client side.
+// SIDEBAR_SCRIPT then corrects the attribute from the cookie before hydration.
 function getSidebarInitialState(): SidebarState {
-  // On the server TanStack Start gives us access to request headers via
-  // globalThis.__tss_request_headers (injected by the Start Vite plugin).
-  // We parse the Cookie header directly.
   try {
-    // biome-ignore lint/suspicious/noExplicitAny: runtime global injected by TanStack Start SSR
-    const headers: Record<string, string> = (globalThis as any).__tss_request_headers ?? {}
-    // biome-ignore lint/complexity/useLiteralKeys: headers keys are dynamic HTTP header names
-    const cookieHeader = headers["cookie"] ?? headers["Cookie"] ?? ""
+    const cookieHeader = getRequest().headers.get("cookie") ?? ""
     const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${SIDEBAR_COOKIE}=([^;]*)`))
     if (match?.[1] === "collapsed") return "collapsed"
   } catch {
-    // SSR context unavailable — fall back to expanded (SIDEBAR_SCRIPT corrects on client)
+    // Client context / Vite build — getRequest() throws; SIDEBAR_SCRIPT handles client
   }
   return "expanded"
 }
@@ -89,15 +88,20 @@ function RootDocument({ children }: { readonly children: ReactNode }) {
   const sidebarInitialState = getSidebarInitialState()
 
   return (
-    <html lang="en">
+    <html
+      lang="en"
+      // data-sidebar is set on <html> — same element the SIDEBAR_SCRIPT targets
+      // and the CSS [data-sidebar] selectors read. Single source of truth for
+      // sidebar collapse state: the attribute on this element drives both the
+      // sidebar width (via --sidebar-current) and the content margin-left.
+      data-sidebar={sidebarInitialState}
+    >
       <head>
         <HeadContent />
       </head>
       <body
         style={{ backgroundColor: "var(--bg)", color: "var(--fg)" }}
         className="font-sans antialiased"
-        // data-sidebar is set by SIDEBAR_SCRIPT before hydration; React rehydrates it.
-        data-sidebar={sidebarInitialState}
       >
         {/* Skip link — first focusable element for keyboard users */}
         <a
@@ -131,12 +135,10 @@ function RootDocument({ children }: { readonly children: ReactNode }) {
           {/* Zone 2: Sidebar — fixed, offset 4px for StatusRail */}
           <Sidebar initialState={sidebarInitialState} />
 
-          {/* Main column — pushed right by sidebar width via margin-left.
-              Uses CSS var so it responds to the sidebar width token.
-              Both expanded (15rem) and collapsed (3rem + 4px rail) states
-              are handled by the transition on the sidebar itself; the margin
-              matches the sidebar width at each state via the same token. */}
-          <AppShellMain sidebarInitialState={sidebarInitialState}>{children}</AppShellMain>
+          {/* Main column — pushed right by the CSS var --sidebar-current which is
+              set by the [data-sidebar] selector on <html>. Both zones move together
+              via a single attribute flip; no React state/inline-style desync. */}
+          <AppShellMain>{children}</AppShellMain>
 
           {/* Toaster — mounted globally; real usage in inc 24+ mutations */}
           <Toaster
@@ -160,47 +162,22 @@ function RootDocument({ children }: { readonly children: ReactNode }) {
   )
 }
 
-// AppShellMain manages the left-margin offset that keeps content clear of the
-// fixed sidebar. We read the router state to know the current sidebar width so
-// we can match the CSS transition. The sidebar itself drives the visual width;
-// we mirror it with a matching margin transition.
-function AppShellMain({
-  sidebarInitialState,
-  children,
-}: {
-  readonly sidebarInitialState: SidebarState
-  readonly children: ReactNode
-}) {
-  return <SidebarOffsetMain initialState={sidebarInitialState}>{children}</SidebarOffsetMain>
-}
-
-// Client component that reads the sidebar cookie on mount and applies the correct
-// left-margin. Transitions match the sidebar width transition so there is no jump.
-function SidebarOffsetMain({
-  initialState,
-  children,
-}: {
-  readonly initialState: SidebarState
-  readonly children: ReactNode
-}) {
-  // Read data-sidebar attribute that SIDEBAR_SCRIPT sets synchronously.
-  // We don't need state here — CSS handles the offset via a data attribute selector.
-  // The transition matches sidebar's --motion-short.
+// AppShellMain — offset content area. margin-left reads var(--sidebar-current)
+// which is driven by html[data-sidebar] in app.css. When the sidebar toggles,
+// it flips the <html> attribute → CSS recalculates both the sidebar width and
+// this margin in one paint; no JS layout listener required.
+function AppShellMain({ children }: { readonly children: ReactNode }) {
   return (
     <div
+      id="shell-main"
       className="flex flex-col min-h-screen"
       style={{
-        // 4px (StatusRail) + sidebar width. CSS transition matches sidebar.
-        marginLeft:
-          initialState === "collapsed"
-            ? "calc(4px + var(--sidebar-width-icon))"
-            : "calc(4px + var(--sidebar-width))",
-        transition: `margin-left var(--motion-short) var(--ease-enter)`,
+        // 4px (StatusRail) + var(--sidebar-current) set by [data-sidebar] selector.
+        // Both sidebar width and this margin read the same token so they move together.
+        marginLeft: "calc(4px + var(--sidebar-current))",
+        // Transition is motion-gated via app.css @media prefers-reduced-motion.
+        transition: "margin-left var(--motion-short) var(--ease-enter)",
       }}
-      // data-sidebar mirrors body[data-sidebar] — a CSS [data-sidebar=collapsed]
-      // selector could also drive this, but inline style is simpler and avoids
-      // a Tailwind arbitrary-selector for a dynamic value.
-      id="shell-main"
     >
       {/* Zone 3: Topbar — thin context bar, sticky */}
       <Topbar />

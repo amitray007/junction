@@ -75,6 +75,24 @@ describe("Field", () => {
     expect(error).toHaveTextContent("Password is too short")
   })
 
+  it("error element has id that matches the aria-describedby contract", () => {
+    // Field renders the error with id="${id}-error" which the cloneElement injection
+    // passes to the control as aria-describedby. Verify the error node has the right id
+    // so the association is possible — the injection is verified separately in SSR.
+    const { container } = render(
+      <Field id="email-check" label="Email" error="Invalid email address">
+        <Input id="email-check" type="email" />
+      </Field>,
+    )
+    const errorEl = container.querySelector<HTMLElement>("[role='alert']")
+    expect(errorEl).not.toBeNull()
+    expect(errorEl?.id).toBe("email-check-error")
+    expect(errorEl?.textContent).toBe("Invalid email address")
+    // The input exists in the same Field container
+    const input = container.querySelector<HTMLInputElement>("#email-check")
+    expect(input).not.toBeNull()
+  })
+
   it("renders in dark mode without errors", () => {
     document.documentElement.setAttribute("data-theme", "dark")
     expect(() =>

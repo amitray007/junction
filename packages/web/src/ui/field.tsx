@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Field — label + control + inline error/description, a11y-wired.
-// Associates a label with its control via htmlFor; exposes error and description
-// via aria-describedby on the control. Built inc 23; wired to writes inc 24+.
+// Associates a label with its control via htmlFor; injects aria-describedby
+// onto the direct child control so screen readers announce the error/description
+// when the control receives focus. Built inc 23; wired to writes inc 24+.
 
-import type { ReactNode } from "react"
+import { Children, cloneElement, isValidElement, type ReactNode } from "react"
 import { cn } from "./cn.js"
 
 export interface FieldProps {
@@ -11,7 +12,7 @@ export interface FieldProps {
   readonly id: string
   /** Label text. */
   readonly label: string
-  /** Inline error message — also sets aria-invalid on the control if non-empty. */
+  /** Inline error message — shown below the control with role=alert. */
   readonly error?: string
   /** Optional description shown below the control. */
   readonly description?: string
@@ -23,6 +24,21 @@ export interface FieldProps {
 export function Field({ id, label, error, description, children, className }: FieldProps) {
   const descriptionId = description ? `${id}-description` : undefined
   const errorId = error ? `${id}-error` : undefined
+  const describedBy = [descriptionId, errorId].filter(Boolean).join(" ") || undefined
+
+  // Inject aria-describedby onto the direct child control so screen readers
+  // announce the error/description when the input is focused. cloneElement is
+  // safe here because Field's contract is "one control child" and all our
+  // primitives accept standard HTMLElement props.
+  const control = (() => {
+    const child = Children.only(children)
+    if (isValidElement(child) && describedBy) {
+      return cloneElement(child as React.ReactElement<{ "aria-describedby"?: string }>, {
+        "aria-describedby": describedBy,
+      })
+    }
+    return child
+  })()
 
   return (
     <div className={cn("flex flex-col gap-1.5", className)}>
@@ -39,10 +55,8 @@ export function Field({ id, label, error, description, children, className }: Fi
         {label}
       </label>
 
-      {/* Control — rendered with aria-describedby pointing at error/description */}
-      <div aria-describedby={[descriptionId, errorId].filter(Boolean).join(" ") || undefined}>
-        {children}
-      </div>
+      {/* Control — aria-describedby injected above */}
+      {control}
 
       {/* Description */}
       {description && (

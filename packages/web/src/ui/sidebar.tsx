@@ -44,10 +44,12 @@ function writeSidebarCookie(state: SidebarState) {
 }
 
 // Pre-hydration sidebar script — reads the cookie and sets the data-sidebar
-// attribute on <body> BEFORE first paint, so the initial width is correct.
-// The SSR render uses the server-read cookie; this script just ensures the
-// attribute is set even if SSR didn't set it (safety net).
-export const SIDEBAR_SCRIPT = `(function(){try{var m=document.cookie.match(/(^|;\\s*)junction-sidebar=([^;]*)/);var s=m&&m[2]==="collapsed"?"collapsed":"expanded";document.body.setAttribute("data-sidebar",s)}catch(e){}})()`
+// attribute on <html> BEFORE first paint, so the initial width is correct.
+// The SSR render (getSidebarInitialState in __root.tsx) sets the same attribute
+// server-side; this script is a belt-and-suspenders no-JS-flash guard.
+// IMPORTANT: targets document.documentElement (<html>), matching the CSS selectors
+// in app.css and the toggle handler below — single source of truth.
+export const SIDEBAR_SCRIPT = `(function(){try{var m=document.cookie.match(/(^|;\\s*)junction-sidebar=([^;]*)/);var s=m&&m[2]==="collapsed"?"collapsed":"expanded";document.documentElement.setAttribute("data-sidebar",s)}catch(e){}})()`
 
 // ─── Nav structure ────────────────────────────────────────────────────────────
 
@@ -264,11 +266,14 @@ export function Sidebar({ initialState = "expanded" }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(initialState === "collapsed")
 
   // On mount, sync from cookie (handles the case where SSR didn't pass initialState).
+  // Also ensures html[data-sidebar] matches React state after hydration.
   useEffect(() => {
     const cookieState = readSidebarCookie()
     setCollapsed(cookieState === "collapsed")
-    // Also set the body attribute for CSS consumers.
-    document.body.setAttribute("data-sidebar", cookieState)
+    // Set the attribute on <html> — the single CSS source of truth for sidebar width
+    // and content margin. SIDEBAR_SCRIPT already set this before hydration; we just
+    // keep it in sync if the cookie differs from the SSR-rendered attribute.
+    document.documentElement.setAttribute("data-sidebar", cookieState)
   }, [])
 
   const toggle = useCallback(() => {
@@ -276,18 +281,29 @@ export function Sidebar({ initialState = "expanded" }: SidebarProps) {
       const next = !prev
       const state: SidebarState = next ? "collapsed" : "expanded"
       writeSidebarCookie(state)
-      document.body.setAttribute("data-sidebar", state)
+      // Single attribute flip on <html> drives BOTH sidebar width AND content margin
+      // via the [data-sidebar] CSS selectors in app.css (--sidebar-current token).
+      document.documentElement.setAttribute("data-sidebar", state)
       return next
     })
   }, [])
 
-  // Cmd/Ctrl+B global keyboard shortcut
+  // Cmd/Ctrl+B global keyboard shortcut — bail when focus is inside an editable
+  // control so we don't clobber native bold (contenteditable) or text input.
   useEffect(() => {
     function onKeyDown(e: globalThis.KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key === "b") {
-        e.preventDefault()
-        toggle()
+      if (!(e.metaKey || e.ctrlKey) || e.key !== "b") return
+      const active = document.activeElement
+      if (
+        active instanceof HTMLInputElement ||
+        active instanceof HTMLTextAreaElement ||
+        active instanceof HTMLSelectElement ||
+        (active instanceof HTMLElement && active.isContentEditable)
+      ) {
+        return // let the native behaviour (e.g. bold) proceed
       }
+      e.preventDefault()
+      toggle()
     }
     window.addEventListener("keydown", onKeyDown)
     return () => window.removeEventListener("keydown", onKeyDown)
@@ -302,6 +318,7 @@ export function Sidebar({ initialState = "expanded" }: SidebarProps) {
         "fixed top-0 bottom-0 left-[4px]", // offset by StatusRail width (4px)
         "flex flex-col",
         "border-r border-[var(--border)]",
+        // Transition is defined here but zeroed in app.css under prefers-reduced-motion.
         "transition-[width] duration-[var(--motion-short)] ease-[var(--ease-enter)]",
         "overflow-hidden",
       )}

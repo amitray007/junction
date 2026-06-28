@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Sidebar tests — grouped nav, collapse state, cookie persistence, a11y landmarks.
+// Covers the architectural invariants: data-sidebar on <html>, content offset
+// tracks sidebar state, Cmd+B bails inside inputs.
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { SIDEBAR_COOKIE, Sidebar, type SidebarState } from "./sidebar.js"
 import { TooltipProvider } from "./tooltip.js"
@@ -38,7 +40,7 @@ afterEach(() => {
   // Reset document.cookie between tests (intentional — test env only)
   // biome-ignore lint/suspicious/noDocumentCookie: intentional test teardown — clears the sidebar cookie between test cases
   document.cookie = `${SIDEBAR_COOKIE}=; max-age=0`
-  document.body.removeAttribute("data-sidebar")
+  document.documentElement.removeAttribute("data-sidebar")
 })
 
 describe("Sidebar", () => {
@@ -93,17 +95,83 @@ describe("Sidebar", () => {
     expect(dashLink).toBeInTheDocument()
   })
 
-  it("toggles collapse on Cmd+B keydown and persists cookie", () => {
-    // Ensure no stale cookie from a prior test
+  it("toggle collapses the sidebar: wordmark disappears (expanded→collapsed)", async () => {
+    // Verify the toggle handler actually changes React state — in expanded mode
+    // the Wordmark (aria-label="Junction") is visible; in collapsed mode it is hidden.
+    // biome-ignore lint/suspicious/noDocumentCookie: intentional — seeds the cookie so useEffect reads "expanded"
+    document.cookie = `${SIDEBAR_COOKIE}=expanded; path=/`
+    renderSidebar("expanded")
+
+    // Wordmark is visible in expanded state
+    expect(screen.getByRole("img", { name: "Junction" })).toBeInTheDocument()
+
+    // Fire Cmd+B to collapse
+    await act(async () => {
+      fireEvent.keyDown(window, { key: "b", metaKey: true })
+    })
+
+    // After collapse the Wordmark is hidden (amber dot shown instead)
+    expect(screen.queryByRole("img", { name: "Junction" })).not.toBeInTheDocument()
+  })
+
+  it("toggle persists cookie and does NOT set data-sidebar on <body>", async () => {
+    // body must NOT carry data-sidebar — it's the old (broken) target.
+    // The architectural fix writes to document.documentElement (<html>) instead.
     // biome-ignore lint/suspicious/noDocumentCookie: intentional — seeds the cookie in happy-dom to ensure clean test state
     document.cookie = `${SIDEBAR_COOKIE}=expanded; path=/`
     renderSidebar("expanded")
 
     // Fire Cmd+B to collapse
-    fireEvent.keyDown(window, { key: "b", metaKey: true })
+    await act(async () => {
+      fireEvent.keyDown(window, { key: "b", metaKey: true })
+    })
 
     // Cookie should be set to "collapsed"
     expect(document.cookie).toContain(`${SIDEBAR_COOKIE}=collapsed`)
+    // body must NOT have the attribute (wrong target from old code)
+    expect(document.body).not.toHaveAttribute("data-sidebar")
+  })
+
+  it("Cmd+B does NOT toggle when focus is inside an input", async () => {
+    // biome-ignore lint/suspicious/noDocumentCookie: intentional — seeds cookie for test isolation
+    document.cookie = `${SIDEBAR_COOKIE}=expanded; path=/`
+    renderSidebar("expanded")
+
+    // Set documentElement to "expanded" manually to match what mount useEffect would set,
+    // since happy-dom useEffect may not flush before the first keyDown.
+    document.documentElement.setAttribute("data-sidebar", "expanded")
+
+    // Create and focus an input to simulate being inside a form field
+    const input = document.createElement("input")
+    document.body.appendChild(input)
+    input.focus()
+
+    // Fire Cmd+B while input is focused — handler bails without toggling
+    await act(async () => {
+      fireEvent.keyDown(window, { key: "b", metaKey: true })
+    })
+
+    // The state must remain "expanded" — attribute unchanged because handler bailed
+    expect(document.documentElement).toHaveAttribute("data-sidebar", "expanded")
+    document.body.removeChild(input)
+  })
+
+  it("Cmd+B does NOT toggle when focus is inside a textarea", async () => {
+    // biome-ignore lint/suspicious/noDocumentCookie: intentional — seeds cookie for test isolation
+    document.cookie = `${SIDEBAR_COOKIE}=expanded; path=/`
+    renderSidebar("expanded")
+    document.documentElement.setAttribute("data-sidebar", "expanded")
+
+    const textarea = document.createElement("textarea")
+    document.body.appendChild(textarea)
+    textarea.focus()
+
+    await act(async () => {
+      fireEvent.keyDown(window, { key: "b", metaKey: true })
+    })
+
+    expect(document.documentElement).toHaveAttribute("data-sidebar", "expanded")
+    document.body.removeChild(textarea)
   })
 
   it("renders in dark mode (data-theme=dark) without errors", () => {

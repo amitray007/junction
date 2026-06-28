@@ -3,3 +3,7 @@
 .tanstack/
 routeTree.gen.ts
 dist/
+# Biome PostToolUse hook compiles .tsx → .js in-place; ignore stale artifacts
+src/**/*.js
+!src/entry-server.js
+!src/entry-client.js
