@@ -112,8 +112,24 @@ Dark is **true near-black** (`#09090B`), not navy. Max two surface levels; depth
 
 ## Layout & geometry
 
-- **Approach:** grid-disciplined app shell — top nav + the left-edge status rail + a max-width content column.
+- **App shell anatomy (DECIDED — sidebar, 2026-06-28):** a fixed five-zone shell, the structure Linear / Vercel / Stripe / Supabase converge on:
+  1. **StatusRail** — 4px fixed left edge (the signature element; survives sidebar collapse).
+  2. **Sidebar** — fixed, `--sidebar-width 15rem` expanded / `--sidebar-width-icon 3rem` icon-rail. **Destinations only** (the nouns), grouped (`MANAGE`: Dashboard/Platforms/Credentials/Profiles · `CONNECT`: MCP Sources). Wordmark in header, theme toggle + status summary in footer. Collapsible via `Cmd/Ctrl+B`, **persisted by cookie** (read server-side for SSR — no flash, mirrors the theme-script approach).
+  3. **Topbar** — sticky, `--topbar-height` (~44px). **Context, not nav**: breadcrumb (left) + global controls (right). (Breadcrumb shows just the section until row→detail pages exist — futures.)
+  4. **Page header zone** — per-route band: title + count chip + optional subtitle + toolbar (search / filter / **labelled** primary action). Reserve its height during load.
+  5. **Content zone** — the only thing that scrolls; table / detail key-value panel / dashboard cards.
+- **Division of labor (keeps it organized — one home per action):** sidebar = destinations · topbar = position + global · page header = verbs for *this page* · row `⋯` = verbs for *this record*.
+- **Active nav treatment:** neutral high-contrast `--fg` text + `--surface-2` bg + a **2px amber inset-left bar** (`box-shadow: inset 2px 0 0 var(--accent)`). NOT amber text (keeps the amber budget tight). Icon may take `--accent`; the label stays `--fg`.
+- **Layout stability (no shake — DECIDED):** `scrollbar-gutter: stable` on `html`; content is **left-aligned in the fixed shell**, not a centered `mx-auto` column (centering + scrollbar toggling = horizontal jump). Only the content zone scrolls; sidebar/topbar/page-header never repaint on nav. Skeletons must occupy the exact loaded-content box (row height + column widths) to avoid vertical reflow.
 - **Radius:** `--radius-sm 0.25rem (4px)` inputs/badges/chips · `--radius-md 0.375rem (6px)` buttons/cards/popovers (the workhorse) · `--radius-lg 0.5rem (8px)` dialogs/sheets/panels. Full (`9999px`) **only** status dots & avatars. The amber wordmark node is deliberately `0` radius (the one sharp element).
+
+## Icon + text discipline (DECIDED)
+
+**Icon + text by default.** Drop to icon-only ONLY when (a) the sidebar is collapsed, (b) it's a universal control (`⋯`, `✕`, search-in-field), or (c) it's a repeated row action in a cramped table. **Every** icon-only control gets a Radix tooltip **and** an `aria-label` with the same words; the icon itself is `aria-hidden`. Primary page actions are **always** labelled (never icon-only). Status is always dot + text (never color-only).
+
+## Routing & data stability (DECIDED — `createRouter` defaults)
+
+Read-heavy localhost management UI: `defaultPreload: "intent"` (preload on hover — near-free on local SQLite) · `defaultStaleTime: 30_000` (no bounce-refetch on revisit within 30s) · keep `staleReloadMode: 'background'` (SWR — render cached, revalidate behind, no flash) · `defaultPendingMs: 1000` / `defaultPendingMinMs: 500` (fast loads never flash a spinner; the old route stays until the new loader resolves) · keep `scrollRestoration` + `defaultViewTransition`. Mutations (inc 24+) call `router.invalidate()` to force-refresh — `staleTime` governs navigation only, never writes.
 
 ---
 

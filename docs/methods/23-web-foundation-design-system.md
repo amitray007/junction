@@ -109,3 +109,59 @@ Exactly: (a) what shipped per phase + what was deferred to 24+ (toast/input/shee
 - **`revisit-when.md`:** the **live rail pulse + patch-bay diagram** on the profile view — trigger: mutation/live-event surfaces exist (inc 26+). The static rail is the v1 stand-in.
 - **`gotchas.md`:** Tailwind v4 + TanStack-Start Vite plugin ordering; the client-bundle leak-grep must account for code-splitting/dynamic-import (don't only grep the entry chunk); Departure-Mono self-host (not on npm — vendored, OFL license must ship).
 - **`deprecations.md`:** none expected; note if any added dep carries an EOL risk.
+
+---
+
+# Addendum — Phase E: sidebar shell + stability + structural primitives
+
+> Added 2026-06-28 after a foundation re-review (user-requested). The first build
+> (Phases A–D, merged-ready) shipped a top-nav shell; review + live QA + design/
+> routing research found the layout base isn't right for a data-management app and
+> the app visually "shakes" on navigation. **Decision: fold this into inc 23 (don't
+> merge yet), foundation-complete scope** — so feature increments (24+) assemble on
+> a correct base instead of scaffolding it. Build on the SAME branch
+> `feat/web-foundation-design-system`. DESIGN.md is updated (Layout, Icon discipline,
+> Routing & data stability sections) — build FROM it.
+
+## E.0 Why (root causes, already diagnosed against the built app — don't re-litigate)
+- **Shake = two causes:** (1) `scrollbar-gutter: auto` + a **centered `mx-auto max-w-4xl`** content column → scrollbar toggling between short/tall pages changes viewport width and re-centers the column (horizontal jump); (2) View Transitions *amplify* that shift by animating it.
+- **Unnecessary refetches:** every route has a bare `loader` with **no `staleTime`/no preload** → refetch on every revisit, no hover preload.
+- **Foundation gaps:** no sidebar/page-header/toolbar primitives; no form inputs (24+ needs them); table lacks sticky header + row-action column; skeletons don't match loaded dimensions; no layout/z-index tokens; active-nav uses amber *text* (shouts).
+
+## E.1 Scope (foundation-complete)
+1. **Stability fixes** (small, high-impact, do first):
+   - `app.css`: `scrollbar-gutter: stable` on `html`.
+   - `router.tsx`: add `defaultPreload: "intent"`, `defaultStaleTime: 30_000`, and explicit `defaultPreloadStaleTime: 30_000`, `defaultGcTime: 1_800_000`, `defaultPendingMs: 1000`, `defaultPendingMinMs: 500`. Keep `scrollRestoration` + `defaultViewTransition`.
+2. **Sidebar shell** (replace top-nav as primary nav):
+   - New `src/ui/sidebar.tsx` (owned, shadcn *pattern* — Provider + cookie persistence + `Cmd/Ctrl+B` + `icon` collapsible + tooltip-on-collapse — skinned with OUR tokens, not shadcn's zinc theme).
+   - `__root.tsx`: fixed five-zone shell (StatusRail · Sidebar · Topbar · PageHeader slot · Content). Sidebar header = `<Wordmark/>` (collapsed → amber node only); content = grouped nav (`MANAGE`/`CONNECT`) with eyebrow-caps group labels; footer = theme toggle + a textual status summary + `⌘B` hint (via `kbd.tsx`).
+   - **Active state:** neutral `--fg` + `--surface-2` bg + `inset 2px 0 0 var(--accent)` left bar (NOT amber text). Icon may be `--accent`.
+   - **Collapse persistence:** cookie (e.g. `junction-sidebar`), read **server-side** for SSR + an inline pre-hydration set (mirror `THEME_SCRIPT`) so width is correct before hydration — no flash. Toggle on `Cmd/Ctrl+B`.
+   - Keep the skip-link as the first focusable element; keep `StatusRail` fixed, `TooltipProvider`, `Toaster`, the theme script.
+3. **Topbar** = thin context bar: section/breadcrumb (left) + global slot (right). (Full breadcrumb deferred to detail pages — futures note.)
+4. **`PageHeader` component** (`src/ui/page-header.tsx`): title (`--text-page-title`) + count chip (a muted `Badge`) + optional subtitle + an `actions` slot (right). Used by all four list routes (rule-of-four satisfied → DRY now). Reserve its height during load.
+5. **Table upgrades** (`table.tsx`): sticky `<thead>` (`position: sticky; top:0`, `--surface` bg + bottom border), a trailing right-aligned **actions column** convention (a `⋯` `dropdown-menu` trigger, revealed on row hover/focus but keyboard-reachable), and `aria-sort` hooks for sortable headers. (Wiring real sort/actions to data is fine to stub where there's no write path yet — but the column + a11y scaffolding lands now.)
+6. **Skeletons** (`skeleton.tsx` / a `TableSkeleton`): render N rows at exactly `--row-height-data` with matching column widths; used as the route `pendingComponent` or loading branch so there's zero reflow.
+7. **Form primitives** (for inc 24+, build now): `input.tsx`, `field.tsx` (label + control + inline error/description, a11y-wired), `select.tsx` (`@radix-ui/react-select`), `switch.tsx` (`@radix-ui/react-switch`), `checkbox.tsx` (`@radix-ui/react-checkbox`). Token-driven, cva variants, each with a happy-dom + TL test (incl. label association + error announce).
+8. **Layout tokens** in `app.css`: `--sidebar-width: 15rem`, `--sidebar-width-icon: 3rem`, `--topbar-height` (≈44px, reuse the h-11 value), `--content-max` (≈1280–1400px upper bound), and a small **z-index scale** (`--z-rail`, `--z-sidebar`, `--z-topbar`, `--z-overlay`) replacing the ad-hoc `z-30/z-40/z-50`.
+9. **Altitude fix:** the dashboard stat-card grid reads as the AI-slop "hero-metric template." Keep cards for the dashboard summary but make it feel designed (vary, don't 3-up identical tiles); tables stay for the record lists. Light touch — don't gold-plate.
+10. **Re-skin the 4 routes + 404** to use `PageHeader` + the stable content zone. Same loaders/server-fns (add `staleTime` via router default, no per-route change needed). Replace inline `<code>`/title duplication with the shared components.
+
+## E.2 Hard invariants (unchanged from Phase A–D + additions)
+- All Phase-A–D invariants still hold (server-only-core boundary + leak-grep, credentials metadata-only, tokens-not-magic-values, WCAG-AA, Departure-Mono wordmark-only, one accent / info-teal, depcruise clean).
+- **New:** every icon-only control has tooltip + `aria-label` + `aria-hidden` icon (per DESIGN.md Icon discipline). Sidebar collapse must be **SSR-correct (cookie, no flash)** — a `useEffect`/localStorage-only read that flashes the wrong width is a fail (same class as the theme flash we already prevent). No layout shift on navigation (verify with a real dashboard↔credentials nav).
+- Still **read-only** — no mutations. Form primitives are built + tested in isolation; they are NOT wired to write paths this increment. The table actions column + sort are scaffolded (a11y + structure) but may be visually-present/no-op until inc 24+ data exists — state which in the report.
+
+## E.3 Proof-of-done (additions)
+- [ ] `pnpm verify` green (incl. new primitive + sidebar tests); web build + leak-grep + depcruise green.
+- [ ] **No shake:** driving a real dashboard↔credentials↔profiles nav shows zero horizontal/vertical content shift (verify in a browser; `scrollbar-gutter: stable` + left-aligned shell + matched skeletons). Reduced-motion still respected.
+- [ ] **No bounce-refetch:** dashboard→credentials→dashboard within 30s does NOT re-run `getDashboard` (network panel); nav links preload on hover.
+- [ ] Sidebar: grouped nav, collapsible via `Cmd+B`, collapse **persists across reload with no flash** (cookie + SSR), icon-only-when-collapsed has tooltips, active state is the 2px amber bar (not amber text).
+- [ ] `PageHeader` used by all 4 routes; table has sticky header + actions-column scaffold; form primitives exist + tested.
+- [ ] Layout + z-index tokens in app.css; no ad-hoc z-values left in components.
+
+## E.4 Reviewers (re-run the relevant lenses on the Phase-E delta)
+`junction-web-reviewer` + `junction-package-boundary` (boundary unchanged but new deps + shell) + `ce-correctness` (router caching/preload + cookie SSR hydration — watch for hydration mismatch on the sidebar width) + `ce-security` (the new cookie read + any new client surface) + `impeccable:critique` / `design-review` / emil `review-animations` (the new shell, active state, motion) + browser dogfooding (sidebar collapse, shake-gone, both themes, keyboard).
+
+## E.5 Builder report-back
+Per the standard report + specifically: paste the network-panel proof (no bounce-refetch + hover-preload), a before/after on the shake (a short note on the dashboard↔credentials nav being stable), the SSR-no-flash proof for sidebar collapse, new deps + why, and what's scaffolded-but-not-wired (table actions/sort, form primitives) deferred to inc 24.
