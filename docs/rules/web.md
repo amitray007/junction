@@ -70,3 +70,32 @@ The `web-build` CI job runs on every push/PR and:
 4. Runs web typecheck (`pnpm --filter @junction/web typecheck`).
 
 This gate enforces the server-only-core boundary in CI — a planted `@junction/core` import in a client route will fail step 1 (Vite build error) and step 2 (leak grep), whichever fires first.
+
+## Anti-AI-slop checklist (a gate, per DESIGN.md north star "not AI-slop")
+
+"Slop" is the *absence of a decision* — the statistical center of every SaaS template. The tell is **convergence** (multiple defaults co-occurring), not any single choice. Audit visually + in source. Each item below is a **MUST NOT** unless it traces to a deliberate, documented DESIGN.md decision.
+
+**Visual tells (verify in a screenshot):**
+- No purple/violet→blue gradients (anywhere); no gradient text on headings/metrics. (Junction: one Signal-Amber accent, no gradients.)
+- No glassmorphism / frosted-glass / `backdrop-blur` as decoration; no colored glows / drop-shadow soup. Depth = **1px borders**, not shadows.
+- No flat pure-grey neutrals — neutrals are brand-tinted (our zinc ramp). Body text MUST clear WCAG AA.
+- No centered hero, no badge-above-H1, no identical 3-up icon-card grid, no "hero metric" stat-banner as the page's reason for being, no uniform-radius/identical-padding-everywhere.
+- No `system-ui`/Inter/Roboto as the type; no emoji as icons (use the icon set — `lucide-react`); no "Built for X"/"best-in-class" filler copy.
+- No bounce/elastic easing.
+
+**Code smells (verify in source — these PRODUCE the visual slop):**
+- No arbitrary Tailwind values (`bg-[#…]`, `p-[123px]`, `text-[14px]`) and no inline hex/px for design decisions — **tokens only** (already a rule above; this is the slop lens on it).
+- No runtime-built Tailwind class strings (`` `bg-${x}-500` ``) — breaks static scanning.
+- No `<div onClick>` / `<div role="button">` where a `<button>`/`<a>` belongs; no color-only state; motion on `transform`/`opacity` only (never `width`/`height`/`margin`/`top`/`left`), always reduced-motion-gated.
+- No `forwardRef` in new components (React 19: `ref` is a prop).
+- No dead scaffolding left exported/unimported (the "over-export" tell) — remove or wire it.
+
+**The test:** would a designer instantly say "an AI made this"? If a screenshot stacks 2+ tells, it fails. `junction-web-reviewer` checks this; DESIGN.md decisions are the only sanctioned exceptions (document them).
+
+## react-doctor (on-demand React audit — NOT in the per-edit loop)
+
+`react-doctor` (millionco — "your agent writes bad React, this catches it") is an **on-demand** audit, run by the orchestrator at a web increment's review step, **not** wired into `pnpm verify` or the per-edit hooks (per spec §5b: ~90% of junction is non-React; the loop stays Biome + React Compiler).
+
+- **Run:** `npx react-doctor@latest --verbose packages/web` (or `--scope changed --base <ref>` for a delta; `--json` for a structured report).
+- **Triage, don't auto-fix:** its diagnostics are *hypotheses*. Read each in context → true positive / false positive / needs-review. Known false positives here: `serve.mjs` dynamic-import of the built SSR bundle (Node script, not a client chunk); `CardTitle`/heading-has-content (content comes from `children`); intentional static-skeleton array-index keys (already `biome-ignore`-justified). Don't suppress without a code-grounded reason.
+- **Fix the true positives** (dead exports/files, `forwardRef`, layout-property animation, await-in-loop, role-instead-of-tag) at the source; re-run to confirm the count drops. It overlaps this checklist + the existing rules — treat it as a second detector, not a separate standard.
