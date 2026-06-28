@@ -27,10 +27,11 @@ The throughline: unit tests and type-checks validate *pieces*; the defects lived
 
 1. **Close the gap in the cheap gate.** When a class of bug escapes to manual QA or CI, the
    fix is not "remember to check next time" — it's to make the local gate catch it. (Hence
-   `pnpm verify:web` builds the web client + runs the smoke test, and the leak-check is a
-   shared script CI and local both call, so they cannot diverge. `verify:web` runs for every
-   web change and is the CI `web-build` job's contract — kept separate from the matrix
-   `verify` only because the core build uses tsdown, which is broken on Node 20.)
+   `pnpm verify` chains `verify:web`, which builds the web client + runs the smoke test, and
+   the leak-check is a shared script CI and local both call, so they cannot diverge. The fix
+   often surfaces a deeper bug — wiring the build into the gate exposed that the core tsdown
+   build was silently Node-20-broken, fixed by adding the `unrun` loader. That's the point:
+   a real gate finds real bugs.)
 2. **"Done" for a user-facing change requires driving the real artifact.** For web: build,
    serve, and assert against the running server (the `web:smoke` script) + the
    `junction-web-verify` skill for visual/interaction QA (theme, collapse-persistence,
