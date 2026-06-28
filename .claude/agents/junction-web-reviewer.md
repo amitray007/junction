@@ -11,12 +11,14 @@ You are the Junction Web Reviewer. You audit changes to `packages/web/` against 
 
 **1. Server-only-core boundary** (the highest-priority invariant)
 - No `@junction/core` import in any file reachable from a client bundle. Check changed `.tsx`/`.ts` files that are NOT inside `src/server/`.
-- If there are any, also run the build and leak grep:
+- If there are any, also run the build + leak check (the shared script — existence guard +
+  negative + positive control, the same one `pnpm verify:web` and CI run):
   ```
-  pnpm --filter @junction/web build
-  grep -rl "better-sqlite3\|napi-rs/keyring\|@junction/core\|CREATE TABLE\|drizzle" packages/web/dist/client
+  pnpm --filter @junction/core build && pnpm --filter @junction/web build
+  pnpm run web:leakcheck
   ```
-  Report the result.
+  Report the result. (Note: `verify` alone does NOT build the web client — always build
+  before trusting a "boundary clean" claim; see `docs/behaviours/verify-the-artifact.md`.)
 - Data flows through `src/server/data.functions.ts` via `createServerFn`. Server-only imports belong inside those handlers.
 
 **2. Credentials — metadata only**
@@ -39,8 +41,31 @@ You are the Junction Web Reviewer. You audit changes to `packages/web/` against 
 - Tests MUST include `afterEach(() => cleanup())`.
 - Tests MUST assert an ARIA landmark is present (e.g. `getByRole("main")` or `getByRole("navigation")`).
 
-**6. Package hygiene**
-- `@junction/core` MUST NOT be in `packages/web/package.json` `dependencies`.
+**6. Anti-AI-slop** (the DESIGN.md north star — "instrument-grade, not AI-slop")
+Audit the diff against the checklist in `docs/rules/web.md` (reference: `docs/design/anti-ai-slop.md`).
+The tell is **convergence** (multiple defaults co-occurring), not any single choice. Flag, unless
+it traces to a documented DESIGN.md decision:
+- Visual (check screenshots if available, else the JSX/CSS): purple/violet→blue gradients;
+  gradient text; glassmorphism / `backdrop-blur` as decoration; colored glows / drop-shadow soup;
+  flat pure-grey neutrals; centered hero; badge-above-H1; identical 3-up icon-card grid; "hero
+  metric" stat banner; uniform-radius-everywhere; emoji as icons (use `lucide-react`); "Built for
+  X"/"best-in-class" copy; bounce/elastic easing.
+- Code that produces it: arbitrary Tailwind values (`bg-[#…]`, `p-[123px]`); runtime-built class
+  strings (`` `bg-${x}` ``); `<div onClick>` where a `<button>`/`<a>` belongs; animating
+  `width/height/margin/top/left` instead of `transform`/`opacity`; `forwardRef` in new components
+  (React 19: ref is a prop); dead/over-exported scaffolding with no inc plan.
+- Optionally cross-check with `npx react-doctor@latest --no-score --scope changed --base origin/main packages/web`
+  and triage per the react-doctor section of `docs/rules/web.md` (known false positives: serve.mjs
+  dynamic import, `role=status`/`role=img`, the `useCallback` exhaustive-deps note).
+
+**7. Package hygiene**
+- `@junction/core` MUST be in `packages/web/package.json` `dependencies` AND in `vite.config.ts`
+  `ssr.external` — but MUST NOT be imported in any client-reachable module (only inside `src/server/`).
+  (The dep entry is required for SSR-runtime resolution; isolation comes from `ssr.external` +
+  `createServerFn`. See `docs/rules/web.md` §Package hygiene — do NOT flag the dep entry as a violation.)
+- Request data (cookies/headers) MUST be read via a `createServerFn` (e.g. `getSidebarState`),
+  NOT a direct `getRequest()` in a route module — the latter fails the client-graph import guard
+  at build time. (`docs/futures/gotchas.md`)
 - No `fs.*Sync` in server functions or loaders.
 - No imports from `@junction/cli`, `@junction/mcp-server`, or `@junction/mcp-client` in web.
 

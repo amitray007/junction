@@ -22,7 +22,13 @@ After an increment is merged:
    - **§4 Plan** — if the route/slicing changed, reconcile with `docs/methods/README.md`.
 2. **Keep the registers current** (already part of the loop): `docs/futures/{gotchas,revisit-when,deprecations}.md`.
 3. **Mark the increment `done`** in `docs/methods/README.md` (this is what the marker is checked against).
-4. Commit these doc updates (with the increment, or as a small follow-up). The pre-commit/pre-push gate (`docs:check` inside `pnpm verify`) blocks the commit if STATE.md is stale or malformed.
+4. **Reflect — and harden the system, not just the memory.** This is a required step, not optional polish: a retrospective is how the system gets harder to fool over time (the compounding is the whole point — see `docs/behaviours/verify-the-artifact.md`). Ask:
+   - **What recurred?** Did a class of bug escape to manual QA / CI / the user more than once? (This session: "green but blind" 5+ times.) A recurring escape is a signal to **close the gap in the cheap gate**, not to "remember next time."
+   - **For each recurring escape, promote it** into the layer that prevents recurrence: a **gate** (a `pnpm verify` / CI step — e.g. `web:smoke`, the shared leak-check), a **skill** (a repeatable QA loop — e.g. `junction-web-verify`), an **agent** rule (fold the lesson into a reviewer's prompt — e.g. anti-slop → `junction-web-reviewer`), a **behaviour** (a first-class decision principle), or at minimum a **gotcha**. Prefer gates > skills > docs (a gate can't be skipped; a doc can).
+   - **Did a builder report "done" on something that wasn't?** If so, tighten the builder-brief "done" bar (`docs/workflow.md`) and the orchestrator's independent-verification discipline.
+   - **Did scope creep or go out-of-bounds?** Note it; surface scope decisions to the user earlier next time.
+   - Record the reflection's *outcomes* (what you promoted where) in the §7 entry — terse, e.g. "promoted X to a verify step + skill Y." If the user asks for a deeper reflection, write it up; otherwise the promoted artifacts ARE the reflection.
+5. Commit these doc updates (with the increment, or as a small follow-up). The pre-commit/pre-push gate (`docs:check` inside `pnpm verify`) blocks the commit if STATE.md is stale or malformed.
 
 **Why a gate, not just this skill:** instructions are advisory — an agent can skip them. The `docs:check` gate gives the memory teeth: structure + freshness are mechanically enforced on every commit/push/CI. (It can't judge entry *quality* — that stays your discipline via this checklist.)
 
