@@ -101,14 +101,7 @@ export function TableCell({ className, ...props }: TdHTMLAttributes<HTMLTableCel
   )
 }
 
-export function TableCaption({ className, ...props }: HTMLAttributes<HTMLTableCaptionElement>) {
-  return (
-    <caption
-      className={cn("mt-4 text-[var(--text-body)] text-[var(--muted)]", className)}
-      {...props}
-    />
-  )
-}
+// TableCaption removed — genuinely dead, no consumer. Re-add if tables need accessible captions.
 
 // ─── Actions column scaffold ──────────────────────────────────────────────────
 // Renders a ⋯ button in the trailing column. The button is visually hidden

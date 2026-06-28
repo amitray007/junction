@@ -185,31 +185,42 @@ export async function readProfiles(): Promise<ProfileMeta[]> {
     const profilesResult = await repos.profiles.list()
     if (profilesResult.isErr()) return []
 
-    const out: ProfileMeta[] = []
+    // Collect all unique credential IDs across all profiles, then resolve them
+    // in parallel (one Promise.all, not one await per source loop iteration).
+    const allCredentialIds = new Set<string>()
     for (const profile of profilesResult.value) {
-      const sources: SourceMeta[] = []
       for (const sr of profile.sources) {
+        if (sr.credentialId !== undefined) allCredentialIds.add(String(sr.credentialId))
+      }
+    }
+
+    // Batch-resolve all credentials referenced by any source.
+    const credentialAccountMap = new Map<string, string>()
+    await Promise.all(
+      Array.from(allCredentialIds).map(async (id) => {
+        const result = await repos.credentials.get(id)
+        credentialAccountMap.set(id, result.isOk() ? result.value.profileName : "(unknown)")
+      }),
+    )
+
+    return profilesResult.value.map((profile) => ({
+      id: String(profile.id),
+      name: profile.name,
+      mcpEndpointPath: profile.mcpEndpointPath,
+      sources: profile.sources.map((sr) => {
         // No credentialId → public/no-auth source
-        let credentialAccount = "(none)"
-        if (sr.credentialId !== undefined) {
-          const credResult = await repos.credentials.get(String(sr.credentialId))
-          credentialAccount = credResult.isOk() ? credResult.value.profileName : "(unknown)"
-        }
-        sources.push({
+        const credentialAccount =
+          sr.credentialId !== undefined
+            ? (credentialAccountMap.get(String(sr.credentialId)) ?? "(unknown)")
+            : "(none)"
+        return {
           namespace: sr.toolNamespace,
           platform: String(sr.platformId),
           credentialAccount,
           enabled: sr.enabled,
           ...(sr.toolFilter !== undefined ? { toolFilter: sr.toolFilter } : {}),
-        })
-      }
-      out.push({
-        id: String(profile.id),
-        name: profile.name,
-        mcpEndpointPath: profile.mcpEndpointPath,
-        sources,
-      })
-    }
-    return out
+        }
+      }),
+    }))
   })
 }

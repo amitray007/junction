@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // DropdownMenu — thin token-styled wrapper around Radix DropdownMenu.
+// inc-24 scaffolding: no live consumer yet — wired for row actions in inc 24+.
 
 import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu"
 import { Check, ChevronRight, Circle } from "lucide-react"

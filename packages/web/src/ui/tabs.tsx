@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Tabs — Radix Tabs with token-driven styles and View Transition-ready structure.
+// inc-24 scaffolding: no live consumer yet — wired for detail panels in inc 24+.
 
 import * as TabsPrimitive from "@radix-ui/react-tabs"
 import type { ComponentPropsWithoutRef } from "react"

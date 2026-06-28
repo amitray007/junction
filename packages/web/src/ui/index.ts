@@ -6,7 +6,7 @@ export type { BadgeProps } from "./badge.js"
 export { Badge, StatusBadge } from "./badge.js"
 export type { ButtonProps, ButtonVariants } from "./button.js"
 export { Button } from "./button.js"
-export { Card, CardContent, CardFooter, CardHeader, CardTitle } from "./card.js"
+export { Card, CardContent, CardHeader, CardTitle } from "./card.js"
 export { Checkbox } from "./checkbox.js"
 export { cn } from "./cn.js"
 export {
@@ -72,7 +72,6 @@ export {
   TableActionsCell,
   TableActionsHead,
   TableBody,
-  TableCaption,
   TableCell,
   TableHead,
   TableHeader,

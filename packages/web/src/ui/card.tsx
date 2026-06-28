@@ -38,6 +38,5 @@ export function CardContent({ className, ...props }: HTMLAttributes<HTMLDivEleme
   return <div className={cn("", className)} {...props} />
 }
 
-export function CardFooter({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("mt-4 flex items-center gap-2", className)} {...props} />
-}
+// CardFooter removed — genuinely dead, no inc-24 consumer planned.
+// Add back (with a comment) if a card action-footer pattern emerges.

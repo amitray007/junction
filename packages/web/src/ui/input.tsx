@@ -2,18 +2,18 @@
 // Input — single-line text input, 32px control height, token-driven.
 // Built and tested in inc 23; NOT wired to write paths (inc 24+).
 
-import { forwardRef, type InputHTMLAttributes } from "react"
+import type { InputHTMLAttributes, Ref } from "react"
 import { cn } from "./cn.js"
 
 export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   /** Shows a red error ring and aria-invalid when true. */
   readonly hasError?: boolean
+  /** React 19: ref is a plain prop, not forwardRef. */
+  ref?: Ref<HTMLInputElement>
 }
 
-export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
-  { className, hasError, ...props },
-  ref,
-) {
+// React 19: ref is a plain prop — no forwardRef wrapper needed.
+export function Input({ className, hasError, ref, ...props }: InputProps) {
   return (
     <input
       ref={ref}
@@ -40,4 +40,4 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
       {...props}
     />
   )
-})
+}
