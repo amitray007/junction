@@ -18,7 +18,7 @@ Rules for `packages/web/` — the TanStack Start SSR dashboard. Each rule is a c
 ## Credentials — metadata only
 
 - **MUST NOT** render `secret`, `secretRef`, or any raw credential value in any component or server function return.
-- Server functions return only summary metadata: IDs, platform names, account labels, connection status. The shape is defined in `src/server/data.functions.ts`.
+- Server functions return only summary metadata: IDs, platform names, account labels, connection status. The shapes (`CredentialMeta`/`PlatformMeta`/`ProfileMeta`/`SourceMeta`) are defined in `src/server/data.server.ts` (the `*.functions.ts` files are the `createServerFn` RPC layer, not where the types are declared).
 
 ## Design tokens (DESIGN.md is the source of truth)
 
@@ -43,6 +43,7 @@ Rules for `packages/web/` — the TanStack Start SSR dashboard. Each rule is a c
 ## Accessibility (WCAG AA)
 
 - **MUST** include ARIA landmarks in every page: `<header>`, `<nav>`, `<main>`, `<aside>`. The root layout in `__root.tsx` defines the shell; route components render inside `<main>`.
+- **MUST NOT** drop or rename the SSR-emitted `<html data-sidebar="collapsed|expanded">` attribute or the stylesheet `<link>` — both are **smoke-gated** (`scripts/web-smoke.mjs`). Reworking `__root.tsx` (e.g. removing a shell zone) must preserve them, or `web:smoke` fails.
 - **MUST** provide a skip-to-content link as the first focusable element (already in `__root.tsx`).
 - **MUST** ensure all interactive elements are keyboard-reachable. Radix handles this for the primitive set; verify when adding new interactive patterns.
 - `pnpm --filter @junction/web test` (happy-dom + @testing-library/react) is the a11y regression layer. Tests MUST include a landmark-present assertion for each route.
