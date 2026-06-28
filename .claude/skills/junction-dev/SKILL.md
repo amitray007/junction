@@ -16,8 +16,10 @@ How to work on junction locally. This skill grows per increment — update it wh
 
 ```bash
 pnpm install            # install workspace deps
-pnpm verify             # THE gate: docs:check + tsc + Biome + Vitest + verify:web. Run before every commit.
-pnpm verify:web         # build core+web, leak-check, smoke-test the running server, web tests/typecheck
+pnpm verify             # THE gate: docs:check + tsc + Biome + Vitest + web tests/typecheck. Run before every commit.
+pnpm verify:web         # FULL web check: build core+web, leak-check, smoke-test the running server, web tests/typecheck.
+                        #   Run this for any web change. (Enforced in CI's web-build job; NOT folded into matrix `verify`
+                        #   because the core build uses tsdown, which is broken on Node 20 — see docs/futures/gotchas.md.)
 pnpm web:smoke          # boot the built serve.mjs + assert the real responses (styled/SSR/leak-free)
 pnpm web:leakcheck      # client-bundle server-only-core boundary check (shared with CI)
 pnpm test               # Vitest (watch)
@@ -27,9 +29,11 @@ pnpm format             # Biome format --write
 pnpm build              # tsdown build all packages
 ```
 
-> **`pnpm verify` now builds the web client + smoke-tests the running server** (via `verify:web`),
-> so it is slower than before — deliberate: a broken production build / dead SSR path must fail the
-> LOCAL gate, not slip to CI or the user (the "green but blind" lesson — `docs/behaviours/verify-the-artifact.md`).
+> **For any web change, run `pnpm verify:web`** — it builds the web client + smoke-tests the running
+> server, catching the "green but blind" class (broken production build / dead SSR path) that the
+> plain `verify` cannot (`docs/behaviours/verify-the-artifact.md`). It is the CI `web-build` job's
+> contract and the `junction-web-verify` skill's automated layer. It is intentionally NOT folded into
+> matrix `verify` (the core build uses tsdown, broken on Node 20 — gotchas.md); CI enforces it on Node 22.
 
 ## Web QA — drive the real artifact (`junction-web-verify` skill + `agent-browser`)
 
