@@ -20,6 +20,7 @@ Precedence: a hook block always wins. `pnpm verify` must pass before any commit.
 | [`security.md`](./security.md) | credential plaintext handling, banned APIs, secrets-in-errors |
 | [`data.md`](./data.md) | additive forward-only migrations, secrets-as-references, repository layer (inc 4+) |
 | [`licensing.md`](./licensing.md) | SPDX header policy (AGPL-3.0-only), AGPL §13 network-source-offer product requirement |
+| [`web.md`](./web.md) | `@junction/web` rules — server-only-core boundary, credentials metadata-only, design tokens (no magic values), semantic HTML/a11y, component test patterns, CI bundle-leak gate (inc 23+) |
 
 > **See also `docs/principles/`** — modularity (where code lives, no `utils` packages, one-way graph) and DRY (factor primitives eagerly, keep policies duplicated until the rule of three). The rules are *what*; the principles are *how to structure*.
 

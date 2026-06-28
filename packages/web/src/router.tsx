@@ -14,5 +14,24 @@ export function getRouter() {
     // `<p>Not Found</p>`. Without this, every not-found request (a mistyped
     // path, a browser probe like /favicon.ico) logs a startup warning.
     defaultNotFoundComponent: NotFound,
+    // Enable View Transitions for same-document route changes (progressive
+    // enhancement — silently no-ops in browsers that don't support the API).
+    // The ::view-transition-* CSS in app.css provides the actual animation;
+    // prefers-reduced-motion gate is in that CSS.
+    defaultViewTransition: true,
+    // ── Data stability (DESIGN.md §"Routing & data stability") ──────────
+    // Preload on hover — near-free on localhost SQLite.
+    defaultPreload: "intent",
+    // Don't re-run loaders on revisit within 30s. SWR: render cached data
+    // immediately, revalidate in the background.
+    defaultStaleTime: 30_000,
+    defaultPreloadStaleTime: 30_000,
+    // Keep loader cache for 30 minutes (GC after that).
+    defaultGcTime: 1_800_000,
+    // Fast loads (< 1s) don't flash a pending skeleton at all; the outgoing
+    // route stays visible. Slow loads show the pending UI only after 1s, and
+    // keep it visible for at least 500ms to avoid a janky flash.
+    defaultPendingMs: 1000,
+    defaultPendingMinMs: 500,
   })
 }

@@ -3,44 +3,100 @@
 
 import { createFileRoute } from "@tanstack/react-router"
 import { getPlatforms, type PlatformMeta } from "../server/data.functions.js"
+import { PageHeader } from "../ui/page-header.js"
+import { TableSkeleton } from "../ui/skeleton.js"
+import { EmptyState } from "../ui/states.js"
+import {
+  Table,
+  TableActionsCell,
+  TableActionsHead,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "../ui/table.js"
 
 export const Route = createFileRoute("/platforms")({
   loader: () => getPlatforms(),
+  pendingComponent: PlatformsPending,
   component: PlatformsPage,
 })
+
+function PlatformsPending() {
+  return (
+    <div>
+      <PageHeader title="Platforms" />
+      <TableSkeleton
+        rows={3}
+        columns={[
+          { width: "w-32" },
+          { width: "w-24" },
+          { flex: true },
+          { width: "w-40" },
+          { width: "w-8" },
+        ]}
+      />
+    </div>
+  )
+}
 
 function PlatformsPage() {
   const platforms = Route.useLoaderData()
   return (
     <div>
-      <h1>Platforms</h1>
+      <PageHeader title="Platforms" count={platforms.length > 0 ? platforms.length : undefined} />
+
       {platforms.length === 0 ? (
-        <p className="empty">
-          No platforms yet. Use <code>junction platform add</code> to add one.
-        </p>
+        <EmptyState
+          label="No platforms yet."
+          hint={
+            <span>
+              Run{" "}
+              <code style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-mono)" }}>
+                junction platform add
+              </code>{" "}
+              to add one.
+            </span>
+          }
+        />
       ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>Kind</th>
-              <th>Display name</th>
-              <th>Base URL</th>
-            </tr>
-          </thead>
-          <tbody>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>ID</TableHead>
+              <TableHead>Kind</TableHead>
+              <TableHead>Display name</TableHead>
+              <TableHead>Base URL</TableHead>
+              {/* Actions column scaffold — wired to data in inc 24+ */}
+              <TableActionsHead />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {platforms.map((p: PlatformMeta) => (
-              <tr key={p.id}>
-                <td>
-                  <code>{p.id}</code>
-                </td>
-                <td>{p.kind}</td>
-                <td>{p.displayName}</td>
-                <td>{p.baseUrl ?? "—"}</td>
-              </tr>
+              <TableRow key={p.id}>
+                <TableCell>
+                  <code style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-mono)" }}>
+                    {p.id}
+                  </code>
+                </TableCell>
+                <TableCell style={{ color: "var(--muted)" }}>{p.kind}</TableCell>
+                <TableCell>{p.displayName}</TableCell>
+                <TableCell>
+                  {p.baseUrl ? (
+                    <code style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-mono)" }}>
+                      {p.baseUrl}
+                    </code>
+                  ) : (
+                    <span style={{ color: "var(--muted)" }}>—</span>
+                  )}
+                </TableCell>
+                {/* Actions cell scaffold — no-op until inc 24+ */}
+                <TableActionsCell />
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       )}
     </div>
   )

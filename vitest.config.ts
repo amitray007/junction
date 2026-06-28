@@ -30,7 +30,7 @@ export default defineConfig({
     hookTimeout: 20_000,
     // Only run source tests; never compiled output or deps.
     include: ["packages/**/src/**/*.test.ts", "packages/**/src/**/*.test.tsx"],
-    exclude: ["**/node_modules/**", "**/dist/**"],
+    exclude: ["**/node_modules/**", "**/dist/**", "packages/web/**/*.test.tsx"],
     alias: {
       "@junction/core/testing": `${coreSrc}/testing/index.ts`,
       "@junction/core": `${coreSrc}/index.ts`,

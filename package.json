@@ -9,7 +9,7 @@
   },
   "license": "AGPL-3.0-only",
   "scripts": {
-    "verify": "pnpm run docs:check && pnpm run typecheck && pnpm run lint && pnpm run test:ci && pnpm --filter @junction/web typecheck",
+    "verify": "pnpm run docs:check && pnpm run typecheck && pnpm run lint && pnpm run test:ci && pnpm --filter @junction/web test && pnpm --filter @junction/web typecheck",
     "docs:check": "node scripts/check-state.mjs",
     "quality": "pnpm depcruise && pnpm syncpack:check && pnpm dup && (pnpm audit --audit-level=high || true)",
     "typecheck": "tsc -b",

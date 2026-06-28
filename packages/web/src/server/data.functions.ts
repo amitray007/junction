@@ -55,3 +55,18 @@ export const getProfiles = createServerFn({ method: "GET" }).handler(async () =>
   assertLocalHost()
   return readProfiles()
 })
+
+// Sidebar collapse state, read from the request cookie. Lives here (a server-fn
+// module) because reading the cookie needs `getRequest()` from
+// `@tanstack/react-start/server`, whose import is denied in the client graph —
+// route files like __root.tsx may not import it directly. The root `beforeLoad`
+// calls this so the initial SSR render emits the correct data-sidebar attribute
+// (no width flash). Returns "expanded"/"collapsed" only — never throws.
+export const getSidebarState = createServerFn({ method: "GET" }).handler(
+  async (): Promise<"expanded" | "collapsed"> => {
+    assertLocalHost()
+    const cookieHeader = getRequest().headers.get("cookie") ?? ""
+    const match = cookieHeader.match(/(?:^|;\s*)junction-sidebar=([^;]*)/)
+    return match?.[1] === "collapsed" ? "collapsed" : "expanded"
+  },
+)
