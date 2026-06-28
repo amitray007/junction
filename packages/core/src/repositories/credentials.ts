@@ -79,6 +79,23 @@ export function createCredentialsRepo(db: Db) {
       }
     },
 
+    /**
+     * Update a credential row's secretRef (used by rotateCredential).
+     * Only the secretRef column is modified; id, platformId, profileName, and kind
+     * are immutable through this path.
+     */
+    setSecretRef(id: string, newSecretRef: string): ResultAsync<Credential, DbError> {
+      try {
+        // Fetch first so we can return the full updated Credential (and surface not-found).
+        const row = db.select().from(credentials).where(eq(credentials.id, id)).get()
+        if (!row) return errAsync({ kind: "not-found" as const, entity: "credential", id })
+        db.update(credentials).set({ secretRef: newSecretRef }).where(eq(credentials.id, id)).run()
+        return okAsync(rowToCredential({ ...row, secretRef: newSecretRef }))
+      } catch (cause) {
+        return errAsync(mapDbError(cause))
+      }
+    },
+
     delete(id: string): ResultAsync<void, DbError> {
       try {
         db.delete(credentials).where(eq(credentials.id, id)).run()

@@ -103,50 +103,73 @@ export function TableCell({ className, ...props }: TdHTMLAttributes<HTMLTableCel
 
 // TableCaption removed — genuinely dead, no consumer. Re-add if tables need accessible captions.
 
-// ─── Actions column scaffold ──────────────────────────────────────────────────
+// ─── Actions column ────────────────────────────────────────────────────────────
 // Renders a ⋯ button in the trailing column. The button is visually hidden
 // until the row is hovered or the cell receives focus — but always keyboard-
-// reachable (opacity-0 does not remove from tab order; we use opacity + pointer-
-// events, not display:none or visibility:hidden).
+// reachable (opacity-0 does not remove from tab order).
 //
-// The DropdownMenuTrigger is wired here as the structural scaffold; actual menu
-// items are added in inc 24+ when row actions exist.
+// Pass `menu` (a DropdownMenuContent element) to activate real row actions.
+// When no menu is provided, the button renders as a plain non-interactive scaffold.
+
+import { DropdownMenu, DropdownMenuTrigger } from "./dropdown-menu.js"
 
 export function TableActionsHead({ className }: { readonly className?: string }) {
   return <TableHead className={cn("w-12 text-right", className)} aria-label="Row actions" />
 }
 
+const triggerButtonClassName = cn(
+  "inline-flex items-center justify-center",
+  "h-7 w-7 rounded-[var(--radius-sm)]",
+  "transition-[opacity,colors] duration-[var(--motion-micro)]",
+  "hover:bg-[var(--surface-2)]",
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-1",
+  // Visually hidden until row hover/focus; always keyboard-reachable (opacity, not display/visibility).
+  "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+)
+
+const triggerButtonStyle = { color: "var(--muted)", backgroundColor: "transparent" }
+
 export function TableActionsCell({
   className,
-  children,
+  menu,
 }: {
   readonly className?: string
-  /** DropdownMenuContent to render when the trigger is activated. */
-  readonly children?: React.ReactNode
+  /**
+   * DropdownMenuContent to show when the ⋯ trigger is activated.
+   * When omitted the trigger renders as a non-interactive scaffold.
+   */
+  readonly menu?: React.ReactNode
 }) {
   return (
     <TableCell className={cn("w-12 text-right pr-2", className)}>
-      {/* Scaffold: plain button for the row-actions trigger.
-          In inc 24+ this becomes a DropdownMenu with real menu items.
-          aria-label provides the accessible name. */}
-      <button
-        type="button"
-        aria-label="Row actions"
-        aria-haspopup="menu"
-        className={cn(
-          "inline-flex items-center justify-center",
-          "h-7 w-7 rounded-[var(--radius-sm)]",
-          "transition-[opacity,colors] duration-[var(--motion-micro)]",
-          "hover:bg-[var(--surface-2)]",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-1",
-          // Visually hidden until row hover/focus; always keyboard-reachable.
-          "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
-        )}
-        style={{ color: "var(--muted)", backgroundColor: "transparent" }}
-      >
-        <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
-      </button>
-      {children}
+      {menu ? (
+        // Real row actions: DropdownMenuTrigger asChild adopts the ⋯ button.
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              aria-label="Row actions"
+              aria-haspopup="menu"
+              className={triggerButtonClassName}
+              style={triggerButtonStyle}
+            >
+              <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+            </button>
+          </DropdownMenuTrigger>
+          {menu}
+        </DropdownMenu>
+      ) : (
+        // Scaffold: plain button with no interaction (no actions yet on this row).
+        <button
+          type="button"
+          aria-label="Row actions"
+          aria-haspopup="menu"
+          className={triggerButtonClassName}
+          style={triggerButtonStyle}
+        >
+          <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+        </button>
+      )}
     </TableCell>
   )
 }

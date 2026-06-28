@@ -93,6 +93,23 @@ describe("Field", () => {
     expect(input).not.toBeNull()
   })
 
+  it("injects aria-describedby AND aria-invalid onto the control when error is present", () => {
+    // The inc-24 fix: Field must wire aria-describedby + aria-invalid directly onto
+    // the control element (not just render an error node with the right id) so screen
+    // readers announce both the association and the invalid state.
+    const { container } = render(
+      <Field id="pw-field" label="Password" error="Too short">
+        <Input id="pw-field" type="password" />
+      </Field>,
+    )
+    const input = container.querySelector<HTMLInputElement>("#pw-field")
+    expect(input).not.toBeNull()
+    // aria-describedby must point at the error node id
+    expect(input?.getAttribute("aria-describedby")).toContain("pw-field-error")
+    // aria-invalid must be set on the control itself (not just the error element)
+    expect(input?.getAttribute("aria-invalid")).toBe("true")
+  })
+
   it("renders in dark mode without errors", () => {
     document.documentElement.setAttribute("data-theme", "dark")
     expect(() =>
