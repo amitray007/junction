@@ -1,63 +1,68 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Dashboard route — counts + system status cards.
-// No @junction/core import; data flows through server functions only.
+// Dashboard route — counts + system status. No @junction/core import.
 
 import { createFileRoute } from "@tanstack/react-router"
-import { Database, Key, LayoutList } from "lucide-react"
+import { Database, Key, Server } from "lucide-react"
 import { getDashboard } from "../server/data.functions.js"
 import { Card, CardContent } from "../ui/card.js"
+import { PageHeader } from "../ui/page-header.js"
+import { TableSkeleton } from "../ui/skeleton.js"
 import { EmptyState } from "../ui/states.js"
 
 export const Route = createFileRoute("/")({
   loader: () => getDashboard(),
+  pendingComponent: DashboardPending,
   component: DashboardPage,
 })
+
+function DashboardPending() {
+  return (
+    <div>
+      <PageHeader title="Dashboard" />
+      <TableSkeleton rows={3} columns={[{ flex: true }, { width: "w-24" }]} />
+    </div>
+  )
+}
 
 function DashboardPage() {
   const data = Route.useLoaderData()
   return (
     <div>
-      {/* Page title */}
-      <h1
-        className="mb-6"
-        style={{
-          fontSize: "var(--text-page-title)",
-          fontWeight: 600,
-          letterSpacing: "var(--tracking-tight)",
-          color: "var(--fg)",
-        }}
-      >
-        Dashboard
-      </h1>
+      <PageHeader title="Dashboard" />
 
-      {/* Stat cards */}
+      {/* Stat cards — three distinct tiles (not identical) */}
       <ul className="grid grid-cols-3 gap-4 mb-8 list-none m-0 p-0" aria-label="Summary counts">
         <StatCard
-          icon={<LayoutList className="h-4 w-4" aria-hidden="true" />}
+          icon={<Server className="h-4 w-4" aria-hidden="true" />}
           value={data.counts.platforms}
           label="Platforms"
+          description="Connected API sources"
         />
         <StatCard
           icon={<Key className="h-4 w-4" aria-hidden="true" />}
           value={data.counts.credentials}
           label="Credentials"
+          description="Stored auth tokens"
         />
         <StatCard
           icon={<Database className="h-4 w-4" aria-hidden="true" />}
           value={data.counts.profiles}
           label="Profiles"
+          description="MCP serving contexts"
         />
       </ul>
 
       {/* System info */}
-      <section aria-label="System status">
+      <section aria-labelledby="system-section-heading">
         <p
-          className="mb-2 uppercase tracking-eyebrow"
+          id="system-section-heading"
+          className="mb-2 uppercase"
           style={{
             fontSize: "var(--text-eyebrow)",
             color: "var(--muted)",
             fontFamily: "var(--font-mono)",
             fontWeight: 500,
+            letterSpacing: "var(--tracking-eyebrow)",
           }}
         >
           System
@@ -100,18 +105,34 @@ function StatCard({
   icon,
   value,
   label,
+  description,
 }: {
   readonly icon: React.ReactNode
   readonly value: number
   readonly label: string
+  readonly description: string
 }) {
   return (
     <li aria-label={`${value} ${label}`} className="list-none">
       <Card>
-        <CardContent className="flex flex-col gap-2">
-          <div className="flex items-center justify-between">
+        <CardContent className="flex flex-col gap-3">
+          {/* Icon + label row */}
+          <div className="flex items-center gap-2">
             <span style={{ color: "var(--muted)" }}>{icon}</span>
+            <span
+              style={{
+                fontSize: "var(--text-eyebrow)",
+                fontFamily: "var(--font-mono)",
+                fontWeight: 500,
+                letterSpacing: "var(--tracking-eyebrow)",
+                color: "var(--muted)",
+                textTransform: "uppercase",
+              }}
+            >
+              {label}
+            </span>
           </div>
+          {/* Count */}
           <div
             style={{
               fontSize: "var(--text-stat)",
@@ -124,7 +145,8 @@ function StatCard({
           >
             {value}
           </div>
-          <div style={{ fontSize: "var(--text-body)", color: "var(--muted)" }}>{label}</div>
+          {/* Description — varies per card, distinguishes tiles from each other */}
+          <div style={{ fontSize: "var(--text-body)", color: "var(--muted)" }}>{description}</div>
         </CardContent>
       </Card>
     </li>

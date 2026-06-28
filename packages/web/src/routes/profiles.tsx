@@ -5,30 +5,41 @@ import { createFileRoute } from "@tanstack/react-router"
 import { getProfiles, type ProfileMeta, type SourceMeta } from "../server/data.functions.js"
 import { StatusBadge } from "../ui/badge.js"
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card.js"
+import { PageHeader } from "../ui/page-header.js"
 import { Separator } from "../ui/separator.js"
+import { TableSkeleton } from "../ui/skeleton.js"
 import { EmptyState } from "../ui/states.js"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table.js"
+import {
+  Table,
+  TableActionsCell,
+  TableActionsHead,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "../ui/table.js"
 
 export const Route = createFileRoute("/profiles")({
   loader: () => getProfiles(),
+  pendingComponent: ProfilesPending,
   component: ProfilesPage,
 })
+
+function ProfilesPending() {
+  return (
+    <div>
+      <PageHeader title="Profiles" />
+      <TableSkeleton rows={2} columns={[{ flex: true }, { width: "w-40" }]} />
+    </div>
+  )
+}
 
 function ProfilesPage() {
   const profiles = Route.useLoaderData()
   return (
     <div>
-      <h1
-        className="mb-6"
-        style={{
-          fontSize: "var(--text-page-title)",
-          fontWeight: 600,
-          letterSpacing: "var(--tracking-tight)",
-          color: "var(--fg)",
-        }}
-      >
-        Profiles
-      </h1>
+      <PageHeader title="Profiles" count={profiles.length > 0 ? profiles.length : undefined} />
 
       {profiles.length === 0 ? (
         <EmptyState
@@ -82,12 +93,13 @@ function ProfileCard({ profile }: { readonly profile: ProfileMeta }) {
           <Separator className="mb-4" />
           <CardContent>
             <p
-              className="mb-2 uppercase tracking-eyebrow"
+              className="mb-2 uppercase"
               style={{
                 fontSize: "var(--text-eyebrow)",
                 color: "var(--muted)",
                 fontFamily: "var(--font-mono)",
                 fontWeight: 500,
+                letterSpacing: "var(--tracking-eyebrow)",
               }}
             >
               Sources
@@ -99,6 +111,8 @@ function ProfileCard({ profile }: { readonly profile: ProfileMeta }) {
                   <TableHead>Platform</TableHead>
                   <TableHead>Account</TableHead>
                   <TableHead>Status</TableHead>
+                  {/* Actions column scaffold — wired to data in inc 24+ */}
+                  <TableActionsHead />
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -128,6 +142,8 @@ function ProfileCard({ profile }: { readonly profile: ProfileMeta }) {
                     <TableCell>
                       <StatusBadge status={s.enabled ? "configured" : "disabled"} />
                     </TableCell>
+                    {/* Actions cell scaffold — no-op until inc 24+ */}
+                    <TableActionsCell />
                   </TableRow>
                 ))}
               </TableBody>

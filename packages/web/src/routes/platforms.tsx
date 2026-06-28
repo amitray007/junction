@@ -3,29 +3,49 @@
 
 import { createFileRoute } from "@tanstack/react-router"
 import { getPlatforms, type PlatformMeta } from "../server/data.functions.js"
+import { PageHeader } from "../ui/page-header.js"
+import { TableSkeleton } from "../ui/skeleton.js"
 import { EmptyState } from "../ui/states.js"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../ui/table.js"
+import {
+  Table,
+  TableActionsCell,
+  TableActionsHead,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "../ui/table.js"
 
 export const Route = createFileRoute("/platforms")({
   loader: () => getPlatforms(),
+  pendingComponent: PlatformsPending,
   component: PlatformsPage,
 })
+
+function PlatformsPending() {
+  return (
+    <div>
+      <PageHeader title="Platforms" />
+      <TableSkeleton
+        rows={3}
+        columns={[
+          { width: "w-32" },
+          { width: "w-24" },
+          { flex: true },
+          { width: "w-40" },
+          { width: "w-8" },
+        ]}
+      />
+    </div>
+  )
+}
 
 function PlatformsPage() {
   const platforms = Route.useLoaderData()
   return (
     <div>
-      <h1
-        className="mb-6"
-        style={{
-          fontSize: "var(--text-page-title)",
-          fontWeight: 600,
-          letterSpacing: "var(--tracking-tight)",
-          color: "var(--fg)",
-        }}
-      >
-        Platforms
-      </h1>
+      <PageHeader title="Platforms" count={platforms.length > 0 ? platforms.length : undefined} />
 
       {platforms.length === 0 ? (
         <EmptyState
@@ -48,6 +68,8 @@ function PlatformsPage() {
               <TableHead>Kind</TableHead>
               <TableHead>Display name</TableHead>
               <TableHead>Base URL</TableHead>
+              {/* Actions column scaffold — wired to data in inc 24+ */}
+              <TableActionsHead />
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -69,6 +91,8 @@ function PlatformsPage() {
                     <span style={{ color: "var(--muted)" }}>—</span>
                   )}
                 </TableCell>
+                {/* Actions cell scaffold — no-op until inc 24+ */}
+                <TableActionsCell />
               </TableRow>
             ))}
           </TableBody>
