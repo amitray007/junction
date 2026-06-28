@@ -16,7 +16,7 @@ import {
   Server,
   Sun,
 } from "lucide-react"
-import { type ReactNode, useCallback, useEffect, useState } from "react"
+import { type ReactNode, useCallback, useEffect, useState, useSyncExternalStore } from "react"
 import { cn } from "./cn.js"
 import { Kbd } from "./kbd.js"
 import { Tooltip } from "./tooltip.js"
@@ -195,6 +195,13 @@ const THEME_ICON: Record<ThemePreference, LucideIcon> = {
   dark: Moon,
 }
 
+// Theme preference is client-only external state (localStorage). useSyncExternalStore
+// is the SSR-safe React primitive for exactly this: getServerSnapshot returns the
+// neutral "system" (matching the SSR HTML + THEME_SCRIPT default), getSnapshot reads
+// localStorage on the client. No mount-effect-derived state (no flash, React-Compiler
+// friendly) and no hydration mismatch — React reconciles the server/client snapshots.
+const themeListeners = new Set<() => void>()
+
 function readStoredTheme(): ThemePreference {
   try {
     const v = localStorage.getItem("junction-theme")
@@ -203,6 +210,11 @@ function readStoredTheme(): ThemePreference {
     // no localStorage (SSR or private browsing)
   }
   return "system"
+}
+
+function subscribeTheme(cb: () => void): () => void {
+  themeListeners.add(cb)
+  return () => themeListeners.delete(cb)
 }
 
 function applyTheme(pref: ThemePreference) {
@@ -217,19 +229,19 @@ function applyTheme(pref: ThemePreference) {
   } catch {
     // ignore
   }
+  for (const cb of themeListeners) cb()
 }
 
 function ThemeToggle({ collapsed }: { readonly collapsed: boolean }) {
-  const [pref, setPref] = useState<ThemePreference>("system")
-
-  useEffect(() => {
-    setPref(readStoredTheme())
-  }, [])
+  const pref = useSyncExternalStore(
+    subscribeTheme,
+    readStoredTheme, // client snapshot
+    () => "system" as ThemePreference, // server snapshot — matches SSR + THEME_SCRIPT default
+  )
 
   function toggle() {
     const next = THEME_CYCLE[(THEME_CYCLE.indexOf(pref) + 1) % THEME_CYCLE.length] ?? "system"
-    applyTheme(next)
-    setPref(next)
+    applyTheme(next) // updates DOM + localStorage, then notifies the store → re-render
   }
 
   const Icon = THEME_ICON[pref]
@@ -271,24 +283,17 @@ interface SidebarProps {
   readonly children?: ReactNode
 }
 
-export function Sidebar({ initialState = "expanded" }: SidebarProps) {
-  const [collapsed, setCollapsed] = useState(initialState === "collapsed")
+export function Sidebar({ initialState }: SidebarProps) {
+  // Initial state comes from SSR (getSidebarState server fn → route context →
+  // initialState) AND from SIDEBAR_SCRIPT, which set html[data-sidebar] from the
+  // cookie before hydration. So React state only needs to MATCH that on first
+  // render — a lazy initializer (read the cookie if no initialState was passed),
+  // NOT a mount effect. Deriving state from a useEffect would re-render on mount
+  // (a flash) and defeat the React Compiler; the initializer runs once.
+  const [collapsed, setCollapsed] = useState(
+    () => (initialState ?? readSidebarCookie()) === "collapsed",
+  )
 
-  // On mount, sync from cookie (handles the case where SSR didn't pass initialState).
-  // Also ensures html[data-sidebar] matches React state after hydration.
-  useEffect(() => {
-    const cookieState = readSidebarCookie()
-    setCollapsed(cookieState === "collapsed")
-    // Set the attribute on <html> — the single CSS source of truth for sidebar width
-    // and content margin. SIDEBAR_SCRIPT already set this before hydration; we just
-    // keep it in sync if the cookie differs from the SSR-rendered attribute.
-    document.documentElement.setAttribute("data-sidebar", cookieState)
-  }, [])
-
-  // useCallback is required for Biome's exhaustive-deps rule (toggle is used as a
-  // dep in the keydown useEffect). React Compiler also memoizes it, so the wrapper
-  // is a no-op at runtime — react-doctor's "redundant manual memoization" finding
-  // is a false positive here given the linter constraint.
   const toggle = useCallback(() => {
     setCollapsed((prev) => {
       const next = !prev
