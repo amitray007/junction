@@ -10,10 +10,10 @@ import {
   Scripts,
   useRouterState,
 } from "@tanstack/react-router"
-import { getRequest } from "@tanstack/react-start/server"
 import type { ReactNode } from "react"
 import { Toaster } from "sonner"
-import { SIDEBAR_COOKIE, SIDEBAR_SCRIPT, Sidebar, type SidebarState } from "../ui/sidebar.js"
+import { getSidebarState } from "../server/data.functions.js"
+import { SIDEBAR_SCRIPT, Sidebar, type SidebarState } from "../ui/sidebar.js"
 import { StatusRail } from "../ui/status-rail.js"
 import { TooltipProvider } from "../ui/tooltip.js"
 import "../styles/app.css"
@@ -24,6 +24,15 @@ import "../styles/app.css"
 const THEME_SCRIPT = `(function(){try{var t=localStorage.getItem("junction-theme");if(t==="dark"||t==="light"){document.documentElement.setAttribute("data-theme",t)}}catch(e){}})()`
 
 export const Route = createRootRoute({
+  // Read the sidebar cookie via a server fn (getSidebarState) so the initial SSR
+  // render emits the correct data-sidebar attribute on <html> — no width flash.
+  // The cookie read needs the server-only `getRequest()`, which route files may
+  // not import (client-graph import protection); the server fn keeps it isolated.
+  // On the client this RPCs the current cookie; SIDEBAR_SCRIPT already set the
+  // attribute pre-hydration, so there is no flash either way.
+  beforeLoad: async (): Promise<{ readonly sidebarState: SidebarState }> => ({
+    sidebarState: await getSidebarState(),
+  }),
   head: () => ({
     meta: [
       { charSet: "utf-8" },
@@ -67,25 +76,8 @@ const STATIC_RAIL_SEGMENTS = [
   { id: "ph-3", state: "disabled" as const, label: "source" },
 ]
 
-// Read the sidebar cookie during SSR so the initial render emits the correct
-// data-sidebar attribute on <html> — preventing a width flash before hydration
-// (same pattern as THEME_SCRIPT for theme). Uses the real TanStack Start server
-// API: getRequest() is available in SSR context and throws on the client, so
-// the try/catch guarantees safe fallback to "expanded" on the client side.
-// SIDEBAR_SCRIPT then corrects the attribute from the cookie before hydration.
-function getSidebarInitialState(): SidebarState {
-  try {
-    const cookieHeader = getRequest().headers.get("cookie") ?? ""
-    const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${SIDEBAR_COOKIE}=([^;]*)`))
-    if (match?.[1] === "collapsed") return "collapsed"
-  } catch {
-    // Client context / Vite build — getRequest() throws; SIDEBAR_SCRIPT handles client
-  }
-  return "expanded"
-}
-
 function RootDocument({ children }: { readonly children: ReactNode }) {
-  const sidebarInitialState = getSidebarInitialState()
+  const sidebarInitialState = Route.useRouteContext().sidebarState
 
   return (
     <html
