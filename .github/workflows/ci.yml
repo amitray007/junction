@@ -45,6 +45,37 @@ jobs:
         run: bwrap --ro-bind /usr /usr --ro-bind /bin /bin --ro-bind-try /lib /lib --ro-bind-try /lib64 /lib64 -- /usr/bin/true
       - run: pnpm install --frozen-lockfile
       - run: pnpm verify
+  web-build:
+    name: web build + bundle-leak check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          cache: true
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: pnpm install --frozen-lockfile
+      # Build the web package (SSR + client bundles).
+      # A planted @junction/core import in a client-reachable module will fail
+      # here (Vite can't bundle the native better-sqlite3 / @napi-rs/keyring deps).
+      - run: pnpm --filter @junction/web build
+      # Client-bundle leak grep — must return no matches.
+      # Catches any server-only identifier that slipped into the client bundle.
+      - name: Client-bundle leak grep
+        run: |
+          LEAKS=$(grep -rl "better-sqlite3\|napi-rs/keyring\|@junction/core\|CREATE TABLE\|drizzle" packages/web/dist/client 2>/dev/null || true)
+          if [ -n "$LEAKS" ]; then
+            echo "ERROR: server-only identifiers found in client bundle:"
+            echo "$LEAKS"
+            exit 1
+          fi
+          echo "OK: no server-only identifiers in client bundle"
+      # Run web component tests (happy-dom environment, separate vitest config).
+      - run: pnpm --filter @junction/web test
+      # Run web typecheck (tsr generate + tsc --noEmit).
+      - run: pnpm --filter @junction/web typecheck
   quality:
     name: quality
     runs-on: ubuntu-latest

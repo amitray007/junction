@@ -1,0 +1,72 @@
+# Web Rules (inc 23+)
+
+Rules for `packages/web/` — the TanStack Start SSR dashboard. Each rule is a checkable MUST / MUST NOT.
+
+## Server-only-core boundary (the most critical invariant)
+
+- **MUST NOT** import `@junction/core` (or its transitive deps `better-sqlite3`, `@napi-rs/keyring`) in any module that could be reachable from a client bundle. The three enforcement layers are:
+  1. `createServerFn` — the handler body is stripped from the client build.
+  2. `*.server.ts` naming — Start's import-protection fails the build.
+  3. `vite.config.ts ssr.external` — defence-in-depth for native deps.
+- **MUST** run the client-bundle leak grep after every web build:
+  ```
+  grep -rl "better-sqlite3\|napi-rs/keyring\|@junction/core\|CREATE TABLE\|drizzle" packages/web/dist/client
+  ```
+  The result MUST be empty. If it fires, trace the import chain back to the `createServerFn` boundary before shipping.
+- **MUST** route all core data through `packages/web/src/server/` (`createServerFn` functions). Client components receive typed result shapes, never raw core types.
+
+## Credentials — metadata only
+
+- **MUST NOT** render `secret`, `secretRef`, or any raw credential value in any component or server function return.
+- Server functions return only summary metadata: IDs, platform names, account labels, connection status. The shape is defined in `src/server/data.functions.ts`.
+
+## Design tokens (DESIGN.md is the source of truth)
+
+- **MUST** use CSS custom properties (`var(--token)`) from `app.css` for all design values. **MUST NOT** hardcode hex colours, font names, or raw pixel values outside of the `@theme` block in `app.css`.
+- **All token additions MUST be recorded in `DESIGN.md`** before being added to `app.css`.
+- **Font discipline:**
+  - Geist Sans → body copy and UI text (`var(--font-sans)`).
+  - Geist Mono → code, IDs, namespaces, numbers (`var(--font-mono)`).
+  - Departure Mono → wordmark ONLY (`var(--font-display)`). **MUST NOT** use Departure Mono anywhere except `src/ui/wordmark.tsx`.
+- **One accent:** Signal Amber (`--accent-*`). **MUST NOT** introduce a second colour accent.
+
+## Component / UI layer (`src/ui/`)
+
+- **MUST** build primitives from Radix UI + cva + tailwind-merge (`cn()`). Do not reinvent interactive primitives — use Radix for a11y.
+- **MUST** use semantic HTML. Biome's `useSemanticElements` is enforced — `<ul>/<li>` not `<div role="list">`, `<button>` not `<div role="button">`, etc.
+- **MUST NOT** use `aria-label` on a plain `<span>` without a `role`. Either add a semantic element or add a `role` (e.g., `role="img"`).
+- **MUST NOT** render status using colour alone. Status badges MUST show colour + dot + text (see `src/ui/badge.tsx`).
+- **MUST** gate View Transitions (and any animation) with `prefers-reduced-motion`. The `@media (prefers-reduced-motion: reduce)` override in `app.css` is the canonical pattern.
+- **MUST NOT** add `aria-hidden="true"` to focusable elements without a `// biome-ignore lint/a11y/noAriaHiddenOnFocusable: <reason>` comment explaining why it is non-focusable.
+
+## Accessibility (WCAG AA)
+
+- **MUST** include ARIA landmarks in every page: `<header>`, `<nav>`, `<main>`, `<aside>`. The root layout in `__root.tsx` defines the shell; route components render inside `<main>`.
+- **MUST** provide a skip-to-content link as the first focusable element (already in `__root.tsx`).
+- **MUST** ensure all interactive elements are keyboard-reachable. Radix handles this for the primitive set; verify when adding new interactive patterns.
+- `pnpm --filter @junction/web test` (happy-dom + @testing-library/react) is the a11y regression layer. Tests MUST include a landmark-present assertion for each route.
+
+## Tests
+
+- **MUST** run component tests in happy-dom using `packages/web/vitest.config.ts` (NOT the root Node vitest config, which runs in a Node environment where `document` is undefined).
+- **MUST** call `afterEach(() => cleanup())` in every component test file to prevent DOM accumulation across tests.
+- **MUST** use destructured query methods from `render()` return values (not `screen.*`) when multiple renders exist in a suite.
+- **MUST** write a test for every new route covering: loader data shape renders, empty state renders, ARIA landmark present.
+- **SHOULD** write tests for new UI primitives (see `src/ui/*.test.tsx` for the pattern).
+
+## Package hygiene
+
+- **MUST NOT** add `@junction/core` to `packages/web/package.json` dependencies (it stays SSR-external — a dep entry would still not make it client-safe).
+- **MUST NOT** use `fs.*Sync` in any server function or loader — keep server code async.
+- **MUST NOT** import from `@junction/cli` / `@junction/mcp-server` / `@junction/mcp-client` in `packages/web`. Those are sibling apps; web talks to core only.
+- New npm dependencies added to `packages/web` MUST be listed in a PR description with the reason and bundle-impact estimate.
+
+## CI web gate (added to ci.yml at Phase D)
+
+The `web-build` CI job runs on every push/PR and:
+1. Builds the web package (`pnpm --filter @junction/web build`).
+2. Runs the client-bundle leak grep (must exit 0 / empty output).
+3. Runs web component tests (`pnpm --filter @junction/web test`).
+4. Runs web typecheck (`pnpm --filter @junction/web typecheck`).
+
+This gate enforces the server-only-core boundary in CI — a planted `@junction/core` import in a client route will fail step 1 (Vite build error) and step 2 (leak grep), whichever fires first.
