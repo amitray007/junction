@@ -1,203 +1,183 @@
 # Design System — Junction Web (`@junction/web`)
 
-> The **decided** design system for the Junction web dashboard. The intent + process
-> live in [`web-ui-brief.md`](./web-ui-brief.md); **this file is the decisions** —
-> tokens, type, color, spacing, motion, the component inventory, the badge taxonomy.
+> The **decided** design system for the Junction web dashboard, rewritten for inc 24.5.
 > Components reference tokens; **no magic values**. Read this before any web UI work.
 >
-> _Decided 2026-06-28 via the design consultation (Codex + two independent design
-> passes converged; open taste calls resolved with the user). Increment 23 implements it._
+> _Decided 2026-06-29. **Replaces the inc-23 "instrument" system** (amber/zinc/Departure-Mono, the live
+> rail). Grounded in the Vercel **Geist** design language (design.md / guidelines / dark tokens),
+> adapted for a single-user localhost broker, and authored against the anti-slop reference in
+> `docs/design/anti-ai-slop.md` + the impeccable.style/slop checklist. The full design rationale, the
+> domain model it serves, and the prior-art exploration live in `docs/design/24.5-ux-foundation-notes.md`._
+> _The previous (inc-23) version of this file is preserved in git history (pre-24.5)._
 
 ---
 
 ## Product context
 
-- **What:** the management surface for Junction — a self-hosted, single-user **localhost broker**. You connect platform accounts once; AI agents reach them via MCP/CLI/API.
-- **Who:** one technical power user, on `localhost`. Not a marketing site, not multi-tenant.
-- **Type:** dense **management dashboard / instrument** (read-only today: credentials, platforms, profiles, per-profile MCP source status; mutation surfaces land inc 24+).
-- **Quality bar:** shadcn/ui · Vercel dashboard · Linear · Geist design language.
+- **What:** the management surface for Junction — a self-hosted, single-user **localhost broker**. You connect platform accounts once; AI agents reach them via one MCP endpoint, scoped by profile.
+- **Who:** one technical user who wants it to feel **effortless** while staying **in control**. Not multi-tenant, not a marketing site.
+- **Type:** a calm, high-contrast **product dashboard** (Geist register). Read-heavy today; mutation surfaces grow per increment.
+- **Quality bar:** Vercel dashboard / Geist. Restrained minimalism, high contrast, whitespace, **color signals state — not decoration**.
 
-## The memorable thing (north star)
+## North star
 
-**"This thing is precise."** The first-3-seconds reaction is *trust through exactness* — the quiet authority of an instrument (a patch bay, an oscilloscope), not an app that markets to you. Cool charcoal panel, **one amber signal line that's actually alive.** Every decision below serves that. No delight-bait; the thrill is recognition.
+**"Effortless and in control."** A person should be able to connect an account, group it into a profile, and point an agent at the endpoint without friction, while always seeing exactly how their data is routed. The memorable, junction-specific element is the **route row**: a connection's path (`source → account → namespace · filter → on/off`) read on one line.
 
-## Anti-slop guardrails (hard)
+## Anti-slop guardrails (hard — see `docs/design/anti-ai-slop.md`)
 
-No purple/blue gradients · no centered hero · no emoji-as-iconography · no drop-shadow soup (separation is **1px borders**, not shadows) · no five competing accents (**one** chromatic accent) · no `system-ui` as the display/body face · no bubble-radius-everything · no inconsistent spacing. Every color/badge/radius/transition traces to a token here.
+Every item is a MUST-NOT unless it traces to a documented decision below.
+No side-accent border on cards/nav (the #1 tell). No hero-metric stat banner. No identical card grids, no nested cards. No mono-eyebrows/section-kickers everywhere. No dark-mode-with-glow, no purple/violet/cyan, no cream/beige page. No gradient text. Body **≥14px**. No em-dash overuse in copy, no "theater"/aphoristic tics, no marketing buzzwords. Status is **text + dot**, never color alone.
 
----
-
-## Aesthetic direction
-
-- **Direction:** minimalistic, shadcn-like, **instrument-grade**. Industrial/utilitarian restraint with one warm signal accent.
-- **Decoration level:** minimal — type, 1px borders, and the single accent do the work.
-- **Mood:** calm, dense, fast, a little severe. A machine you operate.
-- **The thesis made visible:** Junction is a switchboard. The signature element (below) shows the routes lighting up, because the product is a router.
+**Documented, deliberate exceptions** (would otherwise read as tells):
+- **Geist Sans/Mono** is used despite being on the "overused" list. This is a deliberate choice: the project's quality bar is explicitly Geist, and Geist Sans is a genuinely well-cut neutral face. (Decision log below.)
+- **Blue accent.** The generic checklist says "avoid blue." Geist's signature accent is blue, and we adopt it as the single state/action accent. Deliberate. (Decision log.)
+- **Subtle shadows for elevation** (Geist uses two-layer ambient+direct shadows). This reverses inc-23's "borders not shadows." Deliberate.
 
 ---
 
 ## Typography
 
-Self-host via the `geist` npm package (no runtime CDN). Departure Mono is self-hosted from its OFL release (not on npm — vendor the `.woff2`).
+Self-hosted: the Geist Sans/Mono variable `.woff2` are **vendored raw** in `packages/web/src/styles/fonts/`
+(no `geist` npm dependency, no runtime CDN). Do not add a `geist` package.
 
-- **UI / body:** **Geist Sans** — all interface text, prose, labels, form fields.
-- **Mono / data:** **Geist Mono** — IDs, endpoints, namespaces (`github__list_prs`), counts, kbd hints, table cells that hold identifiers. Tabular figures on for numeric columns.
-- **Eyebrows / section labels:** **Geist Mono, uppercase, `letter-spacing: 0.08em`, 11px, muted** — the "rack-label" voice. Used everywhere a section needs a quiet machine-readout label.
-- **Wordmark — DECIDED (Option B):** **Departure Mono** (free, OFL, pixel-grid) for the **wordmark only** — "JUNCTION" with a small **amber square node** as the patch-point glyph beside it. The one pixel hit, load-bearing, where the instrument character lives.
-  - **Discipline rule (enforced by review):** Departure Mono is a **display** face — **never** body, **never** eyebrows, **never** tabular data, **never** below ~14px. Wordmark only. Everything else is Geist.
+- **Sans — Geist Sans:** all UI text, headings, labels, body. Two weights per view max (400/450 text, 500/600 emphasis).
+- **Mono — Geist Mono:** IDs, endpoint URLs, namespaces (`gh`, `github__list_prs`), tool-filter expressions, counts in tables, config blocks. `font-variant-numeric: tabular-nums`. Mono is for **data that is literally an identifier/number** — never as decorative eyebrows.
 
-### Type scale (px)
+No display/serif face. Hierarchy comes from size, weight, and space.
 
-| Role | Token | Size | Weight | Notes |
-|---|---|---|---|---|
-| Page title | `--text-page-title` | 20 | 600 | tracking `--tracking-tight` (`-0.01em`) |
-| Section heading | `--text-section` | 15 | 600 | |
-| Body / table cell | `--text-body` | 13 | 400 | line-height 1.5 — the power-tool register (sub-14 base) |
-| Mono / IDs | `--text-mono` | 12.5 | 400/500 | Geist Mono, tabular for numbers |
-| Eyebrow / label | `--text-eyebrow` | 11 | 500 | Geist Mono, uppercase, tracking `--tracking-eyebrow` (`0.08em`) |
-| Stat count | `--text-stat` | 28 | 700 | Geist Mono, dashboard stat cards; tabular-nums |
-| Hero / 404 | `--text-hero` | 64 | 700 | Geist Mono, large muted decorative numbers only |
+### Type scale (Geist token model; px)
 
-**Tracking tokens:** `--tracking-tight: -0.01em` (page titles) · `--tracking-eyebrow: 0.08em` (eyebrow labels).
+| Role | Token | px | weight | line-height | use |
+|---|---|---|---|---|---|
+| Page title | `--text-h1` | 24 | 600 | 1.25 | one per page |
+| Section | `--text-h2` | 15 | 600 | 1.4 | section headings |
+| Subsection | `--text-h3` | 14 | 600 | 1.4 | card headers |
+| Body / cell | `--text-body` | 14 | 400 | 1.6 | the floor — never below |
+| Label | `--text-label` | 13 | 450/500 | 1.4 | nav, metadata, single-line |
+| Caption | `--text-caption` | 12 | 400 | 1.5 | secondary metadata |
+| Mono / data | `--text-mono` | 13 | 400/500 | 1.5 | Geist Mono, tabular |
+| Stat | `--text-stat` | 22 | 600 | 1.2 | at-a-glance counts (a small row, not a banner) |
+
+Title Case for labels, buttons, tabs, titles. Sentence case for body and helper text.
 
 ---
 
 ## Color
 
-**One chromatic accent (Signal Amber) owns *interaction*; status hues own *state*.** Amber = "a line is live, carrying signal" — the switchboard metaphor. Cool zinc neutrals make the warm accent ignite. Light + dark, system-aware (`prefers-color-scheme`), with a manual toggle.
+**Geist numbered-intent model.** Each scale runs steps that encode *intent*, not lightness: 100–300 backgrounds, 400–600 borders, 700–800 fills, 900–1000 text. **Gray ranks information** (1000 primary, 900 secondary, 700 disabled). **One accent (blue)** carries state + the single most important action. Light + dark are equal, same token names.
 
-### Accent — Signal Amber
-| Token | Light | Dark | Use |
-|---|---|---|---|
-| `--accent` | `#B45309` | `#F59E0B` | accent text/border/focus ring (AA on surface) |
-| `--accent-fill` | `#D97706` | `#FBBF24` | primary-action fill, live rail segment |
-| `--accent-fg` | `#FFFFFF` | `#1A1206` | text on an accent fill |
+### Neutrals
 
-Used for: active nav, focus rings, primary action, the live status rail. **Nothing else gets accent.**
-
-### Neutrals — zinc (cool)
 | Token | Light | Dark |
 |---|---|---|
-| `--bg` | `#FFFFFF` | `#09090B` |
-| `--surface` | `#FAFAFA` | `#18181B` |
-| `--surface-2` | `#F4F4F5` | `#202023` |
-| `--border` | `#E4E4E7` | `#27272A` |
-| `--fg` | `#18181B` | `#FAFAFA` |
-| `--muted` | `#71717A` | `#A1A1AA` |
+| `--bg-100` (page, cards) | `#FFFFFF` | `#000000` |
+| `--bg-200` (subtle separation only) | `#FAFAFA` | `#0A0A0A` |
+| `--gray-100` (hover fill) | `#F2F2F2` | `#1A1A1A` |
+| `--gray-400` (strong border) | `#CFCFCF` | `#454545` |
+| `--gray-600` (faint text / off-state) | `#8F8F8F` | `#8F8F8F` |
+| `--gray-700` (disabled text) | `#6F6F6F` | `#7A7A7A` |
+| `--gray-900` (secondary text) | `#525252` | `#A0A0A0` |
+| `--gray-1000` (primary text) | `#171717` | `#EDEDED` |
+| `--alpha-200` (divider) | `rgba(0,0,0,.05)` | `rgba(255,255,255,.06)` |
+| `--alpha-400` (border) | `rgba(0,0,0,.08)` | `rgba(255,255,255,.10)` |
 
-Dark is **true near-black** (`#09090B`), not navy. Max two surface levels; depth is borders, not shadows.
+Dark page is **true black `#000`** (Geist), light is true white. Borders/dividers use the alpha scale so they layer correctly. (`--bg-200` is for subtle separation only — never a general fill.)
 
-### Status — DECIDED (info = teal, no blue)
-| State | Light text | Dark text | Light tint bg | Dark tint bg |
+### Accent — Blue (state + the one primary action)
+
+| Token | Light | Dark | use |
+|---|---|---|---|
+| `--blue-700` | `#0072F5` | `#3B9EFF` | focus ring, links |
+| `--blue-text` | `#0068D6` | `#6CB6FF` | namespace chips, the endpoint, syntax keys |
+| `--blue-bg` | `#F0F7FF` | `#0F1B2D` | namespace/endpoint chip background |
+
+**Note:** the *single most important action per view* is the Geist primary button = **solid `--gray-1000` fill** (not blue). Blue is reserved for **state, links, focus, and the endpoint/namespace identity**. This keeps the accent budget tight.
+
+### Status (text + dot, never color-only; WCAG AA)
+
+Each state is a **named token** in `app.css` (tokens-only is a hard rule — components reference the token,
+never the hex). Light / dark values:
+
+| State | Token | Light | Dark | meaning |
 |---|---|---|---|---|
-| ok / connected | `#15803D` | `#4ADE80` | `#F0FDF4` | `#052E16` |
-| warning | `#A16207` | `#FACC15` | `#FEFCE8` | `#1C1407` |
-| error | `#B91C1C` | `#F87171` | `#FEF2F2` | `#2A0A0A` |
-| info | `#0E7490` | `#22D3EE` | `#ECFEFF` | `#0B2230` |
-| disabled | `#A1A1AA` | `#52525B` | (transparent, border only) | |
-
-**Info is teal, not blue** — strict anti-slop (blue is the AI default). Status colors are text/icon/dot + a faint tint only — **never** saturated fills. **Connected-green (≈140°)** and **accent-amber (≈35°)** are far enough apart to never read as the same state.
-
-**a11y:** every status foreground clears WCAG AA (≥4.5:1) on its bg/tint. Never color-only — always paired with a dot **and** text/icon (see badges).
+| configured | `--status-configured-fg` | `--gray-700` | `--gray-900` | stored, not live-probed (inc 23–27 default) |
+| connected / ok | `--status-ok-fg` | `#1A7F37` | `#62C073` | live (reserved, probe inc 28+) |
+| no auth | `--status-noauth-fg` | `--blue-text` | `--blue-text` | public source |
+| warning | `--status-warning-fg` | `#A35200` | `#D99320` | expiring (OAuth, inc 28) |
+| error | `--status-error-fg` | `#C9342A` | `#FF6166` | auth failed |
+| off / disabled | `--status-off-fg` | `--gray-600` | `--gray-600` | route toggled off |
 
 ---
 
-## Spacing & density
+## Spacing & layout
 
-- **Base unit: 4px.** Scale: 4 · 8 · 12 · 16 · 24 · 32 · 48. No 6px/10px one-offs.
-- **Density: compact** (it's an instrument; show 20 rows, not 8).
-- **Table row: 36px** data / 40px header. Cell padding `8px 12px`.
-- **Control height: 32px** (buttons/inputs/selects).
-- **Page gutter: 24px** · card padding `16px`.
+- **4px base.** Scale: 4 · 8 · 12 · 16 · 24 · 32 · 40 · 64.
+- **Three-step rhythm (Geist):** 8px inside a group · 16px between groups · 40px between sections. Varied, not monotonous.
+- **Content column:** left-aligned, max ~960px, `scrollbar-gutter: stable` (no shake). Only content scrolls.
+- **Card padding:** 20–24px. **Radii:** 6px controls/surfaces · 12px cards/menus · full only for pills/dots. One radius family per view.
+- **Elevation (Geist two-layer; named tokens):** Child radius ≤ parent. Values:
+  | Token | Light | Dark |
+  |---|---|---|
+  | `--shadow-sm` (raised card) | `0 1px 2px rgba(0,0,0,.04)` | `0 1px 2px rgba(0,0,0,.5)` |
+  | `--shadow-md` (popover/menu/dialog) | `0 1px 1px rgba(0,0,0,.02), 0 4px 8px -4px rgba(0,0,0,.04), 0 16px 24px -8px rgba(0,0,0,.06)` | `0 1px 1px rgba(0,0,0,.3), 0 4px 8px -4px rgba(0,0,0,.5), 0 16px 24px -8px rgba(0,0,0,.6)` |
 
-## Layout & geometry
+### App shell
 
-- **App shell anatomy (DECIDED — sidebar, 2026-06-28):** a fixed five-zone shell, the structure Linear / Vercel / Stripe / Supabase converge on:
-  1. **StatusRail** — 4px fixed left edge (the signature element; survives sidebar collapse).
-  2. **Sidebar** — fixed, `--sidebar-width 15rem` expanded / `--sidebar-width-icon 3rem` icon-rail. **Destinations only** (the nouns), grouped (`MANAGE`: Dashboard/Platforms/Credentials/Profiles · `CONNECT`: MCP Sources). Wordmark in header, theme toggle + status summary in footer. Collapsible via `Cmd/Ctrl+B`, **persisted by cookie** (read server-side for SSR — no flash, mirrors the theme-script approach).
-  3. **Topbar** — sticky, `--topbar-height` (~44px). **Context, not nav**: breadcrumb (left) + global controls (right). (Breadcrumb shows just the section until row→detail pages exist — futures.)
-  4. **Page header zone** — per-route band: title + count chip + optional subtitle + toolbar (search / filter / **labelled** primary action). Reserve its height during load.
-  5. **Content zone** — the only thing that scrolls; table / detail key-value panel / dashboard cards.
-- **Division of labor (keeps it organized — one home per action):** sidebar = destinations · topbar = position + global · page header = verbs for *this page* · row `⋯` = verbs for *this record*.
-- **Active nav treatment:** neutral high-contrast `--fg` text + `--surface-2` bg + a **2px amber inset-left bar** (`box-shadow: inset 2px 0 0 var(--accent)`). NOT amber text (keeps the amber budget tight). Icon may take `--accent`; the label stays `--fg`.
-- **Layout stability (no shake — DECIDED):** `scrollbar-gutter: stable` on `html`; content is **left-aligned in the fixed shell**, not a centered `mx-auto` column (centering + scrollbar toggling = horizontal jump). Only the content zone scrolls; sidebar/topbar/page-header never repaint on nav. Skeletons must occupy the exact loaded-content box (row height + column widths) to avoid vertical reflow.
-- **Radius:** `--radius-sm 0.25rem (4px)` inputs/badges/chips · `--radius-md 0.375rem (6px)` buttons/cards/popovers (the workhorse) · `--radius-lg 0.5rem (8px)` dialogs/sheets/panels. Full (`9999px`) **only** status dots & avatars. The amber wordmark node is deliberately `0` radius (the one sharp element).
-
-## Icon + text discipline (DECIDED)
-
-**Icon + text by default.** Drop to icon-only ONLY when (a) the sidebar is collapsed, (b) it's a universal control (`⋯`, `✕`, search-in-field), or (c) it's a repeated row action in a cramped table. **Every** icon-only control gets a Radix tooltip **and** an `aria-label` with the same words; the icon itself is `aria-hidden`. Primary page actions are **always** labelled (never icon-only). Status is always dot + text (never color-only).
-
-## Routing & data stability (DECIDED — `createRouter` defaults)
-
-Read-heavy localhost management UI: `defaultPreload: "intent"` (preload on hover — near-free on local SQLite) · `defaultStaleTime: 30_000` (no bounce-refetch on revisit within 30s) · keep `staleReloadMode: 'background'` (SWR — render cached, revalidate behind, no flash) · `defaultPendingMs: 1000` / `defaultPendingMinMs: 500` (fast loads never flash a spinner; the old route stays until the new loader resolves) · keep `scrollRestoration` + `defaultViewTransition`. Mutations (inc 24+) call `router.invalidate()` to force-refresh — `staleTime` governs navigation only, never writes.
+- **Sidebar (~240px):** wordmark (the `J` glyph + "Junction" lockup) at top; plain-text destinations (Dashboard · Profiles · Platforms · Credentials) with right-aligned counts; gray-ranked, active = `--gray-100` bg + `--gray-1000` text (**no side-accent stripe**). Footer: running status + theme toggle.
+- **Content:** breadcrumb line → page title row (title + the one primary action) → lede → sections.
+- No separate top control bar; the page title row carries the primary action.
 
 ---
+
+## Components
+
+- **Button hierarchy (Geist):** Primary = solid `--gray-1000` fill, `--bg-100` text (one per view). Secondary = `--bg-100` fill + `--alpha-400` border. Tertiary/ghost = transparent, `--gray-1000` text. Error = red fill, confirm step. Sizes 32/34/40. **Focus ring** = 2px surface gap + 2px `--blue-700` on every interactive element.
+- **Card:** `--bg-100`, `--alpha-400` border, `--shadow-sm`, 12px radius. Header row (h3 + meta) + body. Never nested.
+- **Table / list:** hairline-divided rows (`--alpha-200`), 14px body, ~44px row height, mono for identifiers, hover = `--gray-100`. Column headers in `--gray-700` 12px (not uppercase-mono). Row actions behind a trailing `⋯` (icon-only allowed for repeated row actions) with tooltip + aria-label.
+- **Route row (signature):** `source → account → ns-chip · filter → on/off`. `→` separators in `--gray-400`, namespace in a `--blue-bg`/`--blue-text` chip, filter in mono `--gray-700`, status as dot+label. Reuse of one connection across profiles is legible because the path shape is shared and one segment differs.
+- **Single-endpoint config block:** the one shared endpoint in mono + Copy; tabbed agent config (Claude / Cursor / Raw) as a mono code block (blue keys); a line showing "your key selects the profile" with key→profile chips (the keys are **Coming soon**).
+- **Status badge:** dot + Title-Case label; tints faint; never color-only. Keeps the **Configured** taxonomy (stored, not live-probed) from inc 23.
+- **`ComingSoon` affordance (NEW):** a small, quiet pill — `--gray-100` bg, `--gray-700` text, label "Coming soon" — placed on deferred actions/sections (disabled button + pill, or a section tag). Used wherever the backend isn't wired yet (recent activity, platform/profile mutations, key management). It must read as *intentional and honest*, not unfinished: pair the disabled control with a one-line hint pointing to the CLI where the action exists today (e.g. "Use `junction platform add` for now").
+- **Empty / loading / error states:** first-class. Empty = one plain line + the first action. Loading = skeletons that mirror final content (no layout shift). Error = what happened + how to fix.
 
 ## Motion
 
-Emil-Kowalski school: **purposeful and fast**, confirms state change, never decorates. All transforms gated by `prefers-reduced-motion` → opacity-only at 100ms.
+Geist timing: 0ms most · ~150ms state · ~200ms popover/tooltip/tab · ~300ms overlay/dialog. **Never `transition: all`** (list intended properties). transform/opacity only; honor `prefers-reduced-motion`. No bounce/elastic. Easing `cubic-bezier(0.16, 1, 0.3, 1)` for enters.
 
-| Token | ms | Use |
-|---|---|---|
-| `--motion-micro` | 100 | hover, focus ring, dot color shift |
-| `--motion-short` | 160 | dropdowns, popovers, tooltips, toasts, tabs |
-| `--motion-medium` | 240 | dialogs, sheets, route/view transitions |
+## Copy voice (Geist)
 
-- **Easing:** enter/standard `cubic-bezier(0.16, 1, 0.3, 1)` (expo-out — fast start, soft landing) · exit `cubic-bezier(0.4, 0, 1, 1)` (faster out than in).
-- **Libraries (lightest thing that feels great):**
-  - **sonner** — toasts (mutation feedback once writes land, inc 24+). Mono detail line, no emoji.
-  - **vaul** — bottom sheet for **narrow/mobile only**; on desktop use a Radix Dialog. Don't drawer everything.
-  - **View Transitions API** — same-document route/tab changes (progressive enhancement + support check + reduced-motion gate).
-  - **motion** (`motion/react`) — surgical: the rail pulse, list reorder, presence (`AnimatePresence`) on rows. Native first; reach for motion only where VT/CSS can't.
+Active voice, second person, as few words as possible. Title Case for labels/buttons/titles; sentence case for body/helper. Verb + noun for actions ("Add Credential", not "OK"). "&" over "and". Numerals for counts. Curly quotes, ellipsis character. No "please", no marketing buzzwords, no em-dash overuse, no "theater"/aphoristic cadence. Errors: what happened + how to fix. Toasts name the thing changed, no trailing period, avoid "successfully". In-progress: "Rotating…".
 
 ---
 
-## Component inventory (foundation)
+## The 4 surfaces (v1 content + layout)
 
-Owned in `packages/web/src/ui/` (shadcn pattern: Radix primitives + Tailwind + cva variants, copied not black-boxed; a11y comes from Radix and we don't regress it).
+**Dashboard** (`status`/`init` data). Status line (running · store · sandbox) · **Connect an Agent** (the single endpoint + tabbed config + key→profile chips, keys = Coming soon) · At a Glance (counts as a small stat row, not a banner) · Recent Activity = **Coming soon** (needs audit, inc 29).
 
-button · input/field (+ inline validation) · card · **badge / status pill** · table (sortable, empty/loading) · dialog · sheet/drawer (vaul narrow) · dropdown menu · tabs · tooltip · toast (sonner) · skeleton · separator · kbd · copy-to-clipboard. Plus **empty / loading / error states as first-class** (the dashboard has many).
+**Platforms** (`PlatformMeta[]`). Lighter re-skin: a ruled list — Name · Kind (mono tag) · Connections count · Detail; row → kind-specific descriptor + which profiles route it. `Add Platform` = **Coming soon** (inc 25).
 
-## Status-badge taxonomy (DECIDED)
+**Credentials** (`CredentialMeta[]`). **Fully wired** (inc 24): grouped by platform (the wedge reads as multiple accounts under one source) — Platform · Account · Kind · Status · `⋯` (Rotate / Delete). `Add Credential` works. Secrets never shown. Delete-while-routed → blocked, names the profiles.
 
-The semantic mapping every credential/platform/profile/source state renders through. Color **always** paired with a dot + text (a11y). Tokens from the status table above.
-
-| Badge | Token | Meaning (where used) |
-|---|---|---|
-| **CONFIGURED** | configured (neutral: `--muted` on `--surface-2`) | credential stored but **not live-validated** yet (all creds in inc 23–27; probe lands inc 28) |
-| **CONNECTED** | ok | credential valid · source live · platform reachable (reserved for live-probe result, inc 28+) |
-| **NO AUTH** | info | public / no-auth source (optional-credential sources, inc 16) |
-| **EXPIRING** | warning | token near expiry / degraded (OAuth, inc 28) |
-| **AUTH FAILED** | error | credential invalid / source unreachable |
-| **DISABLED** | disabled | profile source toggled off · credential unused |
-
-**Note on CONFIGURED vs CONNECTED:** CONNECTED asserts liveness ("credential valid AND source reachable"). Until inc 28 adds live health probing, all stored credentials show CONFIGURED — a neutral state that says "this credential was added successfully" without overstating. The `configured` cva variant uses `--muted` text on `--surface-2` bg (same as `disabled` surface but with `--muted` rather than `--status-disabled-fg`).
-
-## The ONE memorable detail — the live status rail (DECIDED)
-
-A persistent **4px vertical rail down the far-left edge** = the literal junction. Each connected source is a short segment whose **color is its state** (live = amber, ok = green, warning, error, idle/disabled = neutral). When an agent hits a source via MCP, that segment does a single **160ms amber pulse** — signal passing through a contact. Calm when idle, alive when traffic flows.
-
-- **Inc 23 ships the static rail** (colored segments, no live pulse — there's no live-event source yet). It reads as the signature element on its own.
-- **The pulse + the fuller patch-bay diagram are recorded in `docs/futures/`** to wire in once mutation/live-event surfaces exist (inc 26+).
-- Buildable as a flex column of `div`s driven by status; reduced-motion → brief opacity tick, never a transform.
+**Profiles** (`ProfileMeta[]`). Full read: each profile a card with its **route rows** (read-only) + "N keys active" (Coming soon). `New Profile` / `Add Route` / `Edit tool access` = **Coming soon** (inc 26). No per-profile endpoint URL (single-endpoint model).
 
 ---
 
 ## Clean-code patterns (web)
 
-- **No business logic in components** — logic stays in `@junction/core`; components render + call `createServerFn`. The server-only-core boundary (inc 22) is preserved: native deps never reach the client bundle.
-- **Layers:** `ui/` primitives → feature components → route files. Composition over configuration. Tokens + cva variants over one-off styles.
-- Every component ships a **happy-dom + Testing Library** test (behavior + a11y affordances) and renders in light **and** dark.
+- No business logic in components; logic in `@junction/core`, components call `createServerFn`. Server-only-core boundary preserved (inc 22). Native deps never reach the client bundle.
+- `ui/` primitives → feature components → routes. Tokens + cva variants over one-offs. Every component ships a happy-dom + Testing Library test and renders in light **and** dark.
 
-## Decisions log
+## Decision log
 
 | Date | Decision | Rationale |
 |---|---|---|
-| 2026-06-28 | Accent = Signal Amber (`#B45309`/`#F59E0B`) | switchboard "live signal" identity; anti-blue/violet; one accent only |
-| 2026-06-28 | Neutrals = cool zinc; true near-black dark | makes warm accent pop; instrument register; borders not shadows |
-| 2026-06-28 | Info hue = **teal** (not blue) | strict anti-slop; blue quarantined out entirely (confirmed visually by user) |
-| 2026-06-28 | Wordmark = **Departure Mono pixel face (Option B)**, wordmark-only | strongest instrument character; one load-bearing pixel hit (user chose B over the `junction__` cursor) |
-| 2026-06-28 | Density compact, 4px grid, 36px rows, 32px controls, 13px body | power-tool scan density |
-| 2026-06-28 | Radius 4/6/8 (md=6 default) | precise, not consumer-pill |
-| 2026-06-28 | Motion 100/160/240ms, expo-out; sonner + vaul(narrow) + View Transitions + motion | Emil-grade, fast, reduced-motion-safe; lightest stack |
-| 2026-06-28 | Signature = left-edge live status rail (static v1, pulse later) | product thesis as one visible detail; cheap, global, distinctive |
+| 2026-06-29 | Rewrite to a Geist-grade system; retire the inc-23 instrument system | User set the bar at Vercel/Geist; prior system read slop-adjacent (side-accent bar, mono-eyebrows, 13px body, amber-glow) |
+| 2026-06-29 | Keep **Geist Sans/Mono** (documented exception to "overused") | Deliberate: the quality bar is Geist; the face is genuinely well-cut |
+| 2026-06-29 | **Blue** as the single state/accent (documented exception to "no blue") | Geist's signature accent; reserved for state/links/focus/endpoint identity |
+| 2026-06-29 | Primary action = solid gray-1000 fill, not blue | Geist convention; keeps accent budget tight |
+| 2026-06-29 | Subtle two-layer shadows for elevation (reverses inc-23 "borders not shadows") | Geist uses shadows; gives depth without the heavier inc-23 border look |
+| 2026-06-29 | Dark + light equal, true black `#000` dark / true white light | Geist; both first-class |
+| 2026-06-29 | Body floor 14px; 4px grid; 8/16/40 rhythm; radii 6/12 | Geist density + the anti-slop "≥14px / varied spacing" rules |
+| 2026-06-29 | **Single shared MCP endpoint** model in the UI (no per-profile URLs); profile chosen by junction key | User decision; auth backend is a later increment, the v1 UI is shaped for it |
+| 2026-06-29 | **"Coming soon"** affordance for deferred backends (with a CLI hint) | inc 24.5 is the setup/foundation increment; shows the whole shape truthfully without faking functionality |
+| 2026-06-29 | Signature element = the **route row** (replaces the inc-23 live rail) | junction-specific structure (routing legible) instead of edge decoration |
