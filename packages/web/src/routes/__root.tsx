@@ -3,12 +3,19 @@
 // No @junction/core import. All data flows through server functions.
 
 import { createRootRoute, HeadContent, Link, Outlet, Scripts } from "@tanstack/react-router"
-import type { ReactNode } from "react"
+import { type ReactNode, useEffect, useState } from "react"
 import { Toaster } from "sonner"
 import { StatusRail } from "../ui/status-rail.js"
 import { TooltipProvider } from "../ui/tooltip.js"
 import { Wordmark } from "../ui/wordmark.js"
 import "../styles/app.css"
+
+// Pre-hydration theme script — reads localStorage and sets data-theme on <html>
+// BEFORE first paint, avoiding a flash of wrong theme. Runs as an inline script
+// in <head> so it executes synchronously before any React hydration.
+const THEME_SCRIPT = `(function(){try{var t=localStorage.getItem("junction-theme");if(t==="dark"||t==="light"){document.documentElement.setAttribute("data-theme",t)}}catch(e){}})()`
+
+type ThemePreference = "system" | "light" | "dark"
 
 export const Route = createRootRoute({
   head: () => ({
@@ -17,8 +24,8 @@ export const Route = createRootRoute({
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: "Junction" },
     ],
-    // Amber-node favicon (SVG, inlined). serve.mjs serves NO static files —
-    // a public/favicon.ico would 404; this stops the browser's /favicon.ico probe.
+    // Amber-node favicon (SVG, inlined). serve.mjs serves static /assets/* but has
+    // no static root for /, so favicon must be inlined to avoid browser /favicon.ico probe.
     links: [
       {
         rel: "icon",
@@ -30,6 +37,9 @@ export const Route = createRootRoute({
           "%3C/svg%3E",
       },
     ],
+    // Inline script runs BEFORE React hydration to read localStorage and set
+    // data-theme on <html>, preventing a flash of wrong theme on page load.
+    scripts: [{ children: THEME_SCRIPT }],
   }),
   component: RootComponent,
 })
@@ -137,6 +147,12 @@ function TopNav() {
         <NavLink to="/profiles">Profiles</NavLink>
       </nav>
 
+      {/* Spacer */}
+      <div className="flex-1" />
+
+      {/* Theme toggle — cycles system → light → dark → system */}
+      <ThemeToggle />
+
       {/* Skip link for keyboard users */}
       <a
         href="#main-content"
@@ -146,6 +162,83 @@ function TopNav() {
         Skip to main content
       </a>
     </header>
+  )
+}
+
+/** Reads the current theme preference from localStorage (or "system" if not set). */
+function readStoredTheme(): ThemePreference {
+  try {
+    const v = localStorage.getItem("junction-theme")
+    if (v === "light" || v === "dark") return v
+  } catch {
+    // no localStorage (SSR or private browsing)
+  }
+  return "system"
+}
+
+/** Applies a theme preference to the document root and persists to localStorage. */
+function applyTheme(pref: ThemePreference) {
+  try {
+    if (pref === "system") {
+      document.documentElement.removeAttribute("data-theme")
+      localStorage.removeItem("junction-theme")
+    } else {
+      document.documentElement.setAttribute("data-theme", pref)
+      localStorage.setItem("junction-theme", pref)
+    }
+  } catch {
+    // ignore
+  }
+}
+
+const THEME_CYCLE: ThemePreference[] = ["system", "light", "dark"]
+const THEME_LABEL: Record<ThemePreference, string> = {
+  system: "Theme: System",
+  light: "Theme: Light",
+  dark: "Theme: Dark",
+}
+const THEME_ICON: Record<ThemePreference, string> = {
+  system: "◐",
+  light: "☀",
+  dark: "☽",
+}
+
+function ThemeToggle() {
+  const [pref, setPref] = useState<ThemePreference>("system")
+
+  // Read stored preference on mount (client-only)
+  useEffect(() => {
+    setPref(readStoredTheme())
+  }, [])
+
+  function toggle() {
+    const next = THEME_CYCLE[(THEME_CYCLE.indexOf(pref) + 1) % THEME_CYCLE.length] ?? "system"
+    applyTheme(next)
+    setPref(next)
+  }
+
+  return (
+    <button
+      type="button"
+      aria-label={THEME_LABEL[pref]}
+      onClick={toggle}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: "var(--control-height)",
+        height: "var(--control-height)",
+        borderRadius: "var(--radius-sm)",
+        border: "1px solid var(--border)",
+        backgroundColor: "transparent",
+        color: "var(--muted)",
+        fontSize: "var(--text-body)",
+        cursor: "pointer",
+        lineHeight: 1,
+      }}
+    >
+      <span aria-hidden="true">{THEME_ICON[pref]}</span>
+    </button>
   )
 }
 
@@ -161,11 +254,6 @@ function NavLink({ to, children }: { readonly to: string; readonly children: Rea
           backgroundColor: "var(--surface-2)",
           fontWeight: "500",
         },
-      }}
-      // View Transitions for route changes (progressive enhancement)
-      onClick={() => {
-        if (!document.startViewTransition) return
-        // Navigation handled by router — VT fires on the DOM update
       }}
     >
       {children}

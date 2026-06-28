@@ -20,11 +20,9 @@ export function TooltipContent({ className, sideOffset = 4, ...props }: TooltipC
           "bg-[var(--fg)] text-[var(--bg)]",
           "px-2 py-1",
           "text-[var(--text-eyebrow)] leading-snug",
-          // Animate in/out using motion-short duration
-          "data-[state=delayed-open]:animate-in data-[state=closed]:animate-out",
-          "data-[state=delayed-open]:fade-in-0 data-[state=closed]:fade-out-0",
-          "data-[state=delayed-open]:zoom-in-95 data-[state=closed]:zoom-out-95",
-          "data-[side=bottom]:slide-in-from-top-1 data-[side=top]:slide-in-from-bottom-1",
+          // Entry/exit opacity — simple CSS transition, no animate-in plugin needed.
+          "transition-opacity duration-[var(--motion-short)]",
+          "data-[state=delayed-open]:opacity-100 data-[state=closed]:opacity-0",
           className,
         )}
         {...props}

@@ -23,7 +23,7 @@ function ProfilesPage() {
         style={{
           fontSize: "var(--text-page-title)",
           fontWeight: 600,
-          letterSpacing: "-0.01em",
+          letterSpacing: "var(--tracking-tight)",
           color: "var(--fg)",
         }}
       >
@@ -126,7 +126,7 @@ function ProfileCard({ profile }: { readonly profile: ProfileMeta }) {
                     </TableCell>
                     <TableCell style={{ color: "var(--muted)" }}>{s.credentialAccount}</TableCell>
                     <TableCell>
-                      <StatusBadge status={s.enabled ? "connected" : "disabled"} />
+                      <StatusBadge status={s.enabled ? "configured" : "disabled"} />
                     </TableCell>
                   </TableRow>
                 ))}

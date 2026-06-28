@@ -8,9 +8,8 @@
 import { defineConfig } from "vitest/config"
 
 export default defineConfig({
-  esbuild: {
-    jsx: "automatic",
-  },
+  // Note: esbuild.jsx is intentionally omitted — Vitest 4 uses oxc for transforms
+  // and silently ignores esbuild options (it also warns about the conflict).
   test: {
     name: "web-components",
     environment: "happy-dom",

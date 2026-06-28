@@ -13,7 +13,7 @@ export function NotFound() {
         aria-hidden="true"
         style={{
           fontFamily: "var(--font-mono)",
-          fontSize: "4rem",
+          fontSize: "var(--text-hero)",
           fontWeight: 700,
           color: "var(--surface-2)",
           lineHeight: 1,

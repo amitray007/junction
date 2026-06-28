@@ -61,17 +61,34 @@ jobs:
       # A planted @junction/core import in a client-reachable module will fail
       # here (Vite can't bundle the native better-sqlite3 / @napi-rs/keyring deps).
       - run: pnpm --filter @junction/web build
-      # Client-bundle leak grep — must return no matches.
-      # Catches any server-only identifier that slipped into the client bundle.
+      # Client-bundle leak grep — three-part check:
+      # 1. Existence guard: dist/client/assets must be non-empty (proves we scanned real output)
+      # 2. Negative check: none of the server-only / secret-payload identifiers appear
+      # 3. Positive control: a known client-bundle string IS present (proves grep scanned content)
       - name: Client-bundle leak grep
         run: |
-          LEAKS=$(grep -rl "better-sqlite3\|napi-rs/keyring\|@junction/core\|CREATE TABLE\|drizzle" packages/web/dist/client 2>/dev/null || true)
+          # 1. Existence guard — catch an empty/missing dist that would make grep trivially pass.
+          if [ -z "$(ls -A packages/web/dist/client/assets 2>/dev/null)" ]; then
+            echo "ERROR: packages/web/dist/client/assets is empty or missing after build"
+            exit 1
+          fi
+          # 2. Negative check — server-only identifiers and secret payload markers must not appear.
+          LEAKS=$(grep -rl \
+            "better-sqlite3\|napi-rs/keyring\|@junction/core\|CREATE TABLE\|drizzle\|secretRef\|secret_ref" \
+            packages/web/dist/client 2>/dev/null || true)
           if [ -n "$LEAKS" ]; then
-            echo "ERROR: server-only identifiers found in client bundle:"
+            echo "ERROR: server-only or secret-payload identifiers found in client bundle:"
             echo "$LEAKS"
             exit 1
           fi
-          echo "OK: no server-only identifiers in client bundle"
+          # 3. Positive control — a string known to be in every client bundle must be present.
+          #    If this fails, the bundle is empty/corrupt or the grep target changed.
+          if ! grep -rl "createFileRoute" packages/web/dist/client > /dev/null 2>&1; then
+            echo "ERROR: positive control failed — 'createFileRoute' not found in client bundle."
+            echo "Either the bundle is empty/corrupt or the grep target dir is wrong."
+            exit 1
+          fi
+          echo "OK: dist/client/assets non-empty, no server-only identifiers, positive control passed"
       # Run web component tests (happy-dom environment, separate vitest config).
       - run: pnpm --filter @junction/web test
       # Run web typecheck (tsr generate + tsc --noEmit).

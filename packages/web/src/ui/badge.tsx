@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Badge / status pill — implements the DESIGN.md badge taxonomy exactly.
 // Status = color + dot + text (WCAG AA; never color-only).
-// Variants map to the five canonical states: ok, info, warning, error, disabled.
+// Variants map to six canonical states: ok, info, warning, error, disabled, configured.
 
 import { cva, type VariantProps } from "class-variance-authority"
 import type { HTMLAttributes } from "react"
@@ -39,6 +39,9 @@ const badgeVariants = cva(
           "bg-[var(--surface-2)] text-[var(--status-disabled-fg)]",
           "border-[var(--border)]",
         ],
+        // configured: neutral — credential stored but not live-probed (probe lands inc 28).
+        // Uses --muted text on --surface-2 bg to signal "present, not validated."
+        configured: ["bg-[var(--surface-2)] text-[var(--muted)]", "border-[var(--border)]"],
       },
     },
     defaultVariants: {
@@ -54,6 +57,7 @@ const dotColors: Record<string, string> = {
   warning: "var(--status-warning-fg)",
   error: "var(--status-error-fg)",
   disabled: "var(--status-disabled-fg)",
+  configured: "var(--muted)",
 }
 
 export interface BadgeProps
@@ -72,8 +76,8 @@ export function Badge({ className, variant = "ok", children, ...props }: BadgePr
         aria-hidden="true"
         style={{
           display: "inline-block",
-          width: "6px",
-          height: "6px",
+          width: "var(--space-dot)",
+          height: "var(--space-dot)",
           borderRadius: "9999px",
           backgroundColor: dotColor,
           flexShrink: 0,
@@ -86,15 +90,20 @@ export function Badge({ className, variant = "ok", children, ...props }: BadgePr
 
 // ─── Status badge taxonomy (DESIGN.md mapping) ────────────────────────────
 
+// "configured" = credential stored but no live health probe yet (probe lands inc 28).
+// "connected" is reserved for when we can assert credential valid + source live.
+// "disabled" = profile source toggled off · credential unused.
+// "no-auth", "expiring", "auth-failed" stay for future live-probe results.
 export function StatusBadge({
   status,
   className,
 }: {
-  readonly status: "connected" | "no-auth" | "expiring" | "auth-failed" | "disabled"
+  readonly status: "connected" | "configured" | "no-auth" | "expiring" | "auth-failed" | "disabled"
   readonly className?: string
 }) {
   const map = {
     connected: { variant: "ok" as const, label: "Connected" },
+    configured: { variant: "configured" as const, label: "Configured" },
     "no-auth": { variant: "info" as const, label: "No Auth" },
     expiring: { variant: "warning" as const, label: "Expiring" },
     "auth-failed": { variant: "error" as const, label: "Auth Failed" },

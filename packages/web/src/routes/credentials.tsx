@@ -14,11 +14,11 @@ export const Route = createFileRoute("/credentials")({
 })
 
 // Map credential kind to a badge status.
-// All stored credentials are connected (they've been added successfully);
-// we don't have live-validity state yet (that lands with OAuth in inc 28).
-function kindToStatus(kind: string): "connected" | "no-auth" | "disabled" {
-  if (kind === "none") return "no-auth"
-  return "connected"
+// All 5 stored credential kinds (api-key, bearer, oauth2, file, env) mean the
+// credential was added successfully. We show "Configured" — neutral, no liveness
+// claim — until inc 28 adds live health probing (CONNECTED = valid + source live).
+function kindToStatus(_kind: string): "configured" {
+  return "configured"
 }
 
 function CredentialsPage() {
@@ -30,7 +30,7 @@ function CredentialsPage() {
         style={{
           fontSize: "var(--text-page-title)",
           fontWeight: 600,
-          letterSpacing: "-0.01em",
+          letterSpacing: "var(--tracking-tight)",
           color: "var(--fg)",
         }}
       >

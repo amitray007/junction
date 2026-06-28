@@ -14,5 +14,10 @@ export function getRouter() {
     // `<p>Not Found</p>`. Without this, every not-found request (a mistyped
     // path, a browser probe like /favicon.ico) logs a startup warning.
     defaultNotFoundComponent: NotFound,
+    // Enable View Transitions for same-document route changes (progressive
+    // enhancement — silently no-ops in browsers that don't support the API).
+    // The ::view-transition-* CSS in app.css provides the actual animation;
+    // prefers-reduced-motion gate is in that CSS.
+    defaultViewTransition: true,
   })
 }

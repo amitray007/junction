@@ -56,7 +56,7 @@ Rules for `packages/web/` — the TanStack Start SSR dashboard. Each rule is a c
 
 ## Package hygiene
 
-- **MUST NOT** add `@junction/core` to `packages/web/package.json` dependencies (it stays SSR-external — a dep entry would still not make it client-safe).
+- `@junction/core` **MUST** be listed in `packages/web/package.json` `dependencies` (Node's module resolver needs it to find the package at SSR runtime) AND **MUST** be in `vite.config.ts` `ssr.external` (prevents bundling its native deps). The dep entry does NOT make it client-safe — `ssr.external` + `createServerFn` is what enforces isolation. **MUST NOT** import `@junction/core` in any client-reachable module (routes, client components, utility files not inside `src/server/`).
 - **MUST NOT** use `fs.*Sync` in any server function or loader — keep server code async.
 - **MUST NOT** import from `@junction/cli` / `@junction/mcp-server` / `@junction/mcp-client` in `packages/web`. Those are sibling apps; web talks to core only.
 - New npm dependencies added to `packages/web` MUST be listed in a PR description with the reason and bundle-impact estimate.

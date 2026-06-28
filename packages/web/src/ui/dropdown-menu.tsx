@@ -23,12 +23,11 @@ export function DropdownMenuContent({ className, sideOffset = 4, ...props }: Con
         className={cn(
           "z-50 min-w-32 overflow-hidden",
           "rounded-[var(--radius-md)] border border-[var(--border)]",
-          "bg-[var(--surface)] shadow-sm",
+          "bg-[var(--surface)]",
           "p-1",
           "text-[var(--text-body)] text-[var(--fg)]",
-          "data-[state=open]:animate-in data-[state=closed]:animate-out",
-          "data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0",
-          "data-[state=open]:zoom-in-95 data-[state=closed]:zoom-out-95",
+          "transition-opacity duration-[var(--motion-short)]",
+          "data-[state=open]:opacity-100 data-[state=closed]:opacity-0",
           className,
         )}
         {...props}
@@ -169,11 +168,10 @@ export function DropdownMenuSubContent({
       className={cn(
         "z-50 min-w-32 overflow-hidden",
         "rounded-[var(--radius-md)] border border-[var(--border)]",
-        "bg-[var(--surface)] shadow-sm",
+        "bg-[var(--surface)]",
         "p-1",
-        "data-[state=open]:animate-in data-[state=closed]:animate-out",
-        "data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0",
-        "data-[state=open]:zoom-in-95 data-[state=closed]:zoom-out-95",
+        "transition-opacity duration-[var(--motion-short)]",
+        "data-[state=open]:opacity-100 data-[state=closed]:opacity-0",
         className,
       )}
       {...props}

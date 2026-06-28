@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Dialog — Radix Dialog with token-driven styles. Used for desktop modals.
-// On narrow/mobile use vaul drawer instead (see sheet.tsx).
+// On narrow/mobile use vaul drawer instead (deferred to a future increment).
 
 import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { X } from "lucide-react"
@@ -20,8 +20,8 @@ export function DialogOverlay({
     <DialogPrimitive.Overlay
       className={cn(
         "fixed inset-0 z-50 bg-black/50 backdrop-blur-sm",
-        "data-[state=open]:animate-in data-[state=closed]:animate-out",
-        "data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0",
+        "transition-opacity duration-[var(--motion-short)]",
+        "data-[state=open]:opacity-100 data-[state=closed]:opacity-0",
         className,
       )}
       {...props}
@@ -42,13 +42,10 @@ export function DialogContent({
           "fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2",
           "w-full max-w-lg",
           "rounded-[var(--radius-lg)] border border-[var(--border)]",
-          "bg-[var(--surface)] shadow-md",
+          "bg-[var(--surface)]",
           "p-6",
-          "data-[state=open]:animate-in data-[state=closed]:animate-out",
-          "data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0",
-          "data-[state=open]:zoom-in-95 data-[state=closed]:zoom-out-95",
-          "data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%]",
-          "data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%]",
+          "transition-opacity duration-[var(--motion-medium)]",
+          "data-[state=open]:opacity-100 data-[state=closed]:opacity-0",
           className,
         )}
         {...props}

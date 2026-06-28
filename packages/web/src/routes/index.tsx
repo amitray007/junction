@@ -23,7 +23,7 @@ function DashboardPage() {
         style={{
           fontSize: "var(--text-page-title)",
           fontWeight: 600,
-          letterSpacing: "-0.01em",
+          letterSpacing: "var(--tracking-tight)",
           color: "var(--fg)",
         }}
       >
@@ -52,7 +52,7 @@ function DashboardPage() {
       {/* System info */}
       <section aria-label="System status">
         <p
-          className="mb-2 uppercase tracking-[0.08em]"
+          className="mb-2 uppercase tracking-eyebrow"
           style={{
             fontSize: "var(--text-eyebrow)",
             color: "var(--muted)",
@@ -114,7 +114,7 @@ function StatCard({
           </div>
           <div
             style={{
-              fontSize: "1.75rem",
+              fontSize: "var(--text-stat)",
               fontWeight: 700,
               fontFamily: "var(--font-mono)",
               color: "var(--fg)",
