@@ -81,10 +81,14 @@ jobs:
             echo "$LEAKS"
             exit 1
           fi
-          # 3. Positive control — a string known to be in every client bundle must be present.
-          #    If this fails, the bundle is empty/corrupt or the grep target changed.
-          if ! grep -rl "createFileRoute" packages/web/dist/client > /dev/null 2>&1; then
-            echo "ERROR: positive control failed — 'createFileRoute' not found in client bundle."
+          # 3. Positive control — a string known to be in the client bundle must be present.
+          #    Proves the grep actually scanned content (an empty match-set then means
+          #    "scanned and clean", never "scanned nothing"). NOTE: do NOT use
+          #    `createFileRoute` here — TanStack Start's Vite plugin compiles that macro
+          #    away, so it never reaches the client chunks. `useLoaderData` is emitted
+          #    into every route's client bundle and is a stable marker.
+          if ! grep -rl "useLoaderData" packages/web/dist/client > /dev/null 2>&1; then
+            echo "ERROR: positive control failed — 'useLoaderData' not found in client bundle."
             echo "Either the bundle is empty/corrupt or the grep target dir is wrong."
             exit 1
           fi
