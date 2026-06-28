@@ -18,17 +18,18 @@ Rules for `packages/web/` — the TanStack Start SSR dashboard. Each rule is a c
 ## Credentials — metadata only
 
 - **MUST NOT** render `secret`, `secretRef`, or any raw credential value in any component or server function return.
-- Server functions return only summary metadata: IDs, platform names, account labels, connection status. The shape is defined in `src/server/data.functions.ts`.
+- Server functions return only summary metadata: IDs, platform names, account labels, connection status. The shapes (`CredentialMeta`/`PlatformMeta`/`ProfileMeta`/`SourceMeta`) are defined in `src/server/data.server.ts` (the `*.functions.ts` files are the `createServerFn` RPC layer, not where the types are declared).
 
 ## Design tokens (DESIGN.md is the source of truth)
 
 - **MUST** use CSS custom properties (`var(--token)`) from `app.css` for all design values. **MUST NOT** hardcode hex colours, font names, or raw pixel values outside of the `@theme` block in `app.css`.
 - **All token additions MUST be recorded in `DESIGN.md`** before being added to `app.css`.
-- **Font discipline:**
-  - Geist Sans → body copy and UI text (`var(--font-sans)`).
-  - Geist Mono → code, IDs, namespaces, numbers (`var(--font-mono)`).
-  - Departure Mono → wordmark ONLY (`var(--font-display)`). **MUST NOT** use Departure Mono anywhere except `src/ui/wordmark.tsx`.
-- **One accent:** Signal Amber (`--accent-*`). **MUST NOT** introduce a second colour accent.
+- **Font discipline (inc-24.5 Geist-grade system):**
+  - Geist Sans → all UI text, headings, labels, body (`var(--font-sans)`).
+  - Geist Mono → code, IDs, endpoints, namespaces, tool-filter expressions, numbers (`var(--font-mono)`). **MUST NOT** use mono as decorative eyebrows/section-kickers.
+  - No display/serif face; no Departure Mono (retired inc 24.5). Hierarchy comes from size/weight/space.
+  - Body text **MUST** be ≥14px.
+- **One accent: Blue** (Geist signature; `--blue-*`). **MUST NOT** introduce a second colour accent. Blue is reserved for **state, links, focus, and the endpoint/namespace identity**; the single most important action per view is the **gray-1000 solid** primary button, not blue. Status hues (ok/warning/error/no-auth) are state signals, not accents. (Inc-23's Signal-Amber accent is retired — see DESIGN.md decision log.)
 
 ## Component / UI layer (`src/ui/`)
 
@@ -42,6 +43,7 @@ Rules for `packages/web/` — the TanStack Start SSR dashboard. Each rule is a c
 ## Accessibility (WCAG AA)
 
 - **MUST** include ARIA landmarks in every page: `<header>`, `<nav>`, `<main>`, `<aside>`. The root layout in `__root.tsx` defines the shell; route components render inside `<main>`.
+- **MUST NOT** drop or rename the SSR-emitted `<html data-sidebar="collapsed|expanded">` attribute or the stylesheet `<link>` — both are **smoke-gated** (`scripts/web-smoke.mjs`). Reworking `__root.tsx` (e.g. removing a shell zone) must preserve them, or `web:smoke` fails.
 - **MUST** provide a skip-to-content link as the first focusable element (already in `__root.tsx`).
 - **MUST** ensure all interactive elements are keyboard-reachable. Radix handles this for the primitive set; verify when adding new interactive patterns.
 - `pnpm --filter @junction/web test` (happy-dom + @testing-library/react) is the a11y regression layer. Tests MUST include a landmark-present assertion for each route.
@@ -76,12 +78,12 @@ This gate enforces the server-only-core boundary in CI — a planted `@junction/
 "Slop" is the *absence of a decision* — the statistical center of every SaaS template. The tell is **convergence** (multiple defaults co-occurring), not any single choice. Audit visually + in source. Each item below is a **MUST NOT** unless it traces to a deliberate, documented DESIGN.md decision.
 
 **Visual tells (verify in a screenshot):**
-- No purple/violet→blue gradients (anywhere); no gradient text on headings/metrics. (Junction: one Signal-Amber accent, no gradients.)
-- No glassmorphism / frosted-glass / `backdrop-blur` as decoration; no colored glows / drop-shadow soup. Depth = **1px borders**, not shadows.
-- No flat pure-grey neutrals — neutrals are brand-tinted (our zinc ramp). Body text MUST clear WCAG AA.
-- No centered hero, no badge-above-H1, no identical 3-up icon-card grid, no "hero metric" stat-banner as the page's reason for being, no uniform-radius/identical-padding-everywhere.
-- No `system-ui`/Inter/Roboto as the type; no emoji as icons (use the icon set — `lucide-react`); no "Built for X"/"best-in-class" filler copy.
-- No bounce/elastic easing.
+- No purple/violet gradients; no gradient text on headings/metrics; no gradients as surface decoration. (Junction: one **blue** accent — Geist's, a documented choice — no gradients.)
+- No glassmorphism / frosted-glass / `backdrop-blur` as decoration; no colored **glows** on dark, no drop-shadow soup. (Geist-grade **subtle two-layer elevation shadows** on cards/popovers/modals ARE allowed — that is the inc-24.5 system; the ban is on glow/decoration, not on Geist's restrained elevation.)
+- No flat pure-grey-dead neutrals; neutrals are the Geist gray ramp (gray ranks information). Body text MUST clear WCAG AA and be ≥14px.
+- No side-accent border on a card/nav item (the #1 AI tell). No centered hero, no eyebrow/badge-above-H1, no identical icon-card grid, no "hero-metric" stat-banner, no nested cards, no mono-eyebrows/section-kickers everywhere, no uniform-padding-everywhere (use the 8/16/40 rhythm).
+- No `system-ui`/Inter/Roboto as the type (we use **Geist** — documented); no emoji as icons (use the icon set); no marketing filler ("best-in-class", "supercharge"), no em-dash overuse, no "theater"/aphoristic copy.
+- No bounce/elastic easing; no `transition: all`.
 
 **Code smells (verify in source — these PRODUCE the visual slop):**
 - No arbitrary Tailwind values (`bg-[#…]`, `p-[123px]`, `text-[14px]`) and no inline hex/px for design decisions — **tokens only** (already a rule above; this is the slop lens on it).
