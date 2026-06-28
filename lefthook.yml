@@ -19,8 +19,13 @@ pre-push:
   commands:
     verify:
       run: pnpm run verify
-    # Boundary + duplication checks (slower — pre-push only).
+    # Boundary check (slower — pre-push only).
     depcruise:
       run: pnpm run depcruise
+    # Duplication check — mirrors CI's `quality` job so jscpd over-threshold fails
+    # locally, not only in CI. (`pnpm verify` does NOT run this; the gap let a
+    # duplication regression reach CI in inc 23 and inc 24 — closed here.)
+    dup:
+      run: pnpm run dup
     syncpack:
       run: pnpm run syncpack:check
