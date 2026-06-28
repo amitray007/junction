@@ -7,12 +7,63 @@
 // The bundle (dist/server/server.js) exports a WinterCG-compatible
 // { fetch(request: Request): Promise<Response> } default export.
 
+import { createReadStream } from "node:fs"
+import { stat } from "node:fs/promises"
 import { createServer } from "node:http"
-import { dirname, join } from "node:path"
+import { dirname, join, normalize, sep } from "node:path"
 import { Readable } from "node:stream"
 import { fileURLToPath } from "node:url"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
+
+// Built client assets (CSS, JS chunks, fonts) live here. The SSR bundle does NOT
+// serve them — this file must, or the page loads unstyled. (First needed in inc 23,
+// the first increment to emit a real client bundle.)
+const CLIENT_DIR = join(__dirname, "dist", "client")
+
+// Minimal extension → Content-Type map for the asset kinds the build emits.
+const CONTENT_TYPES = {
+  ".css": "text/css; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".woff2": "font/woff2",
+  ".woff": "font/woff",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".ico": "image/x-icon",
+  ".map": "application/json; charset=utf-8",
+}
+
+/**
+ * Resolve a request path to a real file INSIDE CLIENT_DIR, or null if it escapes
+ * the dir / isn't a file. Path-traversal guard: the normalized absolute path must
+ * stay under CLIENT_DIR. Returns { filePath, contentType } on a hit.
+ */
+async function resolveStaticFile(reqPath) {
+  // Strip query/hash; decode percent-encoding (a 404 on malformed input is fine).
+  let pathname
+  try {
+    pathname = decodeURIComponent(reqPath.split("?")[0].split("#")[0])
+  } catch {
+    return null
+  }
+  if (!pathname || pathname === "/") return null
+
+  const candidate = normalize(join(CLIENT_DIR, pathname))
+  // Must stay within CLIENT_DIR (block ../ traversal). Append sep to avoid a
+  // sibling-prefix bypass (e.g. dist/client-evil).
+  if (candidate !== CLIENT_DIR && !candidate.startsWith(CLIENT_DIR + sep)) return null
+
+  try {
+    const s = await stat(candidate)
+    if (!s.isFile()) return null
+    const ext = candidate.slice(candidate.lastIndexOf("."))
+    return { filePath: candidate, contentType: CONTENT_TYPES[ext] ?? "application/octet-stream" }
+  } catch {
+    return null
+  }
+}
 
 let app
 try {
@@ -47,6 +98,34 @@ const server = createServer(async (req, res) => {
     res.writeHead(403)
     res.end("Forbidden: access restricted to localhost")
     return
+  }
+
+  // Serve built client assets directly (CSS/JS/fonts). Only GET/HEAD; everything
+  // else (incl. all non-file paths) falls through to the SSR handler below.
+  if (req.method === "GET" || req.method === "HEAD") {
+    try {
+      const hit = await resolveStaticFile(req.url ?? "")
+      if (hit) {
+        res.statusCode = 200
+        res.setHeader("Content-Type", hit.contentType)
+        // Hashed asset filenames are content-addressed → safe to cache long.
+        res.setHeader("Cache-Control", "public, max-age=31536000, immutable")
+        if (req.method === "HEAD") {
+          res.end()
+          return
+        }
+        const fileStream = createReadStream(hit.filePath)
+        fileStream.on("error", (err) => {
+          process.stderr.write(`junction web: static file stream error: ${String(err)}\n`)
+          res.destroy()
+        })
+        fileStream.pipe(res)
+        return
+      }
+    } catch (err) {
+      process.stderr.write(`junction web: static serve error: ${String(err)}\n`)
+      // fall through to SSR
+    }
   }
 
   try {
