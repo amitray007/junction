@@ -16,13 +16,30 @@ How to work on junction locally. This skill grows per increment — update it wh
 
 ```bash
 pnpm install            # install workspace deps
-pnpm verify             # THE gate: typecheck + Biome + Vitest. Run before every commit.
+pnpm verify             # THE gate: docs:check + tsc + Biome + Vitest + verify:web. Run before every commit.
+pnpm verify:web         # build core+web, leak-check, smoke-test the running server, web tests/typecheck
+pnpm web:smoke          # boot the built serve.mjs + assert the real responses (styled/SSR/leak-free)
+pnpm web:leakcheck      # client-bundle server-only-core boundary check (shared with CI)
 pnpm test               # Vitest (watch)
 pnpm test:related       # Vitest, only tests affected by changed files (fast loop)
 pnpm lint               # Biome check
 pnpm format             # Biome format --write
 pnpm build              # tsdown build all packages
 ```
+
+> **`pnpm verify` now builds the web client + smoke-tests the running server** (via `verify:web`),
+> so it is slower than before — deliberate: a broken production build / dead SSR path must fail the
+> LOCAL gate, not slip to CI or the user (the "green but blind" lesson — `docs/behaviours/verify-the-artifact.md`).
+
+## Web QA — drive the real artifact (`junction-web-verify` skill + `agent-browser`)
+
+For visual/interaction QA the smoke test can't assert from HTML (theme, sidebar-collapse
+persistence, no-shake nav, reduced-motion, populated tables), use the **`junction-web-verify`**
+skill, which drives the built server with **`agent-browser`** (`/opt/homebrew/bin/agent-browser`;
+`agent-browser -h`, `agent-browser skills get core --full`). It can `open`/`screenshot`/`eval`,
+`set media dark|reduced-motion`, `cookies set`, and `diff screenshot --baseline`. Always seed a
+throwaway `JUNCTION_HOME` with realistic data first (see "Testing surfaces" below) so you verify
+populated states, not just empty ones. **Run this before accepting a builder's "done" on web work.**
 
 Per-package (once packages exist):
 
