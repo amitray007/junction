@@ -496,4 +496,145 @@ describe.skipIf(!builtBinReady)("credential commands (built bin, child process)"
       expect(parsed.error).toContain("in use")
     })
   })
+
+  // ---------------------------------------------------------------------------
+  // credential rotate — secret changes; new secret never in output
+  // ---------------------------------------------------------------------------
+
+  it("credential rotate --id --secret-stdin --json succeeds and never exposes the new secret", async () => {
+    await withTempHome(async (home) => {
+      const env = { ...process.env, JUNCTION_HOME: home, JUNCTION_STORE: "file" }
+      const INITIAL_SECRET = "initial-secret-value"
+      const NEW_SENTINEL = "ROTATE_SENTINEL_MUST_NOT_APPEAR_IN_OUTPUT_qrs456"
+
+      // Seed platform + credential.
+      await execFileAsync(
+        "node",
+        [
+          distIndex,
+          "platform",
+          "add",
+          "--id",
+          "rotate-plat",
+          "--kind",
+          "mcp",
+          "--display-name",
+          "Rotate Platform",
+          "--transport",
+          "http",
+          "--url",
+          "https://api.example.com/mcp/",
+          "--json",
+        ],
+        { env },
+      )
+
+      const addResult = await new Promise<{ stdout: string }>((resolve) => {
+        const child = execFile(
+          "node",
+          [
+            distIndex,
+            "credential",
+            "add",
+            "--platform",
+            "rotate-plat",
+            "--account",
+            "work",
+            "--kind",
+            "bearer",
+            "--token-stdin",
+            "--json",
+          ],
+          { env },
+          (_err, stdout) => resolve({ stdout }),
+        )
+        child.stdin?.write(INITIAL_SECRET)
+        child.stdin?.end()
+      })
+
+      const credId = (
+        JSON.parse(addResult.stdout.trim()) as { ok: boolean; credential: { id: string } }
+      ).credential.id
+
+      // Rotate via --secret-stdin.
+      const rotateResult = await new Promise<{ stdout: string; stderr: string; exitCode: number }>(
+        (resolve) => {
+          const child = execFile(
+            "node",
+            [distIndex, "credential", "rotate", "--id", credId, "--secret-stdin", "--json"],
+            { env },
+            (err, stdout, stderr) => {
+              resolve({
+                stdout,
+                stderr,
+                exitCode: (err as { code?: number } | null)?.code ?? 0,
+              })
+            },
+          )
+          child.stdin?.write(NEW_SENTINEL)
+          child.stdin?.end()
+        },
+      )
+
+      // Rotation must succeed.
+      expect(rotateResult.exitCode).toBe(0)
+      const rotateParsed = JSON.parse(rotateResult.stdout.trim()) as {
+        ok: boolean
+        credential?: Record<string, unknown>
+      }
+      expect(rotateParsed.ok).toBe(true)
+
+      // SECURITY: new secret sentinel must NOT appear in stdout or stderr.
+      expect(rotateResult.stdout, "new secret in stdout").not.toContain(NEW_SENTINEL)
+      expect(rotateResult.stderr, "new secret in stderr").not.toContain(NEW_SENTINEL)
+
+      // Output is metadata-only (no secretRef, no secret).
+      const cred = rotateParsed.credential ?? {}
+      expect(cred).toHaveProperty("id", credId)
+      expect(cred).toHaveProperty("account", "work")
+      expect(cred).toHaveProperty("kind", "bearer")
+      expect(cred).not.toHaveProperty("secretRef")
+      expect(cred).not.toHaveProperty("secret")
+      expect(JSON.stringify(cred)).not.toContain(NEW_SENTINEL)
+
+      // The credential still appears in list after rotation.
+      const listAfter = await runCmd(
+        ["credential", "list", "--platform", "rotate-plat", "--json"],
+        env,
+      )
+      const listParsed = JSON.parse(listAfter.stdout.trim()) as unknown[]
+      expect(listParsed).toHaveLength(1)
+    })
+  })
+
+  it("credential rotate --id with unknown id exits 1 with error", async () => {
+    await withTempHome(async (home) => {
+      const env = { ...process.env, JUNCTION_HOME: home, JUNCTION_STORE: "file" }
+
+      const result = await new Promise<{ stdout: string; exitCode: number }>((resolve) => {
+        const child = execFile(
+          "node",
+          [
+            distIndex,
+            "credential",
+            "rotate",
+            "--id",
+            "cred_does_not_exist",
+            "--secret-stdin",
+            "--json",
+          ],
+          { env },
+          (err, stdout) => {
+            resolve({ stdout, exitCode: (err as { code?: number } | null)?.code ?? 0 })
+          },
+        )
+        child.stdin?.write("irrelevant-secret")
+        child.stdin?.end()
+      })
+
+      expect(result.exitCode).toBe(1)
+      const parsed = JSON.parse(result.stdout.trim()) as { ok: boolean }
+      expect(parsed.ok).toBe(false)
+    })
+  })
 })

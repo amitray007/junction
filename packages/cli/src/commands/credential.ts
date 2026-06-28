@@ -14,6 +14,7 @@ import {
   getPaths,
   type Repositories,
   removeCredential,
+  rotateCredential,
 } from "@junction/core"
 import { defineCommand } from "citty"
 import { consola } from "consola"
@@ -112,22 +113,12 @@ const addCommand = defineCommand({
     }
 
     // Acquire the token — either from stdin (headless) or interactive masked prompt
-    let secret: string
-    if (args["token-stdin"]) {
-      // Headless / agent mode: read from stdin, trim surrounding whitespace
-      secret = await readTokenFromStdin()
-    } else {
-      // Interactive mode: masked @clack/prompts password prompt — token never echoed
-      const { password, isCancel } = await import("@clack/prompts")
-      const result = await password({
-        message: `Bearer token for ${args.platform} (${args.account}):`,
-      })
-      if (isCancel(result) || typeof result !== "string") {
-        if (!json) consola.warn("Aborted.")
-        return
-      }
-      secret = result
-    }
+    const secret = await acquireSecret({
+      fromStdin: args["token-stdin"],
+      promptMessage: `Bearer token for ${args.platform} (${args.account}):`,
+      json,
+    })
+    if (secret === null) return
 
     if (!secret) {
       const msg = "token must not be empty"
@@ -147,42 +138,14 @@ const addCommand = defineCommand({
       repos.credentials,
     )
 
-    // Overwrite the local variable immediately after use — plaintext is no longer needed
-    secret = ""
-
     if (result.isErr()) {
-      const e = result.error
       // Report error — never include secret or secretRef in error output
-      if (
-        e.kind === "store-unavailable" ||
-        e.kind === "decrypt-failed" ||
-        e.kind === "key-unavailable" ||
-        e.kind === "io-failed" ||
-        e.kind === "invalid-input"
-      ) {
-        reportCredentialError(e, json)
-      } else {
-        reportDbError(e, json)
-      }
+      reportCredentialOpError(result.error, json)
       return
     }
 
-    const cred = result.value
     // Output ONLY metadata — NEVER the secret, NEVER the secretRef
-    const meta = {
-      id: cred.id,
-      platformId: cred.platformId,
-      account: cred.profileName,
-      kind: cred.kind,
-    }
-
-    if (json) {
-      process.stdout.write(`${JSON.stringify({ ok: true, credential: meta })}\n`)
-    } else {
-      consola.success(
-        `Credential added — account: ${cred.profileName}, platform: ${String(cred.platformId)}, id: ${String(cred.id)}`,
-      )
-    }
+    writeCredentialMeta(result.value, json, "added")
   },
 })
 
@@ -292,6 +255,78 @@ const removeCommand = defineCommand({
   },
 })
 
+// ---------------------------------------------------------------------------
+// credential rotate — swap the secret in place (atomic/fail-safe via core)
+// ---------------------------------------------------------------------------
+
+const rotateCommand = defineCommand({
+  meta: {
+    name: "rotate",
+    description: "Rotate (replace) the secret for an existing credential.",
+  },
+  args: {
+    id: {
+      type: "string",
+      description: "Credential ID to rotate",
+      required: true,
+    },
+    "secret-stdin": {
+      type: "boolean",
+      description: "Read the new secret from stdin (headless/agent mode)",
+      default: false,
+    },
+    json: JSON_ARG,
+  },
+  async run({ args }) {
+    const json = args.json ?? false
+
+    // Validate id BEFORE reading the secret — bad input must not cause a secret
+    // to be captured from stdin (mirrors addCommand's discipline).
+    if (!args.id || args.id.trim() === "") {
+      const msg = "invalid input: --id must not be empty"
+      if (json) process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
+      else consola.error(msg)
+      process.exitCode = 1
+      return
+    }
+
+    // Acquire the new secret — either from stdin (headless) or interactive masked prompt.
+    const secret = await acquireSecret({
+      fromStdin: args["secret-stdin"],
+      promptMessage: `New secret for credential ${args.id}:`,
+      json,
+    })
+    if (secret === null) return
+
+    if (!secret) {
+      const msg = "new secret must not be empty"
+      if (json) process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
+      else consola.error(msg)
+      process.exitCode = 1
+      return
+    }
+
+    const ctx = await openDbAndStore(json)
+    if (!ctx) return
+    const { repos, store } = ctx
+
+    const result = await rotateCredential(
+      { credentialId: args.id, newSecret: secret },
+      store,
+      repos.credentials,
+    )
+
+    if (result.isErr()) {
+      // Report error — never include secret or secretRef in error output.
+      reportCredentialOpError(result.error, json)
+      return
+    }
+
+    // Output ONLY metadata — NEVER the secret, NEVER the secretRef.
+    writeCredentialMeta(result.value, json, "rotated")
+  },
+})
+
 export const credentialCommand = defineCommand({
   meta: {
     name: "credential",
@@ -301,6 +336,7 @@ export const credentialCommand = defineCommand({
     add: addCommand,
     list: listCommand,
     remove: removeCommand,
+    rotate: rotateCommand,
   },
 })
 
@@ -322,6 +358,72 @@ async function readTokenFromStdin(): Promise<string> {
     // Resume in case stdin is paused (e.g. if it was already consumed)
     process.stdin.resume()
   })
+}
+
+/**
+ * Acquire the secret — either from stdin (headless) or an interactive masked prompt.
+ * Returns the trimmed secret string, or `null` if the user cancelled (caller must return).
+ */
+async function acquireSecret(opts: {
+  fromStdin: boolean
+  promptMessage: string
+  json: boolean
+}): Promise<string | null> {
+  if (opts.fromStdin) {
+    return readTokenFromStdin()
+  }
+  const { password, isCancel } = await import("@clack/prompts")
+  const result = await password({ message: opts.promptMessage })
+  if (isCancel(result) || typeof result !== "string") {
+    if (!opts.json) consola.warn("Aborted.")
+    return null
+  }
+  return result
+}
+
+/**
+ * Dispatch a CredentialError or DbError to the appropriate reporter.
+ * All error kinds from add/rotate that are not DB-layer go to reportCredentialError.
+ */
+function reportCredentialOpError(
+  e: Parameters<typeof reportCredentialError>[0] | Parameters<typeof reportDbError>[0],
+  json: boolean,
+): void {
+  if (
+    e.kind === "store-unavailable" ||
+    e.kind === "decrypt-failed" ||
+    e.kind === "key-unavailable" ||
+    e.kind === "io-failed" ||
+    e.kind === "invalid-input"
+  ) {
+    reportCredentialError(e as Parameters<typeof reportCredentialError>[0], json)
+  } else {
+    reportDbError(e as Parameters<typeof reportDbError>[0], json)
+  }
+}
+
+/**
+ * Write credential metadata to output (JSON line or consola.success).
+ * NEVER includes secret or secretRef.
+ */
+function writeCredentialMeta(
+  cred: { id: unknown; platformId: unknown; profileName: string; kind: string },
+  json: boolean,
+  successVerb: string,
+): void {
+  const meta = {
+    id: cred.id,
+    platformId: cred.platformId,
+    account: cred.profileName,
+    kind: cred.kind,
+  }
+  if (json) {
+    process.stdout.write(`${JSON.stringify({ ok: true, credential: meta })}\n`)
+  } else {
+    consola.success(
+      `Credential ${successVerb} — account: ${cred.profileName}, platform: ${String(cred.platformId)}, id: ${String(cred.id)}`,
+    )
+  }
 }
 
 // Re-export for internal use — formatCredentialError is used in the CredentialError branch above

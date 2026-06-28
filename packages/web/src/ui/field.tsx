@@ -26,18 +26,22 @@ export function Field({ id, label, error, description, children, className }: Fi
   const errorId = error ? `${id}-error` : undefined
   const describedBy = [descriptionId, errorId].filter(Boolean).join(" ") || undefined
 
-  // Inject aria-describedby onto the direct child control so screen readers
-  // announce the error/description when the input is focused. cloneElement is
-  // safe here because Field's contract is "one control child" and all our
-  // primitives accept standard HTMLElement props.
+  // Inject aria-describedby and aria-invalid onto the direct child control so
+  // screen readers announce the error/description when the input is focused.
+  // cloneElement is safe here because Field's contract is "one control child"
+  // and all our primitives accept standard HTMLElement props.
+  // aria-invalid is only injected when error is present; if the control already
+  // sets its own aria-invalid (e.g. Input via hasError), the injected value
+  // is the same (true), so there is no conflict.
   const control = (() => {
     const child = Children.only(children)
-    if (isValidElement(child) && describedBy) {
-      return cloneElement(child as React.ReactElement<{ "aria-describedby"?: string }>, {
-        "aria-describedby": describedBy,
-      })
-    }
-    return child
+    if (!isValidElement(child)) return child
+    type ControlProps = { "aria-describedby"?: string; "aria-invalid"?: true }
+    const extraProps: ControlProps = {}
+    if (describedBy) extraProps["aria-describedby"] = describedBy
+    if (error) extraProps["aria-invalid"] = true
+    if (Object.keys(extraProps).length === 0) return child
+    return cloneElement(child as React.ReactElement<ControlProps>, extraProps)
   })()
 
   return (

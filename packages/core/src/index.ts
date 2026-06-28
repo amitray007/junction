@@ -45,7 +45,9 @@ export {
   addCredential,
   type CredentialStore,
   createCredentialStore,
+  type RotateCredentialInput,
   removeCredential,
+  rotateCredential,
 } from "./credentials/index.js"
 // Database + repositories
 export { type Db, getDatabase } from "./db/index.js"

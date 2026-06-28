@@ -2,6 +2,16 @@
 
 Non-obvious sharp edges we've already paid for. Each lists the **symptom** and the **fix in place**, so the next person (or agent) doesn't re-learn it the hard way. Roughly grouped by area.
 
+## Web mutations (inc 24)
+
+- **The web write-path pattern (reuse it for inc 25–27).** A mutation is a **POST `createServerFn`** in a `*.functions.ts` module (the RPC boundary, client-importable) whose `.validator()` validates the input (server-side, pure — no core import, no state) and whose `.handler()` calls `assertLocalHost()` **then** a thin `*.server.ts` helper that imports `@junction/core` and does the work. The route calls the fn, then `await router.invalidate()` (the source of truth for refresh — the inc-23 `staleTime` makes nav cached, invalidate forces a fresh loader) + a sonner `toast`. Return **metadata-only** shapes, never raw core types, never the secret/secretRef. Memoized DB lives in `shared.server.ts` (`getDb()`), shared by data + mutations — never call `getDatabase()` per request (inc-22 connection-leak gotcha). (inc 24)
+
+- **`assertLocalHost()` runs *inside* `.handler()`, which fires AFTER `.validator()`.** This is safe ONLY because the validators are **pure** (typeof+trim string checks, throw a 400 Response, touch no state/core/log). If a validator ever did real work, it would run before the loopback guard. Keep validators pure; the guard order is fine as long as they are. (inc 24, security review)
+
+- **`input.secret = ""` after use is best-effort hygiene, NOT a memory wipe.** JS strings are immutable and not zeroable — the original plaintext stays in the V8 heap until GC, and reassigning the param can't affect the caller's copy. The *real* guarantee (secret never enters a return value, error, log, or response) is upheld structurally and tested; do not read the `= ""` as a security control. (inc 24, security + correctness review)
+
+- **Rotation must stay in a neverthrow `.andThen` chain — do NOT use `ResultAsync.fromPromise(async…throw…, e => e as CredentialError|DbError)`.** The `as` cast is unsound: a raw rejection (contract violation) would be miscast, `.kind` becomes `undefined`, and the toast renders "…: undefined". `rotateCredential` mirrors `add-credential.ts`/`remove-credential.ts` exactly (pure chain, typed errors, no cast). Atomicity: new store write (fresh ULID secretRef) → DB repoint → on DB-fail clean up the new store entry (best-effort swallow) keeping the old ref live → on success delete the old store entry (best-effort). Fresh ULID per rotation also avoids AES-256-GCM IV/AAD reuse. (inc 24, correctness/credential review)
+
 ## Web design system (inc 23)
 
 - **Tailwind v4 + TanStack Start plugin order is load-bearing.** The Vite plugin order in `packages/web/vite.config.ts` MUST be `tanstackStart()` → `tailwindcss()` → `viteReact()`. Swapping Tailwind before TanStack Start breaks SSR asset injection; swapping Vite React before Tailwind breaks class generation in JSX. The `@tailwindcss/vite` plugin (v4's Vite integration, replacing PostCSS) must be in the middle slot. If you see missing CSS in prod or a cold-start flash of unstyled content, check this order first. (raised inc 23)
