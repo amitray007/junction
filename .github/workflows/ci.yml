@@ -57,6 +57,11 @@ jobs:
         with:
           node-version: 22
       - run: pnpm install --frozen-lockfile
+      # Build @junction/core FIRST — the web build imports it (server-side, via
+      # data.server.ts) and Vite/Rolldown must resolve the workspace package's
+      # built dist. The `verify` job gets this via `tsc -b` project references;
+      # this standalone job must build the dependency explicitly.
+      - run: pnpm --filter @junction/core build
       # Build the web package (SSR + client bundles).
       # A planted @junction/core import in a client-reachable module will fail
       # here (Vite can't bundle the native better-sqlite3 / @napi-rs/keyring deps).
