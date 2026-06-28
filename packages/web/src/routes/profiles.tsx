@@ -82,7 +82,7 @@ function ProfileCard({ profile }: { readonly profile: ProfileMeta }) {
           <Separator className="mb-4" />
           <CardContent>
             <p
-              className="mb-2 uppercase tracking-[0.08em]"
+              className="mb-2 uppercase tracking-eyebrow"
               style={{
                 fontSize: "var(--text-eyebrow)",
                 color: "var(--muted)",

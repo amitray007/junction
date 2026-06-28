@@ -12,7 +12,7 @@ const badgeVariants = cva(
     "inline-flex items-center gap-1.5",
     "px-2 py-0.5",
     "rounded-[var(--radius-sm)]",
-    "text-[var(--text-eyebrow)] font-medium uppercase tracking-[0.08em]",
+    "text-[var(--text-eyebrow)] font-medium uppercase tracking-eyebrow",
     "border",
     "leading-none whitespace-nowrap",
   ],
