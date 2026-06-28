@@ -117,6 +117,18 @@
   --card-padding: 16px;
   --cell-padding-x: 12px;
   --cell-padding-y: 8px;
+
+  /* Layout geometry (sidebar shell — inc 23 Phase E) */
+  --sidebar-width: 15rem;       /* 240px — expanded sidebar */
+  --sidebar-width-icon: 3rem;   /* 48px — icon-only collapsed state */
+  --topbar-height: 2.75rem;     /* 44px ≈ h-11 */
+  --content-max: 87.5rem;       /* 1400px — wide upper bound, layout doesn't center below this */
+
+  /* Z-index scale — replaces ad-hoc z-30/z-40/z-50 in components */
+  --z-rail: 40;      /* StatusRail — fixed left edge, below sidebar */
+  --z-sidebar: 50;   /* Sidebar — above rail */
+  --z-topbar: 30;    /* Topbar — below sidebar (sidebar can overlay on narrow) */
+  --z-overlay: 60;   /* Modals / sheet backdrops */
 }
 
 /* Dark mode — system-aware + data-theme="dark" manual override */
@@ -229,6 +241,11 @@
   /* Type scale extensions */
   --text-stat: var(--text-stat);
   --text-hero: var(--text-hero);
+
+  /* Layout tokens — expose for Tailwind width/height utilities */
+  --width-sidebar: var(--sidebar-width);
+  --width-sidebar-icon: var(--sidebar-width-icon);
+  --height-topbar: var(--topbar-height);
 }
 
 /* ─── Global resets & base ───────────────────────────────────────────────── */
@@ -242,6 +259,10 @@
 html {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* Prevent horizontal layout shift when a scrollbar appears/disappears.
+     Combined with the fixed sidebar shell, this eliminates the jump that
+     centered mx-auto columns produce when short/tall pages toggle the bar. */
+  scrollbar-gutter: stable;
 }
 
 body {
