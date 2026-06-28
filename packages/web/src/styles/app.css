@@ -1,5 +1,222 @@
 /* SPDX-License-Identifier: AGPL-3.0-only */
-/* @junction/web — minimal dashboard styles. System font, no UI lib. */
+/* @junction/web — tokenized design system. Tailwind v4 CSS-first theme.      */
+/* All values trace to docs/design/DESIGN.md — no magic numbers in components. */
+
+@import "tailwindcss";
+
+/* ─── Self-hosted fonts ──────────────────────────────────────────────────── */
+
+/* Geist Sans — variable font, weights 100–900 */
+@font-face {
+  font-family: "Geist Sans";
+  src: url("./fonts/GeistSans-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+/* Geist Mono — variable font, weights 100–900 */
+@font-face {
+  font-family: "Geist Mono";
+  src: url("./fonts/GeistMono-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Departure Mono — display face, wordmark ONLY (review-enforced) */
+@font-face {
+  font-family: "Departure Mono";
+  src: url("./fonts/DepartureMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-display: block; /* block: avoid FOUT on the wordmark */
+}
+
+/* ─── Design tokens (:root = light, overridden for dark) ────────────────── */
+
+:root {
+  /* Accent — Signal Amber (interaction / live rail) */
+  --accent: #b45309;
+  --accent-fill: #d97706;
+  --accent-fg: #ffffff;
+
+  /* Neutrals — zinc (cool) */
+  --bg: #ffffff;
+  --surface: #fafafa;
+  --surface-2: #f4f4f5;
+  --border: #e4e4e7;
+  --fg: #18181b;
+  --muted: #71717a;
+
+  /* Status — ok / connected (green) */
+  --status-ok-fg: #15803d;
+  --status-ok-bg: #f0fdf4;
+
+  /* Status — info / no-auth (teal, never blue) */
+  --status-info-fg: #0e7490;
+  --status-info-bg: #ecfeff;
+
+  /* Status — warning / expiring (amber-yellow) */
+  --status-warning-fg: #a16207;
+  --status-warning-bg: #fefce8;
+
+  /* Status — error / auth-failed (red) */
+  --status-error-fg: #b91c1c;
+  --status-error-bg: #fef2f2;
+
+  /* Status — disabled (zinc) */
+  --status-disabled-fg: #a1a1aa;
+  --status-disabled-bg: transparent;
+
+  /* Radius */
+  --radius-sm: 0.25rem; /* 4px — inputs, badges, chips */
+  --radius-md: 0.375rem; /* 6px — buttons, cards, popovers */
+  --radius-lg: 0.5rem; /* 8px — dialogs, sheets, panels */
+
+  /* Motion durations */
+  --motion-micro: 100ms;
+  --motion-short: 160ms;
+  --motion-medium: 240ms;
+
+  /* Motion easings */
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1); /* expo-out: fast start, soft landing */
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1); /* faster out than in */
+
+  /* Typography */
+  --font-sans: "Geist Sans", system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, monospace;
+  --font-display: "Departure Mono", monospace; /* wordmark ONLY */
+
+  /* Type scale (px → rem) */
+  --text-page-title: 1.25rem; /* 20px */
+  --text-section: 0.9375rem; /* 15px */
+  --text-body: 0.8125rem; /* 13px */
+  --text-mono: 0.78125rem; /* 12.5px */
+  --text-eyebrow: 0.6875rem; /* 11px */
+
+  /* Spacing (4px grid) */
+  --space-1: 0.25rem; /* 4px */
+  --space-2: 0.5rem; /* 8px */
+  --space-3: 0.75rem; /* 12px */
+  --space-4: 1rem; /* 16px */
+  --space-6: 1.5rem; /* 24px */
+  --space-8: 2rem; /* 32px */
+  --space-12: 3rem; /* 48px */
+
+  /* Component geometry */
+  --row-height-data: 36px;
+  --row-height-header: 40px;
+  --control-height: 32px;
+  --gutter: 24px;
+  --card-padding: 16px;
+  --cell-padding-x: 12px;
+  --cell-padding-y: 8px;
+}
+
+/* Dark mode — system-aware + data-theme="dark" manual override */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --accent: #f59e0b;
+    --accent-fill: #fbbf24;
+    --accent-fg: #1a1206;
+
+    --bg: #09090b;
+    --surface: #18181b;
+    --surface-2: #202023;
+    --border: #27272a;
+    --fg: #fafafa;
+    --muted: #a1a1aa;
+
+    --status-ok-fg: #4ade80;
+    --status-ok-bg: #052e16;
+
+    --status-info-fg: #22d3ee;
+    --status-info-bg: #0b2230;
+
+    --status-warning-fg: #facc15;
+    --status-warning-bg: #1c1407;
+
+    --status-error-fg: #f87171;
+    --status-error-bg: #2a0a0a;
+
+    --status-disabled-fg: #52525b;
+    --status-disabled-bg: transparent;
+  }
+}
+
+[data-theme="dark"] {
+  --accent: #f59e0b;
+  --accent-fill: #fbbf24;
+  --accent-fg: #1a1206;
+
+  --bg: #09090b;
+  --surface: #18181b;
+  --surface-2: #202023;
+  --border: #27272a;
+  --fg: #fafafa;
+  --muted: #a1a1aa;
+
+  --status-ok-fg: #4ade80;
+  --status-ok-bg: #052e16;
+
+  --status-info-fg: #22d3ee;
+  --status-info-bg: #0b2230;
+
+  --status-warning-fg: #facc15;
+  --status-warning-bg: #1c1407;
+
+  --status-error-fg: #f87171;
+  --status-error-bg: #2a0a0a;
+
+  --status-disabled-fg: #52525b;
+  --status-disabled-bg: transparent;
+}
+
+/* ─── Tailwind v4 theme mapping ─────────────────────────────────────────── */
+/* Maps CSS vars → Tailwind utilities (bg-surface, text-fg, etc.)            */
+
+@theme inline {
+  /* Colors */
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+
+  --color-accent: var(--accent);
+  --color-accent-fill: var(--accent-fill);
+  --color-accent-fg: var(--accent-fg);
+
+  --color-ok-fg: var(--status-ok-fg);
+  --color-ok-bg: var(--status-ok-bg);
+  --color-info-fg: var(--status-info-fg);
+  --color-info-bg: var(--status-info-bg);
+  --color-warning-fg: var(--status-warning-fg);
+  --color-warning-bg: var(--status-warning-bg);
+  --color-error-fg: var(--status-error-fg);
+  --color-error-bg: var(--status-error-bg);
+  --color-disabled-fg: var(--status-disabled-fg);
+  --color-disabled-bg: var(--status-disabled-bg);
+
+  /* Border radius */
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+
+  /* Font families */
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+  --font-display: var(--font-display);
+
+  /* Motion */
+  --duration-micro: var(--motion-micro);
+  --duration-short: var(--motion-short);
+  --duration-medium: var(--motion-medium);
+  --ease-enter: var(--ease-enter);
+  --ease-exit: var(--ease-exit);
+}
+
+/* ─── Global resets & base ───────────────────────────────────────────────── */
 
 *,
 *::before,
@@ -7,182 +224,67 @@
   box-sizing: border-box;
 }
 
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-size: 14px;
-  color: #111;
-  background: #f8f9fa;
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  line-height: 1.5;
+  color: var(--fg);
+  background: var(--bg);
 }
 
-/* Nav */
-
-.nav {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0 1.5rem;
-  height: 48px;
-  background: #18181b;
-  color: #fff;
+/* Focus ring — amber, visible, keyboard-only */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }
 
-.nav-brand {
-  font-weight: 700;
-  font-size: 15px;
-  margin-right: 1rem;
-  letter-spacing: -0.01em;
+/* Suppress default focus styles (we use :focus-visible) */
+:focus:not(:focus-visible) {
+  outline: none;
 }
 
-.nav-link {
-  color: #a1a1aa;
-  text-decoration: none;
-  font-size: 13px;
-  padding: 0.3rem 0.6rem;
-  border-radius: 4px;
-  transition:
-    color 0.1s,
-    background 0.1s;
+/* ─── View Transitions ───────────────────────────────────────────────────── */
+/* Reduced-motion: fade only (no slide). Full-motion: fade + slight translate. */
+
+@media (prefers-reduced-motion: no-preference) {
+  ::view-transition-old(root) {
+    animation: vt-slide-out var(--motion-medium) var(--ease-exit) both;
+  }
+  ::view-transition-new(root) {
+    animation: vt-slide-in var(--motion-medium) var(--ease-enter) both;
+  }
+  @keyframes vt-slide-out {
+    from {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    to {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+  }
+  @keyframes vt-slide-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
 }
 
-.nav-link:hover,
-.nav-link[data-status="active"] {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.08);
-}
-
-/* Main layout */
-
-.main {
-  max-width: 900px;
-  margin: 0 auto;
-  padding: 2rem 1.5rem;
-}
-
-h1 {
-  margin: 0 0 1.5rem;
-  font-size: 1.375rem;
-  font-weight: 600;
-}
-
-h2 {
-  margin: 0 0 0.625rem;
-  font-size: 1rem;
-  font-weight: 600;
-}
-
-/* Dashboard cards */
-
-.card-grid {
-  display: flex;
-  gap: 1rem;
-  margin-bottom: 2rem;
-  flex-wrap: wrap;
-}
-
-.card {
-  background: #fff;
-  border: 1px solid #e4e4e7;
-  border-radius: 8px;
-  padding: 1.25rem 1.5rem;
-  min-width: 130px;
-  text-align: center;
-}
-
-.card-value {
-  font-size: 2rem;
-  font-weight: 700;
-  color: #18181b;
-  line-height: 1;
-}
-
-.card-label {
-  font-size: 0.8125rem;
-  color: #71717a;
-  margin-top: 0.375rem;
-}
-
-/* Status list */
-
-.status-list {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: 0.4rem 1.25rem;
-  margin: 0;
-  background: #fff;
-  border: 1px solid #e4e4e7;
-  border-radius: 8px;
-  padding: 1rem 1.25rem;
-}
-
-.status-list dt {
-  color: #71717a;
-  font-weight: 500;
-}
-
-.status-list dd {
-  margin: 0;
-}
-
-/* Tables */
-
-table {
-  width: 100%;
-  border-collapse: collapse;
-  background: #fff;
-  border: 1px solid #e4e4e7;
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-th,
-td {
-  padding: 0.625rem 0.875rem;
-  text-align: left;
-  border-bottom: 1px solid #f0f0f1;
-}
-
-th {
-  background: #fafafa;
-  font-weight: 600;
-  color: #52525b;
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-tr:last-child td {
-  border-bottom: none;
-}
-
-tr:hover td {
-  background: #fafafa;
-}
-
-code {
-  font-family: ui-monospace, "Cascadia Code", monospace;
-  font-size: 0.8125rem;
-  color: #52525b;
-}
-
-.empty {
-  color: #a1a1aa;
-  font-size: 0.875rem;
-  margin: 0;
-}
-
-/* Profile cards */
-
-.profile-card {
-  background: #fff;
-  border: 1px solid #e4e4e7;
-  border-radius: 8px;
-  padding: 1.25rem;
-  margin-bottom: 1rem;
-}
-
-.mcp-path {
-  margin: 0 0 0.75rem;
-  color: #71717a;
-  font-size: 0.8125rem;
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: 100ms;
+  }
 }
