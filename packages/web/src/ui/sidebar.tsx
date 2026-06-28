@@ -6,7 +6,16 @@
 // No @junction/core import.
 
 import { Link, useLocation } from "@tanstack/react-router"
-import { Database, Key, LayoutList, type LucideIcon, Server } from "lucide-react"
+import {
+  Database,
+  Key,
+  LayoutList,
+  type LucideIcon,
+  Monitor,
+  Moon,
+  Server,
+  Sun,
+} from "lucide-react"
 import { type ReactNode, useCallback, useEffect, useState } from "react"
 import { cn } from "./cn.js"
 import { Kbd } from "./kbd.js"
@@ -180,10 +189,10 @@ const THEME_LABEL: Record<ThemePreference, string> = {
   light: "Theme: Light",
   dark: "Theme: Dark",
 }
-const THEME_ICON: Record<ThemePreference, string> = {
-  system: "◐",
-  light: "☀",
-  dark: "☽",
+const THEME_ICON: Record<ThemePreference, LucideIcon> = {
+  system: Monitor,
+  light: Sun,
+  dark: Moon,
 }
 
 function readStoredTheme(): ThemePreference {
@@ -223,6 +232,8 @@ function ThemeToggle({ collapsed }: { readonly collapsed: boolean }) {
     setPref(next)
   }
 
+  const Icon = THEME_ICON[pref]
+
   const btn = (
     <button
       type="button"
@@ -239,12 +250,10 @@ function ThemeToggle({ collapsed }: { readonly collapsed: boolean }) {
       style={{
         backgroundColor: "transparent",
         color: "var(--muted)",
-        fontSize: "var(--text-body)",
         cursor: "pointer",
-        lineHeight: 1,
       }}
     >
-      <span aria-hidden="true">{THEME_ICON[pref]}</span>
+      <Icon className="h-4 w-4" aria-hidden="true" />
     </button>
   )
 
@@ -276,6 +285,10 @@ export function Sidebar({ initialState = "expanded" }: SidebarProps) {
     document.documentElement.setAttribute("data-sidebar", cookieState)
   }, [])
 
+  // useCallback is required for Biome's exhaustive-deps rule (toggle is used as a
+  // dep in the keydown useEffect). React Compiler also memoizes it, so the wrapper
+  // is a no-op at runtime — react-doctor's "redundant manual memoization" finding
+  // is a false positive here given the linter constraint.
   const toggle = useCallback(() => {
     setCollapsed((prev) => {
       const next = !prev
@@ -318,8 +331,8 @@ export function Sidebar({ initialState = "expanded" }: SidebarProps) {
         "fixed top-0 bottom-0 left-[4px]", // offset by StatusRail width (4px)
         "flex flex-col",
         "border-r border-[var(--border)]",
-        // Transition is defined here but zeroed in app.css under prefers-reduced-motion.
-        "transition-[width] duration-[var(--motion-short)] ease-[var(--ease-enter)]",
+        // No width transition — animating layout properties (width) causes jank
+        // (reflow every frame). Collapse is instant; the CSS var swap is atomic.
         "overflow-hidden",
       )}
       style={{

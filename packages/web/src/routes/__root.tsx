@@ -166,9 +166,9 @@ function AppShellMain({ children }: { readonly children: ReactNode }) {
       style={{
         // 4px (StatusRail) + var(--sidebar-current) set by [data-sidebar] selector.
         // Both sidebar width and this margin read the same token so they move together.
+        // No margin-left transition — animating layout properties causes jank (reflow
+        // every frame). The CSS var swap is instant and atomic; collapse feels crisp.
         marginLeft: "calc(4px + var(--sidebar-current))",
-        // Transition is motion-gated via app.css @media prefers-reduced-motion.
-        transition: "margin-left var(--motion-short) var(--ease-enter)",
       }}
     >
       {/* Zone 3: Topbar — thin context bar, sticky */}

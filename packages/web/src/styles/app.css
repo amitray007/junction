@@ -145,10 +145,11 @@ html[data-sidebar="collapsed"] {
   --sidebar-current: var(--sidebar-width-icon);
 }
 
-/* ─── Reduced-motion: zero sidebar + content layout transitions ──────────── */
-/* The sidebar <aside> uses transition-[width] and AppShellMain uses
-   transition: margin-left in inline styles. Gate both here so users who prefer
-   reduced motion get an instant toggle with no sliding animation. */
+/* ─── Reduced-motion: sidebar layout transitions ────────────────────────── */
+/* The sidebar collapse is intentionally instant (no width/margin animation)
+   to avoid animating layout properties. This block is kept as a safety net
+   in case a future change re-introduces a transition — reduced-motion users
+   will always get an instant toggle. */
 @media (prefers-reduced-motion: reduce) {
   aside[aria-label="Main navigation"] {
     transition: none !important;

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Dialog — Radix Dialog with token-driven styles. Used for desktop modals.
 // On narrow/mobile use vaul drawer instead (deferred to a future increment).
+// inc-24 scaffolding: no live consumer yet — wired for mutation forms in inc 24+.
 
 import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { X } from "lucide-react"
@@ -19,7 +20,8 @@ export function DialogOverlay({
   return (
     <DialogPrimitive.Overlay
       className={cn(
-        "fixed inset-0 z-50 bg-black/50 backdrop-blur-sm",
+        // Solid scrim — no backdrop-blur. DESIGN.md: depth = 1px borders, not blur/shadows.
+        "fixed inset-0 z-50 bg-black/50",
         "transition-opacity duration-[var(--motion-short)]",
         "data-[state=open]:opacity-100 data-[state=closed]:opacity-0",
         className,
