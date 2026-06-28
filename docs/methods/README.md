@@ -41,7 +41,7 @@ A **method file** holds one increment's **spec + step-by-step implementation tog
 | **— Feature: Web UI → connect-once via OAuth → secured via audit (planned route) —** | | | |
 | 22 | Web shell + localhost server (read-only dashboard) | `22-web-shell.md` | done |
 | 23 | **Web foundation — design system + quality.** Design-led: shadcn-like UI (Radix + Tailwind, owned `ui/` layer), **Geist** type, design tokens (color/spacing/radius/motion, light+dark), base component inventory + status-badge taxonomy, **Emil-Kowalski-grade motion/transitions** (sonner/vaul/View-Transitions, reduced-motion), WCAG-AA a11y, re-skinned dashboard — distinctive, **not AI-slop**. Plus the quality scaffolding: `docs/rules/web.md`, Biome React domain (hooks rules), happy-dom/Testing-Library component harness, `junction-web-reviewer` agent, CI web gate (`vite build` + client-bundle leak-grep). Brief: `docs/design/web-ui-brief.md` → output `docs/design/DESIGN.md` (**decided**). Shipped as Phases A–E + sidebar/stability rework + anti-slop/react-doctor pass (PR #47). | `23-web-foundation-design-system.md` | done |
-| 24 | Web: credentials management + **rotation** (core `rotateCredential` + CLI `credential rotate`) | — | planned |
+| 24 | Web: credentials management + **rotation** (core `rotateCredential` + CLI `credential rotate`; first web write-path — assembles on inc-23 form primitives) | `24-web-credentials-mutation.md` | written |
 | 25 | Web: platform management (+ extract platform add/refresh orchestration `cli → core`) | — | planned |
 | 26 | Web: profile management (sources + toolFilter editor + per-profile MCP endpoint) | — | planned |
 | 27 | Web: probe + call (in-browser debug surface) | — | planned |
