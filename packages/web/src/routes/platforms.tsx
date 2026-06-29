@@ -4,6 +4,7 @@
 
 import { createFileRoute } from "@tanstack/react-router"
 import { getCredentials, getPlatforms, type PlatformMeta } from "../server/data.functions.js"
+import { MonoChip, MonoCode } from "../ui/code.js"
 import { ComingSoonAction } from "../ui/coming-soon.js"
 import { PageHeader } from "../ui/page-header.js"
 import { TableSkeleton } from "../ui/skeleton.js"
@@ -66,16 +67,7 @@ function PlatformsPage() {
           label="No platforms yet."
           hint={
             <span>
-              Run{" "}
-              <code
-                style={{
-                  fontFamily: "var(--font-mono)",
-                  fontSize: "var(--text-mono)",
-                  color: "var(--blue-text)",
-                }}
-              >
-                junction platform add
-              </code>{" "}
+              Run <MonoCode style={{ color: "var(--blue-text)" }}>junction platform add</MonoCode>{" "}
               to add one.
             </span>
           }
@@ -96,18 +88,7 @@ function PlatformsPage() {
               <TableRow key={p.id}>
                 <TableCell style={{ fontWeight: 500 }}>{p.displayName}</TableCell>
                 <TableCell>
-                  <code
-                    style={{
-                      fontFamily: "var(--font-mono)",
-                      fontSize: "var(--text-mono)",
-                      color: "var(--blue-text)",
-                      backgroundColor: "var(--blue-bg)",
-                      borderRadius: "var(--radius-6)",
-                      padding: "1px 6px",
-                    }}
-                  >
-                    {p.kind}
-                  </code>
+                  <MonoChip>{p.kind}</MonoChip>
                 </TableCell>
                 <TableCell>
                   <span

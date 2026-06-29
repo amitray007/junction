@@ -66,10 +66,10 @@ afterEach(() => {
 })
 
 describe("ProfilesPage", () => {
-  it("renders the page heading", () => {
+  it("renders the page heading as <h1> (route landmark)", () => {
     mockUseLoaderData.mockReturnValue(emptyData)
     const { getByRole } = render(<ProfilesPage />)
-    expect(getByRole("heading", { name: "Profiles" })).toBeInTheDocument()
+    expect(getByRole("heading", { level: 1, name: "Profiles" })).toBeInTheDocument()
   })
 
   it("shows empty state when no profiles", () => {

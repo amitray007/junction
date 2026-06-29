@@ -25,8 +25,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Departure Mono: RETIRED in inc 24.5. Removed @font-face; files remain in repo
-   for OFL compliance but are not loaded. */
+/* Departure Mono retired inc 24.5 — @font-face, woff2, and OFL file all removed. */
 
 /* ─── Design tokens (:root = light, overridden for dark) ────────────────── */
 /* DESIGN.md §Color — Geist numbered-intent model                             */
@@ -98,13 +97,11 @@
   /* ── Motion ──────────────────────────────────────────────────────────── */
   --motion-fast: 150ms;    /* state transitions */
   --motion-base: 200ms;    /* popover/tooltip/tab */
-  --motion-slow: 300ms;    /* overlay/dialog */
   --ease-enter: cubic-bezier(0.16, 1, 0.3, 1); /* expo-out: fast in, soft landing */
   --ease-exit: cubic-bezier(0.4, 0, 1, 1);
 
   /* ── Component geometry ─────────────────────────────────────────────── */
   --control-height: 2rem;       /* 32px — standard control */
-  --control-height-md: 2.125rem; /* 34px */
   --control-height-lg: 2.5rem;  /* 40px */
   --row-height-data: 2.75rem;   /* ~44px — body rows */
   --row-height-header: 2.75rem; /* 44px — table header */
@@ -243,7 +240,6 @@ html[data-sidebar="collapsed"] {
   /* ── Motion ──────────────────────────────────────────────────────── */
   --duration-fast: var(--motion-fast);
   --duration-base: var(--motion-base);
-  --duration-slow: var(--motion-slow);
   --ease-enter: var(--ease-enter);
   --ease-exit: var(--ease-exit);
 

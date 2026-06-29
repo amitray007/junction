@@ -72,10 +72,11 @@ afterEach(() => {
 describe("CredentialsPage", () => {
   // ── Landmark + heading ─────────────────────────────────────────────────────
 
-  it("renders the page heading", () => {
+  it("renders the page heading as <h1> (route landmark)", () => {
     mockUseLoaderData.mockReturnValue({ credentials: emptyCredentials, platforms: emptyPlatforms })
     const { getByRole } = render(<CredentialsPage />)
-    expect(getByRole("heading", { name: "Credentials" })).toBeInTheDocument()
+    const h1 = getByRole("heading", { level: 1, name: "Credentials" })
+    expect(h1).toBeInTheDocument()
   })
 
   // ── Empty state ────────────────────────────────────────────────────────────

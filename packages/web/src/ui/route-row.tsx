@@ -8,6 +8,7 @@
 import type { SourceMeta } from "../server/data.functions.js"
 import { StatusBadge } from "./badge.js"
 import { cn } from "./cn.js"
+import { MonoChip } from "./code.js"
 
 // ─── Tool filter compact render ───────────────────────────────────────────────
 // toolFilter is an object { allow?: string[]; deny?: string[] }, never [object Object].
@@ -99,19 +100,7 @@ export function RouteRow({ source, className }: RouteRowProps) {
       <Sep />
 
       {/* Namespace chip */}
-      <span
-        style={{
-          fontFamily: "var(--font-mono)",
-          fontSize: "var(--text-mono)",
-          color: "var(--blue-text)",
-          backgroundColor: "var(--blue-bg)",
-          borderRadius: "var(--radius-6)",
-          padding: "1px 6px",
-          lineHeight: 1.5,
-        }}
-      >
-        {source.namespace}
-      </span>
+      <MonoChip>{source.namespace}</MonoChip>
 
       {/* Filter */}
       <span aria-hidden="true" style={{ color: "var(--gray-400)" }}>

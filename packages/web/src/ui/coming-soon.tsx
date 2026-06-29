@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// ComingSoon — quiet pill affordance for deferred actions/sections.
+// ComingSoon — quiet pill affordance for deferred actions.
 // Reads as intentional and honest, not unfinished.
 // Usage:
 //   <ComingSoon /> — renders the quiet pill inline
 //   <ComingSoonAction label="Add Platform" cliHint="junction platform add" /> — disabled control + pill + hint
 
-import type { ReactNode } from "react"
+import { Button } from "./button.js"
 import { cn } from "./cn.js"
+import { MonoCode } from "./code.js"
 
 // ─── Pill ─────────────────────────────────────────────────────────────────────
 
@@ -29,7 +30,7 @@ export function ComingSoon({ className }: { readonly className?: string }) {
 }
 
 // ─── Action wrapper ───────────────────────────────────────────────────────────
-// Renders a disabled button labelled by `label`, the Coming soon pill beside it,
+// Renders a disabled Button (secondary variant), the Coming soon pill beside it,
 // and a one-line hint pointing to the CLI command where the action exists today.
 
 interface ComingSoonActionProps {
@@ -44,64 +45,16 @@ export function ComingSoonAction({ label, cliHint, className }: ComingSoonAction
   return (
     <div className={cn("flex flex-col gap-2", className)}>
       <div className="flex items-center gap-2">
-        {/* Disabled button — visually present, non-interactive */}
-        <button
-          type="button"
-          disabled
-          aria-disabled="true"
-          className="inline-flex items-center justify-center gap-2 h-[var(--control-height)] px-3 rounded-[var(--radius-6)] border border-[var(--alpha-400)] select-none cursor-not-allowed opacity-50"
-          style={{
-            backgroundColor: "var(--bg-100)",
-            color: "var(--gray-1000)",
-            fontSize: "var(--text-label)",
-            fontWeight: 500,
-          }}
-        >
+        <Button variant="secondary" disabled>
           {label}
-        </button>
+        </Button>
         <ComingSoon />
       </div>
       {cliHint && (
         <p style={{ fontSize: "var(--text-body)", color: "var(--gray-700)", margin: 0 }}>
-          Use{" "}
-          <code
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: "var(--text-mono)",
-              color: "var(--blue-text)",
-            }}
-          >
-            {cliHint}
-          </code>{" "}
-          for now.
+          Use <MonoCode style={{ color: "var(--blue-text)" }}>{cliHint}</MonoCode> for now.
         </p>
       )}
-    </div>
-  )
-}
-
-// ─── Section tag variant ──────────────────────────────────────────────────────
-// For wrapping an entire section that is Coming soon — renders children
-// (a visual illustration) plus a footer with the pill + hint.
-
-interface ComingSoonSectionProps {
-  readonly children?: ReactNode
-  readonly hint?: string
-  readonly className?: string
-}
-
-export function ComingSoonSection({ children, hint, className }: ComingSoonSectionProps) {
-  return (
-    <div className={cn("flex flex-col gap-3", className)}>
-      {children}
-      <div className="flex items-center gap-3">
-        <ComingSoon />
-        {hint && (
-          <p style={{ fontSize: "var(--text-body)", color: "var(--gray-700)", margin: 0 }}>
-            {hint}
-          </p>
-        )}
-      </div>
     </div>
   )
 }

@@ -146,6 +146,17 @@ describe("RouteRow", () => {
     expect(getByText("All tools")).toBeInTheDocument()
   })
 
+  it("renders '(unknown)' as literal text when credentialAccount is '(unknown)'", () => {
+    // "(unknown)" is a real string label — it must render as-is, not as a badge.
+    const unknown: SourceMeta = { ...baseSource, credentialAccount: "(unknown)" }
+    const { getByText } = render(
+      <ul>
+        <RouteRow source={unknown} />
+      </ul>,
+    )
+    expect(getByText("(unknown)")).toBeInTheDocument()
+  })
+
   it("never renders '[object Object]' for toolFilter", () => {
     const withFilter: SourceMeta = {
       ...baseSource,

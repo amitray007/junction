@@ -55,10 +55,10 @@ afterEach(() => {
 })
 
 describe("DashboardPage", () => {
-  it("renders the page heading", () => {
+  it("renders the page heading as <h1> (route landmark)", () => {
     mockUseLoaderData.mockReturnValue(emptyData)
     const { getByRole } = render(<DashboardPage />)
-    expect(getByRole("heading", { name: "Dashboard" })).toBeInTheDocument()
+    expect(getByRole("heading", { level: 1, name: "Dashboard" })).toBeInTheDocument()
   })
 
   it("renders the stat cards list", () => {
@@ -92,5 +92,26 @@ describe("DashboardPage", () => {
     mockUseLoaderData.mockReturnValue(populatedData)
     const { queryByText } = render(<DashboardPage />)
     expect(queryByText("Nothing configured yet.")).not.toBeInTheDocument()
+  })
+
+  it("renders the Connect an Agent region", () => {
+    mockUseLoaderData.mockReturnValue(emptyData)
+    const { getByRole } = render(<DashboardPage />)
+    // AgentConfig lives inside a section with an aria heading "Connect an Agent"
+    expect(getByRole("region", { name: /connect an agent/i })).toBeInTheDocument()
+  })
+
+  it("does not render a localhost URL in the agent config illustration", () => {
+    mockUseLoaderData.mockReturnValue(emptyData)
+    const { queryByText } = render(<DashboardPage />)
+    expect(queryByText(/localhost/)).not.toBeInTheDocument()
+  })
+
+  it("renders the Recent Activity section with a Coming soon pill", () => {
+    mockUseLoaderData.mockReturnValue(emptyData)
+    const { getAllByText, getByRole } = render(<DashboardPage />)
+    expect(getByRole("region", { name: /recent activity/i })).toBeInTheDocument()
+    // Multiple "Coming soon" pills render (AgentConfig + Recent Activity) — assert at least one.
+    expect(getAllByText("Coming soon").length).toBeGreaterThanOrEqual(1)
   })
 })

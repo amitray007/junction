@@ -27,8 +27,9 @@ describe("AgentConfig", () => {
   it("renders a placeholder endpoint with angle-bracket tokens (NOT a localhost URL)", () => {
     const { getAllByText, queryByText } = render(<AgentConfig />)
     // Placeholder must use angle-bracket form — unmistakably illustrative, not live config.
-    // Appears in both the endpoint display span and the Claude config illustration block.
-    expect(getAllByText(/your-junction-host/).length).toBeGreaterThanOrEqual(1)
+    // Appears in the endpoint span (1) + the active Claude tab pre (1) = 2 nodes total.
+    // (Radix Tabs only mounts the active panel; Cursor/stdio tabs are not in DOM.)
+    expect(getAllByText(/your-junction-host/).length).toBe(2)
     // Must NOT show any localhost URL — that would look like real, paste-able config.
     expect(queryByText(/localhost/)).not.toBeInTheDocument()
   })
@@ -50,8 +51,9 @@ describe("AgentConfig", () => {
   it("config pre blocks are aria-hidden (non-interactive illustration)", () => {
     const { container } = render(<AgentConfig />)
     const pres = container.querySelectorAll("pre[aria-hidden='true']")
-    // All config code blocks must be aria-hidden — they are non-copyable illustration
-    expect(pres.length).toBeGreaterThanOrEqual(1)
+    // Only the active tab panel (Claude, defaultValue) mounts — Radix does not render
+    // inactive panels without forceMount. Exactly 1 aria-hidden <pre> is in the DOM.
+    expect(pres.length).toBe(1)
   })
 
   it("renders the stdio hint for current working path", () => {

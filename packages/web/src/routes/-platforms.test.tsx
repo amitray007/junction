@@ -20,7 +20,13 @@ const platforms: PlatformMeta[] = [
 
 const populatedLoaderData = {
   platforms,
-  connectionCounts: { github: 2 }, // Linear has 0 connections
+  connectionCounts: { github: 2 }, // Linear has 0 connections (absent key → 0)
+}
+
+// Zero-connections fixture — all platforms present but no credentials yet.
+const zeroConnectionsData = {
+  platforms,
+  connectionCounts: {},
 }
 
 // ---- Mocks ------------------------------------------------------------------
@@ -52,17 +58,23 @@ afterEach(() => {
 })
 
 describe("PlatformsPage", () => {
-  it("renders the page heading", () => {
+  // ── Landmark + heading ─────────────────────────────────────────────────────
+
+  it("renders the page heading as <h1> (route landmark)", () => {
     mockUseLoaderData.mockReturnValue(emptyLoaderData)
     const { getByRole } = render(<PlatformsPage />)
-    expect(getByRole("heading", { name: "Platforms" })).toBeInTheDocument()
+    expect(getByRole("heading", { level: 1, name: "Platforms" })).toBeInTheDocument()
   })
+
+  // ── Empty state ────────────────────────────────────────────────────────────
 
   it("shows empty state when no platforms", () => {
     mockUseLoaderData.mockReturnValue(emptyLoaderData)
     const { getByText } = render(<PlatformsPage />)
     expect(getByText("No platforms yet.")).toBeInTheDocument()
   })
+
+  // ── Table rendering ────────────────────────────────────────────────────────
 
   it("renders the platforms table when populated", () => {
     mockUseLoaderData.mockReturnValue(populatedLoaderData)
@@ -84,11 +96,35 @@ describe("PlatformsPage", () => {
     expect(getByText("—")).toBeInTheDocument()
   })
 
-  it("renders connection count from credentials (0 for unconnected platforms)", () => {
+  it("renders connection count from credentials — scoped to the GitHub row", () => {
     mockUseLoaderData.mockReturnValue(populatedLoaderData)
-    const { getAllByText } = render(<PlatformsPage />)
-    // GitHub has 2 connections; Linear has 0 — both rendered in tabular-nums mono
-    expect(getAllByText("2").length).toBeGreaterThanOrEqual(1)
-    expect(getAllByText("0").length).toBeGreaterThanOrEqual(1)
+    const { getByRole } = render(<PlatformsPage />)
+    const table = getByRole("table")
+    // GitHub row: first data row contains "GitHub" and the count "2"
+    const rows = table.querySelectorAll("tbody tr")
+    const githubRow = Array.from(rows).find((r) => r.textContent?.includes("GitHub"))
+    expect(githubRow).toBeDefined()
+    expect(githubRow?.textContent).toContain("2")
+  })
+
+  it("renders 0 connections for a platform with no credentials (absent key in connectionCounts)", () => {
+    mockUseLoaderData.mockReturnValue(populatedLoaderData)
+    const { getByRole } = render(<PlatformsPage />)
+    const table = getByRole("table")
+    const rows = table.querySelectorAll("tbody tr")
+    const linearRow = Array.from(rows).find((r) => r.textContent?.includes("Linear"))
+    expect(linearRow).toBeDefined()
+    expect(linearRow?.textContent).toContain("0")
+  })
+
+  it("renders 0 for all platforms when connectionCounts is empty", () => {
+    mockUseLoaderData.mockReturnValue(zeroConnectionsData)
+    const { getByRole } = render(<PlatformsPage />)
+    const table = getByRole("table")
+    const rows = Array.from(table.querySelectorAll("tbody tr"))
+    // Every data row must show 0 when there are no credentials
+    for (const row of rows) {
+      expect(row.textContent).toContain("0")
+    }
   })
 })

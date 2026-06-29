@@ -79,17 +79,10 @@ describe("StatusBadge", () => {
     expect(getByText("Disabled")).toBeInTheDocument()
   })
 
-  it("maps all 5 CredentialKind values to configured via kindToStatus pattern", () => {
-    // Validate that all real CredentialKind values return the 'configured' badge.
-    // Core CredentialKind = ["api-key", "bearer", "oauth2", "file", "env"]
-    const kinds = ["api-key", "bearer", "oauth2", "file", "env"] as const
-    for (const kind of kinds) {
-      // kindToStatus(_kind) always returns "configured" — assert the badge renders
-      const { getByText, unmount } = render(<StatusBadge status="configured" />)
-      expect(getByText("Configured")).toBeInTheDocument()
-      unmount()
-      // Confirm none of these kinds would produce "Connected" (no dead "none" branch)
-      expect(kind).not.toBe("none")
-    }
+  it("renders 'Configured' for the 'configured' status (credential kind baseline, inc 24.5)", () => {
+    // kindToStatus(_kind) always returns "configured" — the badge must render the correct label.
+    // This is a real component assertion, not a loop over a kind variable that never touches the component.
+    const { getByText } = render(<StatusBadge status="configured" />)
+    expect(getByText("Configured")).toBeInTheDocument()
   })
 })

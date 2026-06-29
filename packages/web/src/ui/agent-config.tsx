@@ -5,6 +5,7 @@
 // DashboardData carries no port/URL. A working http://…/mcp block would be fabricated.
 // This block is purely illustrative: shows the future shape, disabled, with a stdio hint.
 
+import { MonoChip, MonoCode } from "./code.js"
 import { ComingSoon } from "./coming-soon.js"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./tabs.js"
 
@@ -26,28 +27,6 @@ const ILLUSTRATION = {
   headers:
     Authorization: Bearer <your-key>`,
   rawConfig: `junction mcp serve --profile <name>`,
-}
-
-// Key→profile chip — purely illustrative
-function KeyChip({ children }: { readonly children: React.ReactNode }) {
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: "4px",
-        fontFamily: "var(--font-mono)",
-        fontSize: "var(--text-mono)",
-        color: "var(--blue-text)",
-        backgroundColor: "var(--blue-bg)",
-        borderRadius: "var(--radius-6)",
-        padding: "2px 8px",
-        lineHeight: 1.5,
-      }}
-    >
-      {children}
-    </span>
-  )
 }
 
 // Mono code block — non-copyable illustration
@@ -163,8 +142,8 @@ export function AgentConfig() {
           Key selects profile
         </p>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "6px", alignItems: "center" }}>
-          <KeyChip>jk_work → work</KeyChip>
-          <KeyChip>jk_personal → personal</KeyChip>
+          <MonoChip style={{ padding: "2px 8px" }}>jk_work → work</MonoChip>
+          <MonoChip style={{ padding: "2px 8px" }}>jk_personal → personal</MonoChip>
         </div>
       </div>
 
@@ -173,15 +152,9 @@ export function AgentConfig() {
         <ComingSoon />
         <p style={{ fontSize: "var(--text-body)", color: "var(--gray-700)", margin: 0 }}>
           Today, agents connect over stdio with{" "}
-          <code
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: "var(--text-mono)",
-              color: "var(--blue-text)",
-            }}
-          >
+          <MonoCode style={{ color: "var(--blue-text)" }}>
             junction mcp serve --profile &lt;name&gt;
-          </code>
+          </MonoCode>
           . A shared HTTP endpoint with keys is coming soon.
         </p>
       </div>

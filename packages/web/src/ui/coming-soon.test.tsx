@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Tests for ComingSoon primitives — pill, action wrapper, section variant.
+// Tests for ComingSoon primitives — pill and action wrapper.
+// ComingSoonSection was deleted (no consumer, L2 dead export).
 // Verifies: visual text present, disabled state, CLI hint, no working action.
 
 import { cleanup, render } from "@testing-library/react"
 import { afterEach, describe, expect, it } from "vitest"
-import { ComingSoon, ComingSoonAction, ComingSoonSection } from "./coming-soon.js"
+import { ComingSoon, ComingSoonAction } from "./coming-soon.js"
 
 afterEach(() => cleanup())
 
@@ -41,13 +42,13 @@ describe("ComingSoonAction", () => {
     expect(btn).toBeDisabled()
   })
 
-  it("disabled button carries both HTML disabled and aria-disabled (belt-and-suspenders)", () => {
+  it("disabled button is a real <button> element (not a div)", () => {
     const { getByRole } = render(<ComingSoonAction label="Add Route" />)
     const btn = getByRole("button", { name: "Add Route" })
-    // Both guards must be present: HTML disabled blocks form submission; aria-disabled
-    // communicates the state to assistive technology even when CSS hides the button.
+    // Button component renders a native <button> — AT reads the disabled state directly
+    // from the HTML disabled attribute without needing a separate aria-disabled.
+    expect(btn.tagName).toBe("BUTTON")
     expect(btn).toBeDisabled()
-    expect(btn).toHaveAttribute("aria-disabled", "true")
   })
 
   it("renders CLI hint with cliHint prop", () => {
@@ -60,26 +61,5 @@ describe("ComingSoonAction", () => {
   it("does not render hint paragraph when cliHint is omitted", () => {
     const { queryByText } = render(<ComingSoonAction label="New Profile" />)
     expect(queryByText(/for now/i)).not.toBeInTheDocument()
-  })
-})
-
-describe("ComingSoonSection", () => {
-  it("renders children when provided", () => {
-    const { getByText } = render(
-      <ComingSoonSection>
-        <span>Illustration content</span>
-      </ComingSoonSection>,
-    )
-    expect(getByText("Illustration content")).toBeInTheDocument()
-  })
-
-  it("renders Coming soon pill in the footer", () => {
-    const { getByText } = render(<ComingSoonSection hint="Available in the next release." />)
-    expect(getByText("Coming soon")).toBeInTheDocument()
-  })
-
-  it("renders hint text in the footer when provided", () => {
-    const { getByText } = render(<ComingSoonSection hint="Available in the next release." />)
-    expect(getByText("Available in the next release.")).toBeInTheDocument()
   })
 })

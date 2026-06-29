@@ -10,7 +10,9 @@ export { Button } from "./button.js"
 export { Card, CardContent, CardHeader, CardTitle } from "./card.js"
 export { Checkbox } from "./checkbox.js"
 export { cn } from "./cn.js"
-export { ComingSoon, ComingSoonAction, ComingSoonSection } from "./coming-soon.js"
+export type { MonoChipProps, MonoCodeProps } from "./code.js"
+export { MonoChip, MonoCode } from "./code.js"
+export { ComingSoon, ComingSoonAction } from "./coming-soon.js"
 export {
   Dialog,
   DialogClose,

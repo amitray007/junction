@@ -14,6 +14,7 @@ import {
   removeCredentialFn,
   rotateCredentialFn,
 } from "../server/mutations.functions.js"
+import { MonoCode } from "../ui/code.js"
 import {
   Button,
   Dialog,
@@ -77,24 +78,6 @@ function CredentialsPending() {
         ]}
       />
     </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// MonoCode — inline code element for IDs, platform names, account labels.
-// ---------------------------------------------------------------------------
-
-function MonoCode({ children }: { readonly children: React.ReactNode }) {
-  return (
-    <code
-      style={{
-        fontFamily: "var(--font-mono)",
-        fontSize: "var(--text-mono)",
-        color: "var(--gray-900)",
-      }}
-    >
-      {children}
-    </code>
   )
 }
 

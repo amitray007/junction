@@ -6,6 +6,7 @@ import { createFileRoute } from "@tanstack/react-router"
 import { getDashboard } from "../server/data.functions.js"
 import { AgentConfig } from "../ui/agent-config.js"
 import { Card, CardContent } from "../ui/card.js"
+import { MonoCode } from "../ui/code.js"
 import { ComingSoon } from "../ui/coming-soon.js"
 import { PageHeader } from "../ui/page-header.js"
 import { Separator } from "../ui/separator.js"
@@ -147,16 +148,7 @@ function DashboardPage() {
             label="Nothing configured yet."
             hint={
               <span>
-                Run{" "}
-                <code
-                  style={{
-                    fontFamily: "var(--font-mono)",
-                    fontSize: "var(--text-mono)",
-                    color: "var(--blue-text)",
-                  }}
-                >
-                  junction platform add
-                </code>{" "}
+                Run <MonoCode style={{ color: "var(--blue-text)" }}>junction platform add</MonoCode>{" "}
                 to get started.
               </span>
             }
