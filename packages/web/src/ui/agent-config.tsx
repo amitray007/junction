@@ -8,20 +8,21 @@
 import { ComingSoon } from "./coming-soon.js"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./tabs.js"
 
-// Static illustration configs — these are NOT real, NOT copyable.
-// The endpoint URL is a placeholder for the future single-endpoint model.
+// Static illustration configs — shape of the FUTURE single-endpoint model.
+// These are NOT real endpoints. There is no HTTP MCP server today — only stdio.
+// Placeholder form uses angle-bracket tokens so it cannot be mistaken for a live URL.
 const ILLUSTRATION = {
-  endpoint: "http://localhost:4321/mcp",
+  endpoint: "https://<your-junction-host>/mcp",
   claudeConfig: `{
   "mcpServers": {
     "junction": {
-      "url": "http://localhost:4321/mcp",
+      "url": "https://<your-junction-host>/mcp",
       "headers": { "Authorization": "Bearer <your-key>" }
     }
   }
 }`,
   cursorConfig: `junction:
-  url: http://localhost:4321/mcp
+  url: https://<your-junction-host>/mcp
   headers:
     Authorization: Bearer <your-key>`,
   rawConfig: `junction mcp serve --profile <name>`,

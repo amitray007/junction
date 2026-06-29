@@ -129,8 +129,11 @@ function ProfileCard({ profile }: { readonly profile: ProfileMeta }) {
       <Separator style={{ marginTop: "12px", marginBottom: "12px" }} />
       <CardContent>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center" }}>
-          <ComingSoonAction label="Add Route" cliHint="junction profile source add" />
-          <ComingSoonAction label="Edit Tool Access" cliHint="junction profile source edit" />
+          <ComingSoonAction label="Add Route" cliHint="junction profile add-source" />
+          <ComingSoonAction
+            label="Toggle Route"
+            cliHint="junction profile enable-source / disable-source"
+          />
         </div>
       </CardContent>
     </Card>
