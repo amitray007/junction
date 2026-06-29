@@ -155,7 +155,9 @@ export function TableHead({
         height: "var(--row-height-header)",
       }}
       {...props}
-    />
+    >
+      {children}
+    </th>
   )
 }
 
@@ -418,7 +420,12 @@ export function EmptyTableRow({ colSpan, message, action, className }: EmptyTabl
 }
 
 // ─── Actions column ────────────────────────────────────────────────────────────
-// ⋯ button: visually hidden until row hover/focus, always keyboard-reachable.
+// ⋯ button: ALWAYS visible (low opacity at rest, full on hover/focus-within).
+// E11a fix: the previous opacity-0-until-hover pattern made the trigger invisible
+// and unreachable by real pointer events (trackpad/touch had nothing to hit). A
+// persistently visible trigger (opacity-40 at rest → opacity-100 on hover/focus)
+// is the correct pattern for a primary row action. Keyboard remains fully supported
+// via focus-visible ring.
 
 export function TableActionsHead({ className }: { readonly className?: string }) {
   return <TableHead className={cn("w-12 text-right", className)} aria-label="Row actions" />
@@ -430,8 +437,9 @@ const triggerButtonClassName = cn(
   "transition-colors duration-[var(--motion-fast)]",
   "hover:bg-[var(--gray-100)]",
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue-700)] focus-visible:ring-offset-1",
-  // Visually hidden until row hover/focus; always keyboard-reachable.
-  "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
+  // Always visible: low-opacity at rest, full opacity on row hover/focus-within (E11a).
+  // Was: opacity-0 group-hover:opacity-100 — made it impossible to click with pointer.
+  "opacity-40 group-hover:opacity-100 group-focus-within:opacity-100",
 )
 
 export function TableActionsCell({
