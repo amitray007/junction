@@ -113,7 +113,7 @@ never the hex). Light / dark values:
 
 - **4px base.** Scale: 4 · 8 · 12 · 16 · 24 · 32 · 40 · 64.
 - **Three-step rhythm (Geist):** 8px inside a group · 16px between groups · 40px between sections. Varied, not monotonous.
-- **Content column:** left-aligned, max ~960px, `scrollbar-gutter: stable` (no shake). Only content scrolls.
+- **Content width (inc 24.6):** left-aligned in the shell, **using the available width** up to `--content-max` ≈ **1216px** (76rem) with comfortable right padding — NOT a narrow column stranded in a wide viewport (that reads unfinished). `scrollbar-gutter: stable` (no shake). Only content scrolls. Left-aligned at a wide cap reads intentional; do not center a narrow column in dead space.
 - **Card padding:** 20–24px. **Radii:** 6px controls/surfaces · 12px cards/menus · full only for pills/dots. One radius family per view.
 - **Elevation (Geist two-layer; named tokens):** Child radius ≤ parent. Values:
   | Token | Light | Dark |
@@ -124,8 +124,9 @@ never the hex). Light / dark values:
 ### App shell
 
 - **Sidebar (~240px):** wordmark (the `J` glyph + "Junction" lockup) at top; plain-text destinations (Dashboard · Profiles · Platforms · Credentials) with right-aligned counts; gray-ranked, active = `--gray-100` bg + `--gray-1000` text (**no side-accent stripe**). Footer: running status + theme toggle.
-- **Content:** breadcrumb line → page title row (title + the one primary action) → lede → sections.
+- **Content:** page title row (title + the one primary action) → lede → sections. (No redundant breadcrumb that merely repeats the page title — inc 24.6.)
 - No separate top control bar; the page title row carries the primary action.
+- **Dashboard composition (inc 24.6):** a **two-column** layout that uses the width, not a flat equal-weight stack. **Connect an Agent is the primary block** (prominent, top / wider column — the focal point); **At a Glance** (the count strip) + **System** (store/sandbox/home, a quiet detail) sit alongside as secondary; **Recent Activity** is a quiet footer. The grid **collapses to one column** at narrow widths. Vary the section rhythm (8/16/40) — do not give every section the same gap or wrap each in an identical card.
 
 ---
 
@@ -137,7 +138,7 @@ never the hex). Light / dark values:
 - **Route row (signature):** `source → account → ns-chip · filter → on/off`. `→` separators in `--gray-400`, namespace in a `--blue-bg`/`--blue-text` chip, filter in mono `--gray-700`, status as dot+label. Reuse of one connection across profiles is legible because the path shape is shared and one segment differs.
 - **Single-endpoint config block:** the one shared endpoint in mono + Copy; tabbed agent config (Claude / Cursor / Raw) as a mono code block (blue keys); a line showing "your key selects the profile" with key→profile chips (the keys are **Coming soon**).
 - **Status badge:** dot + Title-Case label; tints faint; never color-only. Keeps the **Configured** taxonomy (stored, not live-probed) from inc 23.
-- **`ComingSoon` affordance (NEW):** a small, quiet pill — `--gray-100` bg, `--gray-700` text, label "Coming soon" — placed on deferred actions/sections (disabled button + pill, or a section tag). Used wherever the backend isn't wired yet (recent activity, platform/profile mutations, key management). It must read as *intentional and honest*, not unfinished: pair the disabled control with a one-line hint pointing to the CLI where the action exists today (e.g. "Use `junction platform add` for now").
+- **`ComingSoon` affordance (NEW):** a small, quiet pill — `--gray-100` bg, `--gray-700` text, label "Coming soon" — placed on deferred actions/sections (disabled button + pill, or a section tag). Used wherever the backend isn't wired yet (recent activity, platform/profile mutations, key management). It must read as *intentional and honest*, not unfinished: pair the disabled control with a one-line hint pointing to the CLI where the action exists today (e.g. "Use `junction platform add` for now"). **(inc 24.6) The "coming soon" meaning comes from the pill + copy — NEVER from dimming the whole block with blanket `opacity`** (that reads as broken/loading). Illustrative content (e.g. the Connect-an-Agent endpoint/config preview) renders at **full contrast**, with non-copyable affordances (no Copy button, `user-select:none`/`pointer-events:none`) carrying the "not live yet" signal. **Consolidate** repeated ComingSoon chrome: one quiet "manage via CLI" affordance per card, not a pill + hint stacked for every deferred action.
 - **Empty / loading / error states:** first-class. Empty = one plain line + the first action. Loading = skeletons that mirror final content (no layout shift). Error = what happened + how to fix.
 
 ## Motion
@@ -181,3 +182,7 @@ Active voice, second person, as few words as possible. Title Case for labels/but
 | 2026-06-29 | **Single shared MCP endpoint** model in the UI (no per-profile URLs); profile chosen by junction key | User decision; auth backend is a later increment, the v1 UI is shaped for it |
 | 2026-06-29 | **"Coming soon"** affordance for deferred backends (with a CLI hint) | inc 24.5 is the setup/foundation increment; shows the whole shape truthfully without faking functionality |
 | 2026-06-29 | Signature element = the **route row** (replaces the inc-23 live rail) | junction-specific structure (routing legible) instead of edge decoration |
+| 2026-06-29 (24.6) | Content **uses the width** (≈1216px cap, left-aligned) — not a narrow column stranded in a wide viewport | impeccable:critique found the 960px column left a dead right half → read unfinished/templated |
+| 2026-06-29 (24.6) | **Two-column Dashboard**: Connect-an-Agent primary, At-a-Glance + System secondary, Recent Activity footer | Flat equal-weight stack had no hierarchy; the most important block (Connect) didn't read as the point |
+| 2026-06-29 (24.6) | ComingSoon signals via **pill + copy + non-copyable affordances, never blanket `opacity`** | The dimmed AgentConfig read as broken/loading, not "coming soon" — the worst look for the key surface |
+| 2026-06-29 (24.6) | Drop always-empty columns (Platforms "Base URL"); consolidate repeated ComingSoon chrome | A column of `—` and 4 pill+hint clusters per card are noise; restraint over completeness |

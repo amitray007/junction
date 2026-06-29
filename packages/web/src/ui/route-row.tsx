@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // RouteRow — the signature element.
 // Renders: platform → credentialAccount → <ns chip · filter> → on/off
-// → separators in gray-400; namespace in blue-bg/blue-text chip; filter mono gray-700.
+// → separators in gray-600 (inc 24.6: bumped from gray-400 for legibility); namespace in blue-bg/blue-text chip; filter mono gray-700.
 // Handles: credentialAccount "(none)" → No Auth badge; toolFilter object → compact render.
 // Semantic: each row is a <li> in a <ul> (data list, not a clickable trigger).
 
@@ -50,7 +50,7 @@ function FilterChip({ toolFilter }: { readonly toolFilter?: SourceMeta["toolFilt
 
 function Sep() {
   return (
-    <span aria-hidden="true" style={{ color: "var(--gray-400)", fontSize: "var(--text-body)" }}>
+    <span aria-hidden="true" style={{ color: "var(--gray-600)", fontSize: "var(--text-body)" }}>
       →
     </span>
   )
@@ -103,7 +103,7 @@ export function RouteRow({ source, className }: RouteRowProps) {
       <MonoChip>{source.namespace}</MonoChip>
 
       {/* Filter */}
-      <span aria-hidden="true" style={{ color: "var(--gray-400)" }}>
+      <span aria-hidden="true" style={{ color: "var(--gray-600)" }}>
         ·
       </span>
       <FilterChip toolFilter={source.toolFilter} />

@@ -89,11 +89,21 @@ describe("PlatformsPage", () => {
     expect(getByText("Linear")).toBeInTheDocument()
   })
 
-  it("renders a dash for platforms with no base URL", () => {
+  it("renders inline baseUrl under Name for platforms that have one (inc 24.6: no dedicated column)", () => {
     mockUseLoaderData.mockReturnValue(populatedLoaderData)
     const { getByText } = render(<PlatformsPage />)
-    // Linear has no baseUrl → renders the em-dash placeholder
-    expect(getByText("—")).toBeInTheDocument()
+    // GitHub has baseUrl → rendered inline under the name cell
+    expect(getByText("https://api.github.com")).toBeInTheDocument()
+  })
+
+  it("does not render em-dash for platforms with no baseUrl (inc 24.6: Base URL column removed)", () => {
+    mockUseLoaderData.mockReturnValue(populatedLoaderData)
+    const { queryByText } = render(<PlatformsPage />)
+    // The old Base URL column rendered "—" for every platform without a baseUrl.
+    // inc 24.6: the column is gone entirely — no "—" anywhere in the table.
+    expect(queryByText("—")).not.toBeInTheDocument()
+    // Linear has no baseUrl → no inline URL text under its name cell either
+    expect(queryByText("linear")).not.toBeInTheDocument() // id not shown; displayName is "Linear"
   })
 
   it("renders connection count from credentials — scoped to the GitHub row", () => {

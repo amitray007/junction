@@ -58,7 +58,16 @@ export function AgentConfig() {
   return (
     <section
       aria-labelledby="agent-config-heading"
-      style={{ display: "flex", flexDirection: "column", gap: "16px", opacity: 0.7 }}
+      // inc 24.6: opacity removed — "coming soon" is signalled by the pill + copy,
+      // not by dimming. Full contrast: illustrative but intentional.
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: "16px",
+        border: "1px dashed var(--alpha-400)",
+        borderRadius: "var(--radius-12)",
+        padding: "16px",
+      }}
     >
       {/* Endpoint — displayed but NOT copyable, NOT live */}
       <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>

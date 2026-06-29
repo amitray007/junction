@@ -3,13 +3,7 @@
 // Status-rail RETIRED in inc 24.5 — route-row is the new signature element.
 // No @junction/core import. All data flows through server functions.
 
-import {
-  createRootRoute,
-  HeadContent,
-  Outlet,
-  Scripts,
-  useRouterState,
-} from "@tanstack/react-router"
+import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router"
 import type { ReactNode } from "react"
 import { Toaster } from "sonner"
 import { getSidebarState } from "../server/data.functions.js"
@@ -140,11 +134,13 @@ function AppShellMain({ children }: { readonly children: ReactNode }) {
       {/* Topbar — sticky context/breadcrumb bar */}
       <Topbar />
 
-      {/* Page content — routes render PageHeader + scrollable content inside main */}
+      {/* Page content — routes render PageHeader + scrollable content inside main.
+          inc 24.6: maxWidth raised to --content-max (76rem/1216px) so content
+          uses the available width; scrollbar-gutter prevents layout shift. */}
       <main
         id="main-content"
         className="flex-1 px-[var(--gutter)] py-8"
-        style={{ maxWidth: "var(--content-max)" }}
+        style={{ maxWidth: "var(--content-max)", scrollbarGutter: "stable" }}
       >
         {children}
       </main>
@@ -152,12 +148,11 @@ function AppShellMain({ children }: { readonly children: ReactNode }) {
   )
 }
 
-// Topbar — sticky thin context bar.
+// Topbar — sticky thin structural bar.
+// inc 24.6: the breadcrumb that merely repeated the page h1 is removed (DESIGN.md:
+// "No redundant breadcrumb that merely repeats the page title"). The <header>
+// landmark is kept for the skip-link + sticky chrome; future: theme toggle sits here.
 function Topbar() {
-  const matches = useRouterState({ select: (s) => s.matches })
-  const currentPath = matches.at(-1)?.routeId ?? "/"
-  const sectionLabel = routeToSection(currentPath)
-
   return (
     <header
       className="sticky top-0 flex items-center justify-between shrink-0 px-[var(--gutter)] border-b border-[var(--alpha-200)]"
@@ -167,26 +162,9 @@ function Topbar() {
         zIndex: "var(--z-topbar)",
       }}
     >
-      <nav aria-label="Breadcrumb">
-        <ol className="flex items-center gap-1.5 list-none m-0 p-0">
-          <li>
-            <span
-              style={{ fontSize: "var(--text-label)", color: "var(--gray-700)", fontWeight: 500 }}
-            >
-              {sectionLabel}
-            </span>
-          </li>
-        </ol>
-      </nav>
+      {/* Reserved for theme toggle / future controls (inc 24.6: intentionally empty) */}
+      <div />
       <div />
     </header>
   )
-}
-
-function routeToSection(routeId: string): string {
-  if (routeId === "/" || routeId === "__root__") return "Dashboard"
-  if (routeId.includes("platforms")) return "Platforms"
-  if (routeId.includes("credentials")) return "Credentials"
-  if (routeId.includes("profiles")) return "Profiles"
-  return "Junction"
 }
