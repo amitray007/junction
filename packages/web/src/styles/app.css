@@ -117,12 +117,10 @@
   --topbar-height: 2.75rem;       /* 44px */
   --content-max: 76rem;           /* 1216px — inc 24.6: use the width, left-aligned (DESIGN.md §Spacing) */
 
-  /* ── Dashboard 2-col grid (inc 24.6) ───────────────────────────────── */
-  /* Primary col: Connect an Agent (focal point). Secondary: At-a-Glance + System. */
-  /* .dashboard-grid in app.css drives the layout; @media stacks to 1-col below breakpoint. */
-  --dashboard-col-main: 1fr;        /* primary / Connect-an-Agent column */
-  --dashboard-col-side: 22rem;      /* secondary / At-a-Glance + System (352px) */
-  --dashboard-breakpoint: 48rem;    /* 768px — stack to 1 col below this */
+  /* ── Dashboard layout (inc 25 phase 2) ─────────────────────────────── */
+  /* Single primary column: Connect an Agent (hero) → At-a-Glance → System → Activity. */
+  /* .stat-strip drives the 3-equal-cell At-a-Glance row; collapses below breakpoint. */
+  --stat-strip-breakpoint: 28rem;   /* 448px — below this, stat strip stacks to 1 col */
 
   /* ── Z-index scale ──────────────────────────────────────────────────── */
   --z-sidebar: 50;
@@ -261,22 +259,34 @@ html[data-sidebar="collapsed"] {
      (those would be self-referential; the correct pattern is alias like --width-sidebar). */
 }
 
-/* ─── Dashboard grid — responsive 2-col layout ───────────────────────────── */
-/* .dashboard-grid in routes/index.tsx: Connect an Agent (primary, 1fr) sits left;
-   At-a-Glance + System (secondary, --dashboard-col-side) sit right.
-   @media collapses to a true 1-column stack at --dashboard-breakpoint (48rem/768px). */
+/* ─── Stat strip — At-a-Glance equal-cell row (inc 25 phase 2) ──────────── */
+/* Three equal-width cells in a bordered row; collapses to 1 col below breakpoint.
+   Uses CSS grid so cells are mathematically equal at every viewport width —
+   no flex-wrap distortion. Each cell is bordered on the right except the last.  */
 
-.dashboard-grid {
+.stat-strip {
   display: grid;
-  grid-template-columns: var(--dashboard-col-main) var(--dashboard-col-side);
-  grid-template-rows: auto auto;
-  gap: 24px;
-  align-items: start;
+  grid-template-columns: repeat(3, 1fr);
+  border: 1px solid var(--alpha-400);
+  border-radius: var(--radius-12);
+  background: var(--bg-100);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
 }
 
-@media (max-width: 48rem) {
-  .dashboard-grid {
+/* Vertical dividers between cells — right border on first two cells. */
+.stat-strip > li + li {
+  border-left: 1px solid var(--alpha-200);
+}
+
+@media (max-width: 28rem) {
+  .stat-strip {
     grid-template-columns: 1fr;
+  }
+  /* In 1-col mode: use bottom borders as dividers instead of left borders. */
+  .stat-strip > li + li {
+    border-left: none;
+    border-top: 1px solid var(--alpha-200);
   }
 }
 

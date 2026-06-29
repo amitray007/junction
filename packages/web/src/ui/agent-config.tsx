@@ -173,9 +173,6 @@ export function AgentConfig({ mcpHost }: AgentConfigProps) {
         display: "flex",
         flexDirection: "column",
         gap: "16px",
-        border: "1px dashed var(--alpha-400)",
-        borderRadius: "var(--radius-12)",
-        padding: "16px",
       }}
     >
       {/* Endpoint row */}

@@ -14,6 +14,7 @@ const emptyData = {
   credentialStore: "keyring",
   sandbox: "seatbelt",
   counts: { platforms: 0, credentials: 0, profiles: 0 },
+  mcpHost: undefined as string | undefined,
 }
 
 const populatedData = {
@@ -40,6 +41,7 @@ vi.mock("@tanstack/react-router", () => ({
 // Server functions are server-only; mock them to avoid import errors.
 vi.mock("../server/data.functions.js", () => ({
   getDashboard: vi.fn(),
+  getSettings: vi.fn(),
 }))
 
 // Import AFTER mocks are registered.
@@ -115,7 +117,7 @@ describe("DashboardPage", () => {
     expect(getAllByText("Coming soon").length).toBeGreaterThanOrEqual(1)
   })
 
-  it("renders the System status section (secondary col, inc 24.6 2-col layout)", () => {
+  it("renders the System status section (inc 25 single-column layout)", () => {
     mockUseLoaderData.mockReturnValue(emptyData)
     const { getByRole, getByText } = render(<DashboardPage />)
     expect(getByRole("region", { name: /system/i })).toBeInTheDocument()
@@ -124,7 +126,7 @@ describe("DashboardPage", () => {
     expect(getByText("seatbelt")).toBeInTheDocument()
   })
 
-  it("renders the At a Glance section (secondary col, inc 24.6 2-col layout)", () => {
+  it("renders the At a Glance section (stat strip, inc 25 single-column layout)", () => {
     mockUseLoaderData.mockReturnValue(emptyData)
     const { getByRole } = render(<DashboardPage />)
     expect(getByRole("region", { name: /at a glance/i })).toBeInTheDocument()
