@@ -21,8 +21,10 @@ export function PageHeader({ title, count, subtitle, actions, className }: PageH
   return (
     <div className={cn("flex items-start justify-between gap-4 pb-6", className)}>
       <div className="flex flex-col gap-1 min-w-0">
-        {/* Title row: baseline-aligned so count chip sits on the h1 baseline (B2) */}
-        <div className="flex items-baseline gap-2.5">
+        {/* Title row: center-aligned — the count chip is a fixed-height pill, so optical
+            center against the 24px h1 reads correctly (baseline-align dropped the pill
+            visibly low next to the large heading — agentation feedback). */}
+        <div className="flex items-center gap-2.5">
           <h1
             style={{
               fontSize: "var(--text-h1)",
