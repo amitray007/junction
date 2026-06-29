@@ -11,8 +11,6 @@ import { TableSkeleton } from "../ui/skeleton.js"
 import {
   EmptyTableRow,
   Table,
-  TableActionsCell,
-  TableActionsHead,
   TableBody,
   TableCell,
   TableHead,
@@ -76,13 +74,13 @@ function PlatformsPage() {
             <TableHead>Kind</TableHead>
             <TableHead>Connections</TableHead>
             {/* Base URL column removed inc 24.6 — always `—` for MCP platforms, pure noise. */}
-            <TableActionsHead />
+            {/* Actions column removed — no row actions wired this increment. */}
           </TableRow>
         </TableHeader>
         <TableBody>
           {platforms.length === 0 ? (
             <EmptyTableRow
-              colSpan={4}
+              colSpan={3}
               message="No platforms yet."
               action={
                 <span style={{ fontSize: "var(--text-body)", color: "var(--gray-700)" }}>
@@ -121,8 +119,7 @@ function PlatformsPage() {
                     {connectionCounts[p.id] ?? 0}
                   </span>
                 </TableCell>
-                {/* No row actions yet — wired in inc 25 */}
-                <TableActionsCell />
+                {/* No row actions yet — column removed; will add back when actions are wired. */}
               </TableRow>
             ))
           )}

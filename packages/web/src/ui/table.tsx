@@ -13,7 +13,13 @@ import {
   ChevronsRight,
   MoreHorizontal,
 } from "lucide-react"
-import type { HTMLAttributes, TdHTMLAttributes, ThHTMLAttributes } from "react"
+import type {
+  HTMLAttributes,
+  MouseEvent as ReactMouseEvent,
+  TdHTMLAttributes,
+  ThHTMLAttributes,
+} from "react"
+import { cloneElement, isValidElement, useCallback, useRef, useState } from "react"
 import { cn } from "./cn.js"
 import { DropdownMenu, DropdownMenuTrigger } from "./dropdown-menu.js"
 
@@ -197,67 +203,98 @@ export function TableCellMono({
 }
 
 // ─── Group divider row ─────────────────────────────────────────────────────────
-// B4: full-width row used for platform group headings in the credentials table (Phase 4).
-// Shows a platform label + optional kind chip + count as a quiet section break.
+// B4/inc-25: Variant-C mockup group divider — uppercase mono platform name +
+// kind badge + stretching divider line + "N {unit}" count on the right.
+// Row height 32px, bg color-mix(gray-100 60%, transparent).
 
 interface TableGroupRowProps {
   /** Number of columns the row should span. */
   readonly colSpan: number
-  /** Primary label (e.g. platform display name). */
+  /** Primary label (e.g. platform display name) — rendered uppercase mono. */
   readonly label: string
-  /** Optional kind chip text (e.g. "openapi"). */
+  /** Optional kind chip text (e.g. "openapi") — NOT uppercased. */
   readonly kind?: string
-  /** Optional count shown after the label. */
+  /** Optional count shown on the right. */
   readonly count?: number
+  /** Unit word appended to the count (e.g. "credentials"). Default: "items". */
+  readonly unit?: string
   readonly className?: string
 }
 
-export function TableGroupRow({ colSpan, label, kind, count, className }: TableGroupRowProps) {
+export function TableGroupRow({
+  colSpan,
+  label,
+  kind,
+  count,
+  unit = "items",
+  className,
+}: TableGroupRowProps) {
   return (
     <tr
       className={cn("border-b border-[var(--alpha-200)]", className)}
-      style={{ backgroundColor: "var(--bg-200)" }}
+      style={{
+        height: "32px",
+        backgroundColor: "color-mix(in srgb, var(--gray-100) 60%, transparent)",
+      }}
       aria-label={`Group: ${label}`}
     >
-      <td
-        colSpan={colSpan}
-        className="px-[var(--cell-padding-x)] py-1.5"
-        style={{ color: "var(--gray-700)" }}
-      >
-        <div className="flex items-center gap-2">
+      <td colSpan={colSpan} style={{ padding: "0 16px", verticalAlign: "middle" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          {/* Platform name — uppercase, 11px, mono, gray-700, letter-spacing */}
           <span
             style={{
-              fontSize: "var(--text-caption)",
-              fontWeight: 500,
+              fontFamily: "var(--font-mono)",
+              fontSize: "11px",
+              fontWeight: 600,
+              textTransform: "uppercase",
+              letterSpacing: "0.07em",
               color: "var(--gray-700)",
+              whiteSpace: "nowrap",
             }}
           >
             {label}
           </span>
+          {/* Kind badge — 10px, NOT uppercase, gray-600 on alpha-200 bg, alpha-400 border */}
           {kind && (
             <span
               style={{
                 fontFamily: "var(--font-mono)",
-                fontSize: "var(--text-caption)",
-                color: "var(--gray-700)",
+                fontSize: "10px",
+                fontWeight: 500,
+                color: "var(--gray-600)",
                 backgroundColor: "var(--alpha-200)",
+                border: "1px solid var(--alpha-400)",
                 borderRadius: "var(--radius-6)",
-                padding: "0 6px",
+                padding: "1px 5px",
+                whiteSpace: "nowrap",
               }}
             >
               {kind}
             </span>
           )}
+          {/* Stretching divider line */}
+          <span
+            style={{
+              flex: 1,
+              height: "1px",
+              backgroundColor: "var(--alpha-200)",
+              marginLeft: "4px",
+            }}
+            aria-hidden="true"
+          />
+          {/* Count on the right: "N credentials" */}
           {count !== undefined && (
             <span
               style={{
                 fontFamily: "var(--font-mono)",
-                fontSize: "var(--text-caption)",
-                color: "var(--gray-700)",
+                fontSize: "11px",
+                fontWeight: 400,
+                color: "var(--gray-600)",
                 fontVariantNumeric: "tabular-nums",
+                whiteSpace: "nowrap",
               }}
             >
-              {count}
+              {count} {unit}
             </span>
           )}
         </div>
@@ -420,12 +457,10 @@ export function EmptyTableRow({ colSpan, message, action, className }: EmptyTabl
 }
 
 // ─── Actions column ────────────────────────────────────────────────────────────
-// ⋯ button: ALWAYS visible (low opacity at rest, full on hover/focus-within).
-// E11a fix: the previous opacity-0-until-hover pattern made the trigger invisible
-// and unreachable by real pointer events (trackpad/touch had nothing to hit). A
-// persistently visible trigger (opacity-40 at rest → opacity-100 on hover/focus)
-// is the correct pattern for a primary row action. Keyboard remains fully supported
-// via focus-visible ring.
+// ⋯ button: opens on HOVER (small close delay so moving to menu doesn't dismiss it)
+// as well as click + keyboard (Enter/Space opens, Esc closes, arrows navigate).
+// Always visible at low opacity; full opacity on row hover/focus-within (E11a).
+// Focus after action: Radix's onCloseAutoFocus returns focus to the trigger button.
 
 export function TableActionsHead({ className }: { readonly className?: string }) {
   return <TableHead className={cn("w-12 text-right", className)} aria-label="Row actions" />
@@ -438,45 +473,86 @@ const triggerButtonClassName = cn(
   "hover:bg-[var(--gray-100)]",
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue-700)] focus-visible:ring-offset-1",
   // Always visible: low-opacity at rest, full opacity on row hover/focus-within (E11a).
-  // Was: opacity-0 group-hover:opacity-100 — made it impossible to click with pointer.
   "opacity-40 group-hover:opacity-100 group-focus-within:opacity-100",
 )
+
+// Delay before closing the dropdown after the pointer leaves the trigger area (ms).
+// Long enough to move the pointer from the ⋯ button to the menu without dismissal.
+const HOVER_CLOSE_DELAY_MS = 150
 
 export function TableActionsCell({
   className,
   menu,
 }: {
   readonly className?: string
-  readonly menu?: React.ReactNode
+  /** DropdownMenuContent (or similar) to render inside a DropdownMenu. Required — callers
+   * that have no actions should omit the column entirely (don't render TableActionsCell). */
+  readonly menu: React.ReactNode
 }) {
+  const [open, setOpen] = useState(false)
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const cancelClose = useCallback(() => {
+    if (closeTimerRef.current !== null) {
+      clearTimeout(closeTimerRef.current)
+      closeTimerRef.current = null
+    }
+  }, [])
+
+  const scheduleClose = useCallback(() => {
+    cancelClose()
+    closeTimerRef.current = setTimeout(() => setOpen(false), HOVER_CLOSE_DELAY_MS)
+  }, [cancelClose])
+
   return (
     <TableCell className={cn("w-12 text-right pr-2", className)}>
-      {menu ? (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              aria-label="Row actions"
-              aria-haspopup="menu"
-              className={triggerButtonClassName}
-              style={{ color: "var(--gray-700)", backgroundColor: "transparent" }}
-            >
-              <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
-            </button>
-          </DropdownMenuTrigger>
-          {menu}
-        </DropdownMenu>
-      ) : (
-        <button
-          type="button"
-          aria-label="Row actions"
-          aria-haspopup="menu"
-          className={triggerButtonClassName}
-          style={{ color: "var(--gray-700)", backgroundColor: "transparent" }}
-        >
-          <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
-        </button>
-      )}
+      <DropdownMenu
+        open={open}
+        onOpenChange={(next) => {
+          // Let Radix handle keyboard/click toggles normally; cancel any pending hover-close.
+          cancelClose()
+          setOpen(next)
+        }}
+      >
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            aria-label="Row actions"
+            aria-haspopup="menu"
+            className={triggerButtonClassName}
+            style={{ color: "var(--gray-700)", backgroundColor: "transparent" }}
+            onMouseEnter={() => {
+              cancelClose()
+              setOpen(true)
+            }}
+            onMouseLeave={scheduleClose}
+            onFocus={() => {
+              // Keyboard focus also reveals the menu on focus (not just hover).
+              cancelClose()
+            }}
+          >
+            <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </DropdownMenuTrigger>
+        {/* Inject hover handlers onto the menu content so moving the pointer from the ⋯
+            onto the open menu keeps it open (cancels the close timer); leaving it
+            re-arms the close. Falls back to rendering menu as-is if it's not an element. */}
+        {isValidElement<{
+          onMouseEnter?: (e: ReactMouseEvent) => void
+          onMouseLeave?: (e: ReactMouseEvent) => void
+        }>(menu)
+          ? cloneElement(menu, {
+              onMouseEnter: (e: ReactMouseEvent) => {
+                cancelClose()
+                menu.props.onMouseEnter?.(e)
+              },
+              onMouseLeave: (e: ReactMouseEvent) => {
+                scheduleClose()
+                menu.props.onMouseLeave?.(e)
+              },
+            })
+          : menu}
+      </DropdownMenu>
     </TableCell>
   )
 }

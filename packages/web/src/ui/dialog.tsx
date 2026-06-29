@@ -34,6 +34,8 @@ export function DialogOverlay({
 export function DialogContent({
   className,
   children,
+  onPointerDownOutside,
+  onInteractOutside,
   ...props
 }: ComponentPropsWithoutRef<typeof DialogPrimitive.Content>) {
   return (
@@ -51,6 +53,34 @@ export function DialogContent({
           className,
         )}
         style={{ boxShadow: "var(--shadow-md)" }}
+        onPointerDownOutside={(e) => {
+          // Radix Select portals its listbox outside the dialog DOM — clicking a Select
+          // option fires onPointerDownOutside and would close the dialog. Suppress that
+          // by checking whether the target is inside a Radix popper or listbox portal.
+          const target = e.target as Element | null
+          if (
+            target?.closest("[data-radix-popper-content-wrapper]") ||
+            target?.closest("[role='listbox']") ||
+            target?.closest("[data-radix-select-content]")
+          ) {
+            e.preventDefault()
+            return
+          }
+          onPointerDownOutside?.(e)
+        }}
+        onInteractOutside={(e) => {
+          // Same guard for keyboard-driven interactions (e.g. touch, assistive tech).
+          const target = e.target as Element | null
+          if (
+            target?.closest("[data-radix-popper-content-wrapper]") ||
+            target?.closest("[role='listbox']") ||
+            target?.closest("[data-radix-select-content]")
+          ) {
+            e.preventDefault()
+            return
+          }
+          onInteractOutside?.(e)
+        }}
         {...props}
       >
         {children}

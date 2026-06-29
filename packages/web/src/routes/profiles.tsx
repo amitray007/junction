@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Profiles route — master-detail layout (Variant C, F13) + profile route editing (E11b).
-// Left: profiles list (name + platform chips + route count + ›).
+// Left: profiles list (name + route count + › — no platform chips, inc-25 feedback).
 // Right: selected profile detail — route rows table + editing actions.
 //
 // HONESTY GUARDS:
 // - Edit tool access (filter update in-place) = ComingSoon: no core op exists
 //   (SourceOp is only delete|setEnabled). Filter shown read-only with subtle hint.
 //   Filters are set at ADD-route time only.
-// - "N keys active" = ComingSoon (junction-keys backend, later increment).
+// - "N keys active" removed — was ComingSoon with no near-term plan (inc-25 feedback).
 // - No per-profile HTTP endpoint URL (single-endpoint model — show CLI command).
 //
 // Responsive: at <700px the split stacks list-above-detail (CSS media query).
@@ -671,20 +671,6 @@ function ProfileDetail({
 
         {/* Actions */}
         <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
-          {/* N keys active — ComingSoon (junction-keys, later increment) */}
-          <span
-            style={{
-              fontSize: "var(--text-caption)",
-              color: "var(--gray-700)",
-              display: "flex",
-              alignItems: "center",
-              gap: "4px",
-            }}
-          >
-            Keys active
-            <ComingSoon />
-          </span>
-
           <Button variant="secondary" onClick={() => setAddRouteOpen(true)}>
             <PlusCircle className="h-4 w-4" aria-hidden="true" />
             Add Route
@@ -724,11 +710,6 @@ function ProfileDetail({
 // Profile list item (left panel row)
 // ---------------------------------------------------------------------------
 
-function platformChips(profile: ProfileMeta): string[] {
-  // Collect unique platforms referenced by this profile's sources.
-  return Array.from(new Set(profile.sources.map((s) => s.platform)))
-}
-
 interface ProfileListItemProps {
   readonly profile: ProfileMeta
   readonly selected: boolean
@@ -736,7 +717,6 @@ interface ProfileListItemProps {
 }
 
 function ProfileListItem({ profile, selected, onSelect }: ProfileListItemProps) {
-  const chips = platformChips(profile)
   return (
     <button
       type="button"
@@ -758,44 +738,19 @@ function ProfileListItem({ profile, selected, onSelect }: ProfileListItemProps) 
       }}
       className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue-700)] focus-visible:ring-offset-1 focus-visible:rounded-[var(--radius-6)]"
     >
-      <div style={{ minWidth: 0, flex: 1 }}>
-        <span
-          style={{
-            fontSize: "var(--text-body)",
-            fontWeight: selected ? 600 : 400,
-            color: "var(--gray-1000)",
-            display: "block",
-          }}
-        >
-          {profile.name}
-        </span>
-        {chips.length > 0 && (
-          <div
-            style={{
-              display: "flex",
-              flexWrap: "wrap",
-              gap: "4px",
-              marginTop: "4px",
-            }}
-          >
-            {chips.map((p) => (
-              <span
-                key={p}
-                style={{
-                  fontFamily: "var(--font-mono)",
-                  fontSize: "var(--text-caption)",
-                  color: "var(--blue-text)",
-                  background: "var(--blue-bg)",
-                  borderRadius: "var(--radius-6)",
-                  padding: "1px 6px",
-                }}
-              >
-                {p}
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
+      <span
+        style={{
+          fontSize: "var(--text-body)",
+          fontWeight: selected ? 600 : 400,
+          color: "var(--gray-1000)",
+          minWidth: 0,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {profile.name}
+      </span>
       <div
         style={{
           display: "flex",

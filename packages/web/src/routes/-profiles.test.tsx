@@ -221,10 +221,11 @@ describe("ProfilesPage", () => {
     expect(screen.getByRole("button", { name: /add route/i })).toBeInTheDocument()
   })
 
-  it("shows ComingSoon for 'Keys active' (N keys active ComingSoon guard)", () => {
+  it("does NOT render 'Keys active' (removed inc-25 feedback batch)", () => {
     mockUseLoaderData.mockReturnValue(populatedData)
     render(<ProfilesPage />)
-    expect(screen.getByText("Keys active")).toBeInTheDocument()
+    // The "N keys active" ComingSoon affordance was removed from the detail panel.
+    expect(screen.queryByText("Keys active")).not.toBeInTheDocument()
   })
 
   it("renders profile list filter input", () => {
