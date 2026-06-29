@@ -10,12 +10,17 @@ export function Kbd({ className, ...props }: HTMLAttributes<HTMLElement>) {
       className={cn(
         "inline-flex items-center justify-center",
         "h-5 min-w-5 px-1",
-        "rounded-[var(--radius-sm)] border border-[var(--border)]",
-        "bg-[var(--surface-2)]",
-        "font-mono text-[var(--text-eyebrow)] text-[var(--muted)] leading-none",
+        "rounded-[var(--radius-6)] border border-[var(--alpha-400)]",
         "select-none",
         className,
       )}
+      style={{
+        backgroundColor: "var(--gray-100)",
+        fontFamily: "var(--font-mono)",
+        fontSize: "var(--text-caption)",
+        color: "var(--gray-700)",
+        lineHeight: 1,
+      }}
       {...props}
     />
   )

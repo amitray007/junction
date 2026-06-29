@@ -99,9 +99,18 @@ describe("ProfilesPage", () => {
     expect(getAllByText("Disabled").length).toBeGreaterThanOrEqual(1)
   })
 
-  it("shows 'No sources configured.' for profiles without sources", () => {
+  it("shows 'No routes configured.' for profiles without sources (inc 24.5 RouteRow wording)", () => {
     mockUseLoaderData.mockReturnValue(populatedData)
     const { getByText } = render(<ProfilesPage />)
-    expect(getByText("No sources configured.")).toBeInTheDocument()
+    expect(getByText("No routes configured.")).toBeInTheDocument()
+  })
+
+  it("does not render mcpEndpointPath anywhere (single-endpoint model, not shown in UI)", () => {
+    // mcpEndpointPath is on ProfileMeta for CLI/MCP use but MUST NOT appear in the web UI.
+    // The single-endpoint model (per-profile stdio, no HTTP shown) is enforced here.
+    mockUseLoaderData.mockReturnValue(populatedData)
+    const { queryByText } = render(<ProfilesPage />)
+    expect(queryByText("/tmp/junction/mcp/default.sock")).not.toBeInTheDocument()
+    expect(queryByText("/tmp/junction/mcp/readonly.sock")).not.toBeInTheDocument()
   })
 })

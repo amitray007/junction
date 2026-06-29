@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Card primitive — surface container with 1px border, no drop shadow.
-// Separation is borders, not shadows (DESIGN.md anti-slop rule).
+// Card primitive — bg-100, alpha-400 border, shadow-sm, 12px radius.
+// Header row (h3 + meta) + body. Never nested (DESIGN.md anti-slop rule).
 
 import type { HTMLAttributes } from "react"
 import { cn } from "./cn.js"
@@ -9,10 +9,11 @@ export function Card({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       className={cn(
-        "bg-[var(--surface)] border border-[var(--border)] rounded-[var(--radius-md)]",
+        "bg-[var(--bg-100)] border border-[var(--alpha-400)] rounded-[var(--radius-12)]",
         "p-[var(--card-padding)]",
         className,
       )}
+      style={{ boxShadow: "var(--shadow-sm)" }}
       {...props}
     />
   )
@@ -25,10 +26,12 @@ export function CardHeader({ className, ...props }: HTMLAttributes<HTMLDivElemen
 export function CardTitle({ className, ...props }: HTMLAttributes<HTMLHeadingElement>) {
   return (
     <h3
-      className={cn(
-        "text-[var(--text-section)] font-semibold text-[var(--fg)] leading-none",
-        className,
-      )}
+      className={cn("leading-none", className)}
+      style={{
+        fontSize: "var(--text-h3)",
+        fontWeight: 600,
+        color: "var(--gray-1000)",
+      }}
       {...props}
     />
   )
@@ -37,6 +40,3 @@ export function CardTitle({ className, ...props }: HTMLAttributes<HTMLHeadingEle
 export function CardContent({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return <div className={cn("", className)} {...props} />
 }
-
-// CardFooter removed — genuinely dead, no inc-24 consumer planned.
-// Add back (with a comment) if a card action-footer pattern emerges.

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Empty / loading / error states — first-class shared components.
-// Every route uses these to avoid bespoke one-off states.
+// Empty = one plain line + the first action (DESIGN.md §Components).
 
 import { AlertCircle, Inbox, Loader2 } from "lucide-react"
 import type { ReactNode } from "react"
@@ -10,9 +10,7 @@ import { cn } from "./cn.js"
 
 export interface EmptyStateProps {
   readonly icon?: ReactNode
-  /** Short label for the empty thing. */
   readonly label: string
-  /** Hint text — e.g. CLI command to run. */
   readonly hint?: ReactNode
   readonly className?: string
 }
@@ -20,19 +18,17 @@ export interface EmptyStateProps {
 export function EmptyState({ icon, label, hint, className }: EmptyStateProps) {
   return (
     <div
-      className={cn(
-        "flex flex-col items-center justify-center gap-3",
-        "py-12 text-center",
-        className,
-      )}
+      className={cn("flex flex-col items-start gap-2 py-8", className)}
       role="status"
       aria-label={label}
     >
-      <span className="text-[var(--muted)] opacity-40" aria-hidden="true">
-        {icon ?? <Inbox className="h-8 w-8" />}
+      <span style={{ color: "var(--gray-600)" }} aria-hidden="true">
+        {icon ?? <Inbox className="h-5 w-5" />}
       </span>
-      <p className="text-[var(--text-body)] text-[var(--muted)]">{label}</p>
-      {hint && <p className="text-[var(--text-eyebrow)] text-[var(--muted)] font-mono">{hint}</p>}
+      <p style={{ fontSize: "var(--text-body)", color: "var(--gray-900)", margin: 0 }}>{label}</p>
+      {hint && (
+        <p style={{ fontSize: "var(--text-body)", color: "var(--gray-700)", margin: 0 }}>{hint}</p>
+      )}
     </div>
   )
 }
@@ -48,12 +44,13 @@ export function LoadingState({
 }) {
   return (
     <div
-      className={cn("flex items-center justify-center gap-2 py-8 text-[var(--muted)]", className)}
+      className={cn("flex items-center gap-2 py-8", className)}
       role="status"
       aria-label={label}
+      style={{ color: "var(--gray-700)" }}
     >
       <Loader2 className="h-4 w-4 motion-safe:animate-spin" aria-hidden="true" />
-      <span className="text-[var(--text-body)]">{label}</span>
+      <span style={{ fontSize: "var(--text-body)" }}>{label}</span>
     </div>
   )
 }
@@ -70,11 +67,16 @@ export function ErrorState({ message = "Something went wrong.", className }: Err
     <div
       className={cn(
         "flex items-center gap-2",
-        "rounded-[var(--radius-md)] border border-[var(--status-error-fg)]/30",
-        "bg-[var(--status-error-bg)] px-4 py-3",
-        "text-[var(--text-body)] text-[var(--status-error-fg)]",
+        "rounded-[var(--radius-6)] border",
+        "px-4 py-3",
         className,
       )}
+      style={{
+        borderColor: "color-mix(in srgb, var(--status-error-fg) 30%, transparent)",
+        backgroundColor: "color-mix(in srgb, var(--status-error-fg) 8%, transparent)",
+        color: "var(--status-error-fg)",
+        fontSize: "var(--text-body)",
+      }}
       role="alert"
     >
       <AlertCircle className="h-4 w-4 shrink-0" aria-hidden="true" />

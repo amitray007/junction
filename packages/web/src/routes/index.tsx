@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Dashboard route — counts + system status. No @junction/core import.
+// Dashboard route — status line · Connect an Agent (ComingSoon) · At a Glance · Recent Activity.
+// No @junction/core import.
 
 import { createFileRoute } from "@tanstack/react-router"
-import { Database, Key, Server } from "lucide-react"
 import { getDashboard } from "../server/data.functions.js"
+import { AgentConfig } from "../ui/agent-config.js"
 import { Card, CardContent } from "../ui/card.js"
+import { ComingSoon } from "../ui/coming-soon.js"
 import { PageHeader } from "../ui/page-header.js"
+import { Separator } from "../ui/separator.js"
 import { TableSkeleton } from "../ui/skeleton.js"
 import { EmptyState } from "../ui/states.js"
 
@@ -26,134 +29,145 @@ function DashboardPending() {
 
 function DashboardPage() {
   const data = Route.useLoaderData()
+  const isEmpty =
+    data.counts.platforms === 0 && data.counts.credentials === 0 && data.counts.profiles === 0
+
   return (
-    <div>
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-10)" }}>
       <PageHeader title="Dashboard" />
 
-      {/* Stat cards — three distinct tiles (not identical) */}
-      <ul className="grid grid-cols-3 gap-4 mb-8 list-none m-0 p-0" aria-label="Summary counts">
-        <StatCard
-          icon={<Server className="h-4 w-4" aria-hidden="true" />}
-          value={data.counts.platforms}
-          label="Platforms"
-          description="Connected API sources"
-        />
-        <StatCard
-          icon={<Key className="h-4 w-4" aria-hidden="true" />}
-          value={data.counts.credentials}
-          label="Credentials"
-          description="Stored auth tokens"
-        />
-        <StatCard
-          icon={<Database className="h-4 w-4" aria-hidden="true" />}
-          value={data.counts.profiles}
-          label="Profiles"
-          description="MCP serving contexts"
-        />
-      </ul>
-
-      {/* System info */}
-      <section aria-labelledby="system-section-heading">
-        <p
-          id="system-section-heading"
-          className="mb-2 uppercase"
+      {/* Status line */}
+      <section aria-labelledby="status-heading">
+        <h2
+          id="status-heading"
           style={{
-            fontSize: "var(--text-eyebrow)",
-            color: "var(--muted)",
-            fontFamily: "var(--font-mono)",
-            fontWeight: 500,
-            letterSpacing: "var(--tracking-eyebrow)",
+            fontSize: "var(--text-h2)",
+            fontWeight: 600,
+            color: "var(--gray-1000)",
+            marginBottom: "12px",
           }}
         >
           System
-        </p>
+        </h2>
         <Card>
           <CardContent>
-            <dl className="grid grid-cols-[max-content_1fr] gap-x-8 gap-y-2">
-              <InfoRow label="Home" value={data.home} mono />
-              <InfoRow label="Initialized" value={data.initialized ? "Yes" : "No"} />
-              <InfoRow label="Credential store" value={data.credentialStore} />
-              <InfoRow label="Sandbox" value={data.sandbox} />
+            <dl
+              style={{
+                display: "grid",
+                gridTemplateColumns: "max-content 1fr",
+                columnGap: "32px",
+                rowGap: "8px",
+                margin: 0,
+              }}
+            >
+              <StatusRow label="Store" value={data.credentialStore} />
+              <StatusRow label="Sandbox" value={data.sandbox} />
+              <StatusRow label="Home" value={data.home} mono />
             </dl>
           </CardContent>
         </Card>
       </section>
 
-      {/* First-run hint when nothing configured yet */}
-      {data.counts.platforms === 0 &&
-        data.counts.credentials === 0 &&
-        data.counts.profiles === 0 && (
+      {/* At a Glance — compact stat row, not a hero banner */}
+      <section aria-labelledby="glance-heading">
+        <h2
+          id="glance-heading"
+          style={{
+            fontSize: "var(--text-h2)",
+            fontWeight: 600,
+            color: "var(--gray-1000)",
+            marginBottom: "12px",
+          }}
+        >
+          At a Glance
+        </h2>
+        <ul
+          aria-label="Summary counts"
+          style={{
+            display: "flex",
+            gap: "32px",
+            flexWrap: "wrap",
+            listStyle: "none",
+            margin: 0,
+            padding: 0,
+          }}
+        >
+          <StatItem label="Platforms" value={data.counts.platforms} />
+          <StatItem label="Credentials" value={data.counts.credentials} />
+          <StatItem label="Profiles" value={data.counts.profiles} />
+        </ul>
+      </section>
+
+      {/* Connect an Agent — ComingSoon surface; NO working http endpoint */}
+      <section aria-labelledby="connect-heading">
+        <h2
+          id="connect-heading"
+          style={{
+            fontSize: "var(--text-h2)",
+            fontWeight: 600,
+            color: "var(--gray-1000)",
+            marginBottom: "12px",
+          }}
+        >
+          Connect an Agent
+        </h2>
+        <Card>
+          <CardContent>
+            <AgentConfig />
+          </CardContent>
+        </Card>
+      </section>
+
+      {/* Recent Activity — ComingSoon (audit, inc 29) */}
+      <section aria-labelledby="activity-heading">
+        <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "12px" }}>
+          <h2
+            id="activity-heading"
+            style={{
+              fontSize: "var(--text-h2)",
+              fontWeight: 600,
+              color: "var(--gray-1000)",
+              margin: 0,
+            }}
+          >
+            Recent Activity
+          </h2>
+          <ComingSoon />
+        </div>
+        <p style={{ fontSize: "var(--text-body)", color: "var(--gray-700)", margin: 0 }}>
+          Per-agent usage and audit log coming in a later update.
+        </p>
+      </section>
+
+      {/* First-run hint */}
+      {isEmpty && (
+        <>
+          <Separator />
           <EmptyState
-            className="mt-8"
             label="Nothing configured yet."
             hint={
               <span>
                 Run{" "}
-                <code style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-mono)" }}>
+                <code
+                  style={{
+                    fontFamily: "var(--font-mono)",
+                    fontSize: "var(--text-mono)",
+                    color: "var(--blue-text)",
+                  }}
+                >
                   junction platform add
                 </code>{" "}
                 to get started.
               </span>
             }
           />
-        )}
+        </>
+      )}
     </div>
   )
 }
 
-function StatCard({
-  icon,
-  value,
-  label,
-  description,
-}: {
-  readonly icon: React.ReactNode
-  readonly value: number
-  readonly label: string
-  readonly description: string
-}) {
-  return (
-    <li aria-label={`${value} ${label}`} className="list-none">
-      <Card>
-        <CardContent className="flex flex-col gap-3">
-          {/* Icon + label row */}
-          <div className="flex items-center gap-2">
-            <span style={{ color: "var(--muted)" }}>{icon}</span>
-            <span
-              style={{
-                fontSize: "var(--text-eyebrow)",
-                fontFamily: "var(--font-mono)",
-                fontWeight: 500,
-                letterSpacing: "var(--tracking-eyebrow)",
-                color: "var(--muted)",
-                textTransform: "uppercase",
-              }}
-            >
-              {label}
-            </span>
-          </div>
-          {/* Count */}
-          <div
-            style={{
-              fontSize: "var(--text-stat)",
-              fontWeight: 700,
-              fontFamily: "var(--font-mono)",
-              color: "var(--fg)",
-              lineHeight: 1,
-              fontVariantNumeric: "tabular-nums",
-            }}
-          >
-            {value}
-          </div>
-          {/* Description — varies per card, distinguishes tiles from each other */}
-          <div style={{ fontSize: "var(--text-body)", color: "var(--muted)" }}>{description}</div>
-        </CardContent>
-      </Card>
-    </li>
-  )
-}
-
-function InfoRow({
+function StatusRow({
   label,
   value,
   mono = false,
@@ -164,14 +178,14 @@ function InfoRow({
 }) {
   return (
     <>
-      <dt style={{ fontSize: "var(--text-body)", color: "var(--muted)", fontWeight: 500 }}>
+      <dt style={{ fontSize: "var(--text-body)", color: "var(--gray-700)", fontWeight: 500 }}>
         {label}
       </dt>
       <dd
         style={{
           fontSize: mono ? "var(--text-mono)" : "var(--text-body)",
           fontFamily: mono ? "var(--font-mono)" : "var(--font-sans)",
-          color: "var(--fg)",
+          color: "var(--gray-1000)",
           margin: 0,
           wordBreak: "break-all",
         }}
@@ -179,5 +193,25 @@ function InfoRow({
         {value}
       </dd>
     </>
+  )
+}
+
+function StatItem({ label, value }: { readonly label: string; readonly value: number }) {
+  return (
+    <li style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+      <span
+        style={{
+          fontSize: "var(--text-stat)",
+          fontWeight: 600,
+          color: "var(--gray-1000)",
+          fontFamily: "var(--font-mono)",
+          fontVariantNumeric: "tabular-nums",
+          lineHeight: 1.2,
+        }}
+      >
+        {value}
+      </span>
+      <span style={{ fontSize: "var(--text-label)", color: "var(--gray-700)" }}>{label}</span>
+    </li>
   )
 }

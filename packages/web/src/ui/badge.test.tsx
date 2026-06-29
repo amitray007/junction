@@ -22,14 +22,16 @@ describe("Badge", () => {
     expect(getByText("Auth Failed")).toBeInTheDocument()
   })
 
-  it("applies the ok variant by default", () => {
+  it("applies the configured variant by default (inc 24.5 — no liveness claim)", () => {
     const { container } = render(<Badge>Default</Badge>)
     const badge = container.firstChild as HTMLElement
-    expect(badge.className).toMatch(/ok/)
+    expect(badge.className).toMatch(/configured/)
   })
 
   it("renders each variant without throwing", () => {
-    const variants = ["ok", "info", "warning", "error", "disabled", "configured"] as const
+    // Variants: configured / ok / noauth / warning / error / off (inc 24.5 taxonomy).
+    // 'info', 'disabled' removed; 'noauth' + 'off' added.
+    const variants = ["configured", "ok", "noauth", "warning", "error", "off"] as const
     for (const v of variants) {
       const { getByText, unmount } = render(<Badge variant={v}>{v}</Badge>)
       expect(getByText(v)).toBeInTheDocument()

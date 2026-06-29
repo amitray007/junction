@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Checkbox — Radix UI Checkbox wrapped in tokens.
-// Built inc 23; NOT wired to write paths (inc 24+).
-// Radix handles keyboard (Space to toggle), focus management, ARIA role="checkbox".
+// Focus ring: blue (DESIGN.md). Checked fill: gray-1000.
 
 import * as CheckboxPrimitive from "@radix-ui/react-checkbox"
 import { Check } from "lucide-react"
@@ -16,12 +15,12 @@ export function Checkbox({
     <CheckboxPrimitive.Root
       className={cn(
         "peer h-4 w-4 shrink-0",
-        "rounded-[var(--radius-sm)] border border-[var(--border)]",
-        "transition-colors duration-[var(--motion-micro)]",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-1",
+        "rounded-[var(--radius-6)] border border-[var(--alpha-400)]",
+        "transition-colors duration-[var(--motion-fast)]",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue-700)] focus-visible:ring-offset-1",
         "disabled:cursor-not-allowed disabled:opacity-50",
-        "data-[state=checked]:bg-[var(--accent-fill)] data-[state=checked]:border-[var(--accent-fill)]",
-        "data-[state=unchecked]:bg-[var(--bg)]",
+        "data-[state=checked]:bg-[var(--gray-1000)] data-[state=checked]:border-[var(--gray-1000)]",
+        "data-[state=unchecked]:bg-[var(--bg-100)]",
         className,
       )}
       {...props}
@@ -30,7 +29,7 @@ export function Checkbox({
         <Check
           className="h-3 w-3"
           aria-hidden="true"
-          style={{ color: "var(--accent-fg)", strokeWidth: 3 }}
+          style={{ color: "var(--bg-100)", strokeWidth: 3 }}
         />
       </CheckboxPrimitive.Indicator>
     </CheckboxPrimitive.Root>

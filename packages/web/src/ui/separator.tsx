@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Separator — thin 1px divider using Radix UI Separator for a11y.
+// Separator — hairline 1px divider using alpha-200 (Geist: faint alpha divider).
 
 import * as SeparatorPrimitive from "@radix-ui/react-separator"
 import type { ComponentPropsWithoutRef } from "react"
@@ -18,7 +18,7 @@ export function Separator({
       orientation={orientation}
       decorative={decorative}
       className={cn(
-        "bg-[var(--border)] shrink-0",
+        "bg-[var(--alpha-200)] shrink-0",
         orientation === "horizontal" ? "h-px w-full" : "h-full w-px",
         className,
       )}

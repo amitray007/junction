@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Tooltip — Radix Tooltip with token-driven styles.
+// shadow-md for popover elevation (DESIGN.md §Elevation).
 
 import * as TooltipPrimitive from "@radix-ui/react-tooltip"
 import type { ComponentPropsWithoutRef, ReactNode } from "react"
@@ -16,22 +17,24 @@ export function TooltipContent({ className, sideOffset = 4, ...props }: TooltipC
         sideOffset={sideOffset}
         className={cn(
           "z-50 overflow-hidden",
-          "rounded-[var(--radius-sm)]",
-          "bg-[var(--fg)] text-[var(--bg)]",
-          "px-2 py-1",
-          "text-[var(--text-eyebrow)] leading-snug",
-          // Entry/exit opacity — simple CSS transition, no animate-in plugin needed.
-          "transition-opacity duration-[var(--motion-short)]",
+          "rounded-[var(--radius-6)]",
+          "px-2.5 py-1.5",
+          "transition-opacity duration-[var(--motion-fast)]",
           "data-[state=delayed-open]:opacity-100 data-[state=closed]:opacity-0",
           className,
         )}
+        style={{
+          backgroundColor: "var(--gray-1000)",
+          color: "var(--bg-100)",
+          fontSize: "var(--text-caption)",
+          boxShadow: "var(--shadow-md)",
+        }}
         {...props}
       />
     </TooltipPrimitive.Portal>
   )
 }
 
-// Compound helper for simple text tooltips.
 export function Tooltip({
   children,
   content,

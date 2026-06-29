@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Tests for Wordmark — a11y label, Departure Mono usage, amber node.
+// Tests for Wordmark — a11y label, Geist Sans usage (inc 24.5 rewrite).
+// Departure Mono + amber square RETIRED; J glyph + "Junction" logotype in Geist Sans.
 
 import { cleanup, render } from "@testing-library/react"
 import { afterEach, describe, expect, it } from "vitest"
@@ -13,29 +14,30 @@ describe("Wordmark", () => {
     expect(getByLabelText("Junction")).toBeInTheDocument()
   })
 
-  it("renders JUNCTION text (aria-hidden — label carries the name)", () => {
+  it("renders 'Junction' logotype text (aria-hidden — label carries the name)", () => {
     const { container } = render(<Wordmark />)
     const hidden = container.querySelectorAll('[aria-hidden="true"]')
-    const textSpan = Array.from(hidden).find((el) => el.textContent === "JUNCTION")
+    const textSpan = Array.from(hidden).find((el) => el.textContent === "Junction")
     expect(textSpan).toBeDefined()
   })
 
-  it("uses the display font CSS var for the JUNCTION text span", () => {
+  it("renders the J glyph span (aria-hidden, single letter J)", () => {
     const { container } = render(<Wordmark />)
     const hidden = container.querySelectorAll('[aria-hidden="true"]')
-    const textSpan = Array.from(hidden).find((el) => el.textContent === "JUNCTION") as
+    const glyph = Array.from(hidden).find((el) => el.textContent === "J")
+    expect(glyph).toBeDefined()
+  })
+
+  it("uses Geist Sans font var for the logotype span (not Departure Mono)", () => {
+    const { container } = render(<Wordmark />)
+    const hidden = container.querySelectorAll('[aria-hidden="true"]')
+    const textSpan = Array.from(hidden).find((el) => el.textContent === "Junction") as
       | HTMLElement
       | undefined
     // In happy-dom CSS vars aren't resolved; we verify the var() reference is set.
-    // The discipline rule (Departure Mono wordmark-only) is enforced by the reviewer.
-    expect(textSpan?.style.fontFamily).toContain("var(--font-display)")
-  })
-
-  it("renders the amber node square (aria-hidden, no text)", () => {
-    const { container } = render(<Wordmark />)
-    const hidden = container.querySelectorAll('[aria-hidden="true"]')
-    const nodeSquare = Array.from(hidden).find((el) => el.textContent === "")
-    expect(nodeSquare).toBeDefined()
+    expect(textSpan?.style.fontFamily).toContain("var(--font-sans)")
+    // Departure Mono must NOT appear on the logotype.
+    expect(textSpan?.style.fontFamily).not.toContain("Departure Mono")
   })
 
   it("renders in dark mode without error", () => {

@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Credentials route — add / rotate / delete credentials from the browser.
-// Mutation pattern: POST server-fn → router.invalidate() → toast feedback.
+// Grouped by platform (multi-account wedge). Re-skinned inc 24.5; mutation fns unchanged.
 // No @junction/core import. Secret is input-only; never rendered or returned.
 
 import { createFileRoute, useRouter } from "@tanstack/react-router"
 import { Plus, RefreshCw, Trash2 } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
-import type { CredentialMeta } from "../server/data.functions.js"
+import type { CredentialMeta, PlatformMeta } from "../server/data.functions.js"
 import { getCredentials, getPlatforms } from "../server/data.functions.js"
 import {
   addCredentialFn,
@@ -32,6 +32,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  Separator,
   StatusBadge,
   Table,
   TableActionsCell,
@@ -54,7 +55,6 @@ export const Route = createFileRoute("/credentials")({
   component: CredentialsPage,
 })
 
-// Map credential kind to a badge status.
 // All stored credential kinds mean the credential was added successfully.
 // Show "Configured" — neutral, no liveness claim — until inc 28 adds live probing.
 function kindToStatus(_kind: string): "configured" {
@@ -81,28 +81,34 @@ function CredentialsPending() {
 }
 
 // ---------------------------------------------------------------------------
-// MonoCode — inline code element using the design-token monospace style.
-// Used wherever a credential id, platformId, or account is displayed inline.
+// MonoCode — inline code element for IDs, platform names, account labels.
 // ---------------------------------------------------------------------------
 
-function MonoCode({ children }: { children: React.ReactNode }) {
+function MonoCode({ children }: { readonly children: React.ReactNode }) {
   return (
-    <code style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-mono)" }}>{children}</code>
+    <code
+      style={{
+        fontFamily: "var(--font-mono)",
+        fontSize: "var(--text-mono)",
+        color: "var(--gray-900)",
+      }}
+    >
+      {children}
+    </code>
   )
 }
 
 // ---------------------------------------------------------------------------
-// Shared password field — wraps a masked Input inside a Field.
-// Used by AddCredentialDialog ("Secret") and RotateCredentialDialog ("New secret").
+// Shared password field
 // ---------------------------------------------------------------------------
 
 interface SecretFieldProps {
-  id: string
-  label: string
-  value: string
-  onChange: (v: string) => void
-  error?: string
-  placeholder?: string
+  readonly id: string
+  readonly label: string
+  readonly value: string
+  readonly onChange: (v: string) => void
+  readonly error?: string
+  readonly placeholder?: string
 }
 
 function SecretField({ id, label, value, onChange, error, placeholder }: SecretFieldProps) {
@@ -127,10 +133,10 @@ function SecretField({ id, label, value, onChange, error, placeholder }: SecretF
 // ---------------------------------------------------------------------------
 
 interface AddDialogProps {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  platforms: Array<{ id: string; displayName: string }>
-  onSuccess: () => void
+  readonly open: boolean
+  readonly onOpenChange: (open: boolean) => void
+  readonly platforms: Array<{ id: string; displayName: string }>
+  readonly onSuccess: () => void
 }
 
 function AddCredentialDialog({ open, onOpenChange, platforms, onSuccess }: AddDialogProps) {
@@ -157,7 +163,6 @@ function AddCredentialDialog({ open, onOpenChange, platforms, onSuccess }: AddDi
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    // Client-side validate required fields.
     const newErrors: typeof errors = {}
     if (!platformId) newErrors.platformId = "Platform is required"
     if (!account.trim()) newErrors.account = "Account is required"
@@ -190,7 +195,7 @@ function AddCredentialDialog({ open, onOpenChange, platforms, onSuccess }: AddDi
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Add credential</DialogTitle>
+          <DialogTitle>Add Credential</DialogTitle>
           <DialogDescription>
             Add a bearer credential for a platform. The secret is never stored in plaintext.
           </DialogDescription>
@@ -242,7 +247,7 @@ function AddCredentialDialog({ open, onOpenChange, platforms, onSuccess }: AddDi
               Cancel
             </Button>
             <Button type="submit" variant="primary" disabled={submitting}>
-              {submitting ? "Adding…" : "Add credential"}
+              {submitting ? "Adding…" : "Add Credential"}
             </Button>
           </DialogFooter>
         </form>
@@ -256,9 +261,9 @@ function AddCredentialDialog({ open, onOpenChange, platforms, onSuccess }: AddDi
 // ---------------------------------------------------------------------------
 
 interface RotateDialogProps {
-  credential: CredentialMeta | null
-  onOpenChange: (open: boolean) => void
-  onSuccess: () => void
+  readonly credential: CredentialMeta | null
+  readonly onOpenChange: (open: boolean) => void
+  readonly onSuccess: () => void
 }
 
 function RotateCredentialDialog({ credential, onOpenChange, onSuccess }: RotateDialogProps) {
@@ -307,7 +312,7 @@ function RotateCredentialDialog({ credential, onOpenChange, onSuccess }: RotateD
     <Dialog open={credential !== null} onOpenChange={handleOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Rotate credential</DialogTitle>
+          <DialogTitle>Rotate Credential</DialogTitle>
           <DialogDescription>
             Enter a new secret for <MonoCode>{credential?.account}</MonoCode> on{" "}
             <MonoCode>{credential?.platformId}</MonoCode>. The old secret is deleted from the store
@@ -330,7 +335,7 @@ function RotateCredentialDialog({ credential, onOpenChange, onSuccess }: RotateD
               Cancel
             </Button>
             <Button type="submit" variant="primary" disabled={submitting}>
-              {submitting ? "Rotating…" : "Rotate secret"}
+              {submitting ? "Rotating…" : "Rotate Secret"}
             </Button>
           </DialogFooter>
         </form>
@@ -344,9 +349,9 @@ function RotateCredentialDialog({ credential, onOpenChange, onSuccess }: RotateD
 // ---------------------------------------------------------------------------
 
 interface DeleteDialogProps {
-  credential: CredentialMeta | null
-  onOpenChange: (open: boolean) => void
-  onSuccess: () => void
+  readonly credential: CredentialMeta | null
+  readonly onOpenChange: (open: boolean) => void
+  readonly onSuccess: () => void
 }
 
 function DeleteCredentialDialog({ credential, onOpenChange, onSuccess }: DeleteDialogProps) {
@@ -380,7 +385,7 @@ function DeleteCredentialDialog({ credential, onOpenChange, onSuccess }: DeleteD
     <Dialog open={credential !== null} onOpenChange={handleOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Delete credential</DialogTitle>
+          <DialogTitle>Delete Credential</DialogTitle>
           <DialogDescription>
             Delete credential <MonoCode>{credential?.account}</MonoCode> on{" "}
             <MonoCode>{credential?.platformId}</MonoCode>? This removes the secret from the store
@@ -392,7 +397,7 @@ function DeleteCredentialDialog({ credential, onOpenChange, onSuccess }: DeleteD
             Cancel
           </Button>
           <Button type="button" variant="destructive" disabled={submitting} onClick={handleDelete}>
-            {submitting ? "Deleting…" : "Delete credential"}
+            {submitting ? "Deleting…" : "Delete Credential"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -401,7 +406,84 @@ function DeleteCredentialDialog({ credential, onOpenChange, onSuccess }: DeleteD
 }
 
 // ---------------------------------------------------------------------------
-// Main page component
+// Platform group — credentials grouped under their platform heading.
+// The multi-account wedge: multiple accounts visible under one source.
+// ---------------------------------------------------------------------------
+
+interface PlatformGroupProps {
+  readonly platformId: string
+  readonly displayName: string
+  readonly credentials: CredentialMeta[]
+  readonly onRotate: (c: CredentialMeta) => void
+  readonly onDelete: (c: CredentialMeta) => void
+}
+
+function PlatformGroup({
+  platformId,
+  displayName,
+  credentials,
+  onRotate,
+  onDelete,
+}: PlatformGroupProps) {
+  return (
+    <section aria-labelledby={`platform-${platformId}`}>
+      <h2
+        id={`platform-${platformId}`}
+        style={{
+          fontSize: "var(--text-h2)",
+          fontWeight: 600,
+          color: "var(--gray-1000)",
+          marginBottom: "8px",
+        }}
+      >
+        {displayName}
+      </h2>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Account</TableHead>
+            <TableHead>Kind</TableHead>
+            <TableHead>Status</TableHead>
+            <TableActionsHead />
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {credentials.map((c) => (
+            <TableRow key={c.id}>
+              <TableCell>{c.account}</TableCell>
+              <TableCell>
+                <MonoCode>{c.kind}</MonoCode>
+              </TableCell>
+              <TableCell>
+                <StatusBadge status={kindToStatus(c.kind)} />
+              </TableCell>
+              <TableActionsCell
+                menu={
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onSelect={() => onRotate(c)}>
+                      <RefreshCw className="h-4 w-4" aria-hidden="true" />
+                      Rotate Secret
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onSelect={() => onDelete(c)}
+                      style={{ color: "var(--status-error-fg)" }}
+                    >
+                      <Trash2 className="h-4 w-4" aria-hidden="true" />
+                      Delete
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                }
+              />
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </section>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Main page
 // ---------------------------------------------------------------------------
 
 function CredentialsPage() {
@@ -415,6 +497,19 @@ function CredentialsPage() {
     await router.invalidate()
   }
 
+  // Group credentials by platformId for the multi-account wedge display.
+  const byPlatform = new Map<string, CredentialMeta[]>()
+  for (const c of credentials) {
+    const list = byPlatform.get(c.platformId) ?? []
+    list.push(c)
+    byPlatform.set(c.platformId, list)
+  }
+
+  // Build ordered list of platform display names for group headings.
+  const platformMap = new Map<string, string>(
+    platforms.map((p: PlatformMeta) => [p.id, p.displayName]),
+  )
+
   return (
     <div>
       <PageHeader
@@ -423,7 +518,7 @@ function CredentialsPage() {
         actions={
           <Button variant="primary" onClick={() => setAddOpen(true)}>
             <Plus className="h-4 w-4" aria-hidden="true" />
-            Add credential
+            Add Credential
           </Button>
         }
       />
@@ -434,57 +529,25 @@ function CredentialsPage() {
           hint={
             <span>
               Run <MonoCode>junction credential add</MonoCode> to add one via CLI, or click{" "}
-              <strong>Add credential</strong> above.
+              <strong>Add Credential</strong> above.
             </span>
           }
         />
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>ID</TableHead>
-              <TableHead>Platform</TableHead>
-              <TableHead>Account</TableHead>
-              <TableHead>Kind</TableHead>
-              <TableHead>Status</TableHead>
-              <TableActionsHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {credentials.map((c: CredentialMeta) => (
-              <TableRow key={c.id}>
-                <TableCell>
-                  <MonoCode>{c.id}</MonoCode>
-                </TableCell>
-                <TableCell>
-                  <MonoCode>{c.platformId}</MonoCode>
-                </TableCell>
-                <TableCell>{c.account}</TableCell>
-                <TableCell style={{ color: "var(--muted)" }}>{c.kind}</TableCell>
-                <TableCell>
-                  <StatusBadge status={kindToStatus(c.kind)} />
-                </TableCell>
-                <TableActionsCell
-                  menu={
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onSelect={() => setRotatingCred(c)}>
-                        <RefreshCw className="h-4 w-4" aria-hidden="true" />
-                        Rotate secret
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onSelect={() => setDeletingCred(c)}
-                        style={{ color: "var(--status-error-fg)" }}
-                      >
-                        <Trash2 className="h-4 w-4" aria-hidden="true" />
-                        Delete
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  }
-                />
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <div style={{ display: "flex", flexDirection: "column", gap: "32px" }}>
+          {Array.from(byPlatform.entries()).map(([pid, creds], idx) => (
+            <div key={pid}>
+              {idx > 0 && <Separator style={{ marginBottom: "32px" }} />}
+              <PlatformGroup
+                platformId={pid}
+                displayName={platformMap.get(pid) ?? pid}
+                credentials={creds}
+                onRotate={setRotatingCred}
+                onDelete={setDeletingCred}
+              />
+            </div>
+          ))}
+        </div>
       )}
 
       <AddCredentialDialog

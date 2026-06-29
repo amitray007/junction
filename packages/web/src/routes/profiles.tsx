@@ -1,24 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Profiles list route with joined source metadata. No @junction/core import.
+// Profiles route — full read with route rows. No mutations yet (inc 26).
+// mcpEndpointPath is NOT shown (single-endpoint model). No @junction/core import.
 
 import { createFileRoute } from "@tanstack/react-router"
-import { getProfiles, type ProfileMeta, type SourceMeta } from "../server/data.functions.js"
-import { StatusBadge } from "../ui/badge.js"
+import { getProfiles, type ProfileMeta } from "../server/data.functions.js"
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card.js"
+import { ComingSoon, ComingSoonAction } from "../ui/coming-soon.js"
 import { PageHeader } from "../ui/page-header.js"
+import { RouteRow } from "../ui/route-row.js"
 import { Separator } from "../ui/separator.js"
 import { TableSkeleton } from "../ui/skeleton.js"
 import { EmptyState } from "../ui/states.js"
-import {
-  Table,
-  TableActionsCell,
-  TableActionsHead,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "../ui/table.js"
 
 export const Route = createFileRoute("/profiles")({
   loader: () => getProfiles(),
@@ -39,7 +31,11 @@ function ProfilesPage() {
   const profiles = Route.useLoaderData()
   return (
     <div>
-      <PageHeader title="Profiles" count={profiles.length > 0 ? profiles.length : undefined} />
+      <PageHeader
+        title="Profiles"
+        count={profiles.length > 0 ? profiles.length : undefined}
+        actions={<ComingSoonAction label="New Profile" cliHint="junction profile create" />}
+      />
 
       {profiles.length === 0 ? (
         <EmptyState
@@ -47,7 +43,13 @@ function ProfilesPage() {
           hint={
             <span>
               Run{" "}
-              <code style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-mono)" }}>
+              <code
+                style={{
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "var(--text-mono)",
+                  color: "var(--blue-text)",
+                }}
+              >
                 junction profile create
               </code>{" "}
               to create one.
@@ -55,7 +57,7 @@ function ProfilesPage() {
           }
         />
       ) : (
-        <div className="flex flex-col gap-4">
+        <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
           {profiles.map((p: ProfileMeta) => (
             <ProfileCard key={p.id} profile={p} />
           ))}
@@ -69,99 +71,68 @@ function ProfileCard({ profile }: { readonly profile: ProfileMeta }) {
   return (
     <Card>
       <CardHeader>
-        <div className="flex items-start justify-between gap-4">
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "16px",
+          }}
+        >
           <CardTitle>{profile.name}</CardTitle>
-          {/* MCP endpoint path — mono, muted */}
-          <div
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: "var(--text-mono)",
-              color: "var(--muted)",
-              wordBreak: "break-all",
-              textAlign: "right",
-              flexShrink: 0,
-            }}
-            title="MCP endpoint path"
-          >
-            {profile.mcpEndpointPath}
+          {/* N keys active — ComingSoon (junction-keys, later increment) */}
+          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <span style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)" }}>
+              Keys active
+            </span>
+            <ComingSoon />
           </div>
         </div>
       </CardHeader>
 
       {profile.sources.length > 0 && (
         <>
-          <Separator className="mb-4" />
+          <Separator style={{ marginBottom: "12px" }} />
           <CardContent>
             <p
-              className="mb-2 uppercase"
               style={{
-                fontSize: "var(--text-eyebrow)",
-                color: "var(--muted)",
-                fontFamily: "var(--font-mono)",
+                fontSize: "var(--text-caption)",
+                color: "var(--gray-700)",
                 fontWeight: 500,
-                letterSpacing: "var(--tracking-eyebrow)",
+                marginBottom: "8px",
               }}
             >
-              Sources
+              Routes
             </p>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Namespace</TableHead>
-                  <TableHead>Platform</TableHead>
-                  <TableHead>Account</TableHead>
-                  <TableHead>Status</TableHead>
-                  {/* Actions column scaffold — wired to data in inc 24+ */}
-                  <TableActionsHead />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {profile.sources.map((s: SourceMeta) => (
-                  <TableRow key={s.namespace}>
-                    <TableCell>
-                      <code
-                        style={{
-                          fontFamily: "var(--font-mono)",
-                          fontSize: "var(--text-mono)",
-                        }}
-                      >
-                        {s.namespace}
-                      </code>
-                    </TableCell>
-                    <TableCell>
-                      <code
-                        style={{
-                          fontFamily: "var(--font-mono)",
-                          fontSize: "var(--text-mono)",
-                        }}
-                      >
-                        {s.platform}
-                      </code>
-                    </TableCell>
-                    <TableCell style={{ color: "var(--muted)" }}>{s.credentialAccount}</TableCell>
-                    <TableCell>
-                      <StatusBadge status={s.enabled ? "configured" : "disabled"} />
-                    </TableCell>
-                    {/* Actions cell scaffold — no-op until inc 24+ */}
-                    <TableActionsCell />
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            {/* Route rows — the signature element (inc 24.5) */}
+            <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+              {profile.sources.map((s) => (
+                <RouteRow key={s.namespace} source={s} />
+              ))}
+            </ul>
           </CardContent>
         </>
       )}
 
       {profile.sources.length === 0 && (
         <>
-          <Separator className="mb-4" />
+          <Separator style={{ marginBottom: "12px" }} />
           <CardContent>
-            <p style={{ fontSize: "var(--text-body)", color: "var(--muted)" }}>
-              No sources configured.
+            <p style={{ fontSize: "var(--text-body)", color: "var(--gray-700)", margin: 0 }}>
+              No routes configured.
             </p>
           </CardContent>
         </>
       )}
+
+      {/* Profile mutations — ComingSoon (inc 26) */}
+      <Separator style={{ marginTop: "12px", marginBottom: "12px" }} />
+      <CardContent>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center" }}>
+          <ComingSoonAction label="Add Route" cliHint="junction profile source add" />
+          <ComingSoonAction label="Edit Tool Access" cliHint="junction profile source edit" />
+        </div>
+      </CardContent>
     </Card>
   )
 }
