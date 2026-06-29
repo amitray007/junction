@@ -10,8 +10,9 @@
   "license": "AGPL-3.0-only",
   "scripts": {
     "verify": "pnpm run docs:check && pnpm run typecheck && pnpm run lint && pnpm run test:ci && pnpm run verify:web",
-    "verify:web": "pnpm --filter @junction/core build && pnpm --filter @junction/web build && pnpm run web:leakcheck && pnpm run web:smoke && pnpm --filter @junction/web test && pnpm --filter @junction/web typecheck",
+    "verify:web": "pnpm --filter @junction/core build && pnpm --filter @junction/web build && pnpm run web:leakcheck && pnpm run web:css-tokens && pnpm run web:smoke && pnpm --filter @junction/web test && pnpm --filter @junction/web typecheck",
     "web:leakcheck": "node scripts/web-leakcheck.mjs",
+    "web:css-tokens": "node scripts/web-css-tokens.mjs",
     "web:smoke": "node scripts/web-smoke.mjs",
     "docs:check": "node scripts/check-state.mjs",
     "quality": "pnpm depcruise && pnpm syncpack:check && pnpm dup && (pnpm audit --audit-level=high || true)",
