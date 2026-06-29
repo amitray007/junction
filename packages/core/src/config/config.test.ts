@@ -245,6 +245,29 @@ describe("isValidMcpHost", () => {
   it("rejects a bare colon (empty hostname)", () => {
     expect(isValidMcpHost(":8080")).toBe(false)
   })
+
+  // FIX 3 — bracketed IPv6 support
+  it("accepts bracketed IPv6 literals (FIX 3)", () => {
+    expect(isValidMcpHost("[::1]")).toBe(true)
+    expect(isValidMcpHost("[::1]:8080")).toBe(true)
+    expect(isValidMcpHost("[2001:db8::1]:443")).toBe(true)
+  })
+
+  it("rejects bare (unbracketed) IPv6 — ambiguous with host:port (FIX 3)", () => {
+    expect(isValidMcpHost("::1")).toBe(false)
+  })
+
+  it("rejects bracketed IPv6 with non-digit port (FIX 3)", () => {
+    expect(isValidMcpHost("[::1]:abc")).toBe(false)
+  })
+
+  it("rejects unclosed bracket (FIX 3)", () => {
+    expect(isValidMcpHost("[::1")).toBe(false)
+  })
+
+  it("rejects bracketed IPv6 with unexpected suffix after ] (FIX 3)", () => {
+    expect(isValidMcpHost("[::1]garbage")).toBe(false)
+  })
 })
 
 describe("getMcpHost + setMcpHost", () => {
@@ -341,6 +364,36 @@ describe("getMcpHost + setMcpHost", () => {
       if (!result.isOk()) {
         expect(result.error.kind).toBe("invalid")
       }
+    })
+  })
+
+  // FIX 4 — empty/whitespace mcpHost in config must not suppress env fallback
+  it("FIX 4: hand-written mcpHost='' falls through to JUNCTION_MCP_HOST env var", async () => {
+    await withTempHome(async () => {
+      const paths = await ensureHome()
+      if (!paths.isOk()) throw new Error("ensureHome failed")
+      // Write a config with an explicit empty mcpHost — valid parse per schema but should be ignored.
+      await writeFile(paths.value.configFile, JSON.stringify({ version: 1, mcpHost: "" }), "utf-8")
+      process.env.JUNCTION_MCP_HOST = "env-host-fix4:9000"
+      const getResult = await getMcpHost(paths.value)
+      expect(getResult.isOk()).toBe(true)
+      if (getResult.isOk()) expect(getResult.value).toBe("env-host-fix4:9000")
+    })
+  })
+
+  it("FIX 4: hand-written mcpHost='   ' (whitespace) falls through to env var", async () => {
+    await withTempHome(async () => {
+      const paths = await ensureHome()
+      if (!paths.isOk()) throw new Error("ensureHome failed")
+      await writeFile(
+        paths.value.configFile,
+        JSON.stringify({ version: 1, mcpHost: "   " }),
+        "utf-8",
+      )
+      process.env.JUNCTION_MCP_HOST = "env-host-fix4:9001"
+      const getResult = await getMcpHost(paths.value)
+      expect(getResult.isOk()).toBe(true)
+      if (getResult.isOk()) expect(getResult.value).toBe("env-host-fix4:9001")
     })
   })
 

@@ -13,6 +13,8 @@ export { cn } from "./cn.js"
 export type { MonoChipProps, MonoCodeProps } from "./code.js"
 export { MonoChip, MonoCode } from "./code.js"
 export { ComingSoon, ComingSoonAction } from "./coming-soon.js"
+export type { ConfirmDialogProps } from "./confirm-dialog.js"
+export { ConfirmDialog } from "./confirm-dialog.js"
 export {
   Dialog,
   DialogClose,

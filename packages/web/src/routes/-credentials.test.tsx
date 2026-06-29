@@ -62,7 +62,7 @@ vi.mock("../server/mutations.functions.js", () => ({
   removeCredentialFn: (...args: unknown[]) => mockRemoveCredentialFn(...args),
 }))
 
-const { Route } = await import("./credentials.js")
+const { Route, FlatCredentialsTable } = await import("./credentials.js")
 // biome-ignore lint/suspicious/noExplicitAny: test utility — typing the internal options shape is not worth the boilerplate
 const CredentialsPage = (Route as any).options.component as React.FC
 
@@ -243,7 +243,7 @@ describe("CredentialsPage", () => {
       { id: "c2", platformId: "linear", account: "alice", kind: "bearer" },
     ]
     mockUseLoaderData.mockReturnValue({ credentials: creds, platforms })
-    const { getByRole, queryAllByText } = render(<CredentialsPage />)
+    const { getByRole } = render(<CredentialsPage />)
 
     const table = getByRole("table")
     const sortButtons = Array.from(table.querySelectorAll("th button[type='button']"))
@@ -283,27 +283,42 @@ describe("CredentialsPage", () => {
     expect(aliceCount + bobCount).toBe(manyCredentials.length)
   })
 
-  it("paginates correctly with small page slice — page 2 shows next slice", () => {
-    // Build 4 credentials to test pagination with a page-size of 2 (drive via direct
-    // page control). We can't override PAGE_SIZE from the test, so we verify that
-    // the TablePagination renders a valid page indicator.
-    // For the real PAGE_SIZE=25, use manyCredentials (7 < 25 → all on page 1).
-    // For a proper pagination test, use 26+ items — but generating 26 fixture rows
-    // in a unit test is verbose. Instead, verify the pagination control responds
-    // correctly: with 7 items / page 25, pageCount = 1; first/prev are disabled.
-    mockUseLoaderData.mockReturnValue({ credentials: manyCredentials, platforms })
-    const { getByRole } = render(<CredentialsPage />)
+  it("paginates: page 2 shows the next slice and page 1's rows are gone (pageSize=2, 7 rows)", () => {
+    // Render the table directly with pageSize=2 → 7 credentials = 4 pages, so the
+    // slicing logic genuinely executes (the route's real PAGE_SIZE=25 never paginates
+    // the test fixtures). IDs cred-1..cred-7 are stable mono cells we can assert on.
+    const onRotate = vi.fn()
+    const onDelete = vi.fn()
+    const { getByRole, queryByText, getByText } = render(
+      <FlatCredentialsTable
+        credentials={manyCredentials}
+        platforms={platforms}
+        onRotate={onRotate}
+        onDelete={onDelete}
+        pageSize={2}
+      />,
+    )
     const nav = getByRole("navigation", { name: /page navigation/i })
-    // First and prev buttons disabled on page 1
+    // Page 1: first two IDs present, third absent. (IDs render truncated, so match a prefix.)
+    expect(getByText(/cred-1/)).toBeTruthy()
+    expect(getByText(/cred-2/)).toBeTruthy()
+    expect(queryByText(/cred-3/)).toBeNull()
+    // First/prev disabled on page 1; next enabled.
     const firstBtn = nav.querySelector("button[aria-label='First page']") as HTMLButtonElement
     const prevBtn = nav.querySelector("button[aria-label='Previous page']") as HTMLButtonElement
-    expect(firstBtn?.disabled).toBe(true)
-    expect(prevBtn?.disabled).toBe(true)
-    // Next and last also disabled since all items fit on page 1
     const nextBtn = nav.querySelector("button[aria-label='Next page']") as HTMLButtonElement
-    const lastBtn = nav.querySelector("button[aria-label='Last page']") as HTMLButtonElement
-    expect(nextBtn?.disabled).toBe(true)
-    expect(lastBtn?.disabled).toBe(true)
+    expect(firstBtn.disabled).toBe(true)
+    expect(prevBtn.disabled).toBe(true)
+    expect(nextBtn.disabled).toBe(false)
+    // Click Next → page 2 shows the next slice (cred-3, cred-4); page-1 rows gone.
+    fireEvent.click(nextBtn)
+    expect(getByText(/cred-3/)).toBeTruthy()
+    expect(getByText(/cred-4/)).toBeTruthy()
+    expect(queryByText(/cred-1/)).toBeNull()
+    // First/prev now enabled.
+    expect(
+      (nav.querySelector("button[aria-label='Previous page']") as HTMLButtonElement).disabled,
+    ).toBe(false)
   })
 
   it("pagination shows correct total count", () => {

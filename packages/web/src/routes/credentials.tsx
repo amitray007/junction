@@ -20,6 +20,7 @@ import {
 import { MonoCode } from "../ui/code.js"
 import {
   Button,
+  ConfirmDialog,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -28,6 +29,7 @@ import {
   DialogTitle,
   DropdownMenuContent,
   DropdownMenuItem,
+  EmptyTableRow,
   Field,
   Input,
   PageHeader,
@@ -50,7 +52,6 @@ import {
   TableRow,
   TableSkeleton,
 } from "../ui/index.js"
-import { EmptyTableRow } from "../ui/table.js"
 
 export const Route = createFileRoute("/credentials")({
   loader: async () => {
@@ -340,7 +341,7 @@ function RotateCredentialDialog({ credential, onOpenChange, onSuccess }: RotateD
 }
 
 // ---------------------------------------------------------------------------
-// Delete confirmation dialog
+// Delete confirmation dialog — uses shared ConfirmDialog (FIX 5).
 // ---------------------------------------------------------------------------
 
 interface DeleteDialogProps {
@@ -350,53 +351,39 @@ interface DeleteDialogProps {
 }
 
 function DeleteCredentialDialog({ credential, onOpenChange, onSuccess }: DeleteDialogProps) {
-  const [submitting, setSubmitting] = useState(false)
-
-  function handleOpenChange(next: boolean) {
-    if (!next) setSubmitting(false)
-    onOpenChange(next)
-  }
-
-  async function handleDelete() {
-    if (!credential) return
-    setSubmitting(true)
+  async function handleConfirm(): Promise<boolean> {
+    if (!credential) return false
     try {
       const result = await removeCredentialFn({ data: { credentialId: credential.id } })
       if (!result.ok) {
         toast.error(`Failed to delete credential: ${result.error}`)
-        setSubmitting(false)
-        return
+        return false
       }
       toast.success("Credential deleted")
-      handleOpenChange(false)
       onSuccess()
+      return true
     } catch {
       toast.error("Failed to delete credential")
-      setSubmitting(false)
+      return false
     }
   }
 
   return (
-    <Dialog open={credential !== null} onOpenChange={handleOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Delete Credential</DialogTitle>
-          <DialogDescription>
-            Delete credential <MonoCode>{credential?.account}</MonoCode> on{" "}
-            <MonoCode>{credential?.platformId}</MonoCode>? This removes the secret from the store
-            and cannot be undone.
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <Button type="button" variant="secondary" onClick={() => handleOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button type="button" variant="destructive" disabled={submitting} onClick={handleDelete}>
-            {submitting ? "Deleting…" : "Delete Credential"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <ConfirmDialog
+      open={credential !== null}
+      title="Delete Credential"
+      description={
+        <>
+          Delete credential <MonoCode>{credential?.account}</MonoCode> on{" "}
+          <MonoCode>{credential?.platformId}</MonoCode>? This removes the secret from the store and
+          cannot be undone.
+        </>
+      }
+      confirmLabel="Delete Credential"
+      confirmingLabel="Deleting…"
+      onConfirm={handleConfirm}
+      onOpenChange={onOpenChange}
+    />
   )
 }
 
@@ -417,9 +404,19 @@ interface FlatTableProps {
   readonly platforms: PlatformMeta[]
   readonly onRotate: (c: CredentialMeta) => void
   readonly onDelete: (c: CredentialMeta) => void
+  /** Page size; defaults to PAGE_SIZE. A test seam so pagination slicing is exercisable. */
+  readonly pageSize?: number
 }
 
-function FlatCredentialsTable({ credentials, platforms, onRotate, onDelete }: FlatTableProps) {
+// Exported for direct unit testing of the search/sort/pagination logic (the
+// pageSize prop lets a test exercise a real second page without 25+ fixtures).
+export function FlatCredentialsTable({
+  credentials,
+  platforms,
+  onRotate,
+  onDelete,
+  pageSize = PAGE_SIZE,
+}: FlatTableProps) {
   const [search, setSearch] = useState("")
   const [sortKey, setSortKey] = useState<SortKey>("none")
   const [sortDir, setSortDir] = useState<SortDir>("ascending")
@@ -474,10 +471,10 @@ function FlatCredentialsTable({ credentials, platforms, onRotate, onDelete }: Fl
   }, [filtered, sortKey, sortDir, platformMap])
 
   // Pagination — page resets when search/sort changes.
-  const pageCount = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE))
+  const pageCount = Math.max(1, Math.ceil(sorted.length / pageSize))
   const clampedPage = Math.min(page, pageCount)
-  const pageStart = (clampedPage - 1) * PAGE_SIZE
-  const pageSlice = sorted.slice(pageStart, pageStart + PAGE_SIZE)
+  const pageStart = (clampedPage - 1) * pageSize
+  const pageSlice = sorted.slice(pageStart, pageStart + pageSize)
 
   function handleSort(key: SortKey) {
     if (sortKey === key) {

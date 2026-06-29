@@ -17,8 +17,13 @@ import { createFileRoute, useRouter } from "@tanstack/react-router"
 import { ChevronRight, Plus, PlusCircle, Power, PowerOff, Trash2 } from "lucide-react"
 import { useMemo, useState } from "react"
 import { toast } from "sonner"
-import type { PlatformMeta, ProfileMeta, SourceMeta } from "../server/data.functions.js"
-import { getPlatforms, getProfiles } from "../server/data.functions.js"
+import type {
+  CredentialMeta,
+  PlatformMeta,
+  ProfileMeta,
+  SourceMeta,
+} from "../server/data.functions.js"
+import { getCredentials, getPlatforms, getProfiles } from "../server/data.functions.js"
 import {
   addRouteFn,
   createProfileFn,
@@ -30,6 +35,7 @@ import { MonoCode } from "../ui/code.js"
 import { ComingSoon } from "../ui/coming-soon.js"
 import {
   Button,
+  ConfirmDialog,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -63,8 +69,12 @@ import {
 
 export const Route = createFileRoute("/profiles")({
   loader: async () => {
-    const [profiles, platforms] = await Promise.all([getProfiles(), getPlatforms()])
-    return { profiles, platforms }
+    const [profiles, platforms, credentials] = await Promise.all([
+      getProfiles(),
+      getPlatforms(),
+      getCredentials(),
+    ])
+    return { profiles, platforms, credentials }
   },
   pendingComponent: ProfilesPending,
   component: ProfilesPage,
@@ -188,7 +198,7 @@ function CreateProfileDialog({ open, onOpenChange, onSuccess }: CreateProfileDia
 }
 
 // ---------------------------------------------------------------------------
-// Delete profile dialog
+// Delete profile dialog — uses shared ConfirmDialog (FIX 5).
 // ---------------------------------------------------------------------------
 
 interface DeleteProfileDialogProps {
@@ -198,64 +208,54 @@ interface DeleteProfileDialogProps {
 }
 
 function DeleteProfileDialog({ profile, onOpenChange, onSuccess }: DeleteProfileDialogProps) {
-  const [submitting, setSubmitting] = useState(false)
-
-  function handleOpenChange(next: boolean) {
-    if (!next) setSubmitting(false)
-    onOpenChange(next)
-  }
-
-  async function handleDelete() {
-    if (!profile) return
-    setSubmitting(true)
+  async function handleConfirm(): Promise<boolean> {
+    if (!profile) return false
     try {
       const result = await deleteProfileFn({ data: { profileId: profile.id } })
       if (!result.ok) {
         toast.error(`Failed to delete profile: ${result.error}`)
-        setSubmitting(false)
-        return
+        return false
       }
       toast.success(`Profile "${profile.name}" deleted`)
-      handleOpenChange(false)
       onSuccess()
+      return true
     } catch {
       toast.error("Failed to delete profile")
-      setSubmitting(false)
+      return false
     }
   }
 
   return (
-    <Dialog open={profile !== null} onOpenChange={handleOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Delete Profile</DialogTitle>
-          <DialogDescription>
-            Delete profile <MonoCode>{profile?.name}</MonoCode>? All routes will be removed and this
-            cannot be undone.
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <Button type="button" variant="secondary" onClick={() => handleOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button type="button" variant="destructive" disabled={submitting} onClick={handleDelete}>
-            {submitting ? "Deleting…" : "Delete Profile"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <ConfirmDialog
+      open={profile !== null}
+      title="Delete Profile"
+      description={
+        <>
+          Delete profile <MonoCode>{profile?.name}</MonoCode>? All routes will be removed and this
+          cannot be undone.
+        </>
+      }
+      confirmLabel="Delete Profile"
+      confirmingLabel="Deleting…"
+      onConfirm={handleConfirm}
+      onOpenChange={onOpenChange}
+    />
   )
 }
 
 // ---------------------------------------------------------------------------
-// Add route dialog
+// Add route dialog (FIX 6: includes credential picker to complete the multi-account wedge)
 // ---------------------------------------------------------------------------
+
+// Sentinel value for "no credential" select option (public/no-auth source).
+const NO_CREDENTIAL = "__none__"
 
 interface AddRouteDialogProps {
   readonly open: boolean
   readonly onOpenChange: (open: boolean) => void
   readonly profileId: string
   readonly platforms: PlatformMeta[]
+  readonly credentials: CredentialMeta[]
   readonly onSuccess: () => void
 }
 
@@ -264,15 +264,24 @@ function AddRouteDialog({
   onOpenChange,
   profileId,
   platforms,
+  credentials,
   onSuccess,
 }: AddRouteDialogProps) {
   const [platformId, setPlatformId] = useState("")
+  const [credentialId, setCredentialId] = useState(NO_CREDENTIAL)
   const [namespace, setNamespace] = useState("")
   const [errors, setErrors] = useState<{ platformId?: string; namespace?: string }>({})
   const [submitting, setSubmitting] = useState(false)
 
+  // Filter credentials to those belonging to the selected platform.
+  const platformCredentials = useMemo(
+    () => credentials.filter((c) => c.platformId === platformId),
+    [credentials, platformId],
+  )
+
   function reset() {
     setPlatformId("")
+    setCredentialId(NO_CREDENTIAL)
     setNamespace("")
     setErrors({})
     setSubmitting(false)
@@ -281,6 +290,13 @@ function AddRouteDialog({
   function handleOpenChange(next: boolean) {
     if (!next) reset()
     onOpenChange(next)
+  }
+
+  function handlePlatformChange(id: string) {
+    setPlatformId(id)
+    // Reset credential selection when platform changes — previous cred belongs to old platform.
+    setCredentialId(NO_CREDENTIAL)
+    if (errors.platformId) setErrors((prev) => ({ ...prev, platformId: undefined }))
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -295,7 +311,13 @@ function AddRouteDialog({
     setSubmitting(true)
     try {
       const result = await addRouteFn({
-        data: { profileId, platformId, namespace: namespace.trim() },
+        data: {
+          profileId,
+          platformId,
+          namespace: namespace.trim(),
+          // omit credentialId when the user chose "No credential (public/no-auth)"
+          ...(credentialId !== NO_CREDENTIAL ? { credentialId } : {}),
+        },
       })
       if (!result.ok) {
         toast.error(`Failed to add route: ${result.error}`)
@@ -325,7 +347,7 @@ function AddRouteDialog({
         <form onSubmit={handleSubmit} noValidate>
           <div className="flex flex-col gap-4">
             <Field id="route-platform" label="Platform" error={errors.platformId}>
-              <Select value={platformId} onValueChange={setPlatformId}>
+              <Select value={platformId} onValueChange={handlePlatformChange}>
                 <SelectTrigger id="route-platform" aria-required="true">
                   <SelectValue placeholder="Select a platform" />
                 </SelectTrigger>
@@ -333,6 +355,27 @@ function AddRouteDialog({
                   {platforms.map((p) => (
                     <SelectItem key={p.id} value={p.id}>
                       {p.displayName}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+            {/* Credential select — shows credentials for the selected platform.
+                "No credential" is always offered (public/no-auth source). */}
+            <Field
+              id="route-credential"
+              label="Credential"
+              description="Choose which account to use for this platform source."
+            >
+              <Select value={credentialId} onValueChange={setCredentialId}>
+                <SelectTrigger id="route-credential">
+                  <SelectValue placeholder="No credential (public/no-auth)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_CREDENTIAL}>No credential (public/no-auth)</SelectItem>
+                  {platformCredentials.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.account}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -387,7 +430,7 @@ function AddRouteDialog({
 }
 
 // ---------------------------------------------------------------------------
-// Remove route confirmation dialog
+// Remove route confirmation dialog — uses shared ConfirmDialog (FIX 5).
 // ---------------------------------------------------------------------------
 
 interface RemoveRouteDialogProps {
@@ -398,52 +441,38 @@ interface RemoveRouteDialogProps {
 }
 
 function RemoveRouteDialog({ route, onOpenChange, profileId, onSuccess }: RemoveRouteDialogProps) {
-  const [submitting, setSubmitting] = useState(false)
-
-  function handleOpenChange(next: boolean) {
-    if (!next) setSubmitting(false)
-    onOpenChange(next)
-  }
-
-  async function handleRemove() {
-    if (!route) return
-    setSubmitting(true)
+  async function handleConfirm(): Promise<boolean> {
+    if (!route) return false
     try {
       const result = await removeRouteFn({ data: { profileId, namespace: route.namespace } })
       if (!result.ok) {
         toast.error(`Failed to remove route: ${result.error}`)
-        setSubmitting(false)
-        return
+        return false
       }
       toast.success(`Route "${route.namespace}" removed`)
-      handleOpenChange(false)
       onSuccess()
+      return true
     } catch {
       toast.error("Failed to remove route")
-      setSubmitting(false)
+      return false
     }
   }
 
   return (
-    <Dialog open={route !== null} onOpenChange={handleOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Remove Route</DialogTitle>
-          <DialogDescription>
-            Remove route <MonoCode>{route?.namespace}</MonoCode> from this profile? This cannot be
-            undone.
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <Button type="button" variant="secondary" onClick={() => handleOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button type="button" variant="destructive" disabled={submitting} onClick={handleRemove}>
-            {submitting ? "Removing…" : "Remove Route"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <ConfirmDialog
+      open={route !== null}
+      title="Remove Route"
+      description={
+        <>
+          Remove route <MonoCode>{route?.namespace}</MonoCode> from this profile? This cannot be
+          undone.
+        </>
+      }
+      confirmLabel="Remove Route"
+      confirmingLabel="Removing…"
+      onConfirm={handleConfirm}
+      onOpenChange={onOpenChange}
+    />
   )
 }
 
@@ -564,11 +593,18 @@ function RouteTable({ profile, onToggle, onRemove }: RouteTableProps) {
 interface ProfileDetailProps {
   readonly profile: ProfileMeta
   readonly platforms: PlatformMeta[]
+  readonly credentials: CredentialMeta[]
   readonly onMutate: () => void
   readonly onDeleteProfile: (p: ProfileMeta) => void
 }
 
-function ProfileDetail({ profile, platforms, onMutate, onDeleteProfile }: ProfileDetailProps) {
+function ProfileDetail({
+  profile,
+  platforms,
+  credentials,
+  onMutate,
+  onDeleteProfile,
+}: ProfileDetailProps) {
   const [addRouteOpen, setAddRouteOpen] = useState(false)
   const [removingRoute, setRemovingRoute] = useState<SourceMeta | null>(null)
 
@@ -669,6 +705,7 @@ function ProfileDetail({ profile, platforms, onMutate, onDeleteProfile }: Profil
         onOpenChange={setAddRouteOpen}
         profileId={profile.id}
         platforms={platforms}
+        credentials={credentials}
         onSuccess={onMutate}
       />
       <RemoveRouteDialog
@@ -791,7 +828,11 @@ function ProfileListItem({ profile, selected, onSelect }: ProfileListItemProps) 
 // ---------------------------------------------------------------------------
 
 function ProfilesPage() {
-  const { profiles, platforms }: { profiles: ProfileMeta[]; platforms: PlatformMeta[] } =
+  const {
+    profiles,
+    platforms,
+    credentials,
+  }: { profiles: ProfileMeta[]; platforms: PlatformMeta[]; credentials: CredentialMeta[] } =
     Route.useLoaderData()
   const router = useRouter()
   const [selectedId, setSelectedId] = useState<string | null>(
@@ -934,6 +975,7 @@ function ProfilesPage() {
               <ProfileDetail
                 profile={selectedProfile}
                 platforms={platforms}
+                credentials={credentials}
                 onMutate={invalidate}
                 onDeleteProfile={(p) => setDeletingProfile(p)}
               />
@@ -958,14 +1000,13 @@ function ProfilesPage() {
       <DeleteProfileDialog
         profile={deletingProfile}
         onOpenChange={(open) => {
-          if (!open) {
-            const id = deletingProfile?.id
-            setDeletingProfile(null)
-            if (id) void invalidateAndClearIfDeleted(id)
-          }
+          if (!open) setDeletingProfile(null)
         }}
         onSuccess={() => {
-          // already handled in onOpenChange
+          // A successful delete: clear selection if the deleted profile was selected,
+          // then invalidate. Only runs on actual delete (not cancel).
+          const id = deletingProfile?.id
+          if (id) void invalidateAndClearIfDeleted(id)
         }}
       />
 

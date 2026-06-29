@@ -117,11 +117,6 @@
   --topbar-height: 2.75rem;       /* 44px */
   --content-max: 76rem;           /* 1216px — inc 24.6: use the width, left-aligned (DESIGN.md §Spacing) */
 
-  /* ── Dashboard layout (inc 25 phase 2) ─────────────────────────────── */
-  /* Single primary column: Connect an Agent (hero) → At-a-Glance → System → Activity. */
-  /* .stat-strip drives the 3-equal-cell At-a-Glance row; collapses below breakpoint. */
-  --stat-strip-breakpoint: 28rem;   /* 448px — below this, stat strip stacks to 1 col */
-
   /* ── Z-index scale ──────────────────────────────────────────────────── */
   --z-sidebar: 50;
   --z-topbar: 30;
@@ -255,8 +250,6 @@ html[data-sidebar="collapsed"] {
   --width-sidebar: var(--sidebar-width);
   --width-sidebar-icon: var(--sidebar-width-icon);
   --height-topbar: var(--topbar-height);
-  /* --dashboard-col-* consumed via raw var() in .dashboard-grid — no @theme entries
-     (those would be self-referential; the correct pattern is alias like --width-sidebar). */
 }
 
 /* ─── Stat strip — At-a-Glance equal-cell row (inc 25 phase 2) ──────────── */
@@ -326,11 +319,17 @@ body {
   outline: none;
 }
 
-/* ─── Reduced-motion: sidebar layout ────────────────────────────────────── */
-/* The sidebar collapse is intentionally instant (no width/margin animation)
-   to avoid animating layout properties. This block is kept as a safety net
-   in case a future change re-introduces a transition. */
+/* ─── Reduced-motion: global safety net ─────────────────────────────────── */
+/* Global rule eliminates all transitions and animations for users who prefer
+   reduced motion. The sidebar-specific rules below are kept for clarity but
+   the `*, *::before, *::after` block is the authoritative gate. */
 @media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+  }
   aside[aria-label="Main navigation"] {
     transition: none !important;
   }

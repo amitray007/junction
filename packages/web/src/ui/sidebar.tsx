@@ -192,8 +192,15 @@ export function readStoredTheme(): ThemePreference {
   try {
     const v = localStorage.getItem("junction-theme")
     if (v === "light" || v === "dark") return v
+    // No explicit preference stored — THEME_SCRIPT already set data-theme from
+    // OS prefers-color-scheme. Mirror what the script applied so the toggle label
+    // matches the rendered theme on first paint (FIX 2: OS-light first-visit desync).
+    const applied = document.documentElement.getAttribute("data-theme")
+    if (applied === "light" || applied === "dark") return applied
+    // Fall back to OS preference, then dark.
+    if (window.matchMedia?.("(prefers-color-scheme: light)").matches) return "light"
   } catch {
-    // no localStorage (SSR or private browsing)
+    // no localStorage / document (SSR or private browsing)
   }
   return "dark"
 }

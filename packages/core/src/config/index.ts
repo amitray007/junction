@@ -132,7 +132,15 @@ function isNodeError(value: unknown): value is NodeJS.ErrnoException {
  * override an operator-provided environment default.
  */
 export function getMcpHost(paths: JunctionPaths): ResultAsync<string | undefined, ConfigError> {
-  return loadConfig(paths).map((c) => c.mcpHost ?? process.env.JUNCTION_MCP_HOST ?? undefined)
+  // Treat an empty/whitespace mcpHost as absent — fall through to env var.
+  // This prevents `{version:1, mcpHost:""}` (a valid parse per the schema) from
+  // short-circuiting the JUNCTION_MCP_HOST env fallback via the `??` operator.
+  return loadConfig(paths).map((c) => {
+    const stored = c.mcpHost?.trim()
+    return stored !== undefined && stored !== ""
+      ? stored
+      : (process.env.JUNCTION_MCP_HOST ?? undefined)
+  })
 }
 
 /**
@@ -141,9 +149,14 @@ export function getMcpHost(paths: JunctionPaths): ResultAsync<string | undefined
  * Rules (permissive — rejects obvious garbage, not a strict RFC parser):
  *   - Must be non-empty after trimming.
  *   - Must not contain whitespace, control characters, or a scheme (`://`).
- *   - Allows: `hostname`, `hostname:port`, dotted names, `localhost`, IPv4, `[IPv6]`.
+ *   - Allows: `hostname`, `hostname:port`, dotted names, `localhost`, IPv4.
+ *   - Allows bracketed IPv6: `[::1]`, `[::1]:8080`, `[2001:db8::1]:443`.
+ *   - Rejects bare (unbracketed) IPv6 like `::1` — ambiguous with host:port.
+ *   - Port (if present) must be digits only.
  *
  * Does NOT require `https://` — the caller supplies the scheme when building the URL.
+ * Does NOT fully RFC-validate the IPv6 literal — bracket presence + optional digit port
+ * is sufficient for the self-hosted use case.
  */
 export function isValidMcpHost(host: string): boolean {
   const trimmed = host.trim()
@@ -158,6 +171,23 @@ export function isValidMcpHost(host: string): boolean {
   }
   // Reject anything that already contains a scheme (user confusion guard).
   if (trimmed.includes("://")) return false
+
+  // Bracketed IPv6: `[<literal>]` or `[<literal>]:<port>`
+  if (trimmed.startsWith("[")) {
+    const closingBracket = trimmed.indexOf("]")
+    if (closingBracket === -1) return false // unclosed bracket
+    const afterBracket = trimmed.slice(closingBracket + 1)
+    // Nothing after bracket → bare `[::1]` is valid.
+    if (afterBracket === "") return true
+    // `:port` after bracket → port must be digits only.
+    if (afterBracket.startsWith(":")) {
+      const port = afterBracket.slice(1)
+      return /^\d+$/.test(port)
+    }
+    return false // unexpected suffix after `]`
+  }
+
+  // Non-bracketed: `hostname` or `hostname:port`.
   // Must be at least one non-colon character (not just ":8080").
   const colonIdx = trimmed.indexOf(":")
   const hostname = colonIdx === -1 ? trimmed : trimmed.slice(0, colonIdx)
