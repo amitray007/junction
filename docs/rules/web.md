@@ -67,11 +67,15 @@ Rules for `packages/web/` — the TanStack Start SSR dashboard. Each rule is a c
 
 The `web-build` CI job runs on every push/PR and:
 1. Builds the web package (`pnpm --filter @junction/web build`).
-2. Runs the client-bundle leak grep (must exit 0 / empty output).
-3. Runs web component tests (`pnpm --filter @junction/web test`).
-4. Runs web typecheck (`pnpm --filter @junction/web typecheck`).
+2. Runs the client-bundle leak grep (`pnpm web:leakcheck` — must exit 0).
+3. **Runs the CSS custom-property gate (`pnpm web:css-tokens` — must exit 0, added inc chore/cli-flake-and-css-token-gate).**
+4. Runs the smoke test (`pnpm web:smoke` — SSR + styling + leak-free).
+5. Runs web component tests (`pnpm --filter @junction/web test`).
+6. Runs web typecheck (`pnpm --filter @junction/web typecheck`).
 
 This gate enforces the server-only-core boundary in CI — a planted `@junction/core` import in a client route will fail step 1 (Vite build error) and step 2 (leak grep), whichever fires first.
+
+**`web:css-tokens` gate (step 3):** enforces the tokens-only rule. Parses every `var(--token)` reference in `packages/web/src/**/*.{ts,tsx,css}` and fails (exit 1) if any token is not defined in `app.css`. Catches the silent CSS custom-prop fallback bug (undefined tokens silently degrade — no build error, no console warning). Script: `scripts/web-css-tokens.mjs`. Runtime-injected vars (Radix UI `--radix-*`) are in a documented allowlist inside the script. Positive control: asserts `--gray-1000` is both defined and referenced.
 
 ## Anti-AI-slop checklist (a gate, per DESIGN.md north star "not AI-slop")
 
