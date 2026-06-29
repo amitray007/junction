@@ -2,7 +2,7 @@
 // Field — label + control + inline error/description, a11y-wired.
 // Associates a label with its control via htmlFor; injects aria-describedby
 // onto the direct child control so screen readers announce the error/description
-// when the control receives focus. Built inc 23; wired to writes inc 24+.
+// when the control receives focus.
 
 import { Children, cloneElement, isValidElement, type ReactNode } from "react"
 import { cn } from "./cn.js"
@@ -30,9 +30,6 @@ export function Field({ id, label, error, description, children, className }: Fi
   // screen readers announce the error/description when the input is focused.
   // cloneElement is safe here because Field's contract is "one control child"
   // and all our primitives accept standard HTMLElement props.
-  // aria-invalid is only injected when error is present; if the control already
-  // sets its own aria-invalid (e.g. Input via hasError), the injected value
-  // is the same (true), so there is no conflict.
   const control = (() => {
     const child = Children.only(children)
     if (!isValidElement(child)) return child
@@ -46,46 +43,34 @@ export function Field({ id, label, error, description, children, className }: Fi
 
   return (
     <div className={cn("flex flex-col gap-1.5", className)}>
-      {/* Label */}
       <label
         htmlFor={id}
         style={{
-          fontSize: "var(--text-body)",
+          fontSize: "var(--text-label)",
           fontWeight: 500,
-          color: "var(--fg)",
+          color: "var(--gray-1000)",
           lineHeight: 1.25,
         }}
       >
         {label}
       </label>
 
-      {/* Control — aria-describedby injected above */}
       {control}
 
-      {/* Description */}
       {description && (
         <p
           id={descriptionId}
-          style={{
-            fontSize: "var(--text-eyebrow)",
-            color: "var(--muted)",
-            margin: 0,
-          }}
+          style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)", margin: 0 }}
         >
           {description}
         </p>
       )}
 
-      {/* Inline error */}
       {error && (
         <p
           id={errorId}
           role="alert"
-          style={{
-            fontSize: "var(--text-eyebrow)",
-            color: "var(--status-error-fg)",
-            margin: 0,
-          }}
+          style={{ fontSize: "var(--text-caption)", color: "var(--status-error-fg)", margin: 0 }}
         >
           {error}
         </p>

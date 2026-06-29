@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// <Wordmark /> — the ONLY component that uses Departure Mono.
-// "JUNCTION" + amber square node (the patch-point glyph).
-// Discipline rule: Departure Mono is display-only. Never use it elsewhere.
+// Wordmark — J glyph + "Junction" lockup (Geist Sans).
+// Replaces the inc-23 Departure Mono "JUNCTION" + amber square (retired inc 24.5).
+// The J glyph is a small rounded-square mark in gray-1000; text is Geist Sans.
 
 import type { HTMLAttributes } from "react"
 import { cn } from "./cn.js"
@@ -12,29 +12,45 @@ export function Wordmark({ className, ...props }: WordmarkProps) {
   return (
     <span
       role="img"
-      className={cn("inline-flex items-center gap-1.5 select-none", className)}
+      className={cn("inline-flex items-center gap-2 select-none", className)}
       aria-label="Junction"
       {...props}
     >
-      {/* The one Departure Mono usage in the entire app */}
-      <span
-        style={{ fontFamily: "var(--font-display)", fontSize: "15px", letterSpacing: "0.04em" }}
-        aria-hidden="true"
-      >
-        JUNCTION
-      </span>
-      {/* Amber square node — the patch-point glyph. Deliberately radius-0 (the one sharp element). */}
+      {/* J glyph — small rounded-square mark */}
       <span
         aria-hidden="true"
         style={{
-          display: "inline-block",
-          width: "6px",
-          height: "6px",
-          borderRadius: "0",
-          backgroundColor: "var(--accent-fill)",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: "20px",
+          height: "20px",
+          borderRadius: "var(--radius-6)",
+          backgroundColor: "var(--gray-1000)",
+          color: "var(--bg-100)",
+          fontFamily: "var(--font-sans)",
+          fontSize: "12px",
+          fontWeight: 700,
+          lineHeight: 1,
           flexShrink: 0,
         }}
-      />
+      >
+        J
+      </span>
+      {/* Logotype */}
+      <span
+        aria-hidden="true"
+        style={{
+          fontFamily: "var(--font-sans)",
+          fontSize: "15px",
+          fontWeight: 600,
+          color: "var(--gray-1000)",
+          letterSpacing: "-0.01em",
+          lineHeight: 1,
+        }}
+      >
+        Junction
+      </span>
     </span>
   )
 }

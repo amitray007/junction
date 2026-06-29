@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: AGPL-3.0-only */
-/* @junction/web — tokenized design system. Tailwind v4 CSS-first theme.      */
+/* @junction/web — Geist-grade design system. Tailwind v4 CSS-first theme.    */
 /* All values trace to docs/design/DESIGN.md — no magic numbers in components. */
+/* Inc 24.5: complete rewrite from inc-23 instrument system (amber/zinc/Departure) */
+/* to Geist numbered-intent tokens. See docs/design/DESIGN.md for the contract.  */
 
 @import "tailwindcss";
 
@@ -23,116 +25,106 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* Departure Mono — display face, wordmark ONLY (review-enforced) */
-@font-face {
-  font-family: "Departure Mono";
-  src: url("./fonts/DepartureMono-Regular.woff2") format("woff2");
-  font-weight: 400;
-  font-display: block; /* block: avoid FOUT on the wordmark */
-}
+/* Departure Mono retired inc 24.5 — @font-face, woff2, and OFL file all removed. */
 
 /* ─── Design tokens (:root = light, overridden for dark) ────────────────── */
+/* DESIGN.md §Color — Geist numbered-intent model                             */
 
 :root {
-  /* Accent — Signal Amber (interaction / live rail) */
-  --accent: #b45309;
-  --accent-fill: #d97706;
-  --accent-fg: #ffffff;
+  /* ── Neutrals — Geist gray ramp ──────────────────────────────────────── */
+  --bg-100: #ffffff;          /* page bg, card bg (light = true white) */
+  --bg-200: #fafafa;          /* subtle separation only — never general fill */
+  --gray-100: #f2f2f2;        /* hover fill */
+  --gray-400: #cfcfcf;        /* strong border */
+  --gray-600: #8f8f8f;        /* faint text / off-state (same in light+dark) */
+  --gray-700: #6f6f6f;        /* disabled text */
+  --gray-900: #525252;        /* secondary text */
+  --gray-1000: #171717;       /* primary text */
+  --alpha-200: rgba(0, 0, 0, 0.05);   /* divider */
+  --alpha-400: rgba(0, 0, 0, 0.08);   /* border */
 
-  /* Neutrals — zinc (cool) */
-  --bg: #ffffff;
-  --surface: #fafafa;
-  --surface-2: #f4f4f5;
-  --border: #e4e4e7;
-  --fg: #18181b;
-  --muted: #71717a;
+  /* ── Blue accent — state / links / focus / endpoint identity ─────────── */
+  --blue-700: #0072f5;        /* focus ring, links */
+  --blue-text: #0068d6;       /* namespace chips, endpoint, syntax keys */
+  --blue-bg: #f0f7ff;         /* namespace/endpoint chip background */
 
-  /* Status — ok / connected (green) */
-  --status-ok-fg: #15803d;
-  --status-ok-bg: #f0fdf4;
+  /* ── Status — named pairs (components use var(--status-*-fg) only) ───── */
+  /* configured: stored but not live-probed (inc 23–27 default) */
+  --status-configured-fg: #6f6f6f;   /* = --gray-700 */
+  /* ok / connected: live (reserved, probe inc 28+) */
+  --status-ok-fg: #1a7f37;
+  /* no-auth: public source */
+  --status-noauth-fg: #0068d6;       /* = --blue-text */
+  /* warning / expiring */
+  --status-warning-fg: #a35200;
+  /* error / auth-failed */
+  --status-error-fg: #c9342a;
+  /* off / disabled: route toggled off */
+  --status-off-fg: #8f8f8f;          /* = --gray-600 */
 
-  /* Status — info / no-auth (teal, never blue) */
-  --status-info-fg: #0e7490;
-  --status-info-bg: #ecfeff;
+  /* ── Elevation — Geist two-layer shadows ─────────────────────────────── */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 1px 1px rgba(0, 0, 0, 0.02), 0 4px 8px -4px rgba(0, 0, 0, 0.04), 0 16px 24px -8px rgba(0, 0, 0, 0.06);
 
-  /* Status — warning / expiring (amber-yellow) */
-  --status-warning-fg: #a16207;
-  --status-warning-bg: #fefce8;
-
-  /* Status — error / auth-failed (red) */
-  --status-error-fg: #b91c1c;
-  --status-error-bg: #fef2f2;
-
-  /* Status — disabled (zinc) */
-  --status-disabled-fg: #a1a1aa;
-  --status-disabled-bg: transparent;
-
-  /* Radius */
-  --radius-sm: 0.25rem; /* 4px — inputs, badges, chips */
-  --radius-md: 0.375rem; /* 6px — buttons, cards, popovers */
-  --radius-lg: 0.5rem; /* 8px — dialogs, sheets, panels */
-
-  /* Motion durations */
-  --motion-micro: 100ms;
-  --motion-short: 160ms;
-  --motion-medium: 240ms;
-
-  /* Motion easings */
-  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1); /* expo-out: fast start, soft landing */
-  --ease-exit: cubic-bezier(0.4, 0, 1, 1); /* faster out than in */
-
-  /* Typography */
+  /* ── Typography — Geist token model ─────────────────────────────────── */
   --font-sans: "Geist Sans", system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, monospace;
-  --font-display: "Departure Mono", monospace; /* wordmark ONLY */
+  /* --font-display: REMOVED (Departure Mono retired inc 24.5) */
 
-  /* Type scale (px → rem) */
-  --text-page-title: 1.25rem; /* 20px */
-  --text-section: 0.9375rem; /* 15px */
-  --text-body: 0.8125rem; /* 13px */
-  --text-mono: 0.78125rem; /* 12.5px */
-  --text-eyebrow: 0.6875rem; /* 11px */
-  --text-stat: 1.75rem; /* 28px — dashboard stat card counts */
-  --text-hero: 4rem; /* 64px — 404 / full-bleed hero numbers */
+  /* Type scale (px → rem; body floor 14px per DESIGN.md) */
+  --text-h1: 1.5rem;          /* 24px / 600 — page title, one per page */
+  --text-h2: 0.9375rem;       /* 15px / 600 — section headings */
+  --text-h3: 0.875rem;        /* 14px / 600 — card headers */
+  --text-body: 0.875rem;      /* 14px / 400 — floor, never below */
+  --text-label: 0.8125rem;    /* 13px / 450-500 — nav, metadata, single-line */
+  --text-caption: 0.75rem;    /* 12px / 400 — secondary metadata */
+  --text-mono: 0.8125rem;     /* 13px / 400-500 — Geist Mono, tabular */
+  --text-stat: 1.375rem;      /* 22px / 600 — at-a-glance counts (small row, not banner) */
 
-  /* Tracking (letter-spacing) */
-  --tracking-tight: -0.01em; /* page titles, headings */
-  --tracking-eyebrow: 0.08em; /* eyebrow / rack-label text */
+  /* ── Spacing — 4px base, 8/16/40 rhythm ─────────────────────────────── */
+  --space-1: 0.25rem;  /* 4px */
+  --space-2: 0.5rem;   /* 8px — in-group */
+  --space-4: 1rem;     /* 16px — between groups */
+  --space-5: 1.25rem;  /* 20px — card padding min */
+  --space-6: 1.5rem;   /* 24px — card padding max */
+  --space-10: 2.5rem;  /* 40px — between sections */
 
-  /* Spacing (4px grid) */
-  --space-1: 0.25rem; /* 4px */
-  --space-2: 0.5rem; /* 8px */
-  --space-3: 0.75rem; /* 12px */
-  --space-4: 1rem; /* 16px */
-  --space-6: 1.5rem; /* 24px */
-  --space-8: 2rem; /* 32px */
-  --space-12: 3rem; /* 48px */
-  --space-dot: 6px; /* status dot diameter (badge + wordmark node) */
+  /* ── Radii (DESIGN.md §Spacing) ─────────────────────────────────────── */
+  --radius-6: 0.375rem;    /* 6px — controls / surfaces */
+  --radius-12: 0.75rem;    /* 12px — cards / menus */
+  --radius-full: 9999px;   /* pills / dots */
 
-  /* Component geometry */
-  --row-height-data: 36px;
-  --row-height-header: 40px;
-  --control-height: 32px;
-  --gutter: 24px;
-  --card-padding: 16px;
-  --cell-padding-x: 12px;
-  --cell-padding-y: 8px;
+  /* ── Motion ──────────────────────────────────────────────────────────── */
+  --motion-fast: 150ms;    /* state transitions */
+  --motion-base: 200ms;    /* popover/tooltip/tab */
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1); /* expo-out: fast in, soft landing */
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
 
-  /* Layout geometry (sidebar shell — inc 23 Phase E) */
-  --sidebar-width: 15rem;       /* 240px — expanded sidebar */
-  --sidebar-width-icon: 3rem;   /* 48px — icon-only collapsed state */
-  --topbar-height: 2.75rem;     /* 44px ≈ h-11 */
-  --content-max: 87.5rem;       /* 1400px — wide upper bound, layout doesn't center below this */
+  /* ── Component geometry ─────────────────────────────────────────────── */
+  --control-height: 2rem;       /* 32px — standard control */
+  --control-height-lg: 2.5rem;  /* 40px */
+  --row-height-data: 2.75rem;   /* ~44px — body rows */
+  --row-height-header: 2.75rem; /* 44px — table header */
+  --card-padding: 1.25rem;      /* 20px — card padding */
+  --cell-padding-x: 0.75rem;    /* 12px */
+  --cell-padding-y: 0.75rem;    /* 12px */
+  --gutter: 1.5rem;             /* 24px — page side gutter */
+  --status-dot: 6px;            /* status dot diameter */
 
-  /* Z-index scale — replaces ad-hoc z-30/z-40/z-50 in components */
-  --z-rail: 40;      /* StatusRail — fixed left edge, below sidebar */
-  --z-sidebar: 50;   /* Sidebar — above rail */
-  --z-topbar: 30;    /* Topbar — below sidebar (sidebar can overlay on narrow) */
-  --z-overlay: 60;   /* Modals / sheet backdrops */
+  /* ── Layout shell ───────────────────────────────────────────────────── */
+  --sidebar-width: 15rem;         /* 240px — expanded */
+  --sidebar-width-icon: 3rem;     /* 48px — collapsed icon-only */
+  --topbar-height: 2.75rem;       /* 44px */
+  --content-max: 60rem;           /* 960px — content column max width */
+
+  /* ── Z-index scale ──────────────────────────────────────────────────── */
+  --z-sidebar: 50;
+  --z-topbar: 30;
+  --z-overlay: 60;
 }
 
 /* ─── Sidebar collapse — CSS source of truth ────────────────────────────── */
-/* html[data-sidebar] is set by SIDEBAR_SCRIPT pre-hydration, by getSidebarInitialState()
+/* html[data-sidebar] is set by SIDEBAR_SCRIPT pre-hydration, by getSidebarState()
    during SSR, and by the toggle handler in sidebar.tsx on every toggle.
    --sidebar-current is the SINGLE token both the sidebar width and the content
    margin-left (AppShellMain in __root.tsx) read — so they always move together. */
@@ -145,132 +137,116 @@ html[data-sidebar="collapsed"] {
   --sidebar-current: var(--sidebar-width-icon);
 }
 
-/* ─── Reduced-motion: sidebar layout transitions ────────────────────────── */
-/* The sidebar collapse is intentionally instant (no width/margin animation)
-   to avoid animating layout properties. This block is kept as a safety net
-   in case a future change re-introduces a transition — reduced-motion users
-   will always get an instant toggle. */
-@media (prefers-reduced-motion: reduce) {
-  aside[aria-label="Main navigation"] {
-    transition: none !important;
-  }
-  #shell-main {
-    transition: none !important;
-  }
-}
+/* ─── Dark mode overrides ────────────────────────────────────────────────── */
+/* system-aware + data-theme="dark" manual override. Both themes equal first-class. */
 
-/* Dark mode — system-aware + data-theme="dark" manual override */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --accent: #f59e0b;
-    --accent-fill: #fbbf24;
-    --accent-fg: #1a1206;
+    --bg-100: #000000;          /* true black (Geist dark) */
+    --bg-200: #0a0a0a;
+    --gray-100: #1a1a1a;        /* hover fill */
+    --gray-400: #454545;        /* strong border */
+    --gray-600: #8f8f8f;        /* same value as light — intentional */
+    --gray-700: #7a7a7a;        /* disabled text */
+    --gray-900: #a0a0a0;        /* secondary text */
+    --gray-1000: #ededed;       /* primary text */
+    --alpha-200: rgba(255, 255, 255, 0.06);
+    --alpha-400: rgba(255, 255, 255, 0.10);
 
-    --bg: #09090b;
-    --surface: #18181b;
-    --surface-2: #202023;
-    --border: #27272a;
-    --fg: #fafafa;
-    --muted: #a1a1aa;
+    --blue-700: #3b9eff;
+    --blue-text: #6cb6ff;
+    --blue-bg: #0f1b2d;
 
-    --status-ok-fg: #4ade80;
-    --status-ok-bg: #052e16;
+    --status-configured-fg: #a0a0a0;  /* = --gray-900 in dark */
+    --status-ok-fg: #62c073;
+    --status-noauth-fg: #6cb6ff;      /* = --blue-text dark */
+    --status-warning-fg: #d99320;
+    --status-error-fg: #ff6166;
+    --status-off-fg: #8f8f8f;         /* = --gray-600 (same both themes) */
 
-    --status-info-fg: #22d3ee;
-    --status-info-bg: #0b2230;
-
-    --status-warning-fg: #facc15;
-    --status-warning-bg: #1c1407;
-
-    --status-error-fg: #f87171;
-    --status-error-bg: #2a0a0a;
-
-    --status-disabled-fg: #52525b;
-    --status-disabled-bg: transparent;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+    --shadow-md: 0 1px 1px rgba(0, 0, 0, 0.3), 0 4px 8px -4px rgba(0, 0, 0, 0.5), 0 16px 24px -8px rgba(0, 0, 0, 0.6);
   }
 }
 
 [data-theme="dark"] {
-  --accent: #f59e0b;
-  --accent-fill: #fbbf24;
-  --accent-fg: #1a1206;
+  --bg-100: #000000;
+  --bg-200: #0a0a0a;
+  --gray-100: #1a1a1a;
+  --gray-400: #454545;
+  --gray-600: #8f8f8f;
+  --gray-700: #7a7a7a;
+  --gray-900: #a0a0a0;
+  --gray-1000: #ededed;
+  --alpha-200: rgba(255, 255, 255, 0.06);
+  --alpha-400: rgba(255, 255, 255, 0.10);
 
-  --bg: #09090b;
-  --surface: #18181b;
-  --surface-2: #202023;
-  --border: #27272a;
-  --fg: #fafafa;
-  --muted: #a1a1aa;
+  --blue-700: #3b9eff;
+  --blue-text: #6cb6ff;
+  --blue-bg: #0f1b2d;
 
-  --status-ok-fg: #4ade80;
-  --status-ok-bg: #052e16;
+  --status-configured-fg: #a0a0a0;
+  --status-ok-fg: #62c073;
+  --status-noauth-fg: #6cb6ff;
+  --status-warning-fg: #d99320;
+  --status-error-fg: #ff6166;
+  --status-off-fg: #8f8f8f;
 
-  --status-info-fg: #22d3ee;
-  --status-info-bg: #0b2230;
-
-  --status-warning-fg: #facc15;
-  --status-warning-bg: #1c1407;
-
-  --status-error-fg: #f87171;
-  --status-error-bg: #2a0a0a;
-
-  --status-disabled-fg: #52525b;
-  --status-disabled-bg: transparent;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 1px 1px rgba(0, 0, 0, 0.3), 0 4px 8px -4px rgba(0, 0, 0, 0.5), 0 16px 24px -8px rgba(0, 0, 0, 0.6);
 }
 
 /* ─── Tailwind v4 theme mapping ─────────────────────────────────────────── */
-/* Maps CSS vars → Tailwind utilities (bg-surface, text-fg, etc.)            */
+/* Maps CSS vars → Tailwind utilities                                         */
 
 @theme inline {
-  /* Colors */
-  --color-bg: var(--bg);
-  --color-surface: var(--surface);
-  --color-surface-2: var(--surface-2);
-  --color-border: var(--border);
-  --color-fg: var(--fg);
-  --color-muted: var(--muted);
+  /* ── Neutral color utilities ────────────────────────────────────────── */
+  --color-bg-100: var(--bg-100);
+  --color-bg-200: var(--bg-200);
+  --color-gray-100: var(--gray-100);
+  --color-gray-400: var(--gray-400);
+  --color-gray-600: var(--gray-600);
+  --color-gray-700: var(--gray-700);
+  --color-gray-900: var(--gray-900);
+  --color-gray-1000: var(--gray-1000);
+  --color-alpha-200: var(--alpha-200);
+  --color-alpha-400: var(--alpha-400);
 
-  --color-accent: var(--accent);
-  --color-accent-fill: var(--accent-fill);
-  --color-accent-fg: var(--accent-fg);
+  /* ── Blue accent utilities ─────────────────────────────────────────── */
+  --color-blue-700: var(--blue-700);
+  --color-blue-text: var(--blue-text);
+  --color-blue-bg: var(--blue-bg);
 
-  --color-ok-fg: var(--status-ok-fg);
-  --color-ok-bg: var(--status-ok-bg);
-  --color-info-fg: var(--status-info-fg);
-  --color-info-bg: var(--status-info-bg);
-  --color-warning-fg: var(--status-warning-fg);
-  --color-warning-bg: var(--status-warning-bg);
-  --color-error-fg: var(--status-error-fg);
-  --color-error-bg: var(--status-error-bg);
-  --color-disabled-fg: var(--status-disabled-fg);
-  --color-disabled-bg: var(--status-disabled-bg);
+  /* ── Status utilities ──────────────────────────────────────────────── */
+  --color-status-configured: var(--status-configured-fg);
+  --color-status-ok: var(--status-ok-fg);
+  --color-status-noauth: var(--status-noauth-fg);
+  --color-status-warning: var(--status-warning-fg);
+  --color-status-error: var(--status-error-fg);
+  --color-status-off: var(--status-off-fg);
 
-  /* Border radius */
-  --radius-sm: var(--radius-sm);
-  --radius-md: var(--radius-md);
-  --radius-lg: var(--radius-lg);
-
-  /* Font families */
+  /* ── Font families ────────────────────────────────────────────────── */
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
-  --font-display: var(--font-display);
 
-  /* Motion */
-  --duration-micro: var(--motion-micro);
-  --duration-short: var(--motion-short);
-  --duration-medium: var(--motion-medium);
+  /* ── Shadows ─────────────────────────────────────────────────────── */
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+
+  /* ── Border radius ───────────────────────────────────────────────── */
+  --radius-6: var(--radius-6);
+  --radius-12: var(--radius-12);
+
+  /* ── Motion ──────────────────────────────────────────────────────── */
+  --duration-fast: var(--motion-fast);
+  --duration-base: var(--motion-base);
   --ease-enter: var(--ease-enter);
   --ease-exit: var(--ease-exit);
 
-  /* Tracking (letter-spacing) — expose as Tailwind utilities */
-  --tracking-tight: var(--tracking-tight);
-  --tracking-eyebrow: var(--tracking-eyebrow);
-
-  /* Type scale extensions */
+  /* ── Type scale extensions ───────────────────────────────────────── */
   --text-stat: var(--text-stat);
-  --text-hero: var(--text-hero);
 
-  /* Layout tokens — expose for Tailwind width/height utilities */
+  /* ── Layout tokens ───────────────────────────────────────────────── */
   --width-sidebar: var(--sidebar-width);
   --width-sidebar-icon: var(--sidebar-width-icon);
   --height-topbar: var(--topbar-height);
@@ -287,26 +263,24 @@ html[data-sidebar="collapsed"] {
 html {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  /* Prevent horizontal layout shift when a scrollbar appears/disappears.
-     Combined with the fixed sidebar shell, this eliminates the jump that
-     centered mx-auto columns produce when short/tall pages toggle the bar. */
+  /* Prevent horizontal layout shift when scrollbar appears/disappears. */
   scrollbar-gutter: stable;
 }
 
 body {
   margin: 0;
   font-family: var(--font-sans);
-  font-size: var(--text-body);
-  line-height: 1.5;
-  color: var(--fg);
-  background: var(--bg);
+  font-size: var(--text-body);  /* 14px — the floor (never below) */
+  line-height: 1.6;
+  color: var(--gray-1000);
+  background: var(--bg-100);
 }
 
-/* Focus ring — amber, visible, keyboard-only */
+/* Focus ring — blue, visible, keyboard-only */
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--blue-700);
   outline-offset: 2px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-6);
 }
 
 /* Suppress default focus styles (we use :focus-visible) */
@@ -314,15 +288,28 @@ body {
   outline: none;
 }
 
+/* ─── Reduced-motion: sidebar layout ────────────────────────────────────── */
+/* The sidebar collapse is intentionally instant (no width/margin animation)
+   to avoid animating layout properties. This block is kept as a safety net
+   in case a future change re-introduces a transition. */
+@media (prefers-reduced-motion: reduce) {
+  aside[aria-label="Main navigation"] {
+    transition: none !important;
+  }
+  #shell-main {
+    transition: none !important;
+  }
+}
+
 /* ─── View Transitions ───────────────────────────────────────────────────── */
 /* Reduced-motion: fade only (no slide). Full-motion: fade + slight translate. */
 
 @media (prefers-reduced-motion: no-preference) {
   ::view-transition-old(root) {
-    animation: vt-slide-out var(--motion-medium) var(--ease-exit) both;
+    animation: vt-slide-out var(--motion-base) var(--ease-exit) both;
   }
   ::view-transition-new(root) {
-    animation: vt-slide-in var(--motion-medium) var(--ease-enter) both;
+    animation: vt-slide-in var(--motion-base) var(--ease-enter) both;
   }
   @keyframes vt-slide-out {
     from {

@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Platforms list route. No @junction/core import.
+// Platforms route — lighter re-skin. Add Platform = ComingSoon (inc 25).
+// No @junction/core import.
 
 import { createFileRoute } from "@tanstack/react-router"
-import { getPlatforms, type PlatformMeta } from "../server/data.functions.js"
+import { getCredentials, getPlatforms, type PlatformMeta } from "../server/data.functions.js"
+import { MonoChip, MonoCode } from "../ui/code.js"
+import { ComingSoonAction } from "../ui/coming-soon.js"
 import { PageHeader } from "../ui/page-header.js"
 import { TableSkeleton } from "../ui/skeleton.js"
 import { EmptyState } from "../ui/states.js"
@@ -18,7 +21,15 @@ import {
 } from "../ui/table.js"
 
 export const Route = createFileRoute("/platforms")({
-  loader: () => getPlatforms(),
+  loader: async () => {
+    const [platforms, credentials] = await Promise.all([getPlatforms(), getCredentials()])
+    // Derive connection counts per platform from the credential list.
+    const connectionCounts = new Map<string, number>()
+    for (const c of credentials) {
+      connectionCounts.set(c.platformId, (connectionCounts.get(c.platformId) ?? 0) + 1)
+    }
+    return { platforms, connectionCounts: Object.fromEntries(connectionCounts) }
+  },
   pendingComponent: PlatformsPending,
   component: PlatformsPage,
 })
@@ -32,8 +43,8 @@ function PlatformsPending() {
         columns={[
           { width: "w-32" },
           { width: "w-24" },
+          { width: "w-16" },
           { flex: true },
-          { width: "w-40" },
           { width: "w-8" },
         ]}
       />
@@ -42,20 +53,21 @@ function PlatformsPending() {
 }
 
 function PlatformsPage() {
-  const platforms = Route.useLoaderData()
+  const { platforms, connectionCounts } = Route.useLoaderData()
   return (
     <div>
-      <PageHeader title="Platforms" count={platforms.length > 0 ? platforms.length : undefined} />
+      <PageHeader
+        title="Platforms"
+        count={platforms.length > 0 ? platforms.length : undefined}
+        actions={<ComingSoonAction label="Add Platform" cliHint="junction platform add" />}
+      />
 
       {platforms.length === 0 ? (
         <EmptyState
           label="No platforms yet."
           hint={
             <span>
-              Run{" "}
-              <code style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-mono)" }}>
-                junction platform add
-              </code>{" "}
+              Run <MonoCode style={{ color: "var(--blue-text)" }}>junction platform add</MonoCode>{" "}
               to add one.
             </span>
           }
@@ -64,34 +76,49 @@ function PlatformsPage() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>ID</TableHead>
+              <TableHead>Name</TableHead>
               <TableHead>Kind</TableHead>
-              <TableHead>Display name</TableHead>
+              <TableHead>Connections</TableHead>
               <TableHead>Base URL</TableHead>
-              {/* Actions column scaffold — wired to data in inc 24+ */}
               <TableActionsHead />
             </TableRow>
           </TableHeader>
           <TableBody>
             {platforms.map((p: PlatformMeta) => (
               <TableRow key={p.id}>
+                <TableCell style={{ fontWeight: 500 }}>{p.displayName}</TableCell>
                 <TableCell>
-                  <code style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-mono)" }}>
-                    {p.id}
-                  </code>
+                  <MonoChip>{p.kind}</MonoChip>
                 </TableCell>
-                <TableCell style={{ color: "var(--muted)" }}>{p.kind}</TableCell>
-                <TableCell>{p.displayName}</TableCell>
+                <TableCell>
+                  <span
+                    style={{
+                      fontFamily: "var(--font-mono)",
+                      fontSize: "var(--text-mono)",
+                      color: "var(--gray-900)",
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    {connectionCounts[p.id] ?? 0}
+                  </span>
+                </TableCell>
                 <TableCell>
                   {p.baseUrl ? (
-                    <code style={{ fontFamily: "var(--font-mono)", fontSize: "var(--text-mono)" }}>
+                    <code
+                      style={{
+                        fontFamily: "var(--font-mono)",
+                        fontSize: "var(--text-mono)",
+                        color: "var(--gray-900)",
+                        wordBreak: "break-all",
+                      }}
+                    >
                       {p.baseUrl}
                     </code>
                   ) : (
-                    <span style={{ color: "var(--muted)" }}>—</span>
+                    <span style={{ color: "var(--gray-600)" }}>—</span>
                   )}
                 </TableCell>
-                {/* Actions cell scaffold — no-op until inc 24+ */}
+                {/* No row actions yet — wired in inc 25 */}
                 <TableActionsCell />
               </TableRow>
             ))}

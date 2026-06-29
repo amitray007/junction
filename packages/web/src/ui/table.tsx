@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Table — instrument-grade data table. 36px rows / 40px header, 8x12 cell padding.
-// Geist Mono for ID/namespace columns. Compact density.
-// Phase E additions: sticky thead, aria-sort hooks, trailing actions-column scaffold.
-// Actions column: ⋯ trigger revealed on hover/focus, keyboard-reachable (inc 23 scaffold;
-// real row actions wired to data in inc 24+).
+// Table — data table. ~44px rows, 14px body, mono for identifiers.
+// Column headers: gray-700 12px text, NOT uppercase-mono (DESIGN.md §Components).
+// Hover: gray-100. Hairline alpha-200 row dividers.
+// Actions column: ⋯ trigger revealed on hover/focus, keyboard-reachable.
 
 import { MoreHorizontal } from "lucide-react"
 import type { HTMLAttributes, TdHTMLAttributes, ThHTMLAttributes } from "react"
@@ -11,9 +10,13 @@ import { cn } from "./cn.js"
 
 export function Table({ className, ...props }: HTMLAttributes<HTMLTableElement>) {
   return (
-    <div className="w-full overflow-auto rounded-[var(--radius-md)] border border-[var(--border)]">
+    <div
+      className="w-full overflow-auto rounded-[var(--radius-12)] border border-[var(--alpha-400)]"
+      style={{ boxShadow: "var(--shadow-sm)" }}
+    >
       <table
-        className={cn("w-full border-collapse text-[var(--text-body)]", className)}
+        className={cn("w-full border-collapse", className)}
+        style={{ fontSize: "var(--text-body)" }}
         {...props}
       />
     </div>
@@ -24,35 +27,34 @@ export function TableHeader({ className, ...props }: HTMLAttributes<HTMLTableSec
   return (
     <thead
       className={cn(
-        // Sticky header: stays visible while the table body scrolls.
-        // --surface bg ensures content behind doesn't bleed through.
-        "sticky top-0 z-10",
-        "bg-[var(--surface)]",
-        // Bottom border to separate header from body on scroll.
-        "after:absolute after:bottom-0 after:left-0 after:right-0 after:h-px after:bg-[var(--border)]",
-        "relative",
+        "sticky top-0 z-10 relative",
+        "after:absolute after:bottom-0 after:left-0 after:right-0 after:h-px after:bg-[var(--alpha-200)]",
         className,
       )}
+      style={{ backgroundColor: "var(--bg-100)" }}
       {...props}
     />
   )
 }
 
 export function TableBody({ className, ...props }: HTMLAttributes<HTMLTableSectionElement>) {
-  return <tbody className={cn("bg-[var(--bg)]", className)} {...props} />
+  return (
+    <tbody className={cn("", className)} style={{ backgroundColor: "var(--bg-100)" }} {...props} />
+  )
 }
 
 export function TableRow({ className, ...props }: HTMLAttributes<HTMLTableRowElement>) {
   return (
     <tr
       className={cn(
-        "h-[var(--row-height-data)] border-b border-[var(--border)]",
-        "transition-colors duration-[var(--motion-micro)]",
-        "hover:bg-[var(--surface)] last:border-0",
+        "border-b border-[var(--alpha-200)] last:border-0",
+        "transition-colors duration-[var(--motion-fast)]",
+        "hover:bg-[var(--gray-100)]",
         // Reveal the actions cell trigger on row hover/focus-within.
         "group",
         className,
       )}
+      style={{ height: "var(--row-height-data)" }}
       {...props}
     />
   )
@@ -61,8 +63,7 @@ export function TableRow({ className, ...props }: HTMLAttributes<HTMLTableRowEle
 export type SortDirection = "ascending" | "descending" | "none"
 
 export interface TableHeadProps extends ThHTMLAttributes<HTMLTableCellElement> {
-  /** When provided, renders an aria-sort attribute for sortable columns.
-   *  Actual sort handler wired in inc 24+; scaffold lands here for a11y. */
+  /** When provided, renders an aria-sort attribute for sortable columns. */
   readonly sortDirection?: SortDirection
 }
 
@@ -71,17 +72,21 @@ export function TableHead({ className, sortDirection, ...props }: TableHeadProps
     <th
       aria-sort={sortDirection}
       className={cn(
-        "h-[var(--row-height-header)]",
         "px-[var(--cell-padding-x)] py-[var(--cell-padding-y)]",
         "text-left align-middle",
-        "text-[var(--text-eyebrow)] font-medium uppercase tracking-[var(--tracking-eyebrow)]",
-        "text-[var(--muted)]",
+        "font-medium",
         "whitespace-nowrap",
         sortDirection &&
           sortDirection !== "none" &&
-          "cursor-pointer select-none hover:text-[var(--fg)]",
+          "cursor-pointer select-none hover:text-[var(--gray-1000)]",
         className,
       )}
+      style={{
+        // 12px column headers, gray-700 — NOT uppercase-mono (DESIGN.md §Components)
+        fontSize: "var(--text-caption)",
+        color: "var(--gray-700)",
+        height: "var(--row-height-header)",
+      }}
       {...props}
     />
   )
@@ -91,25 +96,17 @@ export function TableCell({ className, ...props }: TdHTMLAttributes<HTMLTableCel
   return (
     <td
       className={cn(
-        "px-[var(--cell-padding-x)] py-[var(--cell-padding-y)]",
-        "align-middle",
-        "text-[var(--fg)]",
+        "px-[var(--cell-padding-x)] py-[var(--cell-padding-y)] align-middle",
         className,
       )}
+      style={{ color: "var(--gray-1000)" }}
       {...props}
     />
   )
 }
 
-// TableCaption removed — genuinely dead, no consumer. Re-add if tables need accessible captions.
-
 // ─── Actions column ────────────────────────────────────────────────────────────
-// Renders a ⋯ button in the trailing column. The button is visually hidden
-// until the row is hovered or the cell receives focus — but always keyboard-
-// reachable (opacity-0 does not remove from tab order).
-//
-// Pass `menu` (a DropdownMenuContent element) to activate real row actions.
-// When no menu is provided, the button renders as a plain non-interactive scaffold.
+// ⋯ button: visually hidden until row hover/focus, always keyboard-reachable.
 
 import { DropdownMenu, DropdownMenuTrigger } from "./dropdown-menu.js"
 
@@ -119,31 +116,24 @@ export function TableActionsHead({ className }: { readonly className?: string })
 
 const triggerButtonClassName = cn(
   "inline-flex items-center justify-center",
-  "h-7 w-7 rounded-[var(--radius-sm)]",
-  "transition-[opacity,colors] duration-[var(--motion-micro)]",
-  "hover:bg-[var(--surface-2)]",
-  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-1",
-  // Visually hidden until row hover/focus; always keyboard-reachable (opacity, not display/visibility).
+  "h-7 w-7 rounded-[var(--radius-6)]",
+  "transition-colors duration-[var(--motion-fast)]",
+  "hover:bg-[var(--gray-100)]",
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue-700)] focus-visible:ring-offset-1",
+  // Visually hidden until row hover/focus; always keyboard-reachable.
   "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
 )
-
-const triggerButtonStyle = { color: "var(--muted)", backgroundColor: "transparent" }
 
 export function TableActionsCell({
   className,
   menu,
 }: {
   readonly className?: string
-  /**
-   * DropdownMenuContent to show when the ⋯ trigger is activated.
-   * When omitted the trigger renders as a non-interactive scaffold.
-   */
   readonly menu?: React.ReactNode
 }) {
   return (
     <TableCell className={cn("w-12 text-right pr-2", className)}>
       {menu ? (
-        // Real row actions: DropdownMenuTrigger asChild adopts the ⋯ button.
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
@@ -151,7 +141,7 @@ export function TableActionsCell({
               aria-label="Row actions"
               aria-haspopup="menu"
               className={triggerButtonClassName}
-              style={triggerButtonStyle}
+              style={{ color: "var(--gray-700)", backgroundColor: "transparent" }}
             >
               <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
             </button>
@@ -159,13 +149,12 @@ export function TableActionsCell({
           {menu}
         </DropdownMenu>
       ) : (
-        // Scaffold: plain button with no interaction (no actions yet on this row).
         <button
           type="button"
           aria-label="Row actions"
           aria-haspopup="menu"
           className={triggerButtonClassName}
-          style={triggerButtonStyle}
+          style={{ color: "var(--gray-700)", backgroundColor: "transparent" }}
         >
           <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
         </button>

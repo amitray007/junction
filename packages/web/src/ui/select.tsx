@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Select — Radix UI Select wrapped in tokens. 32px control height.
-// Built inc 23; NOT wired to write paths (inc 24+).
+// Select — Radix UI Select wrapped in tokens.
 // Radix handles keyboard nav, screen reader announcements, portal placement.
 
 import * as SelectPrimitive from "@radix-ui/react-select"
@@ -22,15 +21,18 @@ export function SelectTrigger({
       className={cn(
         "flex w-full items-center justify-between",
         "h-[var(--control-height)] px-[var(--cell-padding-x)]",
-        "rounded-[var(--radius-sm)] border border-[var(--border)]",
-        "text-[var(--text-body)]",
-        "transition-colors duration-[var(--motion-micro)]",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-1",
+        "rounded-[var(--radius-6)] border border-[var(--alpha-400)]",
+        "transition-colors duration-[var(--motion-fast)]",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue-700)] focus-visible:ring-offset-1",
         "disabled:cursor-not-allowed disabled:opacity-50",
-        "data-[placeholder]:text-[var(--muted)]",
+        "data-[placeholder]:text-[var(--gray-600)]",
         className,
       )}
-      style={{ backgroundColor: "var(--bg)", color: "var(--fg)" }}
+      style={{
+        backgroundColor: "var(--bg-100)",
+        color: "var(--gray-1000)",
+        fontSize: "var(--text-body)",
+      }}
       {...props}
     >
       {children}
@@ -80,9 +82,7 @@ export function SelectContent({
       <SelectPrimitive.Content
         className={cn(
           "relative z-[var(--z-overlay)] overflow-hidden",
-          "rounded-[var(--radius-md)] border border-[var(--border)]",
-          "shadow-sm",
-          // Entry animation
+          "rounded-[var(--radius-12)] border border-[var(--alpha-400)]",
           "data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95",
           "data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
           "data-[side=bottom]:slide-in-from-top-2 data-[side=top]:slide-in-from-bottom-2",
@@ -90,7 +90,11 @@ export function SelectContent({
             "data-[side=bottom]:translate-y-1 data-[side=top]:-translate-y-1",
           className,
         )}
-        style={{ backgroundColor: "var(--surface)", color: "var(--fg)" }}
+        style={{
+          backgroundColor: "var(--bg-100)",
+          color: "var(--gray-1000)",
+          boxShadow: "var(--shadow-md)",
+        }}
         position={position}
         {...props}
       >
@@ -116,12 +120,8 @@ export function SelectLabel({
 }: ComponentPropsWithoutRef<typeof SelectPrimitive.Label>) {
   return (
     <SelectPrimitive.Label
-      className={cn(
-        "px-[var(--cell-padding-x)] py-1.5 uppercase",
-        "text-[var(--text-eyebrow)] font-medium tracking-[var(--tracking-eyebrow)]",
-        className,
-      )}
-      style={{ color: "var(--muted)", fontFamily: "var(--font-mono)" }}
+      className={cn("px-[var(--cell-padding-x)] py-1.5 font-medium", className)}
+      style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)" }}
       {...props}
     />
   )
@@ -136,21 +136,19 @@ export function SelectItem({
     <SelectPrimitive.Item
       className={cn(
         "relative flex w-full cursor-default select-none items-center",
-        "rounded-[var(--radius-sm)]",
+        "rounded-[var(--radius-6)]",
         "py-1.5 pl-8 pr-[var(--cell-padding-x)]",
-        "text-[var(--text-body)]",
         "outline-none",
-        "focus:bg-[var(--surface-2)] focus:text-[var(--fg)]",
+        "focus:bg-[var(--gray-100)]",
         "data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
         className,
       )}
-      style={{ color: "var(--fg)" }}
+      style={{ fontSize: "var(--text-body)", color: "var(--gray-1000)" }}
       {...props}
     >
-      {/* Checkmark for selected item */}
       <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
         <SelectPrimitive.ItemIndicator>
-          <Check className="h-4 w-4" aria-hidden="true" style={{ color: "var(--accent)" }} />
+          <Check className="h-4 w-4" aria-hidden="true" style={{ color: "var(--blue-700)" }} />
         </SelectPrimitive.ItemIndicator>
       </span>
       <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
@@ -164,8 +162,7 @@ export function SelectSeparator({
 }: ComponentPropsWithoutRef<typeof SelectPrimitive.Separator>) {
   return (
     <SelectPrimitive.Separator
-      className={cn("-mx-1 my-1 h-px", className)}
-      style={{ backgroundColor: "var(--border)" }}
+      className={cn("-mx-1 my-1 h-px bg-[var(--alpha-200)]", className)}
       {...props}
     />
   )

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // DropdownMenu — thin token-styled wrapper around Radix DropdownMenu.
-// inc-24 scaffolding: no live consumer yet — wired for row actions in inc 24+.
+// shadow-md for menu elevation (DESIGN.md §Elevation).
 
 import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu"
 import { Check, ChevronRight, Circle } from "lucide-react"
@@ -23,14 +23,18 @@ export function DropdownMenuContent({ className, sideOffset = 4, ...props }: Con
         sideOffset={sideOffset}
         className={cn(
           "z-50 min-w-32 overflow-hidden",
-          "rounded-[var(--radius-md)] border border-[var(--border)]",
-          "bg-[var(--surface)]",
+          "rounded-[var(--radius-12)] border border-[var(--alpha-400)]",
           "p-1",
-          "text-[var(--text-body)] text-[var(--fg)]",
-          "transition-opacity duration-[var(--motion-short)]",
+          "transition-opacity duration-[var(--motion-fast)]",
           "data-[state=open]:opacity-100 data-[state=closed]:opacity-0",
           className,
         )}
+        style={{
+          backgroundColor: "var(--bg-100)",
+          color: "var(--gray-1000)",
+          fontSize: "var(--text-body)",
+          boxShadow: "var(--shadow-md)",
+        }}
         {...props}
       />
     </DropdownMenuPrimitive.Portal>
@@ -46,14 +50,15 @@ export function DropdownMenuItem({ className, inset, ...props }: ItemProps) {
     <DropdownMenuPrimitive.Item
       className={cn(
         "relative flex cursor-default select-none items-center gap-2",
-        "rounded-[var(--radius-sm)] px-2 py-1.5",
-        "text-[var(--text-body)] text-[var(--fg)] outline-none",
-        "transition-colors duration-[var(--motion-micro)]",
-        "focus:bg-[var(--surface-2)] focus:text-[var(--fg)]",
+        "rounded-[var(--radius-6)] px-2 py-1.5",
+        "outline-none",
+        "transition-colors duration-[var(--motion-fast)]",
+        "focus:bg-[var(--gray-100)]",
         "data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
         inset && "pl-8",
         className,
       )}
+      style={{ fontSize: "var(--text-body)", color: "var(--gray-1000)" }}
       {...props}
     />
   )
@@ -68,14 +73,15 @@ export function DropdownMenuCheckboxItem({
   return (
     <DropdownMenuPrimitive.CheckboxItem
       className={cn(
-        "relative flex cursor-default select-none items-center rounded-[var(--radius-sm)]",
+        "relative flex cursor-default select-none items-center rounded-[var(--radius-6)]",
         "py-1.5 pl-8 pr-2",
-        "text-[var(--text-body)] text-[var(--fg)] outline-none",
-        "transition-colors duration-[var(--motion-micro)]",
-        "focus:bg-[var(--surface-2)] focus:text-[var(--fg)]",
+        "outline-none",
+        "transition-colors duration-[var(--motion-fast)]",
+        "focus:bg-[var(--gray-100)]",
         "data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
         className,
       )}
+      style={{ fontSize: "var(--text-body)", color: "var(--gray-1000)" }}
       checked={checked}
       {...props}
     >
@@ -96,12 +102,8 @@ export function DropdownMenuLabel({
 }: ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Label> & { readonly inset?: boolean }) {
   return (
     <DropdownMenuPrimitive.Label
-      className={cn(
-        "px-2 py-1.5",
-        "text-[var(--text-eyebrow)] font-medium uppercase tracking-eyebrow text-[var(--muted)]",
-        inset && "pl-8",
-        className,
-      )}
+      className={cn("px-2 py-1.5 font-medium", inset && "pl-8", className)}
+      style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)" }}
       {...props}
     />
   )
@@ -113,7 +115,7 @@ export function DropdownMenuSeparator({
 }: ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Separator>) {
   return (
     <DropdownMenuPrimitive.Separator
-      className={cn("-mx-1 my-1 h-px bg-[var(--border)]", className)}
+      className={cn("-mx-1 my-1 h-px bg-[var(--alpha-200)]", className)}
       {...props}
     />
   )
@@ -125,10 +127,8 @@ export function DropdownMenuShortcut({
 }: React.HTMLAttributes<HTMLSpanElement>) {
   return (
     <span
-      className={cn(
-        "ml-auto text-[var(--text-eyebrow)] text-[var(--muted)] tracking-widest",
-        className,
-      )}
+      className={cn("ml-auto tracking-widest", className)}
+      style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)" }}
       {...props}
     />
   )
@@ -145,13 +145,14 @@ export function DropdownMenuSubTrigger({
   return (
     <DropdownMenuPrimitive.SubTrigger
       className={cn(
-        "flex cursor-default select-none items-center gap-2 rounded-[var(--radius-sm)]",
+        "flex cursor-default select-none items-center gap-2 rounded-[var(--radius-6)]",
         "px-2 py-1.5",
-        "text-[var(--text-body)] text-[var(--fg)] outline-none",
-        "focus:bg-[var(--surface-2)] data-[state=open]:bg-[var(--surface-2)]",
+        "outline-none",
+        "focus:bg-[var(--gray-100)] data-[state=open]:bg-[var(--gray-100)]",
         inset && "pl-8",
         className,
       )}
+      style={{ fontSize: "var(--text-body)", color: "var(--gray-1000)" }}
       {...props}
     >
       {children}
@@ -168,13 +169,17 @@ export function DropdownMenuSubContent({
     <DropdownMenuPrimitive.SubContent
       className={cn(
         "z-50 min-w-32 overflow-hidden",
-        "rounded-[var(--radius-md)] border border-[var(--border)]",
-        "bg-[var(--surface)]",
+        "rounded-[var(--radius-12)] border border-[var(--alpha-400)]",
         "p-1",
-        "transition-opacity duration-[var(--motion-short)]",
+        "transition-opacity duration-[var(--motion-fast)]",
         "data-[state=open]:opacity-100 data-[state=closed]:opacity-0",
         className,
       )}
+      style={{
+        backgroundColor: "var(--bg-100)",
+        color: "var(--gray-1000)",
+        boxShadow: "var(--shadow-md)",
+      }}
       {...props}
     />
   )
@@ -188,14 +193,15 @@ export function DropdownMenuRadioItem({
   return (
     <DropdownMenuPrimitive.RadioItem
       className={cn(
-        "relative flex cursor-default select-none items-center rounded-[var(--radius-sm)]",
+        "relative flex cursor-default select-none items-center rounded-[var(--radius-6)]",
         "py-1.5 pl-8 pr-2",
-        "text-[var(--text-body)] text-[var(--fg)] outline-none",
-        "transition-colors duration-[var(--motion-micro)]",
-        "focus:bg-[var(--surface-2)] focus:text-[var(--fg)]",
+        "outline-none",
+        "transition-colors duration-[var(--motion-fast)]",
+        "focus:bg-[var(--gray-100)]",
         "data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
         className,
       )}
+      style={{ fontSize: "var(--text-body)", color: "var(--gray-1000)" }}
       {...props}
     >
       <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">

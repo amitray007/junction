@@ -72,10 +72,11 @@ afterEach(() => {
 describe("CredentialsPage", () => {
   // ── Landmark + heading ─────────────────────────────────────────────────────
 
-  it("renders the page heading", () => {
+  it("renders the page heading as <h1> (route landmark)", () => {
     mockUseLoaderData.mockReturnValue({ credentials: emptyCredentials, platforms: emptyPlatforms })
     const { getByRole } = render(<CredentialsPage />)
-    expect(getByRole("heading", { name: "Credentials" })).toBeInTheDocument()
+    const h1 = getByRole("heading", { level: 1, name: "Credentials" })
+    expect(h1).toBeInTheDocument()
   })
 
   // ── Empty state ────────────────────────────────────────────────────────────
@@ -88,17 +89,24 @@ describe("CredentialsPage", () => {
 
   // ── Table rendering ────────────────────────────────────────────────────────
 
-  it("renders the credentials table when populated", () => {
+  it("renders credential tables when populated (one table per platform group)", () => {
+    // Grouped layout: each platform gets its own <table>. With 2 credentials on
+    // 2 different platforms, there are 2 tables.
     mockUseLoaderData.mockReturnValue({ credentials: populatedCredentials, platforms })
-    const { getByRole } = render(<CredentialsPage />)
-    expect(getByRole("table")).toBeInTheDocument()
+    const { getAllByRole } = render(<CredentialsPage />)
+    expect(getAllByRole("table").length).toBeGreaterThanOrEqual(1)
   })
 
-  it("renders a row per credential with platform and account", () => {
+  it("renders a row per credential showing account and kind", () => {
+    // Grouped layout: platform is the section heading, not a table column.
+    // Rows show: account · kind · status badge.
     mockUseLoaderData.mockReturnValue({ credentials: populatedCredentials, platforms })
     const { getAllByText } = render(<CredentialsPage />)
+    // Both credentials have account "alice"
     expect(getAllByText("alice").length).toBe(populatedCredentials.length)
-    expect(getAllByText("github").length).toBeGreaterThanOrEqual(1)
+    // Platform displayNames appear as section headings ("GitHub", "Linear")
+    expect(getAllByText("GitHub").length).toBeGreaterThanOrEqual(1)
+    expect(getAllByText("Linear").length).toBeGreaterThanOrEqual(1)
   })
 
   it("renders 'Configured' status badge (never 'Connected') for all credential kinds", () => {

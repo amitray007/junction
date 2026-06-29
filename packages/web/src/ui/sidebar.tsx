@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Sidebar shell — fixed 5-zone app shell component (shadcn pattern, OUR tokens).
-// Grouped nav (MANAGE/CONNECT), wordmark header, theme toggle + ⌘B hint footer.
-// Collapse via Cmd/Ctrl+B; persisted by SIDEBAR_COOKIE read server-side for SSR
-// (no width flash on reload — mirrors the THEME_SCRIPT approach).
+// Sidebar shell — fixed app shell component.
+// Active state: gray-100 bg + gray-1000 text. NO side-accent stripe (anti-slop rule).
+// Collapse via Cmd/Ctrl+B; persisted via cookie for SSR no-flash.
 // No @junction/core import.
 
 import { Link, useLocation } from "@tanstack/react-router"
@@ -23,14 +22,12 @@ import { Tooltip } from "./tooltip.js"
 import { Wordmark } from "./wordmark.js"
 
 // ─── Cookie helpers ───────────────────────────────────────────────────────────
-// The sidebar collapse state is persisted in a cookie (not localStorage) so SSR
-// can read it and render the correct initial width before hydration — preventing
-// the flash of wrong width that a useEffect/localStorage approach would cause.
+// Sidebar collapse state is persisted in a cookie (not localStorage) so SSR
+// can read it and render the correct initial width before hydration.
 
 export const SIDEBAR_COOKIE = "junction-sidebar"
 export type SidebarState = "expanded" | "collapsed"
 
-/** Reads the sidebar cookie from document.cookie (client only). */
 function readSidebarCookie(): SidebarState {
   try {
     const match = document.cookie.match(new RegExp(`(?:^|;\\s*)${SIDEBAR_COOKIE}=([^;]*)`))
@@ -41,7 +38,6 @@ function readSidebarCookie(): SidebarState {
   return "expanded"
 }
 
-/** Writes the sidebar cookie (client only, 1-year expiry, SameSite=Lax). */
 function writeSidebarCookie(state: SidebarState) {
   try {
     const maxAge = 365 * 24 * 60 * 60
@@ -52,12 +48,9 @@ function writeSidebarCookie(state: SidebarState) {
   }
 }
 
-// Pre-hydration sidebar script — reads the cookie and sets the data-sidebar
-// attribute on <html> BEFORE first paint, so the initial width is correct.
-// The SSR render (getSidebarInitialState in __root.tsx) sets the same attribute
-// server-side; this script is a belt-and-suspenders no-JS-flash guard.
-// IMPORTANT: targets document.documentElement (<html>), matching the CSS selectors
-// in app.css and the toggle handler below — single source of truth.
+// Pre-hydration sidebar script — reads cookie, sets data-sidebar on <html> BEFORE
+// first paint. SIDEBAR_SCRIPT targets document.documentElement (<html>), matching
+// app.css [data-sidebar] selectors and the toggle handler below.
 export const SIDEBAR_SCRIPT = `(function(){try{var m=document.cookie.match(/(^|;\\s*)junction-sidebar=([^;]*)/);var s=m&&m[2]==="collapsed"?"collapsed":"expanded";document.documentElement.setAttribute("data-sidebar",s)}catch(e){}})()`
 
 // ─── Nav structure ────────────────────────────────────────────────────────────
@@ -75,8 +68,7 @@ const MANAGE_ITEMS: NavItem[] = [
   { to: "/profiles", label: "Profiles", icon: Database },
 ]
 
-// CONNECT group — reserved for MCP Sources and future destinations (inc 24+).
-// Rendered as a structural placeholder until those routes exist.
+// CONNECT group reserved for inc 24+.
 const CONNECT_ITEMS: NavItem[] = []
 
 // ─── Nav link ─────────────────────────────────────────────────────────────────
@@ -89,7 +81,6 @@ function SidebarNavLink({
   readonly collapsed: boolean
 }) {
   const location = useLocation()
-  // "/" matches only root; others match by prefix
   const isActive =
     item.to === "/" ? location.pathname === "/" : location.pathname.startsWith(item.to)
   const Icon = item.icon
@@ -101,32 +92,28 @@ function SidebarNavLink({
       aria-current={isActive ? "page" : undefined}
       className={cn(
         "group relative flex items-center gap-2.5",
-        "rounded-[var(--radius-sm)]",
-        "transition-colors duration-[var(--motion-micro)]",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-1",
+        "rounded-[var(--radius-6)]",
+        "transition-colors duration-[var(--motion-fast)]",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue-700)] focus-visible:ring-offset-1",
         collapsed ? "justify-center w-9 h-9" : "px-2.5 h-9 w-full",
         isActive
-          ? "bg-[var(--surface-2)] text-[var(--fg)] font-medium"
-          : "text-[var(--muted)] hover:bg-[var(--surface-2)] hover:text-[var(--fg)]",
+          ? // Active: gray-100 bg + gray-1000 text — NO side-accent stripe (anti-slop rule)
+            "bg-[var(--gray-100)] text-[var(--gray-1000)] font-medium"
+          : "text-[var(--gray-700)] hover:bg-[var(--gray-100)] hover:text-[var(--gray-1000)]",
       )}
-      style={
-        isActive
-          ? {
-              // 2px amber inset-left bar — active nav treatment (NOT amber text)
-              boxShadow: "inset 2px 0 0 var(--accent)",
-            }
-          : undefined
-      }
     >
       <Icon
         className="shrink-0 h-4 w-4"
         aria-hidden="true"
-        style={{ color: isActive ? "var(--accent)" : undefined }}
+        style={{ color: isActive ? "var(--gray-1000)" : undefined }}
       />
       {!collapsed && (
         <span
-          className="text-[var(--text-body)] leading-none truncate"
-          style={{ color: isActive ? "var(--fg)" : undefined }}
+          className="leading-none truncate"
+          style={{
+            fontSize: "var(--text-label)",
+            color: isActive ? "var(--gray-1000)" : undefined,
+          }}
         >
           {item.label}
         </span>
@@ -160,13 +147,11 @@ function NavGroup({
     <div className="flex flex-col gap-0.5">
       {!collapsed && (
         <p
-          className="px-2.5 mb-1 uppercase select-none"
+          className="px-2.5 mb-1 select-none"
           style={{
-            fontSize: "var(--text-eyebrow)",
-            fontFamily: "var(--font-mono)",
+            fontSize: "var(--text-caption)",
+            color: "var(--gray-600)",
             fontWeight: 500,
-            letterSpacing: "var(--tracking-eyebrow)",
-            color: "var(--muted)",
           }}
         >
           {label}
@@ -179,7 +164,7 @@ function NavGroup({
   )
 }
 
-// ─── Theme toggle (sidebar footer) ───────────────────────────────────────────
+// ─── Theme toggle ─────────────────────────────────────────────────────────────
 
 type ThemePreference = "system" | "light" | "dark"
 
@@ -195,11 +180,8 @@ const THEME_ICON: Record<ThemePreference, LucideIcon> = {
   dark: Moon,
 }
 
-// Theme preference is client-only external state (localStorage). useSyncExternalStore
-// is the SSR-safe React primitive for exactly this: getServerSnapshot returns the
-// neutral "system" (matching the SSR HTML + THEME_SCRIPT default), getSnapshot reads
-// localStorage on the client. No mount-effect-derived state (no flash, React-Compiler
-// friendly) and no hydration mismatch — React reconciles the server/client snapshots.
+// Theme preference: useSyncExternalStore is the SSR-safe primitive for localStorage.
+// getServerSnapshot returns "system" matching SSR + THEME_SCRIPT default — no flash.
 const themeListeners = new Set<() => void>()
 
 function readStoredTheme(): ThemePreference {
@@ -235,13 +217,13 @@ function applyTheme(pref: ThemePreference) {
 function ThemeToggle({ collapsed }: { readonly collapsed: boolean }) {
   const pref = useSyncExternalStore(
     subscribeTheme,
-    readStoredTheme, // client snapshot
-    () => "system" as ThemePreference, // server snapshot — matches SSR + THEME_SCRIPT default
+    readStoredTheme,
+    () => "system" as ThemePreference,
   )
 
   function toggle() {
     const next = THEME_CYCLE[(THEME_CYCLE.indexOf(pref) + 1) % THEME_CYCLE.length] ?? "system"
-    applyTheme(next) // updates DOM + localStorage, then notifies the store → re-render
+    applyTheme(next)
   }
 
   const Icon = THEME_ICON[pref]
@@ -253,15 +235,15 @@ function ThemeToggle({ collapsed }: { readonly collapsed: boolean }) {
       onClick={toggle}
       className={cn(
         "inline-flex items-center justify-center shrink-0",
-        "rounded-[var(--radius-sm)] border border-[var(--border)]",
-        "transition-colors duration-[var(--motion-micro)]",
-        "hover:bg-[var(--surface-2)]",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-1",
+        "rounded-[var(--radius-6)] border border-[var(--alpha-400)]",
+        "transition-colors duration-[var(--motion-fast)]",
+        "hover:bg-[var(--gray-100)]",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue-700)] focus-visible:ring-offset-1",
         "w-9 h-9",
       )}
       style={{
         backgroundColor: "transparent",
-        color: "var(--muted)",
+        color: "var(--gray-700)",
         cursor: "pointer",
       }}
     >
@@ -278,18 +260,14 @@ function ThemeToggle({ collapsed }: { readonly collapsed: boolean }) {
 // ─── Sidebar component ────────────────────────────────────────────────────────
 
 interface SidebarProps {
-  /** Initial state — read from cookie server-side to prevent SSR flash. */
   readonly initialState?: SidebarState
   readonly children?: ReactNode
 }
 
 export function Sidebar({ initialState }: SidebarProps) {
-  // Initial state comes from SSR (getSidebarState server fn → route context →
-  // initialState) AND from SIDEBAR_SCRIPT, which set html[data-sidebar] from the
-  // cookie before hydration. So React state only needs to MATCH that on first
-  // render — a lazy initializer (read the cookie if no initialState was passed),
-  // NOT a mount effect. Deriving state from a useEffect would re-render on mount
-  // (a flash) and defeat the React Compiler; the initializer runs once.
+  // Initial state from SSR (getSidebarState → route context → initialState) AND from
+  // SIDEBAR_SCRIPT, which set html[data-sidebar] from the cookie before hydration.
+  // Lazy initializer runs once — no mount-effect flash.
   const [collapsed, setCollapsed] = useState(
     () => (initialState ?? readSidebarCookie()) === "collapsed",
   )
@@ -300,14 +278,13 @@ export function Sidebar({ initialState }: SidebarProps) {
       const state: SidebarState = next ? "collapsed" : "expanded"
       writeSidebarCookie(state)
       // Single attribute flip on <html> drives BOTH sidebar width AND content margin
-      // via the [data-sidebar] CSS selectors in app.css (--sidebar-current token).
+      // via [data-sidebar] CSS selectors in app.css (--sidebar-current token).
       document.documentElement.setAttribute("data-sidebar", state)
       return next
     })
   }, [])
 
-  // Cmd/Ctrl+B global keyboard shortcut — bail when focus is inside an editable
-  // control so we don't clobber native bold (contenteditable) or text input.
+  // Cmd/Ctrl+B — bail when focus is inside an editable control.
   useEffect(() => {
     function onKeyDown(e: globalThis.KeyboardEvent) {
       if (!(e.metaKey || e.ctrlKey) || e.key !== "b") return
@@ -318,7 +295,7 @@ export function Sidebar({ initialState }: SidebarProps) {
         active instanceof HTMLSelectElement ||
         (active instanceof HTMLElement && active.isContentEditable)
       ) {
-        return // let the native behaviour (e.g. bold) proceed
+        return
       }
       e.preventDefault()
       toggle()
@@ -333,25 +310,22 @@ export function Sidebar({ initialState }: SidebarProps) {
     <aside
       aria-label="Main navigation"
       className={cn(
-        "fixed top-0 bottom-0 left-[4px]", // offset by StatusRail width (4px)
+        "fixed top-0 bottom-0 left-0",
         "flex flex-col",
-        "border-r border-[var(--border)]",
-        // No width transition — animating layout properties (width) causes jank
-        // (reflow every frame). Collapse is instant; the CSS var swap is atomic.
+        "border-r border-[var(--alpha-400)]",
         "overflow-hidden",
       )}
       style={{
         width,
         minWidth: width,
         zIndex: "var(--z-sidebar)",
-        backgroundColor: "var(--surface)",
+        backgroundColor: "var(--bg-100)",
       }}
     >
-      {/* ── Header: wordmark ───────────────────────────────────────── */}
+      {/* Header: wordmark */}
       <div
         className={cn(
-          "flex items-center shrink-0",
-          "border-b border-[var(--border)]",
+          "flex items-center shrink-0 border-b border-[var(--alpha-400)]",
           collapsed
             ? "justify-center h-[var(--topbar-height)] px-0"
             : "px-3 h-[var(--topbar-height)]",
@@ -360,29 +334,37 @@ export function Sidebar({ initialState }: SidebarProps) {
         <Link
           to="/"
           aria-label="Junction dashboard"
-          className="flex items-center no-underline"
-          style={{ color: "var(--fg)" }}
+          className="flex items-center no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue-700)] focus-visible:ring-offset-1 rounded-[var(--radius-6)]"
         >
           {collapsed ? (
-            // When collapsed, show just the amber node
+            // Collapsed: J glyph only
             <span
               aria-hidden="true"
               style={{
-                display: "inline-block",
-                width: "6px",
-                height: "6px",
-                borderRadius: "0",
-                backgroundColor: "var(--accent-fill)",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: "20px",
+                height: "20px",
+                borderRadius: "var(--radius-6)",
+                backgroundColor: "var(--gray-1000)",
+                color: "var(--bg-100)",
+                fontFamily: "var(--font-sans)",
+                fontSize: "12px",
+                fontWeight: 700,
+                lineHeight: 1,
                 flexShrink: 0,
               }}
-            />
+            >
+              J
+            </span>
           ) : (
             <Wordmark />
           )}
         </Link>
       </div>
 
-      {/* ── Nav content ────────────────────────────────────────────── */}
+      {/* Nav content */}
       <nav
         aria-label="Site navigation"
         className={cn(
@@ -398,10 +380,10 @@ export function Sidebar({ initialState }: SidebarProps) {
         )}
       </nav>
 
-      {/* ── Footer: theme toggle + status summary + ⌘B hint ────────── */}
+      {/* Footer: theme toggle + ⌘B hint */}
       <div
         className={cn(
-          "shrink-0 border-t border-[var(--border)]",
+          "shrink-0 border-t border-[var(--alpha-400)]",
           collapsed
             ? "px-1.5 py-3 flex flex-col items-center gap-2"
             : "px-3 py-3 flex items-center gap-2",
@@ -413,8 +395,8 @@ export function Sidebar({ initialState }: SidebarProps) {
             <span
               className="flex-1 truncate"
               style={{
-                fontSize: "var(--text-eyebrow)",
-                color: "var(--muted)",
+                fontSize: "var(--text-caption)",
+                color: "var(--gray-600)",
                 fontFamily: "var(--font-mono)",
               }}
             >
@@ -428,13 +410,13 @@ export function Sidebar({ initialState }: SidebarProps) {
                   onClick={toggle}
                   className={cn(
                     "inline-flex items-center gap-1",
-                    "rounded-[var(--radius-sm)]",
-                    "transition-colors duration-[var(--motion-micro)]",
-                    "hover:bg-[var(--surface-2)]",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-1",
+                    "rounded-[var(--radius-6)]",
+                    "transition-colors duration-[var(--motion-fast)]",
+                    "hover:bg-[var(--gray-100)]",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue-700)] focus-visible:ring-offset-1",
                     "px-1.5 h-6",
                   )}
-                  style={{ color: "var(--muted)", backgroundColor: "transparent" }}
+                  style={{ color: "var(--gray-700)", backgroundColor: "transparent" }}
                 >
                   <Kbd>⌘B</Kbd>
                 </button>
@@ -450,12 +432,12 @@ export function Sidebar({ initialState }: SidebarProps) {
               onClick={toggle}
               className={cn(
                 "inline-flex items-center justify-center",
-                "w-9 h-9 rounded-[var(--radius-sm)]",
-                "transition-colors duration-[var(--motion-micro)]",
-                "hover:bg-[var(--surface-2)]",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-1",
+                "w-9 h-9 rounded-[var(--radius-6)]",
+                "transition-colors duration-[var(--motion-fast)]",
+                "hover:bg-[var(--gray-100)]",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue-700)] focus-visible:ring-offset-1",
               )}
-              style={{ color: "var(--muted)", backgroundColor: "transparent" }}
+              style={{ color: "var(--gray-700)", backgroundColor: "transparent" }}
             >
               <span aria-hidden="true" style={{ fontSize: "var(--text-body)" }}>
                 ›
