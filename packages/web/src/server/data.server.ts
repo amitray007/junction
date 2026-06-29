@@ -46,6 +46,27 @@ async function credentialStoreLabel(paths: JunctionPaths): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
+// System info — metadata only (Store / Sandbox / Home).
+// Used by the sidebar panel; extracted so the sidebar server-fn does not
+// pull in the full dashboard (counts + repos) on every page load.
+// ---------------------------------------------------------------------------
+
+export type SystemInfo = {
+  credentialStore: string
+  sandbox: string
+  home: string
+}
+
+export async function readSystemInfo(): Promise<SystemInfo> {
+  const paths = getPaths()
+  const [credentialStore, sandbox] = await Promise.all([
+    credentialStoreLabel(paths),
+    sandboxLabel(),
+  ])
+  return { credentialStore, sandbox, home: paths.home }
+}
+
+// ---------------------------------------------------------------------------
 // Dashboard
 // ---------------------------------------------------------------------------
 
@@ -59,11 +80,7 @@ export type DashboardData = {
 
 export async function readDashboard(): Promise<DashboardData> {
   const paths = getPaths()
-  const [stateResult, credentialStore, sandbox] = await Promise.all([
-    loadConfigState(paths),
-    credentialStoreLabel(paths),
-    sandboxLabel(),
-  ])
+  const [stateResult, systemInfo] = await Promise.all([loadConfigState(paths), readSystemInfo()])
   const initialized = stateResult.isOk() && stateResult.value.initialized
 
   const counts = await withRepos({ platforms: 0, credentials: 0, profiles: 0 }, async (repos) => {
@@ -79,7 +96,13 @@ export async function readDashboard(): Promise<DashboardData> {
     }
   })
 
-  return { home: paths.home, initialized, credentialStore, sandbox, counts }
+  return {
+    home: systemInfo.home,
+    initialized,
+    credentialStore: systemInfo.credentialStore,
+    sandbox: systemInfo.sandbox,
+    counts,
+  }
 }
 
 // ---------------------------------------------------------------------------

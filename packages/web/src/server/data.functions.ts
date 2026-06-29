@@ -13,6 +13,7 @@ import {
   readPlatforms,
   readProfiles,
   readSettings,
+  readSystemInfo,
 } from "./data.server.js"
 import { assertLocalHost } from "./fn-guards.server.js"
 
@@ -25,6 +26,7 @@ export type {
   ProfileMeta,
   SettingsData,
   SourceMeta,
+  SystemInfo,
 } from "./data.server.js"
 
 // ---------------------------------------------------------------------------
@@ -72,4 +74,12 @@ export const getSidebarState = createServerFn({ method: "GET" }).handler(
 export const getSettings = createServerFn({ method: "GET" }).handler(async () => {
   assertLocalHost()
   return readSettings()
+})
+
+// System info (Store / Sandbox / Home) — used by the sidebar panel.
+// Lightweight: no DB access, metadata-only. Called from __root.tsx beforeLoad
+// in parallel with getSidebarState so the sidebar always has fresh values.
+export const getSystemInfo = createServerFn({ method: "GET" }).handler(async () => {
+  assertLocalHost()
+  return readSystemInfo()
 })

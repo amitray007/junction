@@ -8,6 +8,9 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 // ---- Fixtures ---------------------------------------------------------------
 
+// System info (Store/Sandbox/Home) is no longer on the dashboard — it moved to the
+// sidebar panel. The loader still returns DashboardData for the isEmpty counts check.
+
 const emptyData = {
   home: "/home/user/.junction",
   initialized: true,
@@ -63,25 +66,13 @@ describe("DashboardPage", () => {
     expect(getByRole("heading", { level: 1, name: "Dashboard" })).toBeInTheDocument()
   })
 
-  it("renders the stat cards list", () => {
+  it("does NOT render the overview block (System moved to sidebar)", () => {
     mockUseLoaderData.mockReturnValue(emptyData)
-    const { getByRole } = render(<DashboardPage />)
-    expect(getByRole("list", { name: "Summary counts" })).toBeInTheDocument()
-  })
-
-  it("shows zero counts in stat cards", () => {
-    mockUseLoaderData.mockReturnValue(emptyData)
-    const { getAllByText } = render(<DashboardPage />)
-    // 3 stat cards show their counts; all are 0 → 3 elements with text "0"
-    expect(getAllByText("0").length).toBeGreaterThanOrEqual(3)
-  })
-
-  it("shows populated counts in stat cards", () => {
-    mockUseLoaderData.mockReturnValue(populatedData)
-    const { getByText } = render(<DashboardPage />)
-    expect(getByText("3")).toBeInTheDocument() // platforms
-    expect(getByText("2")).toBeInTheDocument() // credentials
-    expect(getByText("1")).toBeInTheDocument() // profiles
+    const { queryByRole, queryByTestId } = render(<DashboardPage />)
+    // The overview region and its At-a-Glance / System columns are gone.
+    expect(queryByRole("region", { name: /overview/i })).not.toBeInTheDocument()
+    expect(queryByTestId("overview-glance")).not.toBeInTheDocument()
+    expect(queryByTestId("overview-system")).not.toBeInTheDocument()
   })
 
   it("shows empty state when nothing is configured", () => {
@@ -115,20 +106,5 @@ describe("DashboardPage", () => {
     expect(getByRole("region", { name: /recent activity/i })).toBeInTheDocument()
     // Multiple "Coming soon" pills render (AgentConfig + Recent Activity) — assert at least one.
     expect(getAllByText("Coming soon").length).toBeGreaterThanOrEqual(1)
-  })
-
-  it("renders the System status section (inc 25 single-column layout)", () => {
-    mockUseLoaderData.mockReturnValue(emptyData)
-    const { getByRole, getByText } = render(<DashboardPage />)
-    expect(getByRole("region", { name: /system/i })).toBeInTheDocument()
-    // StatusRow values from the fixture
-    expect(getByText("keyring")).toBeInTheDocument()
-    expect(getByText("seatbelt")).toBeInTheDocument()
-  })
-
-  it("renders the At a Glance section (stat strip, inc 25 single-column layout)", () => {
-    mockUseLoaderData.mockReturnValue(emptyData)
-    const { getByRole } = render(<DashboardPage />)
-    expect(getByRole("region", { name: /at a glance/i })).toBeInTheDocument()
   })
 })

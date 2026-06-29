@@ -6,7 +6,9 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router"
 import type { ReactNode } from "react"
 import { Toaster } from "sonner"
-import { getSidebarState } from "../server/data.functions.js"
+import type { SystemInfo } from "../server/data.functions.js"
+import { getSidebarState, getSystemInfo } from "../server/data.functions.js"
+import { DevAgentation } from "../ui/dev-agentation.js"
 import { SIDEBAR_SCRIPT, Sidebar, type SidebarState } from "../ui/sidebar.js"
 import { TooltipProvider } from "../ui/tooltip.js"
 import "../styles/app.css"
@@ -19,11 +21,16 @@ import "../styles/app.css"
 const THEME_SCRIPT = `(function(){try{var s=localStorage.getItem("junction-theme");if(s==="light"||s==="dark"){document.documentElement.setAttribute("data-theme",s)}else{var d=window.matchMedia&&window.matchMedia("(prefers-color-scheme: light)").matches?"light":"dark";document.documentElement.setAttribute("data-theme",d)}}catch(e){document.documentElement.setAttribute("data-theme","dark")}})()`
 
 export const Route = createRootRoute({
-  // Read the sidebar cookie via a server fn so the initial SSR render emits the
-  // correct data-sidebar attribute on <html> — no width flash.
-  beforeLoad: async (): Promise<{ readonly sidebarState: SidebarState }> => ({
-    sidebarState: await getSidebarState(),
-  }),
+  // Read the sidebar cookie + system info in parallel so the initial SSR render
+  // has both without an extra round-trip. getSystemInfo degrades gracefully
+  // (the label helpers return "unavailable (...)" strings) so this never throws.
+  beforeLoad: async (): Promise<{
+    readonly sidebarState: SidebarState
+    readonly systemInfo: SystemInfo
+  }> => {
+    const [sidebarState, systemInfo] = await Promise.all([getSidebarState(), getSystemInfo()])
+    return { sidebarState, systemInfo }
+  },
   head: () => ({
     meta: [
       { charSet: "utf-8" },
@@ -61,7 +68,7 @@ function RootComponent() {
 }
 
 function RootDocument({ children }: { readonly children: ReactNode }) {
-  const sidebarInitialState = Route.useRouteContext().sidebarState
+  const { sidebarState: sidebarInitialState, systemInfo } = Route.useRouteContext()
 
   return (
     <html
@@ -91,7 +98,7 @@ function RootDocument({ children }: { readonly children: ReactNode }) {
           {/* App shell: Sidebar (fixed) + main content column */}
 
           {/* Sidebar — fixed, no StatusRail offset (rail retired inc 24.5) */}
-          <Sidebar initialState={sidebarInitialState} />
+          <Sidebar initialState={sidebarInitialState} systemInfo={systemInfo} />
 
           {/* Main column — margin-left driven by --sidebar-current CSS var
               which is set by [data-sidebar] on <html> (app.css). Atomic toggle,
@@ -114,6 +121,9 @@ function RootDocument({ children }: { readonly children: ReactNode }) {
           />
         </TooltipProvider>
 
+        {/* agentation UI-annotation overlay — DEV-ONLY (stripped from prod builds). */}
+        <DevAgentation />
+
         <Scripts />
       </body>
     </html>
@@ -134,40 +144,18 @@ function AppShellMain({ children }: { readonly children: ReactNode }) {
         marginLeft: "var(--sidebar-current)",
       }}
     >
-      {/* Topbar — sticky context/breadcrumb bar */}
-      <Topbar />
-
       {/* Page content — routes render PageHeader + scrollable content inside main.
           inc 24.6: maxWidth raised to --content-max (76rem/1216px) so content
-          uses the available width; scrollbar-gutter prevents layout shift. */}
+          uses the available width; scrollbar-gutter prevents layout shift.
+          inc 25: the empty Topbar was removed so the page heading sits at the top
+          (no empty band). The <main> top padding is a small, intentional gutter. */}
       <main
         id="main-content"
-        className="flex-1 px-[var(--gutter)] py-8"
+        className="flex-1 px-[var(--gutter)] pt-[var(--gutter)] pb-8"
         style={{ maxWidth: "var(--content-max)", scrollbarGutter: "stable" }}
       >
         {children}
       </main>
     </div>
-  )
-}
-
-// Topbar — sticky thin structural bar.
-// inc 24.6: the breadcrumb that merely repeated the page h1 is removed (DESIGN.md:
-// "No redundant breadcrumb that merely repeats the page title"). The <header>
-// landmark is kept for the skip-link + sticky chrome; future: theme toggle sits here.
-function Topbar() {
-  return (
-    <header
-      className="sticky top-0 flex items-center justify-between shrink-0 px-[var(--gutter)] border-b border-[var(--alpha-200)]"
-      style={{
-        height: "var(--topbar-height)",
-        backgroundColor: "var(--bg-100)",
-        zIndex: "var(--z-topbar)",
-      }}
-    >
-      {/* Reserved for theme toggle / future controls (inc 24.6: intentionally empty) */}
-      <div />
-      <div />
-    </header>
   )
 }

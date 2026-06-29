@@ -252,37 +252,6 @@ html[data-sidebar="collapsed"] {
   --height-topbar: var(--topbar-height);
 }
 
-/* ─── Stat strip — At-a-Glance equal-cell row (inc 25 phase 2) ──────────── */
-/* Three equal-width cells in a bordered row; collapses to 1 col below breakpoint.
-   Uses CSS grid so cells are mathematically equal at every viewport width —
-   no flex-wrap distortion. Each cell is bordered on the right except the last.  */
-
-.stat-strip {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  border: 1px solid var(--alpha-400);
-  border-radius: var(--radius-12);
-  background: var(--bg-100);
-  box-shadow: var(--shadow-sm);
-  overflow: hidden;
-}
-
-/* Vertical dividers between cells — right border on first two cells. */
-.stat-strip > li + li {
-  border-left: 1px solid var(--alpha-200);
-}
-
-@media (max-width: 28rem) {
-  .stat-strip {
-    grid-template-columns: 1fr;
-  }
-  /* In 1-col mode: use bottom borders as dividers instead of left borders. */
-  .stat-strip > li + li {
-    border-left: none;
-    border-top: 1px solid var(--alpha-200);
-  }
-}
-
 /* ─── Global resets & base ───────────────────────────────────────────────── */
 
 *,

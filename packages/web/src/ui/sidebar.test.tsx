@@ -187,6 +187,57 @@ describe("Sidebar", () => {
   })
 })
 
+// ── System panel ──────────────────────────────────────────────────────────────
+
+const fakeSystemInfo = {
+  credentialStore: "keyring",
+  sandbox: "seatbelt · deno",
+  home: "/tmp/x",
+}
+
+describe("Sidebar — System panel", () => {
+  afterEach(() => {
+    cleanup()
+    // biome-ignore lint/suspicious/noDocumentCookie: intentional test teardown
+    document.cookie = `${SIDEBAR_COOKIE}=; max-age=0`
+    document.documentElement.removeAttribute("data-sidebar")
+  })
+
+  it("renders Store / Sandbox / Home rows when expanded with systemInfo", () => {
+    render(
+      <TooltipProvider>
+        <Sidebar initialState="expanded" systemInfo={fakeSystemInfo} />
+      </TooltipProvider>,
+    )
+    expect(screen.getByText("keyring")).toBeInTheDocument()
+    expect(screen.getByText("seatbelt · deno")).toBeInTheDocument()
+    expect(screen.getByText("/tmp/x")).toBeInTheDocument()
+  })
+
+  it("does NOT render text rows when collapsed — shows icon button instead", () => {
+    render(
+      <TooltipProvider>
+        <Sidebar initialState="collapsed" systemInfo={fakeSystemInfo} />
+      </TooltipProvider>,
+    )
+    // Text values must not be visible (collapsed = icon-only mode)
+    expect(screen.queryByText("keyring")).not.toBeInTheDocument()
+    expect(screen.queryByText("seatbelt · deno")).not.toBeInTheDocument()
+    // The icon button is present with its aria-label
+    expect(screen.getByRole("button", { name: "System info" })).toBeInTheDocument()
+  })
+
+  it("renders nothing when systemInfo is omitted", () => {
+    render(
+      <TooltipProvider>
+        <Sidebar initialState="expanded" />
+      </TooltipProvider>,
+    )
+    expect(screen.queryByRole("button", { name: "System info" })).not.toBeInTheDocument()
+    expect(screen.queryByText("Store")).not.toBeInTheDocument()
+  })
+})
+
 // ── FIX 2: Theme toggle desync for OS-light first-time visitors ───────────────
 // readStoredTheme() must mirror what THEME_SCRIPT applied (data-theme on <html>)
 // when localStorage is unset, so the toggle label matches the rendered theme.
