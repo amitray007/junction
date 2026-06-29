@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Dashboard route — status line · Connect an Agent (ComingSoon) · At a Glance · Recent Activity.
+// Dashboard route — 2-col layout (inc 24.6): Connect an Agent (primary) + At-a-Glance + System (secondary).
 // No @junction/core import.
+// Layout: .dashboard-grid CSS class (app.css) — 2-col above 48rem, 1-col stack below.
+// Connect-an-Agent (grid-row: 1 / span 2) is the visual focal point.
 
 import { createFileRoute } from "@tanstack/react-router"
+import type { CSSProperties, ReactNode } from "react"
 import { getDashboard } from "../server/data.functions.js"
 import { AgentConfig } from "../ui/agent-config.js"
 import { Card, CardContent } from "../ui/card.js"
@@ -34,108 +37,86 @@ function DashboardPage() {
     data.counts.platforms === 0 && data.counts.credentials === 0 && data.counts.profiles === 0
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-10)" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: "32px" }}>
       <PageHeader title="Dashboard" />
 
-      {/* Status line */}
-      <section aria-labelledby="status-heading">
-        <h2
-          id="status-heading"
-          style={{
-            fontSize: "var(--text-h2)",
-            fontWeight: 600,
-            color: "var(--gray-1000)",
-            marginBottom: "12px",
-          }}
-        >
-          System
-        </h2>
-        <Card>
-          <CardContent>
-            <dl
-              style={{
-                display: "grid",
-                gridTemplateColumns: "max-content 1fr",
-                columnGap: "32px",
-                rowGap: "8px",
-                margin: 0,
-              }}
-            >
-              <StatusRow label="Store" value={data.credentialStore} />
-              <StatusRow label="Sandbox" value={data.sandbox} />
-              <StatusRow label="Home" value={data.home} mono />
-            </dl>
-          </CardContent>
-        </Card>
-      </section>
-
-      {/* At a Glance — compact stat row, not a hero banner */}
-      <section aria-labelledby="glance-heading">
-        <h2
-          id="glance-heading"
-          style={{
-            fontSize: "var(--text-h2)",
-            fontWeight: 600,
-            color: "var(--gray-1000)",
-            marginBottom: "12px",
-          }}
-        >
-          At a Glance
-        </h2>
-        <ul
-          aria-label="Summary counts"
-          style={{
-            display: "flex",
-            gap: "32px",
-            flexWrap: "wrap",
-            listStyle: "none",
-            margin: 0,
-            padding: 0,
-          }}
-        >
-          <StatItem label="Platforms" value={data.counts.platforms} />
-          <StatItem label="Credentials" value={data.counts.credentials} />
-          <StatItem label="Profiles" value={data.counts.profiles} />
-        </ul>
-      </section>
-
-      {/* Connect an Agent — ComingSoon surface; NO working http endpoint */}
-      <section aria-labelledby="connect-heading">
-        <h2
-          id="connect-heading"
-          style={{
-            fontSize: "var(--text-h2)",
-            fontWeight: 600,
-            color: "var(--gray-1000)",
-            marginBottom: "12px",
-          }}
-        >
-          Connect an Agent
-        </h2>
-        <Card>
-          <CardContent>
-            <AgentConfig />
-          </CardContent>
-        </Card>
-      </section>
-
-      {/* Recent Activity — ComingSoon (audit, inc 29) */}
-      <section aria-labelledby="activity-heading">
-        <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "12px" }}>
+      {/* .dashboard-grid (app.css): 2-col above 48rem (--dashboard-breakpoint), stacks to
+          1-col below via @media. Connect spans both grid rows as the primary focal point.
+          Source order: Connect first (keyboard/reader priority), secondary panels follow. */}
+      <div className="dashboard-grid">
+        {/* PRIMARY — Connect an Agent spans both rows in the primary column */}
+        {/* ComingSoon surface; NO working http endpoint */}
+        <section aria-labelledby="connect-heading" style={{ gridRow: "1 / span 2" }}>
           <h2
-            id="activity-heading"
+            id="connect-heading"
             style={{
               fontSize: "var(--text-h2)",
               fontWeight: 600,
               color: "var(--gray-1000)",
-              margin: 0,
+              marginBottom: "12px",
             }}
           >
-            Recent Activity
+            Connect an Agent
           </h2>
+          <Card>
+            <CardContent>
+              <AgentConfig />
+            </CardContent>
+          </Card>
+        </section>
+
+        {/* SECONDARY row 1 — At a Glance: compact stat strip, no card wrapper */}
+        <section aria-labelledby="glance-heading">
+          <SectionLabel id="glance-heading">At a Glance</SectionLabel>
+          <ul
+            aria-label="Summary counts"
+            style={{
+              display: "flex",
+              gap: "24px",
+              flexWrap: "wrap",
+              listStyle: "none",
+              margin: 0,
+              padding: 0,
+            }}
+          >
+            <StatItem label="Platforms" value={data.counts.platforms} />
+            <StatItem label="Credentials" value={data.counts.credentials} />
+            <StatItem label="Profiles" value={data.counts.profiles} />
+          </ul>
+        </section>
+
+        {/* SECONDARY row 2 — System: quiet detail card */}
+        <section aria-labelledby="status-heading">
+          <SectionLabel id="status-heading">System</SectionLabel>
+          <Card>
+            <CardContent style={{ padding: "12px 16px" }}>
+              <dl
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "max-content 1fr",
+                  columnGap: "16px",
+                  rowGap: "6px",
+                  margin: 0,
+                }}
+              >
+                <StatusRow label="Store" value={data.credentialStore} />
+                <StatusRow label="Sandbox" value={data.sandbox} />
+                <StatusRow label="Home" value={data.home} mono />
+              </dl>
+            </CardContent>
+          </Card>
+        </section>
+      </div>
+
+      {/* Recent Activity — quiet footer (ComingSoon, audit inc 29) */}
+      <section aria-labelledby="activity-heading">
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
+          <SectionLabel id="activity-heading" style={{ margin: 0 }}>
+            Recent Activity
+          </SectionLabel>
           <ComingSoon />
         </div>
-        <p style={{ fontSize: "var(--text-body)", color: "var(--gray-700)", margin: 0 }}>
+        <p style={{ fontSize: "var(--text-body)", color: "var(--gray-600)", margin: 0 }}>
           Per-agent usage and audit log coming in a later update.
         </p>
       </section>
@@ -159,6 +140,37 @@ function DashboardPage() {
   )
 }
 
+// ─── Dashboard-local primitives ───────────────────────────────────────────────
+
+// SectionLabel — secondary section headings (At a Glance / System / Recent Activity).
+// Uppercase, text-label weight, gray-700. Used 3× in this file — rule-of-three.
+// The primary "Connect an Agent" heading is a distinct h2/text-h2 style (single occurrence).
+interface SectionLabelProps {
+  readonly id?: string
+  readonly style?: CSSProperties
+  readonly children: ReactNode
+}
+
+function SectionLabel({ id, style, children }: SectionLabelProps) {
+  return (
+    <h2
+      id={id}
+      style={{
+        fontSize: "var(--text-label)",
+        fontWeight: 500,
+        color: "var(--gray-700)",
+        // margin: "0 0 10px" — top/right/left zero; 10px bottom default (overridable via style)
+        margin: "0 0 10px",
+        textTransform: "uppercase",
+        letterSpacing: "0.05em",
+        ...style,
+      }}
+    >
+      {children}
+    </h2>
+  )
+}
+
 function StatusRow({
   label,
   value,
@@ -170,14 +182,21 @@ function StatusRow({
 }) {
   return (
     <>
-      <dt style={{ fontSize: "var(--text-body)", color: "var(--gray-700)", fontWeight: 500 }}>
+      <dt
+        style={{
+          fontSize: "var(--text-body)",
+          color: "var(--gray-700)",
+          fontWeight: 500,
+          whiteSpace: "nowrap",
+        }}
+      >
         {label}
       </dt>
       <dd
         style={{
           fontSize: mono ? "var(--text-mono)" : "var(--text-body)",
           fontFamily: mono ? "var(--font-mono)" : "var(--font-sans)",
-          color: "var(--gray-1000)",
+          color: "var(--gray-900)",
           margin: 0,
           wordBreak: "break-all",
         }}

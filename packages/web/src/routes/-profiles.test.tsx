@@ -113,4 +113,24 @@ describe("ProfilesPage", () => {
     expect(queryByText("/tmp/junction/mcp/default.sock")).not.toBeInTheDocument()
     expect(queryByText("/tmp/junction/mcp/readonly.sock")).not.toBeInTheDocument()
   })
+
+  it("renders a single consolidated CLI affordance per card with real command names (inc 24.6)", () => {
+    // inc 24.6: 2 ComingSoonAction pills per card (Add Route + Toggle Route) consolidated to
+    // 1 quiet text block with the real CLI command names.
+    mockUseLoaderData.mockReturnValue(populatedData)
+    const { getAllByText } = render(<ProfilesPage />)
+    // "junction profile add-source" must appear — once per profile card (2 cards)
+    expect(getAllByText("junction profile add-source").length).toBeGreaterThanOrEqual(1)
+    expect(getAllByText("junction profile enable-source").length).toBeGreaterThanOrEqual(1)
+    expect(getAllByText("junction profile disable-source").length).toBeGreaterThanOrEqual(1)
+  })
+
+  it("shows quiet create hint in page header (not a disabled button cluster, inc 24.6)", () => {
+    // inc 24.6: the ComingSoonAction cluster in the page header is replaced by a single
+    // inline text hint with the real CLI command. Both the page header actions slot AND the
+    // empty-state hint contain "junction profile create", so use getAllByText.
+    mockUseLoaderData.mockReturnValue(emptyData)
+    const { getAllByText } = render(<ProfilesPage />)
+    expect(getAllByText("junction profile create").length).toBeGreaterThanOrEqual(1)
+  })
 })

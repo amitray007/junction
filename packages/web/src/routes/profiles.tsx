@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Profiles route — full read with route rows. No mutations yet (inc 26).
 // mcpEndpointPath is NOT shown (single-endpoint model). No @junction/core import.
+// inc 24.6: ComingSoon chrome consolidated — 2 pills+hints per card → 1 quiet CLI affordance.
+//           Page header ComingSoonAction cluster → single quiet inline hint.
 
 import { createFileRoute } from "@tanstack/react-router"
 import { getProfiles, type ProfileMeta } from "../server/data.functions.js"
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card.js"
-import { ComingSoon, ComingSoonAction } from "../ui/coming-soon.js"
+import { MonoCode } from "../ui/code.js"
+import { ComingSoon } from "../ui/coming-soon.js"
 import { PageHeader } from "../ui/page-header.js"
 import { RouteRow } from "../ui/route-row.js"
 import { Separator } from "../ui/separator.js"
@@ -34,7 +37,14 @@ function ProfilesPage() {
       <PageHeader
         title="Profiles"
         count={profiles.length > 0 ? profiles.length : undefined}
-        actions={<ComingSoonAction label="New Profile" cliHint="junction profile create" />}
+        // inc 24.6: single quiet hint replaces disabled-button + pill + hint cluster
+        actions={
+          <span style={{ fontSize: "var(--text-body)", color: "var(--gray-600)" }}>
+            Create via{" "}
+            <MonoCode style={{ color: "var(--blue-text)" }}>junction profile create</MonoCode> — UI
+            coming soon
+          </span>
+        }
       />
 
       {profiles.length === 0 ? (
@@ -42,16 +52,7 @@ function ProfilesPage() {
           label="No profiles yet."
           hint={
             <span>
-              Run{" "}
-              <code
-                style={{
-                  fontFamily: "var(--font-mono)",
-                  fontSize: "var(--text-mono)",
-                  color: "var(--blue-text)",
-                }}
-              >
-                junction profile create
-              </code>{" "}
+              Run <MonoCode style={{ color: "var(--blue-text)" }}>junction profile create</MonoCode>{" "}
               to create one.
             </span>
           }
@@ -125,16 +126,16 @@ function ProfileCard({ profile }: { readonly profile: ProfileMeta }) {
         </>
       )}
 
-      {/* Profile mutations — ComingSoon (inc 26) */}
+      {/* Profile mutations — one quiet affordance (inc 24.6: was 2 pill+hint clusters per card) */}
       <Separator style={{ marginTop: "12px", marginBottom: "12px" }} />
       <CardContent>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center" }}>
-          <ComingSoonAction label="Add Route" cliHint="junction profile add-source" />
-          <ComingSoonAction
-            label="Toggle Route"
-            cliHint="junction profile enable-source / disable-source"
-          />
-        </div>
+        <p style={{ fontSize: "var(--text-body)", color: "var(--gray-600)", margin: 0 }}>
+          Routes are managed via the CLI —{" "}
+          <MonoCode style={{ color: "var(--blue-text)" }}>junction profile add-source</MonoCode>,{" "}
+          <MonoCode style={{ color: "var(--blue-text)" }}>junction profile enable-source</MonoCode>,{" "}
+          <MonoCode style={{ color: "var(--blue-text)" }}>junction profile disable-source</MonoCode>
+          . Editing in the UI is coming soon.
+        </p>
       </CardContent>
     </Card>
   )

@@ -115,7 +115,14 @@
   --sidebar-width: 15rem;         /* 240px — expanded */
   --sidebar-width-icon: 3rem;     /* 48px — collapsed icon-only */
   --topbar-height: 2.75rem;       /* 44px */
-  --content-max: 60rem;           /* 960px — content column max width */
+  --content-max: 76rem;           /* 1216px — inc 24.6: use the width, left-aligned (DESIGN.md §Spacing) */
+
+  /* ── Dashboard 2-col grid (inc 24.6) ───────────────────────────────── */
+  /* Primary col: Connect an Agent (focal point). Secondary: At-a-Glance + System. */
+  /* .dashboard-grid in app.css drives the layout; @media stacks to 1-col below breakpoint. */
+  --dashboard-col-main: 1fr;        /* primary / Connect-an-Agent column */
+  --dashboard-col-side: 22rem;      /* secondary / At-a-Glance + System (352px) */
+  --dashboard-breakpoint: 48rem;    /* 768px — stack to 1 col below this */
 
   /* ── Z-index scale ──────────────────────────────────────────────────── */
   --z-sidebar: 50;
@@ -250,6 +257,27 @@ html[data-sidebar="collapsed"] {
   --width-sidebar: var(--sidebar-width);
   --width-sidebar-icon: var(--sidebar-width-icon);
   --height-topbar: var(--topbar-height);
+  /* --dashboard-col-* consumed via raw var() in .dashboard-grid — no @theme entries
+     (those would be self-referential; the correct pattern is alias like --width-sidebar). */
+}
+
+/* ─── Dashboard grid — responsive 2-col layout ───────────────────────────── */
+/* .dashboard-grid in routes/index.tsx: Connect an Agent (primary, 1fr) sits left;
+   At-a-Glance + System (secondary, --dashboard-col-side) sit right.
+   @media collapses to a true 1-column stack at --dashboard-breakpoint (48rem/768px). */
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: var(--dashboard-col-main) var(--dashboard-col-side);
+  grid-template-rows: auto auto;
+  gap: 24px;
+  align-items: start;
+}
+
+@media (max-width: 48rem) {
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* ─── Global resets & base ───────────────────────────────────────────────── */

@@ -114,4 +114,19 @@ describe("DashboardPage", () => {
     // Multiple "Coming soon" pills render (AgentConfig + Recent Activity) — assert at least one.
     expect(getAllByText("Coming soon").length).toBeGreaterThanOrEqual(1)
   })
+
+  it("renders the System status section (secondary col, inc 24.6 2-col layout)", () => {
+    mockUseLoaderData.mockReturnValue(emptyData)
+    const { getByRole, getByText } = render(<DashboardPage />)
+    expect(getByRole("region", { name: /system/i })).toBeInTheDocument()
+    // StatusRow values from the fixture
+    expect(getByText("keyring")).toBeInTheDocument()
+    expect(getByText("seatbelt")).toBeInTheDocument()
+  })
+
+  it("renders the At a Glance section (secondary col, inc 24.6 2-col layout)", () => {
+    mockUseLoaderData.mockReturnValue(emptyData)
+    const { getByRole } = render(<DashboardPage />)
+    expect(getByRole("region", { name: /at a glance/i })).toBeInTheDocument()
+  })
 })
