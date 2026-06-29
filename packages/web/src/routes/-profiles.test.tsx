@@ -72,9 +72,12 @@ describe("ProfilesPage", () => {
     expect(getByRole("heading", { level: 1, name: "Profiles" })).toBeInTheDocument()
   })
 
-  it("shows empty state when no profiles", () => {
+  it("shows empty table with header + message row when no profiles (B3)", () => {
     mockUseLoaderData.mockReturnValue(emptyData)
-    const { getByText } = render(<ProfilesPage />)
+    const { getByRole, getByText } = render(<ProfilesPage />)
+    // Table always rendered — header present
+    expect(getByRole("table")).toBeInTheDocument()
+    // Empty message in a full-width row
     expect(getByText("No profiles yet.")).toBeInTheDocument()
   })
 

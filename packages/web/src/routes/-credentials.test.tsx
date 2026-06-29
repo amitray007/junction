@@ -79,11 +79,14 @@ describe("CredentialsPage", () => {
     expect(h1).toBeInTheDocument()
   })
 
-  // ── Empty state ────────────────────────────────────────────────────────────
+  // ── Empty state (B3: empty table row, not bare text) ──────────────────────
 
-  it("shows empty state when no credentials", () => {
+  it("shows empty table with header + message row when no credentials", () => {
     mockUseLoaderData.mockReturnValue({ credentials: emptyCredentials, platforms: emptyPlatforms })
-    const { getByText } = render(<CredentialsPage />)
+    const { getByRole, getByText } = render(<CredentialsPage />)
+    // Table always rendered — header present
+    expect(getByRole("table")).toBeInTheDocument()
+    // Empty message in a full-width row
     expect(getByText("No credentials yet.")).toBeInTheDocument()
   })
 

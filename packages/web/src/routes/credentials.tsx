@@ -45,7 +45,7 @@ import {
   TableRow,
   TableSkeleton,
 } from "../ui/index.js"
-import { EmptyState } from "../ui/states.js"
+import { EmptyTableRow } from "../ui/table.js"
 
 export const Route = createFileRoute("/credentials")({
   loader: async () => {
@@ -506,16 +506,29 @@ function CredentialsPage() {
         }
       />
 
+      {/* B3: empty state is an empty table row, not bare text */}
       {credentials.length === 0 ? (
-        <EmptyState
-          label="No credentials yet."
-          hint={
-            <span>
-              Run <MonoCode>junction credential add</MonoCode> to add one via CLI, or click{" "}
-              <strong>Add Credential</strong> above.
-            </span>
-          }
-        />
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Account</TableHead>
+              <TableHead>Kind</TableHead>
+              <TableHead>Status</TableHead>
+              <TableActionsHead />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <EmptyTableRow
+              colSpan={4}
+              message="No credentials yet."
+              action={
+                <span style={{ fontSize: "var(--text-body)", color: "var(--gray-700)" }}>
+                  Use <strong>Add Credential</strong> above.
+                </span>
+              }
+            />
+          </TableBody>
+        </Table>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "32px" }}>
           {Array.from(byPlatform.entries()).map(([pid, creds], idx) => (

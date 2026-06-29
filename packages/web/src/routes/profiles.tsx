@@ -13,7 +13,7 @@ import { PageHeader } from "../ui/page-header.js"
 import { RouteRow } from "../ui/route-row.js"
 import { Separator } from "../ui/separator.js"
 import { TableSkeleton } from "../ui/skeleton.js"
-import { EmptyState } from "../ui/states.js"
+import { EmptyTableRow, Table, TableBody, TableHead, TableHeader, TableRow } from "../ui/table.js"
 
 export const Route = createFileRoute("/profiles")({
   loader: () => getProfiles(),
@@ -47,16 +47,29 @@ function ProfilesPage() {
         }
       />
 
+      {/* B3: empty state is an empty table row, not bare text */}
       {profiles.length === 0 ? (
-        <EmptyState
-          label="No profiles yet."
-          hint={
-            <span>
-              Run <MonoCode style={{ color: "var(--blue-text)" }}>junction profile create</MonoCode>{" "}
-              to create one.
-            </span>
-          }
-        />
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Routes</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            <EmptyTableRow
+              colSpan={2}
+              message="No profiles yet."
+              action={
+                <span style={{ fontSize: "var(--text-body)", color: "var(--gray-700)" }}>
+                  Run{" "}
+                  <MonoCode style={{ color: "var(--blue-text)" }}>junction profile create</MonoCode>{" "}
+                  to create one.
+                </span>
+              }
+            />
+          </TableBody>
+        </Table>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
           {profiles.map((p: ProfileMeta) => (

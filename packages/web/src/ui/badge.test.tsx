@@ -28,15 +28,31 @@ describe("Badge", () => {
     expect(badge.className).toMatch(/configured/)
   })
 
-  it("renders each variant without throwing", () => {
-    // Variants: configured / ok / noauth / warning / error / off (inc 24.5 taxonomy).
-    // 'info', 'disabled' removed; 'noauth' + 'off' added.
+  it("renders each status variant without throwing (inc 24.5 taxonomy)", () => {
+    // Variants: configured / ok / noauth / warning / error / off
     const variants = ["configured", "ok", "noauth", "warning", "error", "off"] as const
     for (const v of variants) {
       const { getByText, unmount } = render(<Badge variant={v}>{v}</Badge>)
       expect(getByText(v)).toBeInTheDocument()
       unmount()
     }
+  })
+
+  it("renders neutral variant without a dot — count chip, not a status signal (B4)", () => {
+    const { container, getByText } = render(<Badge variant="neutral">42</Badge>)
+    expect(getByText("42")).toBeInTheDocument()
+    // neutral has no dot (not a status badge)
+    const badge = container.firstChild as HTMLElement
+    const dots = badge.querySelectorAll('[aria-hidden="true"]')
+    expect(dots.length).toBe(0)
+  })
+
+  it("status variants include a dot alongside text — never color-only (B4)", () => {
+    const { container, getByText } = render(<Badge variant="ok">Connected</Badge>)
+    expect(getByText("Connected")).toBeInTheDocument()
+    const badge = container.firstChild as HTMLElement
+    const dots = badge.querySelectorAll('[aria-hidden="true"]')
+    expect(dots.length).toBeGreaterThanOrEqual(1)
   })
 
   it("renders in dark mode (data-theme=dark) without error", () => {

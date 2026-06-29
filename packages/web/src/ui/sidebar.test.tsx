@@ -56,15 +56,17 @@ describe("Sidebar", () => {
     expect(screen.getByRole("img", { name: "Junction" })).toBeInTheDocument()
   })
 
-  it("renders nav links in the MANAGE group when expanded", () => {
+  it("renders nav links in two groups when expanded (A6/A7 — no 'Manage' eyebrow)", () => {
     renderSidebar("expanded")
-    // Group eyebrow label
-    expect(screen.getByText("Manage")).toBeInTheDocument()
-    // Nav links
+    // A6: no "Manage" group label
+    expect(screen.queryByText("Manage")).not.toBeInTheDocument()
+    // A7 Group 1: Dashboard + Settings
     expect(screen.getByRole("link", { name: "Dashboard" })).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "Settings" })).toBeInTheDocument()
+    // A7 Group 2: Platforms, Profiles, Credentials
     expect(screen.getByRole("link", { name: "Platforms" })).toBeInTheDocument()
-    expect(screen.getByRole("link", { name: "Credentials" })).toBeInTheDocument()
     expect(screen.getByRole("link", { name: "Profiles" })).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "Credentials" })).toBeInTheDocument()
   })
 
   it("marks the Dashboard link as the current page (active route = /)", () => {
@@ -73,9 +75,13 @@ describe("Sidebar", () => {
     expect(dashLink).toHaveAttribute("aria-current", "page")
   })
 
-  it("renders theme toggle button", () => {
+  it("renders theme toggle button (A1 — light|dark only, no system)", () => {
     renderSidebar()
-    expect(screen.getByRole("button", { name: /Theme:/ })).toBeInTheDocument()
+    // Toggle aria-label is "Theme: Light" or "Theme: Dark" — never "Theme: System"
+    const btn = screen.getByRole("button", { name: /Theme:/ })
+    expect(btn).toBeInTheDocument()
+    expect(btn.getAttribute("aria-label")).toMatch(/Theme: (Light|Dark)/)
+    expect(btn.getAttribute("aria-label")).not.toContain("System")
   })
 
   it("renders toggle sidebar button in the footer", () => {

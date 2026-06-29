@@ -11,9 +11,12 @@ import { SIDEBAR_SCRIPT, Sidebar, type SidebarState } from "../ui/sidebar.js"
 import { TooltipProvider } from "../ui/tooltip.js"
 import "../styles/app.css"
 
-// Pre-hydration theme script — reads localStorage and sets data-theme on <html>
-// BEFORE first paint, avoiding a flash of wrong theme.
-const THEME_SCRIPT = `(function(){try{var t=localStorage.getItem("junction-theme");if(t==="dark"||t==="light"){document.documentElement.setAttribute("data-theme",t)}}catch(e){}})()`
+// Pre-hydration theme script — A1: light|dark only, default dark.
+// If an explicit preference is stored in localStorage, use it.
+// Otherwise seed from OS prefers-color-scheme ONCE (without persisting) so an
+// unset user gets their OS pref on first visit; default dark when no OS signal.
+// Never sets a "system" value — always a concrete light|dark on data-theme.
+const THEME_SCRIPT = `(function(){try{var s=localStorage.getItem("junction-theme");if(s==="light"||s==="dark"){document.documentElement.setAttribute("data-theme",s)}else{var d=window.matchMedia&&window.matchMedia("(prefers-color-scheme: light)").matches?"light":"dark";document.documentElement.setAttribute("data-theme",d)}}catch(e){document.documentElement.setAttribute("data-theme","dark")}})()`
 
 export const Route = createRootRoute({
   // Read the sidebar cookie via a server fn so the initial SSR render emits the
