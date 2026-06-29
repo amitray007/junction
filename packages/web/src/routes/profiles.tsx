@@ -870,12 +870,16 @@ function ProfilesPage() {
             alignItems: "flex-start",
           }}
         >
-          {/* Left — profiles list */}
+          {/* Left — profiles list. marginTop pushes the list panel down so its top
+              aligns with the right ROUTE TABLE (the detail header — name + serve + actions
+              — occupies that height above the table). --detail-header-offset is defined on
+              the container below; it collapses to 0 in the stacked (<700px) layout. */}
           <section
             aria-label="Profile list"
             style={{
               width: "260px",
               flexShrink: 0,
+              marginTop: "var(--detail-header-offset)",
               display: "flex",
               flexDirection: "column",
               gap: "var(--space-2)",
@@ -964,18 +968,6 @@ function ProfilesPage() {
           if (id) void invalidateAndClearIfDeleted(id)
         }}
       />
-
-      {/* Responsive: stack at narrow widths */}
-      <style>{`
-        @media (max-width: 700px) {
-          .profiles-master-detail {
-            flex-direction: column !important;
-          }
-          .profiles-master-detail > *:first-child {
-            width: 100% !important;
-          }
-        }
-      `}</style>
     </div>
   )
 }

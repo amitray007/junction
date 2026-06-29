@@ -252,6 +252,26 @@ html[data-sidebar="collapsed"] {
   --height-topbar: var(--topbar-height);
 }
 
+/* ─── Profiles master-detail split ───────────────────────────────────────── */
+/* Two-column split: a left profiles list + the right profile detail. The detail
+   has a header (name + serve line + Add/Delete) ABOVE its route table, so the left
+   list is pushed down by --detail-header-offset to top-align with the table. The
+   layout stacks to one column below the breakpoint (offset then collapses to 0). */
+
+.profiles-master-detail {
+  --detail-header-offset: 4.125rem; /* ≈ height of the detail header above the table */
+}
+
+@media (max-width: 700px) {
+  .profiles-master-detail {
+    flex-direction: column !important;
+    --detail-header-offset: 0 !important; /* stacked: list is above the detail */
+  }
+  .profiles-master-detail > *:first-child {
+    width: 100% !important;
+  }
+}
+
 /* ─── Global resets & base ───────────────────────────────────────────────── */
 
 *,
