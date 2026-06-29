@@ -13,6 +13,8 @@ export { cn } from "./cn.js"
 export type { MonoChipProps, MonoCodeProps } from "./code.js"
 export { MonoChip, MonoCode } from "./code.js"
 export { ComingSoon, ComingSoonAction } from "./coming-soon.js"
+export type { ConfirmDialogProps } from "./confirm-dialog.js"
+export { ConfirmDialog } from "./confirm-dialog.js"
 export {
   Dialog,
   DialogClose,
@@ -62,8 +64,15 @@ export {
   SelectValue,
 } from "./select.js"
 export { Separator } from "./separator.js"
-export type { SidebarState } from "./sidebar.js"
-export { SIDEBAR_COOKIE, SIDEBAR_SCRIPT, Sidebar } from "./sidebar.js"
+export type { SidebarState, ThemePreference } from "./sidebar.js"
+export {
+  applyTheme,
+  readStoredTheme,
+  SIDEBAR_COOKIE,
+  SIDEBAR_SCRIPT,
+  Sidebar,
+  ThemeToggle,
+} from "./sidebar.js"
 export type { SkeletonColumn } from "./skeleton.js"
 export { Skeleton, SkeletonRow, TableSkeleton } from "./skeleton.js"
 export type { EmptyStateProps, ErrorStateProps } from "./states.js"
@@ -71,13 +80,17 @@ export { EmptyState, ErrorState, LoadingState } from "./states.js"
 export { Switch } from "./switch.js"
 export type { SortDirection, TableHeadProps } from "./table.js"
 export {
+  EmptyTableRow,
   Table,
   TableActionsCell,
   TableActionsHead,
   TableBody,
   TableCell,
+  TableCellMono,
+  TableGroupRow,
   TableHead,
   TableHeader,
+  TablePagination,
   TableRow,
 } from "./table.js"
 export { Tabs, TabsContent, TabsList, TabsTrigger } from "./tabs.js"

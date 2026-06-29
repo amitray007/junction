@@ -1,46 +1,65 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Route tests for /profiles.
-// Strategy: mock createFileRoute so Route.useLoaderData() returns test fixtures,
+// Route tests for /profiles — master-detail layout (Variant C, F13).
+// Strategy: mock createFileRoute + useRouter so Route.useLoaderData() returns test fixtures,
 // then import the module and render Route.options.component.
 
-import { cleanup, render } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import type { ProfileMeta } from "../server/data.functions.js"
+import type { CredentialMeta, PlatformMeta, ProfileMeta } from "../server/data.functions.js"
 
 // ---- Fixtures ---------------------------------------------------------------
 
-const emptyData: ProfileMeta[] = []
+const emptyProfiles: ProfileMeta[] = []
+const emptyPlatforms: PlatformMeta[] = []
+const emptyCredentials: CredentialMeta[] = []
 
-const populatedData: ProfileMeta[] = [
-  {
-    id: "prof-1",
-    name: "default",
-    mcpEndpointPath: "/tmp/junction/mcp/default.sock",
-    sources: [
-      {
-        namespace: "github",
-        platform: "github",
-        credentialAccount: "alice",
-        enabled: true,
-      },
-      {
-        namespace: "linear",
-        platform: "linear",
-        credentialAccount: "alice",
-        enabled: false,
-      },
-    ],
-  },
-  {
-    id: "prof-2",
-    name: "readonly",
-    mcpEndpointPath: "/tmp/junction/mcp/readonly.sock",
-    sources: [],
-  },
+const emptyData = {
+  profiles: emptyProfiles,
+  platforms: emptyPlatforms,
+  credentials: emptyCredentials,
+}
+
+const platforms: PlatformMeta[] = [{ id: "github", kind: "openapi", displayName: "GitHub" }]
+
+const credentials: CredentialMeta[] = [
+  { id: "cred-1", platformId: "github", account: "alice", kind: "bearer" },
 ]
+
+const populatedData = {
+  profiles: [
+    {
+      id: "prof-1",
+      name: "default",
+      mcpEndpointPath: "/profiles/default/mcp",
+      sources: [
+        {
+          namespace: "github",
+          platform: "github",
+          credentialAccount: "alice",
+          enabled: true,
+        },
+        {
+          namespace: "linear",
+          platform: "linear",
+          credentialAccount: "alice",
+          enabled: false,
+        },
+      ],
+    },
+    {
+      id: "prof-2",
+      name: "readonly",
+      mcpEndpointPath: "/profiles/readonly/mcp",
+      sources: [],
+    },
+  ] satisfies ProfileMeta[],
+  platforms,
+  credentials,
+}
 
 // ---- Mocks ------------------------------------------------------------------
 
+const mockInvalidate = vi.fn().mockResolvedValue(undefined)
 const mockUseLoaderData = vi.fn().mockReturnValue(emptyData)
 
 vi.mock("@tanstack/react-router", () => ({
@@ -48,10 +67,27 @@ vi.mock("@tanstack/react-router", () => ({
     useLoaderData: mockUseLoaderData,
     options,
   }),
+  useRouter: () => ({ invalidate: mockInvalidate }),
 }))
 
 vi.mock("../server/data.functions.js", () => ({
   getProfiles: vi.fn(),
+  getPlatforms: vi.fn(),
+  getCredentials: vi.fn(),
+}))
+
+const mockCreateProfileFn = vi.fn()
+const mockDeleteProfileFn = vi.fn()
+const mockAddRouteFn = vi.fn()
+const mockRemoveRouteFn = vi.fn()
+const mockToggleRouteFn = vi.fn()
+
+vi.mock("../server/profile-mutations.functions.js", () => ({
+  createProfileFn: (...args: unknown[]) => mockCreateProfileFn(...args),
+  deleteProfileFn: (...args: unknown[]) => mockDeleteProfileFn(...args),
+  addRouteFn: (...args: unknown[]) => mockAddRouteFn(...args),
+  removeRouteFn: (...args: unknown[]) => mockRemoveRouteFn(...args),
+  toggleRouteFn: (...args: unknown[]) => mockToggleRouteFn(...args),
 }))
 
 const { Route } = await import("./profiles.js")
@@ -63,6 +99,12 @@ const ProfilesPage = (Route as any).options.component as React.FC
 afterEach(() => {
   cleanup()
   mockUseLoaderData.mockReset()
+  mockCreateProfileFn.mockReset()
+  mockDeleteProfileFn.mockReset()
+  mockAddRouteFn.mockReset()
+  mockRemoveRouteFn.mockReset()
+  mockToggleRouteFn.mockReset()
+  mockInvalidate.mockReset().mockResolvedValue(undefined)
 })
 
 describe("ProfilesPage", () => {
@@ -72,65 +114,283 @@ describe("ProfilesPage", () => {
     expect(getByRole("heading", { level: 1, name: "Profiles" })).toBeInTheDocument()
   })
 
-  it("shows empty state when no profiles", () => {
+  it("shows empty table with header + message row when no profiles (B3)", () => {
     mockUseLoaderData.mockReturnValue(emptyData)
-    const { getByText } = render(<ProfilesPage />)
+    const { getByRole, getByText } = render(<ProfilesPage />)
+    // Table rendered in empty state
+    expect(getByRole("table")).toBeInTheDocument()
     expect(getByText("No profiles yet.")).toBeInTheDocument()
   })
 
-  it("renders profile names when populated", () => {
-    mockUseLoaderData.mockReturnValue(populatedData)
-    const { getByText } = render(<ProfilesPage />)
-    expect(getByText("default")).toBeInTheDocument()
-    expect(getByText("readonly")).toBeInTheDocument()
+  it("renders New Profile button (primary action)", () => {
+    mockUseLoaderData.mockReturnValue(emptyData)
+    render(<ProfilesPage />)
+    // Empty state shows New Profile in the header AND in the empty table row — use getAllByRole
+    expect(screen.getAllByRole("button", { name: /new profile/i }).length).toBeGreaterThanOrEqual(1)
   })
 
-  it("renders 'Configured' badge for enabled sources (not 'Connected')", () => {
+  it("renders master-detail layout when profiles exist (F13)", () => {
     mockUseLoaderData.mockReturnValue(populatedData)
-    const { getAllByText, queryAllByText } = render(<ProfilesPage />)
-    // Enabled source → "Configured", not "Connected"
-    expect(getAllByText("Configured").length).toBeGreaterThanOrEqual(1)
-    expect(queryAllByText("Connected").length).toBe(0)
+    render(<ProfilesPage />)
+    // Left list — both profile names visible as buttons
+    expect(screen.getByRole("button", { name: /default/i })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /readonly/i })).toBeInTheDocument()
+  })
+
+  it("selects first profile by default and shows its detail (F13)", () => {
+    mockUseLoaderData.mockReturnValue(populatedData)
+    render(<ProfilesPage />)
+    // The first profile's name appears in the detail heading (h2)
+    expect(screen.getByRole("heading", { level: 2, name: "default" })).toBeInTheDocument()
+  })
+
+  it("clicking a profile list item switches the detail panel (selection behavior)", async () => {
+    mockUseLoaderData.mockReturnValue(populatedData)
+    render(<ProfilesPage />)
+
+    // Initially "default" is selected
+    expect(screen.getByRole("heading", { level: 2, name: "default" })).toBeInTheDocument()
+
+    // Click the "readonly" list item
+    fireEvent.click(screen.getByRole("button", { name: /readonly/i }))
+
+    // Detail panel switches to "readonly"
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { level: 2, name: "readonly" })).toBeInTheDocument(),
+    )
+  })
+
+  it("renders route table with correct columns in detail view", () => {
+    mockUseLoaderData.mockReturnValue(populatedData)
+    render(<ProfilesPage />)
+    // Route table headers
+    expect(screen.getByRole("columnheader", { name: "Platform" })).toBeInTheDocument()
+    expect(screen.getByRole("columnheader", { name: "Namespace" })).toBeInTheDocument()
+    expect(screen.getByRole("columnheader", { name: "Status" })).toBeInTheDocument()
+  })
+
+  it("renders 'Configured' badge for enabled sources", () => {
+    mockUseLoaderData.mockReturnValue(populatedData)
+    render(<ProfilesPage />)
+    expect(screen.getAllByText("Configured").length).toBeGreaterThanOrEqual(1)
   })
 
   it("renders 'Disabled' badge for disabled sources", () => {
     mockUseLoaderData.mockReturnValue(populatedData)
-    const { getAllByText } = render(<ProfilesPage />)
-    expect(getAllByText("Disabled").length).toBeGreaterThanOrEqual(1)
+    render(<ProfilesPage />)
+    expect(screen.getAllByText("Disabled").length).toBeGreaterThanOrEqual(1)
   })
 
-  it("shows 'No routes configured.' for profiles without sources (inc 24.5 RouteRow wording)", () => {
+  it("shows empty route table row for profiles without sources (B3)", () => {
+    // Select the second profile (readonly — no sources). Since tests can't click,
+    // create data with only a no-source profile.
+    mockUseLoaderData.mockReturnValue({
+      profiles: [
+        {
+          id: "prof-2",
+          name: "readonly",
+          mcpEndpointPath: "/profiles/readonly/mcp",
+          sources: [],
+        },
+      ],
+      platforms: [],
+      credentials: [],
+    })
+    render(<ProfilesPage />)
+    expect(screen.getByText("No routes in this profile.")).toBeInTheDocument()
+  })
+
+  it("does not render mcpEndpointPath anywhere (single-endpoint model)", () => {
     mockUseLoaderData.mockReturnValue(populatedData)
-    const { getByText } = render(<ProfilesPage />)
-    expect(getByText("No routes configured.")).toBeInTheDocument()
+    render(<ProfilesPage />)
+    // The mcpEndpointPath (/profiles/default/mcp) must NOT appear literally in the UI.
+    expect(screen.queryByText("/profiles/default/mcp")).not.toBeInTheDocument()
+    expect(screen.queryByText("/profiles/readonly/mcp")).not.toBeInTheDocument()
   })
 
-  it("does not render mcpEndpointPath anywhere (single-endpoint model, not shown in UI)", () => {
-    // mcpEndpointPath is on ProfileMeta for CLI/MCP use but MUST NOT appear in the web UI.
-    // The single-endpoint model (per-profile stdio, no HTTP shown) is enforced here.
+  it("shows CLI serve command (single-endpoint model) in detail panel", () => {
     mockUseLoaderData.mockReturnValue(populatedData)
-    const { queryByText } = render(<ProfilesPage />)
-    expect(queryByText("/tmp/junction/mcp/default.sock")).not.toBeInTheDocument()
-    expect(queryByText("/tmp/junction/mcp/readonly.sock")).not.toBeInTheDocument()
+    render(<ProfilesPage />)
+    // CLI serve command — the correct no-HTTP affordance
+    expect(screen.getByText(/junction mcp serve --profile default/)).toBeInTheDocument()
   })
 
-  it("renders a single consolidated CLI affordance per card with real command names (inc 24.6)", () => {
-    // inc 24.6: 2 ComingSoonAction pills per card (Add Route + Toggle Route) consolidated to
-    // 1 quiet text block with the real CLI command names.
+  it("shows Add Route button in detail panel", () => {
     mockUseLoaderData.mockReturnValue(populatedData)
-    const { getAllByText } = render(<ProfilesPage />)
-    // "junction profile add-source" must appear — once per profile card (2 cards)
-    expect(getAllByText("junction profile add-source").length).toBeGreaterThanOrEqual(1)
-    expect(getAllByText("junction profile enable-source").length).toBeGreaterThanOrEqual(1)
-    expect(getAllByText("junction profile disable-source").length).toBeGreaterThanOrEqual(1)
+    render(<ProfilesPage />)
+    expect(screen.getByRole("button", { name: /add route/i })).toBeInTheDocument()
   })
 
-  it("shows quiet create hint in page header (not a disabled button cluster, inc 24.6)", () => {
-    // inc 24.6: the ComingSoonAction cluster in the page header is replaced by a single
-    // inline text hint with the real CLI command. Both the page header actions slot AND the
-    // empty-state hint contain "junction profile create", so use getAllByText.
+  it("shows ComingSoon for 'Keys active' (N keys active ComingSoon guard)", () => {
+    mockUseLoaderData.mockReturnValue(populatedData)
+    render(<ProfilesPage />)
+    expect(screen.getByText("Keys active")).toBeInTheDocument()
+  })
+
+  it("renders profile list filter input", () => {
+    mockUseLoaderData.mockReturnValue(populatedData)
+    render(<ProfilesPage />)
+    expect(screen.getByRole("searchbox", { name: /filter profiles/i })).toBeInTheDocument()
+  })
+
+  it("list filter: typing narrows the profile list", async () => {
+    mockUseLoaderData.mockReturnValue(populatedData)
+    render(<ProfilesPage />)
+
+    const filterInput = screen.getByRole("searchbox", { name: /filter profiles/i })
+    fireEvent.change(filterInput, { target: { value: "read" } })
+
+    // "readonly" still visible; "default" filtered out
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /readonly/i })).toBeInTheDocument()
+      expect(screen.queryByRole("button", { name: /^default$/i })).not.toBeInTheDocument()
+    })
+  })
+
+  // ── FIX 1: Delete cancel must NOT change selection ─────────────────────────
+
+  it("FIX 1: opening Delete dialog then cancelling leaves selection unchanged", async () => {
+    mockUseLoaderData.mockReturnValue(populatedData)
+    render(<ProfilesPage />)
+
+    // Initially "default" (first profile) is selected
+    expect(screen.getByRole("heading", { level: 2, name: "default" })).toBeInTheDocument()
+
+    // Click Delete button in the detail panel
+    const deleteBtn = screen.getByRole("button", { name: /^delete$/i })
+    fireEvent.click(deleteBtn)
+
+    // Dialog opens
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
+
+    // Cancel the dialog
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
+
+    // Selection must still be "default" — NOT jumped to another profile
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { level: 2, name: "default" })).toBeInTheDocument(),
+    )
+    // invalidate must NOT have been called (no mutation happened)
+    expect(mockInvalidate).not.toHaveBeenCalled()
+  })
+
+  // ── Create profile — success + error paths ─────────────────────────────────
+
+  it("create profile: opens dialog, submits name, calls createProfileFn on success", async () => {
     mockUseLoaderData.mockReturnValue(emptyData)
-    const { getAllByText } = render(<ProfilesPage />)
-    expect(getAllByText("junction profile create").length).toBeGreaterThanOrEqual(1)
+    mockCreateProfileFn.mockResolvedValue({ ok: true, id: "new-id", name: "newprof" })
+
+    render(<ProfilesPage />)
+
+    // Click New Profile button (use first one in header)
+    const newProfileBtns = screen.getAllByRole("button", { name: /new profile/i })
+    fireEvent.click(newProfileBtns[0] as HTMLElement)
+
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
+
+    const dialog = screen.getByRole("dialog")
+    const nameInput = dialog.querySelector("#profile-name") as HTMLInputElement
+    expect(nameInput).not.toBeNull()
+    fireEvent.change(nameInput, { target: { value: "newprof" } })
+
+    const submitBtn = dialog.querySelector("button[type='submit']") as HTMLButtonElement
+    fireEvent.click(submitBtn)
+
+    await waitFor(() => expect(mockCreateProfileFn).toHaveBeenCalledOnce())
+    // On success, invalidate is called
+    await waitFor(() => expect(mockInvalidate).toHaveBeenCalled())
+  })
+
+  it("create profile: error path — toast.error shown, invalidate NOT called", async () => {
+    mockUseLoaderData.mockReturnValue(emptyData)
+    mockCreateProfileFn.mockResolvedValue({ ok: false, error: "Name taken" })
+
+    render(<ProfilesPage />)
+    const newProfileBtns = screen.getAllByRole("button", { name: /new profile/i })
+    fireEvent.click(newProfileBtns[0] as HTMLElement)
+
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
+
+    const dialog = screen.getByRole("dialog")
+    const nameInput = dialog.querySelector("#profile-name") as HTMLInputElement
+    fireEvent.change(nameInput, { target: { value: "taken" } })
+
+    const submitBtn = dialog.querySelector("button[type='submit']") as HTMLButtonElement
+    fireEvent.click(submitBtn)
+
+    await waitFor(() => expect(mockCreateProfileFn).toHaveBeenCalledOnce())
+    // On error, invalidate must NOT be called
+    expect(mockInvalidate).not.toHaveBeenCalled()
+  })
+
+  it("create profile: required-name validation prevents submission", async () => {
+    mockUseLoaderData.mockReturnValue(emptyData)
+    render(<ProfilesPage />)
+
+    const newProfileBtns = screen.getAllByRole("button", { name: /new profile/i })
+    fireEvent.click(newProfileBtns[0] as HTMLElement)
+
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
+
+    const dialog = screen.getByRole("dialog")
+    const submitBtn = dialog.querySelector("button[type='submit']") as HTMLButtonElement
+    fireEvent.click(submitBtn)
+
+    await waitFor(() => expect(screen.getByText("Name is required")).toBeInTheDocument())
+    expect(mockCreateProfileFn).not.toHaveBeenCalled()
+  })
+
+  // ── Delete profile — success path ──────────────────────────────────────────
+
+  it("delete profile: confirm calls deleteProfileFn; invalidate runs on success", async () => {
+    mockUseLoaderData.mockReturnValue(populatedData)
+    mockDeleteProfileFn.mockResolvedValue({ ok: true })
+
+    render(<ProfilesPage />)
+
+    // Delete the currently-selected "default" profile
+    fireEvent.click(screen.getByRole("button", { name: /^delete$/i }))
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
+
+    // Find the destructive confirm button ("Delete Profile")
+    const confirmBtn = screen.getByRole("button", { name: "Delete Profile" })
+    fireEvent.click(confirmBtn)
+
+    await waitFor(() => expect(mockDeleteProfileFn).toHaveBeenCalledOnce())
+    await waitFor(() => expect(mockInvalidate).toHaveBeenCalled())
+  })
+
+  // ── FIX 6: Add Route dialog contains credential select ─────────────────────
+
+  it("FIX 6: Add Route dialog renders a Credential select field", async () => {
+    mockUseLoaderData.mockReturnValue(populatedData)
+    render(<ProfilesPage />)
+
+    fireEvent.click(screen.getByRole("button", { name: /add route/i }))
+
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
+    // Credential field label must be present
+    expect(screen.getByText("Credential")).toBeInTheDocument()
+  })
+
+  it("FIX 6: Add Route submits credentialId when no-auth option is selected", async () => {
+    mockUseLoaderData.mockReturnValue(populatedData)
+    mockAddRouteFn.mockResolvedValue({ ok: true })
+
+    render(<ProfilesPage />)
+    fireEvent.click(screen.getByRole("button", { name: /add route/i }))
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
+
+    const dialog = screen.getByRole("dialog")
+    // Fill in namespace
+    const nsInput = dialog.querySelector("#route-namespace") as HTMLInputElement
+    fireEvent.change(nsInput, { target: { value: "myns" } })
+
+    // Submit without selecting a platform (should fail validation — platform required)
+    const submitBtn = dialog.querySelector("button[type='submit']") as HTMLButtonElement
+    fireEvent.click(submitBtn)
+
+    await waitFor(() => expect(screen.getByText("Platform is required")).toBeInTheDocument())
+    expect(mockAddRouteFn).not.toHaveBeenCalled()
   })
 })

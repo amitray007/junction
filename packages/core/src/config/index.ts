@@ -10,12 +10,17 @@
 import { randomUUID } from "node:crypto"
 import { readFile, rename, unlink, writeFile } from "node:fs/promises"
 import path from "node:path"
-import { err, ok, type Result, ResultAsync } from "neverthrow"
+import { err, errAsync, ok, type Result, ResultAsync } from "neverthrow"
 import { z } from "zod"
 import type { ConfigError } from "../errors/index.js"
 import type { JunctionPaths } from "../paths/index.js"
 
-export const ConfigSchema = z.object({ version: z.literal(1) })
+export const ConfigSchema = z.object({
+  version: z.literal(1),
+  // mcpHost is optional — old {version:1} configs still parse (Zod strips unknown
+  // keys by default; adding an optional field is backward-compatible; no version bump).
+  mcpHost: z.string().optional(),
+})
 
 export type Config = z.infer<typeof ConfigSchema>
 
@@ -109,4 +114,123 @@ export function saveConfig(paths: JunctionPaths, config: Config): ResultAsync<vo
 
 function isNodeError(value: unknown): value is NodeJS.ErrnoException {
   return value instanceof Error && "code" in value
+}
+
+// ---------------------------------------------------------------------------
+// MCP host resolver, validator, and setter
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the MCP host for this Junction instance.
+ *
+ * Precedence (first wins):
+ *   1. `config.mcpHost` — an explicit value the user saved via `setMcpHost`.
+ *   2. `JUNCTION_MCP_HOST` env var — a deployment-level override without editing config.
+ *   3. `undefined` — no host configured; Connect-an-Agent shows the placeholder.
+ *
+ * Config overrides env so that a user who saves a host in Settings can always
+ * override an operator-provided environment default.
+ */
+export function getMcpHost(paths: JunctionPaths): ResultAsync<string | undefined, ConfigError> {
+  // Treat an empty/whitespace mcpHost as absent — fall through to env var.
+  // This prevents `{version:1, mcpHost:""}` (a valid parse per the schema) from
+  // short-circuiting the JUNCTION_MCP_HOST env fallback via the `??` operator.
+  return loadConfig(paths).map((c) => {
+    const stored = c.mcpHost?.trim()
+    return stored !== undefined && stored !== ""
+      ? stored
+      : (process.env.JUNCTION_MCP_HOST ?? undefined)
+  })
+}
+
+/**
+ * Validate an MCP host string.
+ *
+ * Rules (permissive — rejects obvious garbage, not a strict RFC parser):
+ *   - Must be non-empty after trimming.
+ *   - Must not contain whitespace, control characters, or a scheme (`://`).
+ *   - Allows: `hostname`, `hostname:port`, dotted names, `localhost`, IPv4.
+ *   - Allows bracketed IPv6: `[::1]`, `[::1]:8080`, `[2001:db8::1]:443`.
+ *   - Rejects bare (unbracketed) IPv6 like `::1` — ambiguous with host:port.
+ *   - Port (if present) must be digits only.
+ *
+ * Does NOT require `https://` — the caller supplies the scheme when building the URL.
+ * Does NOT fully RFC-validate the IPv6 literal — bracket presence + optional digit port
+ * is sufficient for the self-hosted use case.
+ */
+export function isValidMcpHost(host: string): boolean {
+  const trimmed = host.trim()
+  if (trimmed.length === 0) return false
+  // Reject whitespace anywhere (spaces, tabs, newlines).
+  if (/\s/.test(trimmed)) return false
+  // Reject control characters (U+0000–U+001F, U+007F) via char-code scan — avoids a
+  // control-char regex, which Biome's noControlCharactersInRegex auto-fix mangles.
+  for (let i = 0; i < trimmed.length; i++) {
+    const code = trimmed.charCodeAt(i)
+    if (code <= 0x1f || code === 0x7f) return false
+  }
+  // Reject anything that already contains a scheme (user confusion guard).
+  if (trimmed.includes("://")) return false
+
+  // Bracketed IPv6: `[<literal>]` or `[<literal>]:<port>`
+  if (trimmed.startsWith("[")) {
+    const closingBracket = trimmed.indexOf("]")
+    if (closingBracket === -1) return false // unclosed bracket
+    const afterBracket = trimmed.slice(closingBracket + 1)
+    // Nothing after bracket → bare `[::1]` is valid.
+    if (afterBracket === "") return true
+    // `:port` after bracket → port must be digits only.
+    if (afterBracket.startsWith(":")) {
+      const port = afterBracket.slice(1)
+      return /^\d+$/.test(port)
+    }
+    return false // unexpected suffix after `]`
+  }
+
+  // Non-bracketed: `hostname` or `hostname:port`.
+  // Must be at least one non-colon character (not just ":8080").
+  const colonIdx = trimmed.indexOf(":")
+  const hostname = colonIdx === -1 ? trimmed : trimmed.slice(0, colonIdx)
+  if (hostname.length === 0) return false
+  // Port, if present, must be digits only.
+  if (colonIdx !== -1) {
+    const port = trimmed.slice(colonIdx + 1)
+    if (!/^\d+$/.test(port)) return false
+  }
+  return true
+}
+
+/**
+ * Persist `mcpHost` into the config (load → merge → save, locked + atomic).
+ *
+ * - Pass a non-empty string to set the host.
+ * - Pass `undefined` or `""` to clear it (the key is REMOVED from the saved JSON
+ *   so the file stays clean; storing `undefined`/`""` is avoided).
+ * - Rejects invalid host strings with `{ kind: "invalid" }` before any I/O.
+ */
+export function setMcpHost(
+  paths: JunctionPaths,
+  host: string | undefined,
+): ResultAsync<void, ConfigError> {
+  // Treat empty-string as "clear".
+  const trimmed = typeof host === "string" ? host.trim() : undefined
+  const clearing = trimmed === undefined || trimmed === ""
+
+  if (!clearing && !isValidMcpHost(trimmed as string)) {
+    // errAsync propagates the error through the ResultAsync — NOT
+    // fromSafePromise(Promise.resolve(err(...))), which wraps the err Result as
+    // an OK *value* (isOk() === true), silently passing invalid hosts.
+    return errAsync<void, ConfigError>({
+      kind: "invalid",
+      issues: [`"${trimmed}" is not a valid host (hostname or hostname:port expected)`],
+    })
+  }
+
+  return loadConfig(paths).andThen((current) => {
+    // Build the merged config. When clearing, drop ONLY mcpHost (via destructure)
+    // so any other future config keys survive — don't reconstruct from version alone.
+    const { mcpHost: _omitted, ...rest } = current
+    const updated: Config = clearing ? rest : { ...current, mcpHost: trimmed as string }
+    return saveConfig(paths, updated)
+  })
 }

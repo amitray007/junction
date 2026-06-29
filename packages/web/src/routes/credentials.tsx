@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Credentials route — add / rotate / delete credentials from the browser.
-// Grouped by platform (multi-account wedge). Re-skinned inc 24.5; mutation fns unchanged.
+// Credentials route — flat paginated table with platform group-dividers (Variant C, F12).
+// Replaces the grouped-card layout (inc-24.5) with ONE table: columns ID · Platform ·
+// Account · Kind (true: bearer) · Status · ⋯, group-divider rows per platform, search,
+// sort (Platform/Account), and a TablePagination footer (page size 25).
+// The inc-24 add/rotate/delete mutations stay wired unchanged.
 // No @junction/core import. Secret is input-only; never rendered or returned.
 
 import { createFileRoute, useRouter } from "@tanstack/react-router"
 import { Plus, RefreshCw, Trash2 } from "lucide-react"
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { toast } from "sonner"
 import type { CredentialMeta, PlatformMeta } from "../server/data.functions.js"
 import { getCredentials, getPlatforms } from "../server/data.functions.js"
@@ -17,6 +20,7 @@ import {
 import { MonoCode } from "../ui/code.js"
 import {
   Button,
+  ConfirmDialog,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -25,6 +29,7 @@ import {
   DialogTitle,
   DropdownMenuContent,
   DropdownMenuItem,
+  EmptyTableRow,
   Field,
   Input,
   PageHeader,
@@ -33,19 +38,20 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-  Separator,
   StatusBadge,
   Table,
   TableActionsCell,
   TableActionsHead,
   TableBody,
   TableCell,
+  TableCellMono,
+  TableGroupRow,
   TableHead,
   TableHeader,
+  TablePagination,
   TableRow,
   TableSkeleton,
 } from "../ui/index.js"
-import { EmptyState } from "../ui/states.js"
 
 export const Route = createFileRoute("/credentials")({
   loader: async () => {
@@ -61,6 +67,13 @@ export const Route = createFileRoute("/credentials")({
 function kindToStatus(_kind: string): "configured" {
   return "configured"
 }
+
+// Page size for the paginated table (F12). 25 rows is comfortable for the seed (10)
+// and leaves room as the credential list grows.
+const PAGE_SIZE = 25
+
+// Number of columns in the flat table — used for colSpan on group-divider + empty rows.
+const COL_COUNT = 6
 
 function CredentialsPending() {
   return (
@@ -328,7 +341,7 @@ function RotateCredentialDialog({ credential, onOpenChange, onSuccess }: RotateD
 }
 
 // ---------------------------------------------------------------------------
-// Delete confirmation dialog
+// Delete confirmation dialog — uses shared ConfirmDialog (FIX 5).
 // ---------------------------------------------------------------------------
 
 interface DeleteDialogProps {
@@ -338,130 +351,309 @@ interface DeleteDialogProps {
 }
 
 function DeleteCredentialDialog({ credential, onOpenChange, onSuccess }: DeleteDialogProps) {
-  const [submitting, setSubmitting] = useState(false)
-
-  function handleOpenChange(next: boolean) {
-    if (!next) setSubmitting(false)
-    onOpenChange(next)
-  }
-
-  async function handleDelete() {
-    if (!credential) return
-    setSubmitting(true)
+  async function handleConfirm(): Promise<boolean> {
+    if (!credential) return false
     try {
       const result = await removeCredentialFn({ data: { credentialId: credential.id } })
       if (!result.ok) {
         toast.error(`Failed to delete credential: ${result.error}`)
-        setSubmitting(false)
-        return
+        return false
       }
       toast.success("Credential deleted")
-      handleOpenChange(false)
       onSuccess()
+      return true
     } catch {
       toast.error("Failed to delete credential")
-      setSubmitting(false)
+      return false
     }
   }
 
   return (
-    <Dialog open={credential !== null} onOpenChange={handleOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Delete Credential</DialogTitle>
-          <DialogDescription>
-            Delete credential <MonoCode>{credential?.account}</MonoCode> on{" "}
-            <MonoCode>{credential?.platformId}</MonoCode>? This removes the secret from the store
-            and cannot be undone.
-          </DialogDescription>
-        </DialogHeader>
-        <DialogFooter>
-          <Button type="button" variant="secondary" onClick={() => handleOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button type="button" variant="destructive" disabled={submitting} onClick={handleDelete}>
-            {submitting ? "Deleting…" : "Delete Credential"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <ConfirmDialog
+      open={credential !== null}
+      title="Delete Credential"
+      description={
+        <>
+          Delete credential <MonoCode>{credential?.account}</MonoCode> on{" "}
+          <MonoCode>{credential?.platformId}</MonoCode>? This removes the secret from the store and
+          cannot be undone.
+        </>
+      }
+      confirmLabel="Delete Credential"
+      confirmingLabel="Deleting…"
+      onConfirm={handleConfirm}
+      onOpenChange={onOpenChange}
+    />
   )
 }
 
 // ---------------------------------------------------------------------------
-// Platform group — credentials grouped under their platform heading.
-// The multi-account wedge: multiple accounts visible under one source.
+// Flat credentials table (F12 — Variant C)
+//
+// Sort behavior: when sorting by Account (a non-platform column), group dividers
+// are dropped and the list is flattened for a clean sort result. When sorting by
+// Platform (or unsorted), group dividers are preserved within the single table.
+// This is documented here so the behavior is predictable and easy to extend.
 // ---------------------------------------------------------------------------
 
-interface PlatformGroupProps {
-  readonly platformId: string
-  readonly displayName: string
+type SortKey = "platform" | "account" | "none"
+type SortDir = "ascending" | "descending"
+
+interface FlatTableProps {
   readonly credentials: CredentialMeta[]
+  readonly platforms: PlatformMeta[]
   readonly onRotate: (c: CredentialMeta) => void
   readonly onDelete: (c: CredentialMeta) => void
+  /** Page size; defaults to PAGE_SIZE. A test seam so pagination slicing is exercisable. */
+  readonly pageSize?: number
 }
 
-function PlatformGroup({
-  platformId,
-  displayName,
+// Exported for direct unit testing of the search/sort/pagination logic (the
+// pageSize prop lets a test exercise a real second page without 25+ fixtures).
+export function FlatCredentialsTable({
   credentials,
+  platforms,
   onRotate,
   onDelete,
-}: PlatformGroupProps) {
+  pageSize = PAGE_SIZE,
+}: FlatTableProps) {
+  const [search, setSearch] = useState("")
+  const [sortKey, setSortKey] = useState<SortKey>("none")
+  const [sortDir, setSortDir] = useState<SortDir>("ascending")
+  const [page, setPage] = useState(1)
+
+  // Build a lookup from platformId → PlatformMeta for display names and kinds.
+  const platformMap = useMemo(
+    () => new Map<string, PlatformMeta>(platforms.map((p) => [p.id, p])),
+    [platforms],
+  )
+
+  // Filter by search query (case-insensitive substring over id, account, platform name).
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    if (!q) return credentials
+    return credentials.filter((c) => {
+      const displayName = platformMap.get(c.platformId)?.displayName ?? c.platformId
+      return (
+        c.id.toLowerCase().includes(q) ||
+        c.account.toLowerCase().includes(q) ||
+        displayName.toLowerCase().includes(q) ||
+        c.platformId.toLowerCase().includes(q)
+      )
+    })
+  }, [credentials, platformMap, search])
+
+  // Sort. When sorted by Account, drop group dividers (flatten).
+  // When sorted by Platform or unsorted, keep platform grouping.
+  const { sorted, grouped } = useMemo(() => {
+    const isByAccount = sortKey === "account"
+    const isByPlatform = sortKey === "platform"
+
+    const items = [...filtered]
+    if (isByAccount) {
+      items.sort((a, b) => {
+        const cmp = a.account.localeCompare(b.account)
+        return sortDir === "ascending" ? cmp : -cmp
+      })
+      return { sorted: items, grouped: false }
+    }
+
+    if (isByPlatform) {
+      items.sort((a, b) => {
+        const aN = platformMap.get(a.platformId)?.displayName ?? a.platformId
+        const bN = platformMap.get(b.platformId)?.displayName ?? b.platformId
+        const cmp = aN.localeCompare(bN)
+        return sortDir === "ascending" ? cmp : -cmp
+      })
+    }
+    // else: preserve loader order (already grouped by platform)
+    return { sorted: items, grouped: true }
+  }, [filtered, sortKey, sortDir, platformMap])
+
+  // Pagination — page resets when search/sort changes.
+  const pageCount = Math.max(1, Math.ceil(sorted.length / pageSize))
+  const clampedPage = Math.min(page, pageCount)
+  const pageStart = (clampedPage - 1) * pageSize
+  const pageSlice = sorted.slice(pageStart, pageStart + pageSize)
+
+  function handleSort(key: SortKey) {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "ascending" ? "descending" : "ascending"))
+    } else {
+      setSortKey(key)
+      setSortDir("ascending")
+    }
+    setPage(1)
+  }
+
+  function handleSearch(q: string) {
+    setSearch(q)
+    setPage(1)
+  }
+
+  // Build the row content. When grouped, insert a TableGroupRow before the first
+  // credential of each new platform.
+  type TableItem =
+    | { type: "group"; platformId: string }
+    | { type: "row"; credential: CredentialMeta }
+
+  const tableItems: TableItem[] = useMemo(() => {
+    if (!grouped) {
+      return pageSlice.map((c) => ({ type: "row" as const, credential: c }))
+    }
+    const items: TableItem[] = []
+    let lastPlatformId: string | null = null
+    for (const c of pageSlice) {
+      if (c.platformId !== lastPlatformId) {
+        items.push({ type: "group", platformId: c.platformId })
+        lastPlatformId = c.platformId
+      }
+      items.push({ type: "row", credential: c })
+    }
+    return items
+  }, [grouped, pageSlice])
+
+  // Count credentials per platform for the group-divider count badge.
+  const platformCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const c of sorted) {
+      counts.set(c.platformId, (counts.get(c.platformId) ?? 0) + 1)
+    }
+    return counts
+  }, [sorted])
+
+  const isEmptySearch = sorted.length === 0 && search.trim().length > 0
+
   return (
-    <section aria-labelledby={`platform-${platformId}`}>
-      <h2
-        id={`platform-${platformId}`}
-        style={{
-          fontSize: "var(--text-h2)",
-          fontWeight: 600,
-          color: "var(--gray-1000)",
-          marginBottom: "8px",
-        }}
-      >
-        {displayName}
-      </h2>
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Account</TableHead>
-            <TableHead>Kind</TableHead>
-            <TableHead>Status</TableHead>
-            <TableActionsHead />
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {credentials.map((c) => (
-            <TableRow key={c.id}>
-              <TableCell>{c.account}</TableCell>
-              <TableCell>
-                <MonoCode>{c.kind}</MonoCode>
-              </TableCell>
-              <TableCell>
-                <StatusBadge status={kindToStatus(c.kind)} />
-              </TableCell>
-              <TableActionsCell
-                menu={
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem onSelect={() => onRotate(c)}>
-                      <RefreshCw className="h-4 w-4" aria-hidden="true" />
-                      Rotate Secret
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onSelect={() => onDelete(c)}
-                      style={{ color: "var(--status-error-fg)" }}
-                    >
-                      <Trash2 className="h-4 w-4" aria-hidden="true" />
-                      Delete
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
+    <div className="flex flex-col gap-3">
+      {/* Search input — labeled for a11y (DESIGN.md: labeled inputs) */}
+      <div>
+        <label
+          htmlFor="cred-search"
+          style={{
+            fontSize: "var(--text-label)",
+            color: "var(--gray-700)",
+            display: "block",
+            marginBottom: "6px",
+          }}
+        >
+          Search
+        </label>
+        <Input
+          id="cred-search"
+          type="search"
+          placeholder="Filter by platform, account, or ID"
+          value={search}
+          onChange={(e) => handleSearch(e.target.value)}
+          style={{ maxWidth: "320px" }}
+          aria-label="Search credentials"
+        />
+      </div>
+
+      <div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>ID</TableHead>
+              <TableHead
+                sortDirection={sortKey === "platform" ? sortDir : "none"}
+                onSort={() => handleSort("platform")}
+              >
+                Platform
+              </TableHead>
+              <TableHead
+                sortDirection={sortKey === "account" ? sortDir : "none"}
+                onSort={() => handleSort("account")}
+              >
+                Account
+              </TableHead>
+              <TableHead>Kind</TableHead>
+              <TableHead>Status</TableHead>
+              <TableActionsHead />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {sorted.length === 0 ? (
+              <EmptyTableRow
+                colSpan={COL_COUNT}
+                message={
+                  isEmptySearch ? "No credentials match your search." : "No credentials yet."
+                }
+                action={
+                  isEmptySearch ? undefined : (
+                    <span style={{ fontSize: "var(--text-body)", color: "var(--gray-700)" }}>
+                      Use <strong>Add Credential</strong> above.
+                    </span>
+                  )
                 }
               />
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    </section>
+            ) : (
+              tableItems.map((item) => {
+                if (item.type === "group") {
+                  const platform = platformMap.get(item.platformId)
+                  return (
+                    <TableGroupRow
+                      key={`group-${item.platformId}`}
+                      colSpan={COL_COUNT}
+                      label={platform?.displayName ?? item.platformId}
+                      kind={platform?.kind}
+                      count={platformCounts.get(item.platformId)}
+                    />
+                  )
+                }
+                const c = item.credential
+                // Truncate the ID for display (mono, first 12 chars + ellipsis).
+                const idDisplay = c.id.length > 13 ? `${c.id.slice(0, 12)}…` : c.id
+                const platformName = platformMap.get(c.platformId)?.displayName ?? c.platformId
+                return (
+                  <TableRow key={c.id}>
+                    <TableCellMono title={c.id} style={{ color: "var(--gray-700)" }}>
+                      {idDisplay}
+                    </TableCellMono>
+                    <TableCellMono>
+                      <MonoCode>{platformName}</MonoCode>
+                    </TableCellMono>
+                    <TableCell>{c.account}</TableCell>
+                    <TableCellMono>
+                      {/* Kind shows TRUE stored kind — "bearer" only (honesty guard, F12). */}
+                      {c.kind}
+                    </TableCellMono>
+                    <TableCell>
+                      <StatusBadge status={kindToStatus(c.kind)} />
+                    </TableCell>
+                    <TableActionsCell
+                      menu={
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onSelect={() => onRotate(c)}>
+                            <RefreshCw className="h-4 w-4" aria-hidden="true" />
+                            Rotate Secret
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onSelect={() => onDelete(c)}
+                            style={{ color: "var(--status-error-fg)" }}
+                          >
+                            <Trash2 className="h-4 w-4" aria-hidden="true" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      }
+                    />
+                  </TableRow>
+                )
+              })
+            )}
+          </TableBody>
+        </Table>
+
+        {/* Pagination footer — always rendered so the control is present even with 1 page */}
+        <TablePagination
+          page={clampedPage}
+          pageCount={pageCount}
+          total={sorted.length}
+          onPageChange={setPage}
+        />
+      </div>
+    </div>
   )
 }
 
@@ -480,19 +672,6 @@ function CredentialsPage() {
     await router.invalidate()
   }
 
-  // Group credentials by platformId for the multi-account wedge display.
-  const byPlatform = new Map<string, CredentialMeta[]>()
-  for (const c of credentials) {
-    const list = byPlatform.get(c.platformId) ?? []
-    list.push(c)
-    byPlatform.set(c.platformId, list)
-  }
-
-  // Build ordered list of platform display names for group headings.
-  const platformMap = new Map<string, string>(
-    platforms.map((p: PlatformMeta) => [p.id, p.displayName]),
-  )
-
   return (
     <div>
       <PageHeader
@@ -506,32 +685,12 @@ function CredentialsPage() {
         }
       />
 
-      {credentials.length === 0 ? (
-        <EmptyState
-          label="No credentials yet."
-          hint={
-            <span>
-              Run <MonoCode>junction credential add</MonoCode> to add one via CLI, or click{" "}
-              <strong>Add Credential</strong> above.
-            </span>
-          }
-        />
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: "32px" }}>
-          {Array.from(byPlatform.entries()).map(([pid, creds], idx) => (
-            <div key={pid}>
-              {idx > 0 && <Separator style={{ marginBottom: "32px" }} />}
-              <PlatformGroup
-                platformId={pid}
-                displayName={platformMap.get(pid) ?? pid}
-                credentials={creds}
-                onRotate={setRotatingCred}
-                onDelete={setDeletingCred}
-              />
-            </div>
-          ))}
-        </div>
-      )}
+      <FlatCredentialsTable
+        credentials={credentials}
+        platforms={platforms}
+        onRotate={setRotatingCred}
+        onDelete={setDeletingCred}
+      />
 
       <AddCredentialDialog
         open={addOpen}

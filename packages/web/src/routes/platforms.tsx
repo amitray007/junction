@@ -8,8 +8,8 @@ import { getCredentials, getPlatforms, type PlatformMeta } from "../server/data.
 import { MonoChip, MonoCode } from "../ui/code.js"
 import { PageHeader } from "../ui/page-header.js"
 import { TableSkeleton } from "../ui/skeleton.js"
-import { EmptyState } from "../ui/states.js"
 import {
+  EmptyTableRow,
   Table,
   TableActionsCell,
   TableActionsHead,
@@ -68,29 +68,32 @@ function PlatformsPage() {
         }
       />
 
-      {platforms.length === 0 ? (
-        <EmptyState
-          label="No platforms yet."
-          hint={
-            <span>
-              Run <MonoCode style={{ color: "var(--blue-text)" }}>junction platform add</MonoCode>{" "}
-              to add one.
-            </span>
-          }
-        />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Kind</TableHead>
-              <TableHead>Connections</TableHead>
-              {/* Base URL column removed inc 24.6 — always `—` for MCP platforms, pure noise. */}
-              <TableActionsHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {platforms.map((p: PlatformMeta) => (
+      {/* B3: always render the table — empty state is a full-width row, not bare text */}
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Name</TableHead>
+            <TableHead>Kind</TableHead>
+            <TableHead>Connections</TableHead>
+            {/* Base URL column removed inc 24.6 — always `—` for MCP platforms, pure noise. */}
+            <TableActionsHead />
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {platforms.length === 0 ? (
+            <EmptyTableRow
+              colSpan={4}
+              message="No platforms yet."
+              action={
+                <span style={{ fontSize: "var(--text-body)", color: "var(--gray-700)" }}>
+                  Run{" "}
+                  <MonoCode style={{ color: "var(--blue-text)" }}>junction platform add</MonoCode>{" "}
+                  to add one.
+                </span>
+              }
+            />
+          ) : (
+            platforms.map((p: PlatformMeta) => (
               <TableRow key={p.id}>
                 <TableCell>
                   <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
@@ -121,10 +124,10 @@ function PlatformsPage() {
                 {/* No row actions yet — wired in inc 25 */}
                 <TableActionsCell />
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+            ))
+          )}
+        </TableBody>
+      </Table>
     </div>
   )
 }

@@ -5,7 +5,7 @@
 
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { SIDEBAR_COOKIE, Sidebar, type SidebarState } from "./sidebar.js"
+import { readStoredTheme, SIDEBAR_COOKIE, Sidebar, type SidebarState } from "./sidebar.js"
 import { TooltipProvider } from "./tooltip.js"
 
 // ── Mock @tanstack/react-router ──────────────────────────────────────────────
@@ -56,15 +56,17 @@ describe("Sidebar", () => {
     expect(screen.getByRole("img", { name: "Junction" })).toBeInTheDocument()
   })
 
-  it("renders nav links in the MANAGE group when expanded", () => {
+  it("renders nav links in two groups when expanded (A6/A7 — no 'Manage' eyebrow)", () => {
     renderSidebar("expanded")
-    // Group eyebrow label
-    expect(screen.getByText("Manage")).toBeInTheDocument()
-    // Nav links
+    // A6: no "Manage" group label
+    expect(screen.queryByText("Manage")).not.toBeInTheDocument()
+    // A7 Group 1: Dashboard + Settings
     expect(screen.getByRole("link", { name: "Dashboard" })).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "Settings" })).toBeInTheDocument()
+    // A7 Group 2: Platforms, Profiles, Credentials
     expect(screen.getByRole("link", { name: "Platforms" })).toBeInTheDocument()
-    expect(screen.getByRole("link", { name: "Credentials" })).toBeInTheDocument()
     expect(screen.getByRole("link", { name: "Profiles" })).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "Credentials" })).toBeInTheDocument()
   })
 
   it("marks the Dashboard link as the current page (active route = /)", () => {
@@ -73,9 +75,13 @@ describe("Sidebar", () => {
     expect(dashLink).toHaveAttribute("aria-current", "page")
   })
 
-  it("renders theme toggle button", () => {
+  it("renders theme toggle button (A1 — light|dark only, no system)", () => {
     renderSidebar()
-    expect(screen.getByRole("button", { name: /Theme:/ })).toBeInTheDocument()
+    // Toggle aria-label is "Theme: Light" or "Theme: Dark" — never "Theme: System"
+    const btn = screen.getByRole("button", { name: /Theme:/ })
+    expect(btn).toBeInTheDocument()
+    expect(btn.getAttribute("aria-label")).toMatch(/Theme: (Light|Dark)/)
+    expect(btn.getAttribute("aria-label")).not.toContain("System")
   })
 
   it("renders toggle sidebar button in the footer", () => {
@@ -178,5 +184,59 @@ describe("Sidebar", () => {
     document.documentElement.setAttribute("data-theme", "dark")
     expect(() => renderSidebar()).not.toThrow()
     document.documentElement.removeAttribute("data-theme")
+  })
+})
+
+// ── FIX 2: Theme toggle desync for OS-light first-time visitors ───────────────
+// readStoredTheme() must mirror what THEME_SCRIPT applied (data-theme on <html>)
+// when localStorage is unset, so the toggle label matches the rendered theme.
+
+describe("readStoredTheme (FIX 2 — OS-light first-visit desync)", () => {
+  afterEach(() => {
+    // Clean up between sub-tests
+    document.documentElement.removeAttribute("data-theme")
+    try {
+      localStorage.removeItem("junction-theme")
+    } catch {
+      // ignore
+    }
+  })
+
+  it("returns stored localStorage value when explicitly set to 'light'", () => {
+    localStorage.setItem("junction-theme", "light")
+    expect(readStoredTheme()).toBe("light")
+  })
+
+  it("returns stored localStorage value when explicitly set to 'dark'", () => {
+    localStorage.setItem("junction-theme", "dark")
+    expect(readStoredTheme()).toBe("dark")
+  })
+
+  it("OS-light first visit: mirrors data-theme='light' on <html> (set by THEME_SCRIPT)", () => {
+    // Simulate: localStorage unset, THEME_SCRIPT already set data-theme="light" from OS pref.
+    localStorage.removeItem("junction-theme")
+    document.documentElement.setAttribute("data-theme", "light")
+    // readStoredTheme must return "light" so the toggle shows the correct current theme.
+    expect(readStoredTheme()).toBe("light")
+  })
+
+  it("OS-dark first visit: mirrors data-theme='dark' on <html>", () => {
+    localStorage.removeItem("junction-theme")
+    document.documentElement.setAttribute("data-theme", "dark")
+    expect(readStoredTheme()).toBe("dark")
+  })
+
+  it("falls back to 'dark' when neither localStorage, data-theme, nor an OS light preference is set", () => {
+    localStorage.removeItem("junction-theme")
+    document.documentElement.removeAttribute("data-theme")
+    // Stub matchMedia to report NO light preference so the dark fallback is exercised
+    // deterministically (happy-dom's default matchMedia reports matches:true).
+    const original = window.matchMedia
+    window.matchMedia = (() => ({ matches: false })) as unknown as typeof window.matchMedia
+    try {
+      expect(readStoredTheme()).toBe("dark")
+    } finally {
+      window.matchMedia = original
+    }
   })
 })

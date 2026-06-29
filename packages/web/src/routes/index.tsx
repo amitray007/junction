@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Dashboard route — 2-col layout (inc 24.6): Connect an Agent (primary) + At-a-Glance + System (secondary).
+// Dashboard route — inc 25 phase 2: single-column top→bottom layout.
+// Structure: Connect an Agent (hero, Card-outer) → At-a-Glance (stat strip) →
+//            System (quiet Card) → Recent Activity (ComingSoon footer).
+// .stat-strip (app.css): 3-equal-cell CSS grid — no flex-wrap distortion at any width.
 // No @junction/core import.
-// Layout: .dashboard-grid CSS class (app.css) — 2-col above 48rem, 1-col stack below.
-// Connect-an-Agent (grid-row: 1 / span 2) is the visual focal point.
 
 import { createFileRoute } from "@tanstack/react-router"
 import type { CSSProperties, ReactNode } from "react"
-import { getDashboard } from "../server/data.functions.js"
+import { getDashboard, getSettings } from "../server/data.functions.js"
 import { AgentConfig } from "../ui/agent-config.js"
 import { Card, CardContent } from "../ui/card.js"
 import { MonoCode } from "../ui/code.js"
@@ -17,7 +18,11 @@ import { TableSkeleton } from "../ui/skeleton.js"
 import { EmptyState } from "../ui/states.js"
 
 export const Route = createFileRoute("/")({
-  loader: () => getDashboard(),
+  loader: async () => {
+    // Parallel fetch: dashboard counts/system + settings (for the mcpHost in AgentConfig).
+    const [dashboard, settings] = await Promise.all([getDashboard(), getSettings()])
+    return { ...dashboard, mcpHost: settings.mcpHost }
+  },
   pendingComponent: DashboardPending,
   component: DashboardPage,
 })
@@ -40,75 +45,66 @@ function DashboardPage() {
     <div style={{ display: "flex", flexDirection: "column", gap: "32px" }}>
       <PageHeader title="Dashboard" />
 
-      {/* .dashboard-grid (app.css): 2-col above 48rem (--dashboard-breakpoint), stacks to
-          1-col below via @media. Connect spans both grid rows as the primary focal point.
-          Source order: Connect first (keyboard/reader priority), secondary panels follow. */}
-      <div className="dashboard-grid">
-        {/* PRIMARY — Connect an Agent spans both rows in the primary column */}
-        {/* ComingSoon surface; NO working http endpoint */}
-        <section aria-labelledby="connect-heading" style={{ gridRow: "1 / span 2" }}>
-          <h2
-            id="connect-heading"
-            style={{
-              fontSize: "var(--text-h2)",
-              fontWeight: 600,
-              color: "var(--gray-1000)",
-              marginBottom: "12px",
-            }}
-          >
-            Connect an Agent
-          </h2>
-          <Card>
-            <CardContent>
-              <AgentConfig />
-            </CardContent>
-          </Card>
-        </section>
+      {/* PRIMARY — Connect an Agent (hero block; ONE container = Card). */}
+      {/* AgentConfig carries no outer border of its own — the Card is the single container. */}
+      {/* HONESTY: the shared HTTP endpoint isn't live; AgentConfig always carries the note. */}
+      <section aria-labelledby="connect-heading">
+        <h2
+          id="connect-heading"
+          style={{
+            fontSize: "var(--text-h2)",
+            fontWeight: 600,
+            color: "var(--gray-1000)",
+            marginBottom: "12px",
+          }}
+        >
+          Connect an Agent
+        </h2>
+        <Card>
+          <CardContent>
+            <AgentConfig mcpHost={data.mcpHost} />
+          </CardContent>
+        </Card>
+      </section>
 
-        {/* SECONDARY row 1 — At a Glance: compact stat strip, no card wrapper */}
-        <section aria-labelledby="glance-heading">
-          <SectionLabel id="glance-heading">At a Glance</SectionLabel>
-          <ul
-            aria-label="Summary counts"
-            style={{
-              display: "flex",
-              gap: "24px",
-              flexWrap: "wrap",
-              listStyle: "none",
-              margin: 0,
-              padding: 0,
-            }}
-          >
-            <StatItem label="Platforms" value={data.counts.platforms} />
-            <StatItem label="Credentials" value={data.counts.credentials} />
-            <StatItem label="Profiles" value={data.counts.profiles} />
-          </ul>
-        </section>
+      {/* SECONDARY — At a Glance: 3-equal-cell stat strip (.stat-strip in app.css). */}
+      {/* CSS grid guarantees equal widths at 1440/1000/700px — no flex-wrap distortion. */}
+      <section aria-labelledby="glance-heading">
+        <SectionLabel id="glance-heading">At a Glance</SectionLabel>
+        <ul
+          aria-label="Summary counts"
+          className="stat-strip"
+          style={{ margin: 0, padding: 0, listStyle: "none" }}
+        >
+          <StatCell label="Platforms" value={data.counts.platforms} />
+          <StatCell label="Credentials" value={data.counts.credentials} />
+          <StatCell label="Profiles" value={data.counts.profiles} />
+        </ul>
+      </section>
 
-        {/* SECONDARY row 2 — System: quiet detail card */}
-        <section aria-labelledby="status-heading">
-          <SectionLabel id="status-heading">System</SectionLabel>
-          <Card>
-            <CardContent style={{ padding: "12px 16px" }}>
-              <dl
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "max-content 1fr",
-                  columnGap: "16px",
-                  rowGap: "6px",
-                  margin: 0,
-                }}
-              >
-                <StatusRow label="Store" value={data.credentialStore} />
-                <StatusRow label="Sandbox" value={data.sandbox} />
-                <StatusRow label="Home" value={data.home} mono />
-              </dl>
-            </CardContent>
-          </Card>
-        </section>
-      </div>
+      {/* SECONDARY — System: quiet detail (store / sandbox / home), de-emphasized. */}
+      <section aria-labelledby="status-heading">
+        <SectionLabel id="status-heading">System</SectionLabel>
+        <Card>
+          <CardContent style={{ padding: "12px 16px" }}>
+            <dl
+              style={{
+                display: "grid",
+                gridTemplateColumns: "max-content 1fr",
+                columnGap: "16px",
+                rowGap: "6px",
+                margin: 0,
+              }}
+            >
+              <StatusRow label="Store" value={data.credentialStore} />
+              <StatusRow label="Sandbox" value={data.sandbox} />
+              <StatusRow label="Home" value={data.home} mono />
+            </dl>
+          </CardContent>
+        </Card>
+      </section>
 
-      {/* Recent Activity — quiet footer (ComingSoon, audit inc 29) */}
+      {/* Recent Activity — quiet footer (ComingSoon, audit inc 29). */}
       <section aria-labelledby="activity-heading">
         <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
           <SectionLabel id="activity-heading" style={{ margin: 0 }}>
@@ -144,7 +140,7 @@ function DashboardPage() {
 
 // SectionLabel — secondary section headings (At a Glance / System / Recent Activity).
 // Uppercase, text-label weight, gray-700. Used 3× in this file — rule-of-three.
-// The primary "Connect an Agent" heading is a distinct h2/text-h2 style (single occurrence).
+// The primary "Connect an Agent" heading is a distinct h2/text-h2 style (single use).
 interface SectionLabelProps {
   readonly id?: string
   readonly style?: CSSProperties
@@ -159,7 +155,6 @@ function SectionLabel({ id, style, children }: SectionLabelProps) {
         fontSize: "var(--text-label)",
         fontWeight: 500,
         color: "var(--gray-700)",
-        // margin: "0 0 10px" — top/right/left zero; 10px bottom default (overridable via style)
         margin: "0 0 10px",
         textTransform: "uppercase",
         letterSpacing: "0.05em",
@@ -207,9 +202,19 @@ function StatusRow({
   )
 }
 
-function StatItem({ label, value }: { readonly label: string; readonly value: number }) {
+// StatCell — one cell in the At-a-Glance stat strip.
+// Padding matches the card-padding rhythm; stat number is --text-stat.
+// The strip's border/radius/shadow lives on the <ul.stat-strip> wrapper (app.css).
+function StatCell({ label, value }: { readonly label: string; readonly value: number }) {
   return (
-    <li style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+    <li
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: "4px",
+        padding: "var(--card-padding)",
+      }}
+    >
       <span
         style={{
           fontSize: "var(--text-stat)",

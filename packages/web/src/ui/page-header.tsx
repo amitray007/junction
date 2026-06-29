@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // PageHeader — per-route band: title (--text-h1) + count chip + optional actions slot.
-// Used by all four list routes.
+// B2: title row is baseline-aligned (items-baseline); count chip uses neutral variant
+// so it reads as a count, not a status signal; subtitle uses --gray-700 per spec;
+// actions align to the title row top (items-start on outer flex).
+// Used by all list routes.
 
 import type { ReactNode } from "react"
 import { Badge } from "./badge.js"
@@ -18,6 +21,7 @@ export function PageHeader({ title, count, subtitle, actions, className }: PageH
   return (
     <div className={cn("flex items-start justify-between gap-4 pb-6", className)}>
       <div className="flex flex-col gap-1 min-w-0">
+        {/* Title row: baseline-aligned so count chip sits on the h1 baseline (B2) */}
         <div className="flex items-baseline gap-2.5">
           <h1
             style={{
@@ -31,18 +35,21 @@ export function PageHeader({ title, count, subtitle, actions, className }: PageH
             {title}
           </h1>
           {count !== undefined && (
-            <Badge variant="configured" aria-label={`${count} ${title.toLowerCase()}`}>
+            // neutral variant: a quiet count chip, not a status badge (B4 decision)
+            <Badge variant="neutral" aria-label={`${count} ${title.toLowerCase()}`}>
               {count}
             </Badge>
           )}
         </div>
+        {/* Subtitle/lede: --gray-700 per spec (B2) */}
         {subtitle && (
-          <p style={{ fontSize: "var(--text-body)", color: "var(--gray-900)", margin: 0 }}>
+          <p style={{ fontSize: "var(--text-body)", color: "var(--gray-700)", margin: 0 }}>
             {subtitle}
           </p>
         )}
       </div>
 
+      {/* Actions: shrink-0 keeps them right-aligned, aligned to title row top via items-start */}
       {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
     </div>
   )

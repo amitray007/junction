@@ -7,9 +7,12 @@ export {
   ConfigSchema,
   type ConfigState,
   DEFAULT_CONFIG,
+  getMcpHost,
+  isValidMcpHost,
   loadConfig,
   loadConfigState,
   saveConfig,
+  setMcpHost,
 } from "./config/index.js"
 export type { ConfigError, PathsError, UpstreamError } from "./errors/index.js"
 export { getLogger, type Logger, setLogger } from "./logging/index.js"

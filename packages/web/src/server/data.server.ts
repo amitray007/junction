@@ -7,8 +7,10 @@ import {
   createCredentialStore,
   createRepositories,
   createSandbox,
+  getMcpHost,
   getPaths,
   type JunctionPaths,
+  loadConfig,
   loadConfigState,
   type Repositories,
 } from "@junction/core"
@@ -146,6 +148,37 @@ export type ProfileMeta = {
   name: string
   mcpEndpointPath: string
   sources: SourceMeta[]
+}
+
+// ---------------------------------------------------------------------------
+// Settings — resolved MCP host + source
+// ---------------------------------------------------------------------------
+
+export type SettingsData = {
+  /** The resolved MCP host (config value wins; falls to env; else undefined). */
+  mcpHost: string | undefined
+  /** Where the current value came from — drives the source note in the UI. */
+  mcpHostSource: "config" | "env" | "none"
+}
+
+export async function readSettings(): Promise<SettingsData> {
+  const paths = getPaths()
+  // Resolve in parallel: the raw config (to see if mcpHost is explicitly set)
+  // and the fully-resolved host (config ?? env ?? undefined).
+  const [configResult, resolvedResult] = await Promise.all([loadConfig(paths), getMcpHost(paths)])
+
+  const rawConfigHost = configResult.isOk() ? configResult.value.mcpHost : undefined
+  const resolved = resolvedResult.isOk() ? resolvedResult.value : undefined
+
+  let mcpHostSource: SettingsData["mcpHostSource"] = "none"
+  if (rawConfigHost !== undefined) {
+    mcpHostSource = "config"
+  } else if (resolved !== undefined) {
+    // resolved but not from config → came from JUNCTION_MCP_HOST env
+    mcpHostSource = "env"
+  }
+
+  return { mcpHost: resolved, mcpHostSource }
 }
 
 export async function readProfiles(): Promise<ProfileMeta[]> {

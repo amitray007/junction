@@ -2,17 +2,18 @@
 // Sidebar shell — fixed app shell component.
 // Active state: gray-100 bg + gray-1000 text. NO side-accent stripe (anti-slop rule).
 // Collapse via Cmd/Ctrl+B; persisted via cookie for SSR no-flash.
+// Theme: light|dark only (no "system") — default dark, OS-pref seeded on first visit.
 // No @junction/core import.
 
 import { Link, useLocation } from "@tanstack/react-router"
 import {
   Database,
   Key,
-  LayoutList,
+  LayoutDashboard,
   type LucideIcon,
-  Monitor,
   Moon,
   Server,
+  Settings,
   Sun,
 } from "lucide-react"
 import { type ReactNode, useCallback, useEffect, useState, useSyncExternalStore } from "react"
@@ -61,15 +62,18 @@ interface NavItem {
   readonly icon: LucideIcon
 }
 
-const MANAGE_ITEMS: NavItem[] = [
-  { to: "/", label: "Dashboard", icon: LayoutList },
-  { to: "/platforms", label: "Platforms", icon: Server },
-  { to: "/credentials", label: "Credentials", icon: Key },
-  { to: "/profiles", label: "Profiles", icon: Database },
+// Group 1: top — Dashboard + Settings (no "Manage" eyebrow — A6/A7)
+const NAV_TOP: NavItem[] = [
+  { to: "/", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/settings", label: "Settings", icon: Settings },
 ]
 
-// CONNECT group reserved for inc 24+.
-const CONNECT_ITEMS: NavItem[] = []
+// Group 2: platforms + data items
+const NAV_DATA: NavItem[] = [
+  { to: "/platforms", label: "Platforms", icon: Server },
+  { to: "/profiles", label: "Profiles", icon: Database },
+  { to: "/credentials", label: "Credentials", icon: Key },
+]
 
 // ─── Nav link ─────────────────────────────────────────────────────────────────
 
@@ -132,31 +136,18 @@ function SidebarNavLink({
 }
 
 // ─── Nav group ────────────────────────────────────────────────────────────────
+// A6/A7: no "Manage" eyebrow label. Groups are separated by a subtle hairline.
 
 function NavGroup({
-  label,
   items,
   collapsed,
 }: {
-  readonly label: string
   readonly items: NavItem[]
   readonly collapsed: boolean
 }) {
   if (items.length === 0) return null
   return (
     <div className="flex flex-col gap-0.5">
-      {!collapsed && (
-        <p
-          className="px-2.5 mb-1 select-none"
-          style={{
-            fontSize: "var(--text-caption)",
-            color: "var(--gray-600)",
-            fontWeight: 500,
-          }}
-        >
-          {label}
-        </p>
-      )}
       {items.map((item) => (
         <SidebarNavLink key={item.to} item={item} collapsed={collapsed} />
       ))}
@@ -164,34 +155,54 @@ function NavGroup({
   )
 }
 
+// Hairline separator between nav groups — alpha-200, subtle.
+function NavGroupSeparator({ collapsed }: { readonly collapsed: boolean }) {
+  return (
+    <div
+      aria-hidden="true"
+      style={{
+        height: "1px",
+        backgroundColor: "var(--alpha-200)",
+        margin: collapsed ? "4px 6px" : "4px 0",
+      }}
+    />
+  )
+}
+
 // ─── Theme toggle ─────────────────────────────────────────────────────────────
+// A1: light|dark only (no "system"). Default = dark. First-paint seeds from OS
+// prefers-color-scheme once (without persisting), then explicit after user toggle.
 
-type ThemePreference = "system" | "light" | "dark"
+export type ThemePreference = "light" | "dark"
 
-const THEME_CYCLE: ThemePreference[] = ["system", "light", "dark"]
 const THEME_LABEL: Record<ThemePreference, string> = {
-  system: "Theme: System",
   light: "Theme: Light",
   dark: "Theme: Dark",
 }
 const THEME_ICON: Record<ThemePreference, LucideIcon> = {
-  system: Monitor,
   light: Sun,
   dark: Moon,
 }
 
 // Theme preference: useSyncExternalStore is the SSR-safe primitive for localStorage.
-// getServerSnapshot returns "system" matching SSR + THEME_SCRIPT default — no flash.
+// getServerSnapshot returns "dark" — the SSR/no-JS default.
 const themeListeners = new Set<() => void>()
 
-function readStoredTheme(): ThemePreference {
+export function readStoredTheme(): ThemePreference {
   try {
     const v = localStorage.getItem("junction-theme")
     if (v === "light" || v === "dark") return v
+    // No explicit preference stored — THEME_SCRIPT already set data-theme from
+    // OS prefers-color-scheme. Mirror what the script applied so the toggle label
+    // matches the rendered theme on first paint (FIX 2: OS-light first-visit desync).
+    const applied = document.documentElement.getAttribute("data-theme")
+    if (applied === "light" || applied === "dark") return applied
+    // Fall back to OS preference, then dark.
+    if (window.matchMedia?.("(prefers-color-scheme: light)").matches) return "light"
   } catch {
-    // no localStorage (SSR or private browsing)
+    // no localStorage / document (SSR or private browsing)
   }
-  return "system"
+  return "dark"
 }
 
 function subscribeTheme(cb: () => void): () => void {
@@ -199,31 +210,21 @@ function subscribeTheme(cb: () => void): () => void {
   return () => themeListeners.delete(cb)
 }
 
-function applyTheme(pref: ThemePreference) {
+export function applyTheme(pref: ThemePreference) {
   try {
-    if (pref === "system") {
-      document.documentElement.removeAttribute("data-theme")
-      localStorage.removeItem("junction-theme")
-    } else {
-      document.documentElement.setAttribute("data-theme", pref)
-      localStorage.setItem("junction-theme", pref)
-    }
+    document.documentElement.setAttribute("data-theme", pref)
+    localStorage.setItem("junction-theme", pref)
   } catch {
     // ignore
   }
   for (const cb of themeListeners) cb()
 }
 
-function ThemeToggle({ collapsed }: { readonly collapsed: boolean }) {
-  const pref = useSyncExternalStore(
-    subscribeTheme,
-    readStoredTheme,
-    () => "system" as ThemePreference,
-  )
+export function ThemeToggle({ collapsed }: { readonly collapsed: boolean }) {
+  const pref = useSyncExternalStore(subscribeTheme, readStoredTheme, () => "dark" as const)
 
   function toggle() {
-    const next = THEME_CYCLE[(THEME_CYCLE.indexOf(pref) + 1) % THEME_CYCLE.length] ?? "system"
-    applyTheme(next)
+    applyTheme(pref === "light" ? "dark" : "light")
   }
 
   const Icon = THEME_ICON[pref]
@@ -371,13 +372,15 @@ export function Sidebar({ initialState }: SidebarProps) {
           "flex-1 overflow-y-auto overflow-x-hidden",
           collapsed
             ? "px-1.5 py-3 flex flex-col items-center gap-1"
-            : "px-2 py-3 flex flex-col gap-4",
+            : "px-2 py-3 flex flex-col gap-1",
         )}
       >
-        <NavGroup label="Manage" items={MANAGE_ITEMS} collapsed={collapsed} />
-        {CONNECT_ITEMS.length > 0 && (
-          <NavGroup label="Connect" items={CONNECT_ITEMS} collapsed={collapsed} />
-        )}
+        {/* Group 1: Dashboard + Settings */}
+        <NavGroup items={NAV_TOP} collapsed={collapsed} />
+        {/* Subtle hairline group separator — no eyebrow label (A6) */}
+        <NavGroupSeparator collapsed={collapsed} />
+        {/* Group 2: Platforms + Profiles + Credentials */}
+        <NavGroup items={NAV_DATA} collapsed={collapsed} />
       </nav>
 
       {/* Footer: theme toggle + ⌘B hint */}
