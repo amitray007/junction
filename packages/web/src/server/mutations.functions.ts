@@ -8,8 +8,7 @@
 // The new secret is an INPUT only — it is NEVER echoed back in any return value.
 
 import { createServerFn } from "@tanstack/react-start"
-import { getRequest } from "@tanstack/react-start/server"
-import { isLocalHost } from "./host-guard.js"
+import { assertLocalHost, requireString } from "./fn-guards.server.js"
 import {
   mutateAddCredential,
   mutateRemoveCredential,
@@ -19,27 +18,6 @@ import {
 // Re-export the metadata type so route files can annotate without importing
 // from mutations.server.ts (which is server-only by convention).
 export type { CredentialMutationMeta } from "./mutations.server.js"
-
-// ---------------------------------------------------------------------------
-// DNS-rebinding / CSRF guard — loopback-only (mirrors data.functions.ts)
-// ---------------------------------------------------------------------------
-
-function assertLocalHost(): void {
-  if (!isLocalHost(getRequest().headers.get("host"))) {
-    throw new Response("Forbidden: access restricted to localhost", { status: 403 })
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Input validation helpers — server-side only, no Zod client bundle
-// ---------------------------------------------------------------------------
-
-function requireString(value: unknown, name: string): string {
-  if (typeof value !== "string" || value.trim() === "") {
-    throw new Response(`Bad Request: ${name} must be a non-empty string`, { status: 400 })
-  }
-  return value.trim()
-}
 
 // ---------------------------------------------------------------------------
 // Server functions (POST — mutations)

@@ -1,10 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-import { mkdir, writeFile } from "node:fs/promises"
-import { describe, expect, it } from "vitest"
+import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { ensureHome } from "../paths/index.js"
 import { withTempHome } from "../testing/index.js"
-import { type Config, DEFAULT_CONFIG, loadConfig, loadConfigState, saveConfig } from "./index.js"
+import {
+  type Config,
+  DEFAULT_CONFIG,
+  getMcpHost,
+  isValidMcpHost,
+  loadConfig,
+  loadConfigState,
+  saveConfig,
+  setMcpHost,
+} from "./index.js"
 
 describe("config", () => {
   it("missing config.json returns ok(DEFAULT_CONFIG)", async () => {
@@ -196,6 +205,157 @@ describe("loadConfigState", () => {
       if (!result.isOk()) {
         expect(result.error.kind).toBe("read-failed")
       }
+    })
+  })
+})
+
+describe("isValidMcpHost", () => {
+  it("accepts plain hostnames", () => {
+    expect(isValidMcpHost("example.com")).toBe(true)
+    expect(isValidMcpHost("localhost")).toBe(true)
+    expect(isValidMcpHost("my-host.internal")).toBe(true)
+  })
+
+  it("accepts host:port form", () => {
+    expect(isValidMcpHost("example.com:443")).toBe(true)
+    expect(isValidMcpHost("localhost:4321")).toBe(true)
+    expect(isValidMcpHost("127.0.0.1:8080")).toBe(true)
+  })
+
+  it("rejects empty / whitespace-only strings", () => {
+    expect(isValidMcpHost("")).toBe(false)
+    expect(isValidMcpHost("   ")).toBe(false)
+  })
+
+  it("rejects strings containing whitespace", () => {
+    expect(isValidMcpHost("my host")).toBe(false)
+    expect(isValidMcpHost("host name:80")).toBe(false)
+  })
+
+  it("rejects strings containing a scheme (://)", () => {
+    expect(isValidMcpHost("https://example.com")).toBe(false)
+    expect(isValidMcpHost("http://localhost")).toBe(false)
+  })
+
+  it("rejects strings with a non-digit port", () => {
+    expect(isValidMcpHost("example.com:abc")).toBe(false)
+    expect(isValidMcpHost("localhost:80xx")).toBe(false)
+  })
+
+  it("rejects a bare colon (empty hostname)", () => {
+    expect(isValidMcpHost(":8080")).toBe(false)
+  })
+})
+
+describe("getMcpHost + setMcpHost", () => {
+  // Stash and restore JUNCTION_MCP_HOST around each test so we don't leak.
+  let prevEnv: string | undefined
+  beforeEach(() => {
+    prevEnv = process.env.JUNCTION_MCP_HOST
+    delete process.env.JUNCTION_MCP_HOST
+  })
+  afterEach(() => {
+    if (prevEnv === undefined) {
+      delete process.env.JUNCTION_MCP_HOST
+    } else {
+      process.env.JUNCTION_MCP_HOST = prevEnv
+    }
+  })
+
+  it("set→get roundtrip: saved host is returned by getMcpHost", async () => {
+    await withTempHome(async () => {
+      const paths = await ensureHome()
+      if (!paths.isOk()) throw new Error("ensureHome failed")
+      const setResult = await setMcpHost(paths.value, "example.com")
+      expect(setResult.isOk()).toBe(true)
+      const getResult = await getMcpHost(paths.value)
+      expect(getResult.isOk()).toBe(true)
+      if (getResult.isOk()) expect(getResult.value).toBe("example.com")
+    })
+  })
+
+  it("env fallback: no config → getMcpHost returns JUNCTION_MCP_HOST", async () => {
+    await withTempHome(async () => {
+      process.env.JUNCTION_MCP_HOST = "env-host.example.com"
+      const paths = await ensureHome()
+      if (!paths.isOk()) throw new Error("ensureHome failed")
+      const getResult = await getMcpHost(paths.value)
+      expect(getResult.isOk()).toBe(true)
+      if (getResult.isOk()) expect(getResult.value).toBe("env-host.example.com")
+    })
+  })
+
+  it("config-overrides-env: config host wins over JUNCTION_MCP_HOST", async () => {
+    await withTempHome(async () => {
+      process.env.JUNCTION_MCP_HOST = "env-host.example.com"
+      const paths = await ensureHome()
+      if (!paths.isOk()) throw new Error("ensureHome failed")
+      const setResult = await setMcpHost(paths.value, "config-host.example.com")
+      expect(setResult.isOk()).toBe(true)
+      const getResult = await getMcpHost(paths.value)
+      expect(getResult.isOk()).toBe(true)
+      if (getResult.isOk()) expect(getResult.value).toBe("config-host.example.com")
+    })
+  })
+
+  it("clearing: set then clear → getMcpHost returns undefined; mcpHost key absent from JSON", async () => {
+    await withTempHome(async () => {
+      const paths = await ensureHome()
+      if (!paths.isOk()) throw new Error("ensureHome failed")
+      // Set first
+      const setResult = await setMcpHost(paths.value, "to-be-cleared.com")
+      expect(setResult.isOk()).toBe(true)
+      // Clear with undefined
+      const clearResult = await setMcpHost(paths.value, undefined)
+      expect(clearResult.isOk()).toBe(true)
+      // getMcpHost must return undefined (no env set)
+      const getResult = await getMcpHost(paths.value)
+      expect(getResult.isOk()).toBe(true)
+      if (getResult.isOk()) expect(getResult.value).toBeUndefined()
+      // The saved JSON must NOT contain "mcpHost" key
+      const raw = await readFile(paths.value.configFile, "utf-8")
+      const parsed = JSON.parse(raw) as Record<string, unknown>
+      expect(Object.hasOwn(parsed, "mcpHost")).toBe(false)
+    })
+  })
+
+  it("clearing with empty string also removes mcpHost key", async () => {
+    await withTempHome(async () => {
+      const paths = await ensureHome()
+      if (!paths.isOk()) throw new Error("ensureHome failed")
+      await setMcpHost(paths.value, "some.host")
+      const clearResult = await setMcpHost(paths.value, "")
+      expect(clearResult.isOk()).toBe(true)
+      const raw = await readFile(paths.value.configFile, "utf-8")
+      const parsed = JSON.parse(raw) as Record<string, unknown>
+      expect(Object.hasOwn(parsed, "mcpHost")).toBe(false)
+    })
+  })
+
+  it("invalid host rejected: setMcpHost returns err({ kind: 'invalid' })", async () => {
+    await withTempHome(async () => {
+      const paths = await ensureHome()
+      if (!paths.isOk()) throw new Error("ensureHome failed")
+      const result = await setMcpHost(paths.value, "https://bad-scheme.com")
+      expect(result.isOk()).toBe(false)
+      if (!result.isOk()) {
+        expect(result.error.kind).toBe("invalid")
+      }
+    })
+  })
+
+  it("backward-compat: old {version:1} config still loads and getMcpHost falls to env/undefined", async () => {
+    await withTempHome(async () => {
+      const paths = await ensureHome()
+      if (!paths.isOk()) throw new Error("ensureHome failed")
+      // Write a config with NO mcpHost key (pre-D5 shape).
+      await writeFile(paths.value.configFile, JSON.stringify({ version: 1 }), "utf-8")
+      const loadResult = await loadConfig(paths.value)
+      expect(loadResult.isOk()).toBe(true)
+      // getMcpHost with no env → undefined
+      const getResult = await getMcpHost(paths.value)
+      expect(getResult.isOk()).toBe(true)
+      if (getResult.isOk()) expect(getResult.value).toBeUndefined()
     })
   })
 })

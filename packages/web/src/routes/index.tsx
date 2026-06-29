@@ -6,7 +6,7 @@
 
 import { createFileRoute } from "@tanstack/react-router"
 import type { CSSProperties, ReactNode } from "react"
-import { getDashboard } from "../server/data.functions.js"
+import { getDashboard, getSettings } from "../server/data.functions.js"
 import { AgentConfig } from "../ui/agent-config.js"
 import { Card, CardContent } from "../ui/card.js"
 import { MonoCode } from "../ui/code.js"
@@ -17,7 +17,11 @@ import { TableSkeleton } from "../ui/skeleton.js"
 import { EmptyState } from "../ui/states.js"
 
 export const Route = createFileRoute("/")({
-  loader: () => getDashboard(),
+  loader: async () => {
+    // Parallel fetch: dashboard counts/system + settings (for the mcpHost in AgentConfig).
+    const [dashboard, settings] = await Promise.all([getDashboard(), getSettings()])
+    return { ...dashboard, mcpHost: settings.mcpHost }
+  },
   pendingComponent: DashboardPending,
   component: DashboardPage,
 })
@@ -60,7 +64,7 @@ function DashboardPage() {
           </h2>
           <Card>
             <CardContent>
-              <AgentConfig />
+              <AgentConfig mcpHost={data.mcpHost} />
             </CardContent>
           </Card>
         </section>

@@ -7,8 +7,14 @@
 
 import { createServerFn } from "@tanstack/react-start"
 import { getRequest } from "@tanstack/react-start/server"
-import { readCredentials, readDashboard, readPlatforms, readProfiles } from "./data.server.js"
-import { isLocalHost } from "./host-guard.js"
+import {
+  readCredentials,
+  readDashboard,
+  readPlatforms,
+  readProfiles,
+  readSettings,
+} from "./data.server.js"
+import { assertLocalHost } from "./fn-guards.server.js"
 
 // Re-export types so route files can annotate useLoaderData() without a
 // direct import from data.server.ts (which is server-only by convention).
@@ -17,20 +23,9 @@ export type {
   DashboardData,
   PlatformMeta,
   ProfileMeta,
+  SettingsData,
   SourceMeta,
 } from "./data.server.js"
-
-// ---------------------------------------------------------------------------
-// DNS-rebinding / CSRF guard — loopback-only
-// ---------------------------------------------------------------------------
-
-function assertLocalHost(): void {
-  // Defense-in-depth atop the loopback bind + serve.mjs's HTTP-layer Host check.
-  // Throw a real 403 Response (not an Error → which TanStack surfaces as a 500).
-  if (!isLocalHost(getRequest().headers.get("host"))) {
-    throw new Response("Forbidden: access restricted to localhost", { status: 403 })
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Server functions (GET, read-only — no mutations this increment)
@@ -70,3 +65,11 @@ export const getSidebarState = createServerFn({ method: "GET" }).handler(
     return match?.[1] === "collapsed" ? "collapsed" : "expanded"
   },
 )
+
+// Settings data: the resolved MCP host + where it came from.
+// Dedicated fn (not folded into DashboardData) for cleaner separation — Settings
+// and Dashboard read independently; no resolve-logic duplication.
+export const getSettings = createServerFn({ method: "GET" }).handler(async () => {
+  assertLocalHost()
+  return readSettings()
+})
