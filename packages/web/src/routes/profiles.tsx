@@ -587,27 +587,95 @@ function RouteTable({ profile, onToggle, onRemove }: RouteTableProps) {
 }
 
 // ---------------------------------------------------------------------------
-// Profile detail panel (right side)
+// Profile header bar — full-width, rendered ABOVE the master-detail split.
+// Contains: profile name (h2) + CLI serve line (left), Add Route + Delete (right).
 // ---------------------------------------------------------------------------
 
-interface ProfileDetailProps {
+interface ProfileHeaderBarProps {
   readonly profile: ProfileMeta
-  readonly platforms: PlatformMeta[]
-  readonly credentials: CredentialMeta[]
-  readonly onMutate: () => void
+  readonly onAddRoute: () => void
   readonly onDeleteProfile: (p: ProfileMeta) => void
 }
 
-function ProfileDetail({
+function ProfileHeaderBar({ profile, onAddRoute, onDeleteProfile }: ProfileHeaderBarProps) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "space-between",
+        gap: "var(--space-4)",
+        flexWrap: "wrap",
+        marginBottom: "var(--space-4)",
+      }}
+    >
+      <div style={{ minWidth: 0 }}>
+        <h2
+          style={{
+            fontSize: "var(--text-h2)",
+            fontWeight: 600,
+            color: "var(--gray-1000)",
+            margin: 0,
+          }}
+        >
+          {profile.name}
+        </h2>
+        {/* CLI serve command — the single-endpoint model (no per-profile HTTP URL) */}
+        <p
+          style={{
+            fontSize: "var(--text-caption)",
+            color: "var(--gray-700)",
+            margin: "4px 0 0",
+          }}
+        >
+          Serve via{" "}
+          <MonoCode style={{ color: "var(--blue-text)" }}>
+            junction mcp serve --profile {profile.name}
+          </MonoCode>
+        </p>
+      </div>
+
+      {/* Actions */}
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+        <Button variant="secondary" onClick={onAddRoute}>
+          <PlusCircle className="h-4 w-4" aria-hidden="true" />
+          Add Route
+        </Button>
+        <Button variant="destructive" onClick={() => onDeleteProfile(profile)}>
+          <Trash2 className="h-4 w-4" aria-hidden="true" />
+          Delete
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Profile routes panel (right side) — route table + dialogs only (no header).
+// Header has been lifted to ProfileHeaderBar (full-width above the split).
+// ---------------------------------------------------------------------------
+
+interface ProfileRoutesProps {
+  readonly profile: ProfileMeta
+  readonly platforms: PlatformMeta[]
+  readonly credentials: CredentialMeta[]
+  readonly addRouteOpen: boolean
+  readonly onAddRouteOpenChange: (open: boolean) => void
+  readonly removingRoute: SourceMeta | null
+  readonly onRemovingRouteChange: (route: SourceMeta | null) => void
+  readonly onMutate: () => void
+}
+
+function ProfileRoutes({
   profile,
   platforms,
   credentials,
+  addRouteOpen,
+  onAddRouteOpenChange,
+  removingRoute,
+  onRemovingRouteChange,
   onMutate,
-  onDeleteProfile,
-}: ProfileDetailProps) {
-  const [addRouteOpen, setAddRouteOpen] = useState(false)
-  const [removingRoute, setRemovingRoute] = useState<SourceMeta | null>(null)
-
+}: ProfileRoutesProps) {
   async function handleToggle(s: SourceMeta, enabled: boolean) {
     try {
       const result = await toggleRouteFn({
@@ -625,70 +693,18 @@ function ProfileDetail({
   }
 
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        gap: "var(--space-4)",
-        minWidth: 0,
-      }}
-    >
-      {/* Detail header */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "flex-start",
-          justifyContent: "space-between",
-          gap: "var(--space-4)",
-          flexWrap: "wrap",
-        }}
-      >
-        <div style={{ minWidth: 0 }}>
-          <h2
-            style={{
-              fontSize: "var(--text-h2)",
-              fontWeight: 600,
-              color: "var(--gray-1000)",
-              margin: 0,
-            }}
-          >
-            {profile.name}
-          </h2>
-          {/* CLI serve command — the single-endpoint model (no per-profile HTTP URL) */}
-          <p
-            style={{
-              fontSize: "var(--text-caption)",
-              color: "var(--gray-700)",
-              margin: "4px 0 0",
-            }}
-          >
-            Serve via{" "}
-            <MonoCode style={{ color: "var(--blue-text)" }}>
-              junction mcp serve --profile {profile.name}
-            </MonoCode>
-          </p>
-        </div>
-
-        {/* Actions */}
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
-          <Button variant="secondary" onClick={() => setAddRouteOpen(true)}>
-            <PlusCircle className="h-4 w-4" aria-hidden="true" />
-            Add Route
-          </Button>
-          <Button variant="destructive" onClick={() => onDeleteProfile(profile)}>
-            <Trash2 className="h-4 w-4" aria-hidden="true" />
-            Delete
-          </Button>
-        </div>
-      </div>
-
+    <div style={{ minWidth: 0 }}>
       {/* Routes table */}
-      <RouteTable profile={profile} onToggle={handleToggle} onRemove={(s) => setRemovingRoute(s)} />
+      <RouteTable
+        profile={profile}
+        onToggle={handleToggle}
+        onRemove={(s) => onRemovingRouteChange(s)}
+      />
 
       {/* Dialogs */}
       <AddRouteDialog
         open={addRouteOpen}
-        onOpenChange={setAddRouteOpen}
+        onOpenChange={onAddRouteOpenChange}
         profileId={profile.id}
         platforms={platforms}
         credentials={credentials}
@@ -697,7 +713,7 @@ function ProfileDetail({
       <RemoveRouteDialog
         route={removingRoute}
         onOpenChange={(open) => {
-          if (!open) setRemovingRoute(null)
+          if (!open) onRemovingRouteChange(null)
         }}
         profileId={profile.id}
         onSuccess={onMutate}
@@ -796,6 +812,10 @@ function ProfilesPage() {
   const [createOpen, setCreateOpen] = useState(false)
   const [deletingProfile, setDeletingProfile] = useState<ProfileMeta | null>(null)
   const [filterQuery, setFilterQuery] = useState("")
+  // Hoisted from ProfileDetail so the header-bar buttons and the route table
+  // row-actions both share the same dialog state.
+  const [addRouteOpen, setAddRouteOpen] = useState(false)
+  const [removingRoute, setRemovingRoute] = useState<SourceMeta | null>(null)
 
   const selectedProfile = useMemo(
     () => profiles.find((p: ProfileMeta) => p.id === selectedId) ?? null,
@@ -861,90 +881,103 @@ function ProfilesPage() {
           </TableBody>
         </Table>
       ) : (
-        /* Master-detail split */
-        <div
-          className="profiles-master-detail"
-          style={{
-            display: "flex",
-            gap: "var(--space-4)",
-            alignItems: "flex-start",
-          }}
-        >
-          {/* Left — profiles list. marginTop pushes the list panel down so its top
-              aligns with the right ROUTE TABLE (the detail header — name + serve + actions
-              — occupies that height above the table). --detail-header-offset is defined on
-              the container below; it collapses to 0 in the stacked (<700px) layout. */}
-          <section
-            aria-label="Profile list"
+        <>
+          {/* Full-width profile header bar — rendered ABOVE the split when a profile is
+              selected, so both the left list panel and the right route table start at the
+              same row naturally (no offset hack needed). */}
+          {selectedProfile !== null && (
+            <ProfileHeaderBar
+              profile={selectedProfile}
+              onAddRoute={() => setAddRouteOpen(true)}
+              onDeleteProfile={(p) => setDeletingProfile(p)}
+            />
+          )}
+
+          {/* Master-detail split */}
+          <div
+            className="profiles-master-detail"
             style={{
-              width: "260px",
-              flexShrink: 0,
-              marginTop: "var(--detail-header-offset)",
               display: "flex",
-              flexDirection: "column",
-              gap: "var(--space-2)",
-              // Contained border panel
-              border: "1px solid var(--alpha-400)",
-              borderRadius: "var(--radius-12)",
-              padding: "var(--space-2)",
-              background: "var(--bg-100)",
-              boxShadow: "var(--shadow-sm)",
+              gap: "var(--space-4)",
+              alignItems: "flex-start",
             }}
           >
-            {/* List filter */}
-            <div style={{ padding: "4px 4px 0" }}>
-              <Input
-                type="search"
-                placeholder="Filter profiles…"
-                value={filterQuery}
-                onChange={(e) => setFilterQuery(e.target.value)}
-                aria-label="Filter profiles"
-                style={{ fontSize: "var(--text-caption)" }}
-              />
-            </div>
-            <nav aria-label="Profiles">
-              {filteredProfiles.length === 0 ? (
-                <p
-                  style={{
-                    fontSize: "var(--text-caption)",
-                    color: "var(--gray-700)",
-                    textAlign: "center",
-                    padding: "var(--space-4)",
-                    margin: 0,
-                  }}
-                >
-                  No profiles match.
-                </p>
-              ) : (
-                filteredProfiles.map((p: ProfileMeta) => (
-                  <ProfileListItem
-                    key={p.id}
-                    profile={p}
-                    selected={p.id === selectedId}
-                    onSelect={() => setSelectedId(p.id)}
-                  />
-                ))
-              )}
-            </nav>
-          </section>
+            {/* Left — profiles list. No marginTop offset needed: the header bar lives
+                above the split, so both columns naturally top-align. */}
+            <section
+              aria-label="Profile list"
+              style={{
+                width: "260px",
+                flexShrink: 0,
+                display: "flex",
+                flexDirection: "column",
+                gap: "var(--space-2)",
+                // Contained border panel
+                border: "1px solid var(--alpha-400)",
+                borderRadius: "var(--radius-12)",
+                padding: "var(--space-2)",
+                background: "var(--bg-100)",
+                boxShadow: "var(--shadow-sm)",
+              }}
+            >
+              {/* List filter */}
+              <div style={{ padding: "4px 4px 0" }}>
+                <Input
+                  type="search"
+                  placeholder="Filter profiles…"
+                  value={filterQuery}
+                  onChange={(e) => setFilterQuery(e.target.value)}
+                  aria-label="Filter profiles"
+                  style={{ fontSize: "var(--text-caption)" }}
+                />
+              </div>
+              <nav aria-label="Profiles">
+                {filteredProfiles.length === 0 ? (
+                  <p
+                    style={{
+                      fontSize: "var(--text-caption)",
+                      color: "var(--gray-700)",
+                      textAlign: "center",
+                      padding: "var(--space-4)",
+                      margin: 0,
+                    }}
+                  >
+                    No profiles match.
+                  </p>
+                ) : (
+                  filteredProfiles.map((p: ProfileMeta) => (
+                    <ProfileListItem
+                      key={p.id}
+                      profile={p}
+                      selected={p.id === selectedId}
+                      onSelect={() => setSelectedId(p.id)}
+                    />
+                  ))
+                )}
+              </nav>
+            </section>
 
-          {/* Right — profile detail */}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            {selectedProfile !== null ? (
-              <ProfileDetail
-                profile={selectedProfile}
-                platforms={platforms}
-                credentials={credentials}
-                onMutate={invalidate}
-                onDeleteProfile={(p) => setDeletingProfile(p)}
-              />
-            ) : (
-              <p style={{ fontSize: "var(--text-body)", color: "var(--gray-700)", margin: 0 }}>
-                Select a profile to view details.
-              </p>
-            )}
+            {/* Right — route table (header has moved to ProfileHeaderBar above) */}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              {selectedProfile !== null ? (
+                <ProfileRoutes
+                  profile={selectedProfile}
+                  platforms={platforms}
+                  credentials={credentials}
+                  addRouteOpen={addRouteOpen}
+                  onAddRouteOpenChange={setAddRouteOpen}
+                  removingRoute={removingRoute}
+                  onRemovingRouteChange={setRemovingRoute}
+                  onMutate={invalidate}
+                />
+              ) : (
+                <p style={{ fontSize: "var(--text-body)", color: "var(--gray-700)", margin: 0 }}>
+                  Select a profile to view details.
+                </p>
+              )}
+            </div>
           </div>
-        </div>
+        </>
       )}
 
       {/* Dialogs */}
