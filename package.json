@@ -34,7 +34,7 @@
     "@biomejs/biome": "^2.5.0",
     "@changesets/changelog-github": "^0.7.0",
     "@changesets/cli": "^2.31.0",
-    "dependency-cruiser": "^17.4.3",
+    "dependency-cruiser": "^18.0.0",
     "jscpd": "^4.2.5",
     "lefthook": "^2.1.9",
     "syncpack": "^15.3.2",
