@@ -7,6 +7,7 @@ import { createFileRoute } from "@tanstack/react-router"
 import { getCredentials, getPlatforms, type PlatformMeta } from "../server/data.functions.js"
 import { MonoChip, MonoCode } from "../ui/code.js"
 import { PageHeader } from "../ui/page-header.js"
+import { RefreshButton } from "../ui/refresh-button.js"
 import { TableSkeleton } from "../ui/skeleton.js"
 import {
   EmptyTableRow,
@@ -59,10 +60,14 @@ function PlatformsPage() {
         count={platforms.length > 0 ? platforms.length : undefined}
         // inc 24.6: simplified to a single quiet inline hint (no disabled button + pill cluster).
         actions={
-          <span style={{ fontSize: "var(--text-body)", color: "var(--gray-600)" }}>
-            Add via <MonoCode style={{ color: "var(--blue-text)" }}>junction platform add</MonoCode>{" "}
-            — UI coming soon
-          </span>
+          <>
+            <span style={{ fontSize: "var(--text-body)", color: "var(--gray-600)" }}>
+              Add via{" "}
+              <MonoCode style={{ color: "var(--blue-text)" }}>junction platform add</MonoCode> — UI
+              coming soon
+            </span>
+            <RefreshButton />
+          </>
         }
       />
 

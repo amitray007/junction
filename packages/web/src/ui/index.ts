@@ -50,6 +50,7 @@ export type { InputProps } from "./input.js"
 export { Input } from "./input.js"
 export { Kbd } from "./kbd.js"
 export { PageHeader, PageHeaderSkeleton } from "./page-header.js"
+export { RefreshButton } from "./refresh-button.js"
 export { RouteRow } from "./route-row.js"
 export {
   Select,

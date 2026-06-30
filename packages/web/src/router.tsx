@@ -19,14 +19,17 @@ export function getRouter() {
     // The ::view-transition-* CSS in app.css provides the actual animation;
     // prefers-reduced-motion gate is in that CSS.
     defaultViewTransition: true,
-    // ── Data stability (DESIGN.md §"Routing & data stability") ──────────
+    // ── Data freshness ──────────────────────────────────────────────────
     // Preload on hover — near-free on localhost SQLite.
     defaultPreload: "intent",
-    // Don't re-run loaders on revisit within 30s. SWR: render cached data
-    // immediately, revalidate in the background.
-    defaultStaleTime: 30_000,
-    defaultPreloadStaleTime: 30_000,
-    // Keep loader cache for 30 minutes (GC after that).
+    // staleTime 0: ALWAYS revalidate the loader on navigation/refresh. Junction's
+    // data changes OUT OF BAND (the CLI, other agents, another browser tab), so a
+    // 30s "fresh" window meant a refresh could show stale data. Refetching is
+    // near-free on localhost SQLite, and hover-preload keeps it flash-free.
+    defaultStaleTime: 0,
+    // Preloads can be briefly cached (avoids a double-fetch on hover→click).
+    defaultPreloadStaleTime: 5_000,
+    // Keep loader cache for 30 minutes (GC after that) — for instant back/forward.
     defaultGcTime: 1_800_000,
     // Fast loads (< 1s) don't flash a pending skeleton at all; the outgoing
     // route stays visible. Slow loads show the pending UI only after 1s, and

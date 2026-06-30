@@ -33,6 +33,7 @@ import {
   Field,
   Input,
   PageHeader,
+  RefreshButton,
   Select,
   SelectContent,
   SelectItem,
@@ -681,10 +682,13 @@ function CredentialsPage() {
         title="Credentials"
         count={credentials.length > 0 ? credentials.length : undefined}
         actions={
-          <Button variant="primary" onClick={() => setAddOpen(true)}>
-            <Plus className="h-4 w-4" aria-hidden="true" />
-            Add Credential
-          </Button>
+          <>
+            <RefreshButton />
+            <Button variant="primary" onClick={() => setAddOpen(true)}>
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              Add Credential
+            </Button>
+          </>
         }
       />
 

@@ -49,6 +49,7 @@ import {
   Field,
   Input,
   PageHeader,
+  RefreshButton,
   Select,
   SelectContent,
   SelectItem,
@@ -851,10 +852,13 @@ function ProfilesPage() {
         title="Profiles"
         count={profiles.length > 0 ? profiles.length : undefined}
         actions={
-          <Button variant="primary" onClick={() => setCreateOpen(true)}>
-            <Plus className="h-4 w-4" aria-hidden="true" />
-            New Profile
-          </Button>
+          <>
+            <RefreshButton />
+            <Button variant="primary" onClick={() => setCreateOpen(true)}>
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              New Profile
+            </Button>
+          </>
         }
       />
 

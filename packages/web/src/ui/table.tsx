@@ -13,13 +13,7 @@ import {
   ChevronsRight,
   MoreHorizontal,
 } from "lucide-react"
-import type {
-  HTMLAttributes,
-  MouseEvent as ReactMouseEvent,
-  TdHTMLAttributes,
-  ThHTMLAttributes,
-} from "react"
-import { cloneElement, isValidElement, useCallback, useRef, useState } from "react"
+import type { HTMLAttributes, TdHTMLAttributes, ThHTMLAttributes } from "react"
 import { cn } from "./cn.js"
 import { DropdownMenu, DropdownMenuTrigger } from "./dropdown-menu.js"
 
@@ -477,10 +471,6 @@ const triggerButtonClassName = cn(
   "opacity-40 group-hover:opacity-100 group-focus-within:opacity-100",
 )
 
-// Delay before closing the dropdown after the pointer leaves the trigger area (ms).
-// Long enough to move the pointer from the ⋯ button to the menu without dismissal.
-const HOVER_CLOSE_DELAY_MS = 150
-
 export function TableActionsCell({
   className,
   menu,
@@ -490,31 +480,14 @@ export function TableActionsCell({
    * that have no actions should omit the column entirely (don't render TableActionsCell). */
   readonly menu: React.ReactNode
 }) {
-  const [open, setOpen] = useState(false)
-  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  const cancelClose = useCallback(() => {
-    if (closeTimerRef.current !== null) {
-      clearTimeout(closeTimerRef.current)
-      closeTimerRef.current = null
-    }
-  }, [])
-
-  const scheduleClose = useCallback(() => {
-    cancelClose()
-    closeTimerRef.current = setTimeout(() => setOpen(false), HOVER_CLOSE_DELAY_MS)
-  }, [cancelClose])
-
+  // Click-to-open (Radix default, uncontrolled). A previous hover-to-open implementation
+  // flickered: Radix portals the menu with a gap (sideOffset) from the trigger, so the
+  // pointer crossing that gap fired mouseleave→close while the open state + zoom animation
+  // re-triggered — a visible open/close loop. Click is the robust, flicker-free standard;
+  // the trigger stays keyboard-reachable (Enter/Space) and always-visible.
   return (
     <TableCell className={cn("w-12 text-right pr-2", className)}>
-      <DropdownMenu
-        open={open}
-        onOpenChange={(next) => {
-          // Let Radix handle keyboard/click toggles normally; cancel any pending hover-close.
-          cancelClose()
-          setOpen(next)
-        }}
-      >
+      <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
             type="button"
@@ -522,37 +495,11 @@ export function TableActionsCell({
             aria-haspopup="menu"
             className={triggerButtonClassName}
             style={{ color: "var(--gray-700)", backgroundColor: "transparent" }}
-            onMouseEnter={() => {
-              cancelClose()
-              setOpen(true)
-            }}
-            onMouseLeave={scheduleClose}
-            onFocus={() => {
-              // Keyboard focus also reveals the menu on focus (not just hover).
-              cancelClose()
-            }}
           >
             <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
           </button>
         </DropdownMenuTrigger>
-        {/* Inject hover handlers onto the menu content so moving the pointer from the ⋯
-            onto the open menu keeps it open (cancels the close timer); leaving it
-            re-arms the close. Falls back to rendering menu as-is if it's not an element. */}
-        {isValidElement<{
-          onMouseEnter?: (e: ReactMouseEvent) => void
-          onMouseLeave?: (e: ReactMouseEvent) => void
-        }>(menu)
-          ? cloneElement(menu, {
-              onMouseEnter: (e: ReactMouseEvent) => {
-                cancelClose()
-                menu.props.onMouseEnter?.(e)
-              },
-              onMouseLeave: (e: ReactMouseEvent) => {
-                scheduleClose()
-                menu.props.onMouseLeave?.(e)
-              },
-            })
-          : menu}
+        {menu}
       </DropdownMenu>
     </TableCell>
   )

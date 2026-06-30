@@ -38,6 +38,8 @@ vi.mock("@tanstack/react-router", () => ({
     useLoaderData: mockUseLoaderData,
     options,
   }),
+  // RefreshButton (in the PageHeader actions) calls useRouter().invalidate().
+  useRouter: () => ({ invalidate: vi.fn().mockResolvedValue(undefined) }),
 }))
 
 // Loader calls both getPlatforms and getCredentials — stub both.
