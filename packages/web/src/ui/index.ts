@@ -21,6 +21,7 @@ export {
   DialogContent,
   DialogDescription,
   DialogFooter,
+  DialogFormFooter,
   DialogHeader,
   DialogOverlay,
   DialogPortal,

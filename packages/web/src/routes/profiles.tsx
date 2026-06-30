@@ -39,7 +39,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
+  DialogFormFooter,
   DialogHeader,
   DialogTitle,
   DropdownMenuContent,
@@ -184,14 +184,12 @@ function CreateProfileDialog({ open, onOpenChange, onSuccess }: CreateProfileDia
               />
             </Field>
           </div>
-          <DialogFooter>
-            <Button type="button" variant="secondary" onClick={() => handleOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" variant="primary" disabled={submitting}>
-              {submitting ? "Creating…" : "Create Profile"}
-            </Button>
-          </DialogFooter>
+          <DialogFormFooter
+            onCancel={() => handleOpenChange(false)}
+            submitting={submitting}
+            submitLabel="Create Profile"
+            submittingLabel="Creating…"
+          />
         </form>
       </DialogContent>
     </Dialog>
@@ -416,14 +414,12 @@ function AddRouteDialog({
               <span style={{ color: "var(--gray-600)" }}>— use remove + re-add to change.</span>
             </div>
           </div>
-          <DialogFooter>
-            <Button type="button" variant="secondary" onClick={() => handleOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" variant="primary" disabled={submitting}>
-              {submitting ? "Adding…" : "Add Route"}
-            </Button>
-          </DialogFooter>
+          <DialogFormFooter
+            onCancel={() => handleOpenChange(false)}
+            submitting={submitting}
+            submitLabel="Add Route"
+            submittingLabel="Adding…"
+          />
         </form>
       </DialogContent>
     </Dialog>

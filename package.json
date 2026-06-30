@@ -35,7 +35,7 @@
     "@changesets/changelog-github": "^0.7.0",
     "@changesets/cli": "^2.31.0",
     "dependency-cruiser": "^18.0.0",
-    "jscpd": "^4.2.5",
+    "jscpd": "^5.0.11",
     "lefthook": "^2.1.9",
     "syncpack": "^15.3.2",
     "tsdown": "^0.22.3",

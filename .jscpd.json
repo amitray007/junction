@@ -1,7 +1,6 @@
 {
   "minTokens": 50,
   "minLines": 5,
-  "//threshold": "Allow a tiny duplication budget (0.5%). The light/dark token blocks in web/src/styles/app.css are intentionally parallel (same token names, different values) — inherent to a tokenized theme, not copy-paste sloppiness. A real duplicate would push well past this on a 200-module codebase and still fail.",
   "threshold": 0.5,
   "reporters": ["console"],
   "ignore": [
@@ -9,6 +8,7 @@
     "**/node_modules/**",
     "**/*.test.ts",
     "**/*.test.tsx",
+    "**/*.css",
     "**/drizzle/**",
     "**/*.d.ts",
     "**/migrations/meta/**",

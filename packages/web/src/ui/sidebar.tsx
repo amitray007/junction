@@ -24,7 +24,7 @@ import { type ReactNode, useCallback, useEffect, useState, useSyncExternalStore 
 import type { SystemInfo } from "../server/data.functions.js"
 import { cn } from "./cn.js"
 import { Tooltip } from "./tooltip.js"
-import { Wordmark } from "./wordmark.js"
+import { JGlyph, Wordmark } from "./wordmark.js"
 
 // ─── Cookie helpers ───────────────────────────────────────────────────────────
 // Sidebar collapse state is persisted in a cookie (not localStorage) so SSR
@@ -502,31 +502,8 @@ export function Sidebar({ initialState, systemInfo }: SidebarProps) {
           aria-label="Junction dashboard"
           className="flex items-center no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue-700)] focus-visible:ring-offset-1 rounded-[var(--radius-6)]"
         >
-          {collapsed ? (
-            // Collapsed: J glyph only
-            <span
-              aria-hidden="true"
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                width: "20px",
-                height: "20px",
-                borderRadius: "var(--radius-6)",
-                backgroundColor: "var(--gray-1000)",
-                color: "var(--bg-100)",
-                fontFamily: "var(--font-sans)",
-                fontSize: "12px",
-                fontWeight: 700,
-                lineHeight: 1,
-                flexShrink: 0,
-              }}
-            >
-              J
-            </span>
-          ) : (
-            <Wordmark />
-          )}
+          {/* Collapsed: J glyph only (shared component — never drifts from the Wordmark). */}
+          {collapsed ? <JGlyph /> : <Wordmark />}
         </Link>
       </div>
 
