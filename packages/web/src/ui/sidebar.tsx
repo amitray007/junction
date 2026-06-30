@@ -13,6 +13,7 @@ import {
   LayoutDashboard,
   type LucideIcon,
   Moon,
+  ScrollText,
   Server,
   Settings,
   Sun,
@@ -67,6 +68,7 @@ interface NavItem {
 // Group 1: top — Dashboard + Settings (no "Manage" eyebrow — A6/A7)
 const NAV_TOP: NavItem[] = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/audit", label: "Audit", icon: ScrollText },
   { to: "/settings", label: "Settings", icon: Settings },
 ]
 
@@ -358,23 +360,31 @@ function SidebarSystemPanel({
   }
 
   return (
-    <section
-      aria-label="System"
-      style={{
-        borderTop: "1px solid var(--alpha-200)",
-        padding: "10px 12px",
-        display: "flex",
-        flexDirection: "column",
-        gap: "6px",
-      }}
-    >
-      <SystemInfoRow label="Store" value={systemInfo.credentialStore} />
-      <SystemInfoRow label="Sandbox" value={systemInfo.sandbox} />
-      <SystemInfoRow label="Home" value={systemInfo.home} mono />
-    </section>
+    <div style={{ padding: "8px" }}>
+      <section
+        aria-label="System"
+        style={{
+          // Overall border around the panel (feedback) — a contained card, not just a
+          // top hairline.
+          border: "1px solid var(--alpha-400)",
+          borderRadius: "var(--radius-6)",
+          background: "var(--bg-100)",
+          padding: "10px 12px",
+          display: "flex",
+          flexDirection: "column",
+          gap: "10px",
+        }}
+      >
+        <SystemInfoRow label="Store" value={systemInfo.credentialStore} />
+        <SystemInfoRow label="Sandbox" value={systemInfo.sandbox} />
+        <SystemInfoRow label="Home" value={systemInfo.home} mono />
+      </section>
+    </div>
   )
 }
 
+// A stacked label/value pair: the label on its own line, the value below it.
+// The value wraps (break-word) so long paths/strings show fully, not truncated.
 function SystemInfoRow({
   label,
   value,
@@ -385,14 +395,12 @@ function SystemInfoRow({
   readonly mono?: boolean
 }) {
   return (
-    <div style={{ display: "flex", gap: "8px", alignItems: "baseline" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
       <span
         style={{
           fontSize: "var(--text-caption)",
           color: "var(--gray-600)",
           fontWeight: 500,
-          flexShrink: 0,
-          minWidth: "48px",
         }}
       >
         {label}
@@ -403,10 +411,8 @@ function SystemInfoRow({
           fontSize: mono ? "var(--text-mono)" : "var(--text-caption)",
           fontFamily: mono ? "var(--font-mono)" : "var(--font-sans)",
           color: "var(--gray-900)",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-          minWidth: 0,
+          wordBreak: "break-word",
+          lineHeight: 1.35,
         }}
       >
         {value}

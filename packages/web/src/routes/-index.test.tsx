@@ -75,14 +75,9 @@ describe("DashboardPage", () => {
     expect(queryByTestId("overview-system")).not.toBeInTheDocument()
   })
 
-  it("shows empty state when nothing is configured", () => {
+  it("does not render a first-run empty state (removed — feedback)", () => {
+    // The "Nothing configured yet" first-run hint was removed from the dashboard.
     mockUseLoaderData.mockReturnValue(emptyData)
-    const { getByText } = render(<DashboardPage />)
-    expect(getByText("Nothing configured yet.")).toBeInTheDocument()
-  })
-
-  it("does not show empty state when data exists", () => {
-    mockUseLoaderData.mockReturnValue(populatedData)
     const { queryByText } = render(<DashboardPage />)
     expect(queryByText("Nothing configured yet.")).not.toBeInTheDocument()
   })

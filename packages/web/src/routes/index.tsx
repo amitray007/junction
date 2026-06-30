@@ -8,12 +8,9 @@ import type { CSSProperties, ReactNode } from "react"
 import { getDashboard, getSettings } from "../server/data.functions.js"
 import { AgentConfig } from "../ui/agent-config.js"
 import { Card, CardContent } from "../ui/card.js"
-import { MonoCode } from "../ui/code.js"
 import { ComingSoon } from "../ui/coming-soon.js"
 import { PageHeader } from "../ui/page-header.js"
-import { Separator } from "../ui/separator.js"
 import { TableSkeleton } from "../ui/skeleton.js"
-import { EmptyState } from "../ui/states.js"
 
 export const Route = createFileRoute("/")({
   loader: async () => {
@@ -36,8 +33,6 @@ function DashboardPending() {
 
 function DashboardPage() {
   const data = Route.useLoaderData()
-  const isEmpty =
-    data.counts.platforms === 0 && data.counts.credentials === 0 && data.counts.profiles === 0
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "32px" }}>
@@ -77,22 +72,6 @@ function DashboardPage() {
           Per-agent usage and audit log coming in a later update.
         </p>
       </section>
-
-      {/* First-run hint */}
-      {isEmpty && (
-        <>
-          <Separator />
-          <EmptyState
-            label="Nothing configured yet."
-            hint={
-              <span>
-                Run <MonoCode style={{ color: "var(--blue-text)" }}>junction platform add</MonoCode>{" "}
-                to get started.
-              </span>
-            }
-          />
-        </>
-      )}
     </div>
   )
 }

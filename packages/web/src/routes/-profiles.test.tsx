@@ -122,11 +122,11 @@ describe("ProfilesPage", () => {
     expect(getByText("No profiles yet.")).toBeInTheDocument()
   })
 
-  it("renders New Profile button (primary action)", () => {
+  it("renders the New Profile button once, in the PageHeader (not duplicated in the empty row)", () => {
     mockUseLoaderData.mockReturnValue(emptyData)
     render(<ProfilesPage />)
-    // Empty state shows New Profile in the header AND in the empty table row — use getAllByRole
-    expect(screen.getAllByRole("button", { name: /new profile/i }).length).toBeGreaterThanOrEqual(1)
+    // The empty table row no longer carries a New Profile button — it's only in the header.
+    expect(screen.getAllByRole("button", { name: /new profile/i })).toHaveLength(1)
   })
 
   it("renders master-detail layout when profiles exist (F13)", () => {

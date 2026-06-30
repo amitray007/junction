@@ -868,16 +868,8 @@ function ProfilesPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            <EmptyTableRow
-              colSpan={2}
-              message="No profiles yet."
-              action={
-                <Button variant="primary" onClick={() => setCreateOpen(true)}>
-                  <Plus className="h-4 w-4" aria-hidden="true" />
-                  New Profile
-                </Button>
-              }
-            />
+            {/* No action here — "New Profile" lives in the PageHeader (avoid duplicating). */}
+            <EmptyTableRow colSpan={2} message="No profiles yet." />
           </TableBody>
         </Table>
       ) : (
