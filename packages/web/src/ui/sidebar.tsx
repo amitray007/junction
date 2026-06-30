@@ -552,13 +552,16 @@ export function Sidebar({ initialState, systemInfo }: SidebarProps) {
         <SidebarSystemPanel systemInfo={systemInfo} collapsed={collapsed} />
       )}
 
-      {/* Footer: theme toggle + ⌘B hint */}
+      {/* Footer: theme toggle + ⌘B hint. When the System card is shown it already
+          separates the footer from the nav, so no top border (a second edge-to-edge line
+          read as clunky — feedback). Only when there's no System card do we keep a border. */}
       <div
         className={cn(
-          "shrink-0 border-t border-[var(--alpha-400)]",
+          "shrink-0",
+          systemInfo === undefined && "border-t border-[var(--alpha-400)]",
           collapsed
-            ? "px-1.5 py-3 flex flex-col items-center gap-2"
-            : "px-3 py-3 flex items-center gap-2",
+            ? "px-1.5 pb-3 pt-1 flex flex-col items-center gap-2"
+            : "px-3 pb-3 pt-1 flex items-center gap-2",
         )}
       >
         <ThemeToggle collapsed={collapsed} />
