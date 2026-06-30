@@ -62,6 +62,11 @@
   /* off / disabled: route toggled off */
   --status-off-fg: #8f8f8f;          /* = --gray-600 */
 
+  /* ── Tooltip — a solid dark chip in BOTH themes (never inverts to white).  */
+  /* Light: near-black chip, white text. (Dark override below keeps it dark.)  */
+  --tooltip-bg: #171717;
+  --tooltip-fg: #ffffff;
+
   /* ── Elevation — Geist two-layer shadows ─────────────────────────────── */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
   --shadow-md: 0 1px 1px rgba(0, 0, 0, 0.02), 0 4px 8px -4px rgba(0, 0, 0, 0.04), 0 16px 24px -8px rgba(0, 0, 0, 0.06);
@@ -164,6 +169,11 @@ html[data-sidebar="collapsed"] {
     --status-error-fg: #ff6166;
     --status-off-fg: #8f8f8f;         /* = --gray-600 (same both themes) */
 
+    /* Tooltip stays a DARK chip in dark mode — a slightly-elevated dark surface that
+       pops off true-black, with light text. Never a bright/white chip. */
+    --tooltip-bg: #2a2a2a;
+    --tooltip-fg: #ededed;
+
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
     --shadow-md: 0 1px 1px rgba(0, 0, 0, 0.3), 0 4px 8px -4px rgba(0, 0, 0, 0.5), 0 16px 24px -8px rgba(0, 0, 0, 0.6);
   }
@@ -191,6 +201,10 @@ html[data-sidebar="collapsed"] {
   --status-warning-fg: #d99320;
   --status-error-fg: #ff6166;
   --status-off-fg: #8f8f8f;
+
+  /* Tooltip stays a dark chip in dark mode (see @media block above). */
+  --tooltip-bg: #2a2a2a;
+  --tooltip-fg: #ededed;
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
   --shadow-md: 0 1px 1px rgba(0, 0, 0, 0.3), 0 4px 8px -4px rgba(0, 0, 0, 0.5), 0 16px 24px -8px rgba(0, 0, 0, 0.6);

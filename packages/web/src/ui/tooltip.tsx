@@ -24,8 +24,10 @@ export function TooltipContent({ className, sideOffset = 4, ...props }: TooltipC
           className,
         )}
         style={{
-          backgroundColor: "var(--gray-1000)",
-          color: "var(--bg-100)",
+          // Dedicated tooltip tokens — a dark chip in BOTH themes (does NOT invert to a
+          // bright/white chip in dark mode, which read as too bright — feedback).
+          backgroundColor: "var(--tooltip-bg)",
+          color: "var(--tooltip-fg)",
           fontSize: "var(--text-caption)",
           boxShadow: "var(--shadow-md)",
         }}

@@ -84,10 +84,10 @@ describe("Sidebar", () => {
     expect(btn.getAttribute("aria-label")).not.toContain("System")
   })
 
-  it("renders toggle sidebar button in the footer", () => {
+  it("renders the collapse-sidebar button in the footer (expanded → 'Collapse sidebar')", () => {
     renderSidebar()
-    // The ⌘B button
-    const toggleBtn = screen.getByRole("button", { name: "Toggle sidebar" })
+    // Expanded sidebar: the footer button collapses it (icon button, no ⌘B text).
+    const toggleBtn = screen.getByRole("button", { name: "Collapse sidebar" })
     expect(toggleBtn).toBeInTheDocument()
   })
 

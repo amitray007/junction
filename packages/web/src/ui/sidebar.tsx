@@ -13,6 +13,8 @@ import {
   LayoutDashboard,
   type LucideIcon,
   Moon,
+  PanelLeft,
+  PanelLeftClose,
   ScrollText,
   Server,
   Settings,
@@ -21,7 +23,6 @@ import {
 import { type ReactNode, useCallback, useEffect, useState, useSyncExternalStore } from "react"
 import type { SystemInfo } from "../server/data.functions.js"
 import { cn } from "./cn.js"
-import { Kbd } from "./kbd.js"
 import { Tooltip } from "./tooltip.js"
 import { Wordmark } from "./wordmark.js"
 
@@ -566,44 +567,31 @@ export function Sidebar({ initialState, systemInfo }: SidebarProps) {
       >
         <ThemeToggle collapsed={collapsed} />
         {!collapsed && (
-          <>
-            <span
-              className="flex-1 truncate"
-              style={{
-                fontSize: "var(--text-caption)",
-                color: "var(--gray-600)",
-                fontFamily: "var(--font-mono)",
-              }}
-            >
-              localhost
-            </span>
-            <div className="flex items-center gap-1 shrink-0">
-              <Tooltip content="Toggle sidebar">
-                <button
-                  type="button"
-                  aria-label="Toggle sidebar"
-                  onClick={toggle}
-                  className={cn(
-                    "inline-flex items-center gap-1",
-                    "rounded-[var(--radius-6)]",
-                    "transition-colors duration-[var(--motion-fast)]",
-                    "hover:bg-[var(--gray-100)]",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue-700)] focus-visible:ring-offset-1",
-                    "px-1.5 h-6",
-                  )}
-                  style={{ color: "var(--gray-700)", backgroundColor: "transparent" }}
-                >
-                  <Kbd>⌘B</Kbd>
-                </button>
-              </Tooltip>
-            </div>
-          </>
+          <div className="flex flex-1 items-center justify-end shrink-0">
+            <Tooltip content="Collapse sidebar (⌘B)">
+              <button
+                type="button"
+                aria-label="Collapse sidebar"
+                onClick={toggle}
+                className={cn(
+                  "inline-flex items-center justify-center",
+                  "w-8 h-8 rounded-[var(--radius-6)]",
+                  "transition-colors duration-[var(--motion-fast)]",
+                  "hover:bg-[var(--gray-100)]",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue-700)] focus-visible:ring-offset-1",
+                )}
+                style={{ color: "var(--gray-700)", backgroundColor: "transparent" }}
+              >
+                <PanelLeftClose className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </Tooltip>
+          </div>
         )}
         {collapsed && (
-          <Tooltip content="Toggle sidebar (⌘B)">
+          <Tooltip content="Expand sidebar (⌘B)">
             <button
               type="button"
-              aria-label="Toggle sidebar"
+              aria-label="Expand sidebar"
               onClick={toggle}
               className={cn(
                 "inline-flex items-center justify-center",
@@ -614,9 +602,7 @@ export function Sidebar({ initialState, systemInfo }: SidebarProps) {
               )}
               style={{ color: "var(--gray-700)", backgroundColor: "transparent" }}
             >
-              <span aria-hidden="true" style={{ fontSize: "var(--text-body)" }}>
-                ›
-              </span>
+              <PanelLeft className="h-4 w-4" aria-hidden="true" />
             </button>
           </Tooltip>
         )}
