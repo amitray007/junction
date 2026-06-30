@@ -818,8 +818,11 @@ function ProfilesPage() {
   const [addRouteOpen, setAddRouteOpen] = useState(false)
   const [removingRoute, setRemovingRoute] = useState<SourceMeta | null>(null)
 
+  // The selected profile, falling back to the first one if selectedId no longer exists
+  // (e.g. the selected profile was deleted out of band and the list was refreshed). This
+  // keeps the detail pane populated instead of blanking while other profiles remain.
   const selectedProfile = useMemo(
-    () => profiles.find((p: ProfileMeta) => p.id === selectedId) ?? null,
+    () => profiles.find((p: ProfileMeta) => p.id === selectedId) ?? profiles[0] ?? null,
     [profiles, selectedId],
   )
 

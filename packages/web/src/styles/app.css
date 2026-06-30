@@ -4,7 +4,10 @@
 /* Inc 24.5: complete rewrite from inc-23 instrument system (amber/zinc/Departure) */
 /* to Geist numbered-intent tokens. See docs/design/DESIGN.md for the contract.  */
 
+/* tw-animate-css provides the animate-in/animate-out + fade/zoom/slide enter-exit
+   utilities the Radix popovers use (Tailwind v4 ships none). Reduced-motion gated below. */
 @import "tailwindcss";
+@import "tw-animate-css";
 
 /* ─── Self-hosted fonts ──────────────────────────────────────────────────── */
 
@@ -125,7 +128,6 @@
 
   /* ── Z-index scale ──────────────────────────────────────────────────── */
   --z-sidebar: 50;
-  --z-topbar: 30;
   --z-overlay: 60;
 }
 
@@ -264,7 +266,6 @@ html[data-sidebar="collapsed"] {
   /* ── Layout tokens ───────────────────────────────────────────────── */
   --width-sidebar: var(--sidebar-width);
   --width-sidebar-icon: var(--sidebar-width-icon);
-  --height-topbar: var(--topbar-height);
 }
 
 /* ─── Profiles master-detail split ───────────────────────────────────────── */

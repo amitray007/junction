@@ -451,10 +451,10 @@ export function EmptyTableRow({ colSpan, message, action, className }: EmptyTabl
 }
 
 // ─── Actions column ────────────────────────────────────────────────────────────
-// ⋯ button: opens on HOVER (small close delay so moving to menu doesn't dismiss it)
-// as well as click + keyboard (Enter/Space opens, Esc closes, arrows navigate).
+// ⋯ button: opens on CLICK + keyboard (Enter/Space opens, Esc closes, arrows navigate).
+// (Hover-to-open was tried but flickered against Radix's portaled menu — see the body.)
 // Always visible at low opacity; full opacity on row hover/focus-within (E11a).
-// Focus after action: Radix's onCloseAutoFocus returns focus to the trigger button.
+// Focus returns to the trigger on close via Radix's default onCloseAutoFocus behavior.
 
 export function TableActionsHead({ className }: { readonly className?: string }) {
   return <TableHead className={cn("w-12 text-right", className)} aria-label="Row actions" />

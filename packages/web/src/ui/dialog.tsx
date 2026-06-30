@@ -13,6 +13,17 @@ export const DialogTrigger = DialogPrimitive.Trigger
 export const DialogPortal = DialogPrimitive.Portal
 export const DialogClose = DialogPrimitive.Close
 
+// True when the event target is inside a Radix popper/select portal (rendered OUTSIDE the
+// dialog DOM). Used to stop a Select-option click from being treated as an outside-click
+// that closes the dialog. Exported for unit testing the guard logic.
+export function isInsideRadixPopper(target: Element | null): boolean {
+  return Boolean(
+    target?.closest("[data-radix-popper-content-wrapper]") ||
+      target?.closest("[role='listbox']") ||
+      target?.closest("[data-radix-select-content]"),
+  )
+}
+
 export function DialogOverlay({
   className,
   ...props
@@ -57,27 +68,16 @@ export function DialogContent({
         style={{ boxShadow: "var(--shadow-md)" }}
         onPointerDownOutside={(e) => {
           // Radix Select portals its listbox outside the dialog DOM — clicking a Select
-          // option fires onPointerDownOutside and would close the dialog. Suppress that
-          // by checking whether the target is inside a Radix popper or listbox portal.
-          const target = e.target as Element | null
-          if (
-            target?.closest("[data-radix-popper-content-wrapper]") ||
-            target?.closest("[role='listbox']") ||
-            target?.closest("[data-radix-select-content]")
-          ) {
+          // option fires this and would wrongly close the dialog. Keep it open for clicks
+          // inside a Radix popper/select portal; genuine outside clicks (scrim) still close.
+          if (isInsideRadixPopper(e.target as Element | null)) {
             e.preventDefault()
             return
           }
           onPointerDownOutside?.(e)
         }}
         onInteractOutside={(e) => {
-          // Same guard for keyboard-driven interactions (e.g. touch, assistive tech).
-          const target = e.target as Element | null
-          if (
-            target?.closest("[data-radix-popper-content-wrapper]") ||
-            target?.closest("[role='listbox']") ||
-            target?.closest("[data-radix-select-content]")
-          ) {
+          if (isInsideRadixPopper(e.target as Element | null)) {
             e.preventDefault()
             return
           }

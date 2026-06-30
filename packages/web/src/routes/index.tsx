@@ -5,7 +5,7 @@
 
 import { createFileRoute } from "@tanstack/react-router"
 import type { CSSProperties, ReactNode } from "react"
-import { getDashboard, getSettings } from "../server/data.functions.js"
+import { getSettings } from "../server/data.functions.js"
 import { AgentConfig } from "../ui/agent-config.js"
 import { Card, CardContent } from "../ui/card.js"
 import { ComingSoon } from "../ui/coming-soon.js"
@@ -14,9 +14,10 @@ import { TableSkeleton } from "../ui/skeleton.js"
 
 export const Route = createFileRoute("/")({
   loader: async () => {
-    // Parallel fetch: dashboard counts/system + settings (for the mcpHost in AgentConfig).
-    const [dashboard, settings] = await Promise.all([getDashboard(), getSettings()])
-    return { ...dashboard, mcpHost: settings.mcpHost }
+    // Only the mcpHost is rendered now (counts/system moved off the dashboard), so fetch
+    // just the settings — no dead getDashboard count/label queries on every visit.
+    const settings = await getSettings()
+    return { mcpHost: settings.mcpHost }
   },
   pendingComponent: DashboardPending,
   component: DashboardPage,
