@@ -13,6 +13,17 @@ export const DialogTrigger = DialogPrimitive.Trigger
 export const DialogPortal = DialogPrimitive.Portal
 export const DialogClose = DialogPrimitive.Close
 
+// True when the event target is inside a Radix popper/select portal (rendered OUTSIDE the
+// dialog DOM). Used to stop a Select-option click from being treated as an outside-click
+// that closes the dialog. Exported for unit testing the guard logic.
+export function isInsideRadixPopper(target: Element | null): boolean {
+  return Boolean(
+    target?.closest("[data-radix-popper-content-wrapper]") ||
+      target?.closest("[role='listbox']") ||
+      target?.closest("[data-radix-select-content]"),
+  )
+}
+
 export function DialogOverlay({
   className,
   ...props
@@ -34,6 +45,8 @@ export function DialogOverlay({
 export function DialogContent({
   className,
   children,
+  onPointerDownOutside,
+  onInteractOutside,
   ...props
 }: ComponentPropsWithoutRef<typeof DialogPrimitive.Content>) {
   return (
@@ -46,11 +59,30 @@ export function DialogContent({
           "rounded-[var(--radius-12)] border border-[var(--alpha-400)]",
           "bg-[var(--bg-100)]",
           "p-6",
-          "transition-opacity duration-[var(--motion-base)]",
-          "data-[state=open]:opacity-100 data-[state=closed]:opacity-0",
+          // Fade + subtle scale-in. A modal is NOT anchored to a trigger, so it keeps
+          // center origin (the -translate-1/2 centering composes with the zoom utility).
+          "data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95",
+          "data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
           className,
         )}
         style={{ boxShadow: "var(--shadow-md)" }}
+        onPointerDownOutside={(e) => {
+          // Radix Select portals its listbox outside the dialog DOM — clicking a Select
+          // option fires this and would wrongly close the dialog. Keep it open for clicks
+          // inside a Radix popper/select portal; genuine outside clicks (scrim) still close.
+          if (isInsideRadixPopper(e.target as Element | null)) {
+            e.preventDefault()
+            return
+          }
+          onPointerDownOutside?.(e)
+        }}
+        onInteractOutside={(e) => {
+          if (isInsideRadixPopper(e.target as Element | null)) {
+            e.preventDefault()
+            return
+          }
+          onInteractOutside?.(e)
+        }}
         {...props}
       >
         {children}

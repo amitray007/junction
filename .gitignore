@@ -7,3 +7,6 @@ coverage/
 .junction-test/
 .junction/
 .gstack/
+# Session scratchpad — throwaway working files (briefs, mockups, seeds). Never committed;
+# also keeps Biome (vcs.useIgnoreFile) from linting throwaway HTML/JS in here.
+scratchpad/

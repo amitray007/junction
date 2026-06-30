@@ -11,63 +11,57 @@ import type { HTMLAttributes } from "react"
 import { cn } from "./cn.js"
 
 const badgeVariants = cva(
+  // Geometry + type match the design-system reference exactly (preview.html .badge):
+  // 20px tall, 0 8px padding, 5px gap, small radius (chip, not a full pill), Geist Mono
+  // 11px with .03em tracking, 1px border. Mapped to OUR status tokens.
   [
-    "inline-flex items-center gap-1.5",
-    "px-2",
-    "rounded-[var(--radius-full)]",
-    "text-[var(--text-caption)] font-medium",
+    "inline-flex items-center gap-[5px]",
+    "h-5 px-2",
+    "rounded-[var(--radius-6)]",
+    "font-mono text-[11px] tracking-[0.03em]",
     "leading-none whitespace-nowrap",
-    // Fixed height ensures consistent baseline alignment across all badge uses
-    "h-5",
+    "border border-transparent",
   ],
   {
     variants: {
+      // Each status variant: text = the status fg, bg = a 12% tint of it, border = a 30%
+      // tint (reference .b-* pattern: color/background/border-color from one hue).
       variant: {
         // configured: stored, not live-probed (inc 23–27 default)
-        // B4: tinted bg 12% + 1px border 30% using color-mix
         configured: [
           "text-[var(--status-configured-fg)]",
-          "[background:color-mix(in_srgb,var(--status-configured-fg)_12%,transparent)]",
-          "[border:1px_solid_color-mix(in_srgb,var(--status-configured-fg)_30%,transparent)]",
+          "[background-color:color-mix(in_srgb,var(--status-configured-fg)_12%,transparent)]",
+          "[border-color:color-mix(in_srgb,var(--status-configured-fg)_30%,transparent)]",
         ],
         // ok / connected: live (reserved, probe inc 28+)
         ok: [
           "text-[var(--status-ok-fg)]",
-          "[background:color-mix(in_srgb,var(--status-ok-fg)_12%,transparent)]",
-          "[border:1px_solid_color-mix(in_srgb,var(--status-ok-fg)_30%,transparent)]",
+          "[background-color:color-mix(in_srgb,var(--status-ok-fg)_12%,transparent)]",
+          "[border-color:color-mix(in_srgb,var(--status-ok-fg)_30%,transparent)]",
         ],
         // no-auth: public source, blue signal
         noauth: [
           "text-[var(--status-noauth-fg)]",
-          "[background:color-mix(in_srgb,var(--status-noauth-fg)_12%,transparent)]",
-          "[border:1px_solid_color-mix(in_srgb,var(--status-noauth-fg)_30%,transparent)]",
+          "[background-color:color-mix(in_srgb,var(--status-noauth-fg)_12%,transparent)]",
+          "[border-color:color-mix(in_srgb,var(--status-noauth-fg)_30%,transparent)]",
         ],
         // warning / expiring
         warning: [
           "text-[var(--status-warning-fg)]",
-          "[background:color-mix(in_srgb,var(--status-warning-fg)_12%,transparent)]",
-          "[border:1px_solid_color-mix(in_srgb,var(--status-warning-fg)_30%,transparent)]",
+          "[background-color:color-mix(in_srgb,var(--status-warning-fg)_12%,transparent)]",
+          "[border-color:color-mix(in_srgb,var(--status-warning-fg)_30%,transparent)]",
         ],
         // error / auth-failed
         error: [
           "text-[var(--status-error-fg)]",
-          "[background:color-mix(in_srgb,var(--status-error-fg)_12%,transparent)]",
-          "[border:1px_solid_color-mix(in_srgb,var(--status-error-fg)_30%,transparent)]",
+          "[background-color:color-mix(in_srgb,var(--status-error-fg)_12%,transparent)]",
+          "[border-color:color-mix(in_srgb,var(--status-error-fg)_30%,transparent)]",
         ],
-        // off / disabled: route toggled off
-        off: [
-          "text-[var(--status-off-fg)]",
-          "[background:color-mix(in_srgb,var(--status-off-fg)_12%,transparent)]",
-          "[border:1px_solid_color-mix(in_srgb,var(--status-off-fg)_30%,transparent)]",
-        ],
+        // off / disabled: route toggled off — reference .b-dis: transparent bg + a plain
+        // neutral border (no tint), so it visibly reads as "inactive".
+        off: ["text-[var(--status-off-fg)]", "bg-transparent", "border-[var(--alpha-400)]"],
         // neutral: count chip next to page title — quiet gray, NOT a status signal.
-        // Distinct from "configured" so a count of 3 next to "Credentials" doesn't
-        // read as a "Configured" status badge (B4 decision: keep count chips neutral).
-        neutral: [
-          "text-[var(--gray-700)]",
-          "bg-[var(--gray-100)]",
-          "border border-[var(--alpha-400)]",
-        ],
+        neutral: ["text-[var(--gray-700)]", "bg-[var(--gray-100)]", "border-[var(--alpha-400)]"],
       },
     },
     defaultVariants: {

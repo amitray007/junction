@@ -197,67 +197,98 @@ export function TableCellMono({
 }
 
 // ─── Group divider row ─────────────────────────────────────────────────────────
-// B4: full-width row used for platform group headings in the credentials table (Phase 4).
-// Shows a platform label + optional kind chip + count as a quiet section break.
+// B4/inc-25: Variant-C mockup group divider — uppercase mono platform name +
+// kind badge + stretching divider line + "N {unit}" count on the right.
+// Row height 32px, bg color-mix(gray-100 60%, transparent).
 
 interface TableGroupRowProps {
   /** Number of columns the row should span. */
   readonly colSpan: number
-  /** Primary label (e.g. platform display name). */
+  /** Primary label (e.g. platform display name) — rendered uppercase mono. */
   readonly label: string
-  /** Optional kind chip text (e.g. "openapi"). */
+  /** Optional kind chip text (e.g. "openapi") — NOT uppercased. */
   readonly kind?: string
-  /** Optional count shown after the label. */
+  /** Optional count shown on the right. */
   readonly count?: number
+  /** Unit word appended to the count (e.g. "credentials"). Default: "items". */
+  readonly unit?: string
   readonly className?: string
 }
 
-export function TableGroupRow({ colSpan, label, kind, count, className }: TableGroupRowProps) {
+export function TableGroupRow({
+  colSpan,
+  label,
+  kind,
+  count,
+  unit = "items",
+  className,
+}: TableGroupRowProps) {
   return (
     <tr
       className={cn("border-b border-[var(--alpha-200)]", className)}
-      style={{ backgroundColor: "var(--bg-200)" }}
+      style={{
+        height: "32px",
+        backgroundColor: "color-mix(in srgb, var(--gray-100) 60%, transparent)",
+      }}
       aria-label={`Group: ${label}`}
     >
-      <td
-        colSpan={colSpan}
-        className="px-[var(--cell-padding-x)] py-1.5"
-        style={{ color: "var(--gray-700)" }}
-      >
-        <div className="flex items-center gap-2">
+      <td colSpan={colSpan} style={{ padding: "0 16px", verticalAlign: "middle" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          {/* Platform name — uppercase, 11px, mono, gray-700, letter-spacing */}
           <span
             style={{
-              fontSize: "var(--text-caption)",
-              fontWeight: 500,
+              fontFamily: "var(--font-mono)",
+              fontSize: "11px",
+              fontWeight: 600,
+              textTransform: "uppercase",
+              letterSpacing: "0.07em",
               color: "var(--gray-700)",
+              whiteSpace: "nowrap",
             }}
           >
             {label}
           </span>
+          {/* Kind badge — 10px, NOT uppercase, gray-600 on alpha-200 bg, alpha-400 border */}
           {kind && (
             <span
               style={{
                 fontFamily: "var(--font-mono)",
-                fontSize: "var(--text-caption)",
-                color: "var(--gray-700)",
+                fontSize: "10px",
+                fontWeight: 500,
+                color: "var(--gray-600)",
                 backgroundColor: "var(--alpha-200)",
+                border: "1px solid var(--alpha-400)",
                 borderRadius: "var(--radius-6)",
-                padding: "0 6px",
+                padding: "1px 5px",
+                whiteSpace: "nowrap",
               }}
             >
               {kind}
             </span>
           )}
+          {/* Stretching divider line */}
+          <span
+            style={{
+              flex: 1,
+              height: "1px",
+              backgroundColor: "var(--alpha-200)",
+              marginLeft: "4px",
+            }}
+            aria-hidden="true"
+          />
+          {/* Count on the right: "N credentials" */}
           {count !== undefined && (
             <span
               style={{
                 fontFamily: "var(--font-mono)",
-                fontSize: "var(--text-caption)",
-                color: "var(--gray-700)",
+                fontSize: "11px",
+                fontWeight: 400,
+                color: "var(--gray-600)",
                 fontVariantNumeric: "tabular-nums",
+                whiteSpace: "nowrap",
               }}
             >
-              {count}
+              {count} {unit}
             </span>
           )}
         </div>
@@ -420,12 +451,10 @@ export function EmptyTableRow({ colSpan, message, action, className }: EmptyTabl
 }
 
 // ─── Actions column ────────────────────────────────────────────────────────────
-// ⋯ button: ALWAYS visible (low opacity at rest, full on hover/focus-within).
-// E11a fix: the previous opacity-0-until-hover pattern made the trigger invisible
-// and unreachable by real pointer events (trackpad/touch had nothing to hit). A
-// persistently visible trigger (opacity-40 at rest → opacity-100 on hover/focus)
-// is the correct pattern for a primary row action. Keyboard remains fully supported
-// via focus-visible ring.
+// ⋯ button: opens on CLICK + keyboard (Enter/Space opens, Esc closes, arrows navigate).
+// (Hover-to-open was tried but flickered against Radix's portaled menu — see the body.)
+// Always visible at low opacity; full opacity on row hover/focus-within (E11a).
+// Focus returns to the trigger on close via Radix's default onCloseAutoFocus behavior.
 
 export function TableActionsHead({ className }: { readonly className?: string }) {
   return <TableHead className={cn("w-12 text-right", className)} aria-label="Row actions" />
@@ -434,11 +463,11 @@ export function TableActionsHead({ className }: { readonly className?: string })
 const triggerButtonClassName = cn(
   "inline-flex items-center justify-center",
   "h-7 w-7 rounded-[var(--radius-6)]",
-  "transition-colors duration-[var(--motion-fast)]",
+  // Transition BOTH colors + opacity so the hover reveal fades in (was snapping 40→100%).
+  "transition-[color,background-color,opacity] duration-[var(--motion-fast)]",
   "hover:bg-[var(--gray-100)]",
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue-700)] focus-visible:ring-offset-1",
   // Always visible: low-opacity at rest, full opacity on row hover/focus-within (E11a).
-  // Was: opacity-0 group-hover:opacity-100 — made it impossible to click with pointer.
   "opacity-40 group-hover:opacity-100 group-focus-within:opacity-100",
 )
 
@@ -447,36 +476,31 @@ export function TableActionsCell({
   menu,
 }: {
   readonly className?: string
-  readonly menu?: React.ReactNode
+  /** DropdownMenuContent (or similar) to render inside a DropdownMenu. Required — callers
+   * that have no actions should omit the column entirely (don't render TableActionsCell). */
+  readonly menu: React.ReactNode
 }) {
+  // Click-to-open (Radix default, uncontrolled). A previous hover-to-open implementation
+  // flickered: Radix portals the menu with a gap (sideOffset) from the trigger, so the
+  // pointer crossing that gap fired mouseleave→close while the open state + zoom animation
+  // re-triggered — a visible open/close loop. Click is the robust, flicker-free standard;
+  // the trigger stays keyboard-reachable (Enter/Space) and always-visible.
   return (
     <TableCell className={cn("w-12 text-right pr-2", className)}>
-      {menu ? (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              aria-label="Row actions"
-              aria-haspopup="menu"
-              className={triggerButtonClassName}
-              style={{ color: "var(--gray-700)", backgroundColor: "transparent" }}
-            >
-              <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
-            </button>
-          </DropdownMenuTrigger>
-          {menu}
-        </DropdownMenu>
-      ) : (
-        <button
-          type="button"
-          aria-label="Row actions"
-          aria-haspopup="menu"
-          className={triggerButtonClassName}
-          style={{ color: "var(--gray-700)", backgroundColor: "transparent" }}
-        >
-          <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
-        </button>
-      )}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            aria-label="Row actions"
+            aria-haspopup="menu"
+            className={triggerButtonClassName}
+            style={{ color: "var(--gray-700)", backgroundColor: "transparent" }}
+          >
+            <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </DropdownMenuTrigger>
+        {menu}
+      </DropdownMenu>
     </TableCell>
   )
 }

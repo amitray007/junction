@@ -7,12 +7,11 @@ import { createFileRoute } from "@tanstack/react-router"
 import { getCredentials, getPlatforms, type PlatformMeta } from "../server/data.functions.js"
 import { MonoChip, MonoCode } from "../ui/code.js"
 import { PageHeader } from "../ui/page-header.js"
+import { RefreshButton } from "../ui/refresh-button.js"
 import { TableSkeleton } from "../ui/skeleton.js"
 import {
   EmptyTableRow,
   Table,
-  TableActionsCell,
-  TableActionsHead,
   TableBody,
   TableCell,
   TableHead,
@@ -61,10 +60,14 @@ function PlatformsPage() {
         count={platforms.length > 0 ? platforms.length : undefined}
         // inc 24.6: simplified to a single quiet inline hint (no disabled button + pill cluster).
         actions={
-          <span style={{ fontSize: "var(--text-body)", color: "var(--gray-600)" }}>
-            Add via <MonoCode style={{ color: "var(--blue-text)" }}>junction platform add</MonoCode>{" "}
-            — UI coming soon
-          </span>
+          <>
+            <span style={{ fontSize: "var(--text-body)", color: "var(--gray-600)" }}>
+              Add via{" "}
+              <MonoCode style={{ color: "var(--blue-text)" }}>junction platform add</MonoCode> — UI
+              coming soon
+            </span>
+            <RefreshButton />
+          </>
         }
       />
 
@@ -76,13 +79,13 @@ function PlatformsPage() {
             <TableHead>Kind</TableHead>
             <TableHead>Connections</TableHead>
             {/* Base URL column removed inc 24.6 — always `—` for MCP platforms, pure noise. */}
-            <TableActionsHead />
+            {/* Actions column removed — no row actions wired this increment. */}
           </TableRow>
         </TableHeader>
         <TableBody>
           {platforms.length === 0 ? (
             <EmptyTableRow
-              colSpan={4}
+              colSpan={3}
               message="No platforms yet."
               action={
                 <span style={{ fontSize: "var(--text-body)", color: "var(--gray-700)" }}>
@@ -121,8 +124,7 @@ function PlatformsPage() {
                     {connectionCounts[p.id] ?? 0}
                   </span>
                 </TableCell>
-                {/* No row actions yet — wired in inc 25 */}
-                <TableActionsCell />
+                {/* No row actions yet — column removed; will add back when actions are wired. */}
               </TableRow>
             ))
           )}

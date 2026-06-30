@@ -25,8 +25,12 @@ export function DropdownMenuContent({ className, sideOffset = 4, ...props }: Con
           "z-50 min-w-32 overflow-hidden",
           "rounded-[var(--radius-12)] border border-[var(--alpha-400)]",
           "p-1",
-          "transition-opacity duration-[var(--motion-fast)]",
-          "data-[state=open]:opacity-100 data-[state=closed]:opacity-0",
+          // Origin-aware zoom + fade + slight slide (matches Select; scales from the
+          // trigger, not center — the menu should feel anchored to the ⋯).
+          "data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95",
+          "data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
+          "data-[side=bottom]:slide-in-from-top-1 data-[side=top]:slide-in-from-bottom-1",
+          "data-[side=left]:slide-in-from-right-1 data-[side=right]:slide-in-from-left-1",
           className,
         )}
         style={{
@@ -34,6 +38,7 @@ export function DropdownMenuContent({ className, sideOffset = 4, ...props }: Con
           color: "var(--gray-1000)",
           fontSize: "var(--text-body)",
           boxShadow: "var(--shadow-md)",
+          transformOrigin: "var(--radix-dropdown-menu-content-transform-origin)",
         }}
         {...props}
       />

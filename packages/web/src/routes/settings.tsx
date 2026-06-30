@@ -212,14 +212,8 @@ function AppearanceSection() {
         </p>
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-        {/* ThemeToggle from the sidebar — reused as-is (collapsed=false for the label form) */}
-        <ThemeToggle collapsed={false} />
-        <p style={{ fontSize: "var(--text-body)", color: "var(--gray-700)", margin: 0 }}>
-          Toggle between light and dark. Persisted in localStorage; seeded from your OS preference
-          on first visit.
-        </p>
-      </div>
+      {/* The canonical theme control rendered as a labeled button (Light/Dark). */}
+      <ThemeToggle collapsed={false} withLabel />
     </section>
   )
 }
@@ -244,7 +238,9 @@ function SettingsPage() {
     <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
       <PageHeader title="Settings" subtitle="Junction-wide preferences." />
 
-      <div style={{ display: "flex", flexDirection: "column", gap: "32px" }}>
+      {/* Constrain to a readable form column — settings fields shouldn't stretch the
+          full 1216px content width (agentation feedback: "horizontally too long"). */}
+      <div style={{ display: "flex", flexDirection: "column", gap: "32px", maxWidth: "40rem" }}>
         <McpHostSection data={data} />
         <SectionDivider />
         <AppearanceSection />

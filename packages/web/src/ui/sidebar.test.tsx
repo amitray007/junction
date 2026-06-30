@@ -84,10 +84,10 @@ describe("Sidebar", () => {
     expect(btn.getAttribute("aria-label")).not.toContain("System")
   })
 
-  it("renders toggle sidebar button in the footer", () => {
+  it("renders the collapse-sidebar button in the footer (expanded → 'Collapse sidebar')", () => {
     renderSidebar()
-    // The ⌘B button
-    const toggleBtn = screen.getByRole("button", { name: "Toggle sidebar" })
+    // Expanded sidebar: the footer button collapses it (icon button, no ⌘B text).
+    const toggleBtn = screen.getByRole("button", { name: "Collapse sidebar" })
     expect(toggleBtn).toBeInTheDocument()
   })
 
@@ -184,6 +184,57 @@ describe("Sidebar", () => {
     document.documentElement.setAttribute("data-theme", "dark")
     expect(() => renderSidebar()).not.toThrow()
     document.documentElement.removeAttribute("data-theme")
+  })
+})
+
+// ── System panel ──────────────────────────────────────────────────────────────
+
+const fakeSystemInfo = {
+  credentialStore: "keyring",
+  sandbox: "seatbelt · deno",
+  home: "/tmp/x",
+}
+
+describe("Sidebar — System panel", () => {
+  afterEach(() => {
+    cleanup()
+    // biome-ignore lint/suspicious/noDocumentCookie: intentional test teardown
+    document.cookie = `${SIDEBAR_COOKIE}=; max-age=0`
+    document.documentElement.removeAttribute("data-sidebar")
+  })
+
+  it("renders Store / Sandbox / Home rows when expanded with systemInfo", () => {
+    render(
+      <TooltipProvider>
+        <Sidebar initialState="expanded" systemInfo={fakeSystemInfo} />
+      </TooltipProvider>,
+    )
+    expect(screen.getByText("keyring")).toBeInTheDocument()
+    expect(screen.getByText("seatbelt · deno")).toBeInTheDocument()
+    expect(screen.getByText("/tmp/x")).toBeInTheDocument()
+  })
+
+  it("does NOT render text rows when collapsed — shows icon button instead", () => {
+    render(
+      <TooltipProvider>
+        <Sidebar initialState="collapsed" systemInfo={fakeSystemInfo} />
+      </TooltipProvider>,
+    )
+    // Text values must not be visible (collapsed = icon-only mode)
+    expect(screen.queryByText("keyring")).not.toBeInTheDocument()
+    expect(screen.queryByText("seatbelt · deno")).not.toBeInTheDocument()
+    // The icon button is present with its aria-label
+    expect(screen.getByRole("button", { name: "System info" })).toBeInTheDocument()
+  })
+
+  it("renders nothing when systemInfo is omitted", () => {
+    render(
+      <TooltipProvider>
+        <Sidebar initialState="expanded" />
+      </TooltipProvider>,
+    )
+    expect(screen.queryByRole("button", { name: "System info" })).not.toBeInTheDocument()
+    expect(screen.queryByText("Store")).not.toBeInTheDocument()
   })
 })
 

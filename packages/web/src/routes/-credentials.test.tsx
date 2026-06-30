@@ -135,6 +135,14 @@ describe("CredentialsPage", () => {
     expect(getAllByText("Linear").length).toBeGreaterThanOrEqual(1)
   })
 
+  it("group divider shows 'N credentials' count (Variant-C mockup, inc-25 feedback)", () => {
+    mockUseLoaderData.mockReturnValue({ credentials: populatedCredentials, platforms })
+    const { getAllByText } = render(<CredentialsPage />)
+    // Two platform groups (github, linear), each with one credential → two "1 credentials"
+    // dividers. The "N credentials" wording (not a bare number) is the Variant-C fix.
+    expect(getAllByText("1 credentials").length).toBe(2)
+  })
+
   it("renders platform name in the Platform column for each credential row", () => {
     mockUseLoaderData.mockReturnValue({ credentials: populatedCredentials, platforms })
     const { getAllByText } = render(<CredentialsPage />)
@@ -299,7 +307,7 @@ describe("CredentialsPage", () => {
       />,
     )
     const nav = getByRole("navigation", { name: /page navigation/i })
-    // Page 1: first two IDs present, third absent. (IDs render truncated, so match a prefix.)
+    // Page 1: first two IDs present, third absent. (IDs now render in full — regex still matches.)
     expect(getByText(/cred-1/)).toBeTruthy()
     expect(getByText(/cred-2/)).toBeTruthy()
     expect(queryByText(/cred-3/)).toBeNull()

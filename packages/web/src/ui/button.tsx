@@ -16,7 +16,12 @@ const buttonVariants = cva(
     "h-[var(--control-height)] px-3",
     "text-[var(--text-label)] font-medium leading-none whitespace-nowrap",
     "rounded-[var(--radius-6)] border",
-    "transition-colors duration-[var(--motion-fast)]",
+    // Transition color + transform so the press scale is smooth (transform is GPU-safe;
+    // disabled under prefers-reduced-motion by the global app.css block).
+    "transition-[color,background-color,opacity,transform] duration-[var(--motion-fast)]",
+    // Subtle press feedback — the button visibly responds to a click (Emil: buttons must
+    // feel responsive). Not on :disabled.
+    "active:not-disabled:scale-[0.97]",
     // Focus ring: blue, 2px surface gap + 2px outline (DESIGN.md)
     "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--blue-700)]",
     "disabled:pointer-events-none disabled:opacity-50",

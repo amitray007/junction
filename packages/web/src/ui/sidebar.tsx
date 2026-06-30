@@ -8,17 +8,21 @@
 import { Link, useLocation } from "@tanstack/react-router"
 import {
   Database,
+  HardDrive,
   Key,
   LayoutDashboard,
   type LucideIcon,
   Moon,
+  PanelLeft,
+  PanelLeftClose,
+  ScrollText,
   Server,
   Settings,
   Sun,
 } from "lucide-react"
 import { type ReactNode, useCallback, useEffect, useState, useSyncExternalStore } from "react"
+import type { SystemInfo } from "../server/data.functions.js"
 import { cn } from "./cn.js"
-import { Kbd } from "./kbd.js"
 import { Tooltip } from "./tooltip.js"
 import { Wordmark } from "./wordmark.js"
 
@@ -65,6 +69,7 @@ interface NavItem {
 // Group 1: top — Dashboard + Settings (no "Manage" eyebrow — A6/A7)
 const NAV_TOP: NavItem[] = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/audit", label: "Audit", icon: ScrollText },
   { to: "/settings", label: "Settings", icon: Settings },
 ]
 
@@ -220,7 +225,17 @@ export function applyTheme(pref: ThemePreference) {
   for (const cb of themeListeners) cb()
 }
 
-export function ThemeToggle({ collapsed }: { readonly collapsed: boolean }) {
+// ThemeToggle — flips light↔dark (canonical theme control).
+//   collapsed: icon-only square + tooltip (sidebar collapsed state).
+//   withLabel: wider button showing the icon + the current theme label
+//     ("Light"/"Dark") — used as the Settings "Appearance" control.
+export function ThemeToggle({
+  collapsed,
+  withLabel = false,
+}: {
+  readonly collapsed: boolean
+  readonly withLabel?: boolean
+}) {
   const pref = useSyncExternalStore(subscribeTheme, readStoredTheme, () => "dark" as const)
 
   function toggle() {
@@ -228,6 +243,35 @@ export function ThemeToggle({ collapsed }: { readonly collapsed: boolean }) {
   }
 
   const Icon = THEME_ICON[pref]
+
+  if (withLabel) {
+    return (
+      <button
+        type="button"
+        aria-label={THEME_LABEL[pref]}
+        onClick={toggle}
+        className={cn(
+          "inline-flex items-center gap-2 shrink-0",
+          "rounded-[var(--radius-6)] border border-[var(--alpha-400)]",
+          "transition-colors duration-[var(--motion-fast)]",
+          "hover:bg-[var(--gray-100)]",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue-700)] focus-visible:ring-offset-1",
+          "h-[var(--control-height)] px-3",
+        )}
+        style={{
+          backgroundColor: "transparent",
+          color: "var(--gray-1000)",
+          cursor: "pointer",
+        }}
+      >
+        <Icon className="h-4 w-4" aria-hidden="true" style={{ color: "var(--gray-700)" }} />
+        <span style={{ fontSize: "var(--text-body)" }}>
+          {/* Show the CURRENT theme; clicking switches to the other. */}
+          {pref === "light" ? "Light" : "Dark"}
+        </span>
+      </button>
+    )
+  }
 
   const btn = (
     <button
@@ -258,14 +302,135 @@ export function ThemeToggle({ collapsed }: { readonly collapsed: boolean }) {
   return btn
 }
 
+// ─── System panel ─────────────────────────────────────────────────────────────
+// Pinned between nav and footer. Expanded: three quiet label/value rows.
+// Collapsed: a single icon button whose tooltip contains all three values.
+// If systemInfo is undefined, renders nothing.
+
+function SidebarSystemPanel({
+  systemInfo,
+  collapsed,
+}: {
+  readonly systemInfo: SystemInfo
+  readonly collapsed: boolean
+}) {
+  if (collapsed) {
+    const tooltipContent = (
+      <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+        <div>
+          <span style={{ color: "var(--gray-600)", marginRight: "6px" }}>Store</span>
+          {systemInfo.credentialStore}
+        </div>
+        <div>
+          <span style={{ color: "var(--gray-600)", marginRight: "6px" }}>Sandbox</span>
+          {systemInfo.sandbox}
+        </div>
+        <div>
+          <span style={{ color: "var(--gray-600)", marginRight: "6px" }}>Home</span>
+          {systemInfo.home}
+        </div>
+      </div>
+    )
+    return (
+      <div
+        style={{
+          borderTop: "1px solid var(--alpha-200)",
+          padding: "8px 6px",
+          display: "flex",
+          justifyContent: "center",
+        }}
+      >
+        <Tooltip content={tooltipContent} delayDuration={300}>
+          <button
+            type="button"
+            aria-label="System info"
+            className={cn(
+              "inline-flex items-center justify-center",
+              "w-9 h-9 rounded-[var(--radius-6)]",
+              "transition-colors duration-[var(--motion-fast)]",
+              "hover:bg-[var(--gray-100)]",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue-700)] focus-visible:ring-offset-1",
+            )}
+            style={{ color: "var(--gray-600)", backgroundColor: "transparent", cursor: "default" }}
+          >
+            <HardDrive className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </Tooltip>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ padding: "8px" }}>
+      <section
+        aria-label="System"
+        style={{
+          // Overall border around the panel (feedback) — a contained card, not just a
+          // top hairline.
+          border: "1px solid var(--alpha-400)",
+          borderRadius: "var(--radius-6)",
+          background: "var(--bg-100)",
+          padding: "10px 12px",
+          display: "flex",
+          flexDirection: "column",
+          gap: "10px",
+        }}
+      >
+        <SystemInfoRow label="Store" value={systemInfo.credentialStore} />
+        <SystemInfoRow label="Sandbox" value={systemInfo.sandbox} />
+        <SystemInfoRow label="Home" value={systemInfo.home} mono />
+      </section>
+    </div>
+  )
+}
+
+// A stacked label/value pair: the label on its own line, the value below it.
+// The value wraps (break-word) so long paths/strings show fully, not truncated.
+function SystemInfoRow({
+  label,
+  value,
+  mono = false,
+}: {
+  readonly label: string
+  readonly value: string
+  readonly mono?: boolean
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+      <span
+        style={{
+          fontSize: "var(--text-caption)",
+          color: "var(--gray-600)",
+          fontWeight: 500,
+        }}
+      >
+        {label}
+      </span>
+      <span
+        title={value}
+        style={{
+          fontSize: mono ? "var(--text-mono)" : "var(--text-caption)",
+          fontFamily: mono ? "var(--font-mono)" : "var(--font-sans)",
+          color: "var(--gray-900)",
+          wordBreak: "break-word",
+          lineHeight: 1.35,
+        }}
+      >
+        {value}
+      </span>
+    </div>
+  )
+}
+
 // ─── Sidebar component ────────────────────────────────────────────────────────
 
 interface SidebarProps {
   readonly initialState?: SidebarState
+  readonly systemInfo?: SystemInfo
   readonly children?: ReactNode
 }
 
-export function Sidebar({ initialState }: SidebarProps) {
+export function Sidebar({ initialState, systemInfo }: SidebarProps) {
   // Initial state from SSR (getSidebarState → route context → initialState) AND from
   // SIDEBAR_SCRIPT, which set html[data-sidebar] from the cookie before hydration.
   // Lazy initializer runs once — no mount-effect flash.
@@ -383,55 +548,50 @@ export function Sidebar({ initialState }: SidebarProps) {
         <NavGroup items={NAV_DATA} collapsed={collapsed} />
       </nav>
 
-      {/* Footer: theme toggle + ⌘B hint */}
+      {/* System panel — pinned above footer; renders nothing when systemInfo is absent */}
+      {systemInfo !== undefined && (
+        <SidebarSystemPanel systemInfo={systemInfo} collapsed={collapsed} />
+      )}
+
+      {/* Footer: theme toggle + ⌘B hint. When the System card is shown it already
+          separates the footer from the nav, so no top border (a second edge-to-edge line
+          read as clunky — feedback). Only when there's no System card do we keep a border. */}
       <div
         className={cn(
-          "shrink-0 border-t border-[var(--alpha-400)]",
+          "shrink-0",
+          systemInfo === undefined && "border-t border-[var(--alpha-400)]",
           collapsed
-            ? "px-1.5 py-3 flex flex-col items-center gap-2"
-            : "px-3 py-3 flex items-center gap-2",
+            ? "px-1.5 pb-3 pt-1 flex flex-col items-center gap-2"
+            : "px-3 pb-3 pt-1 flex items-center gap-2",
         )}
       >
         <ThemeToggle collapsed={collapsed} />
         {!collapsed && (
-          <>
-            <span
-              className="flex-1 truncate"
-              style={{
-                fontSize: "var(--text-caption)",
-                color: "var(--gray-600)",
-                fontFamily: "var(--font-mono)",
-              }}
-            >
-              localhost
-            </span>
-            <div className="flex items-center gap-1 shrink-0">
-              <Tooltip content="Toggle sidebar">
-                <button
-                  type="button"
-                  aria-label="Toggle sidebar"
-                  onClick={toggle}
-                  className={cn(
-                    "inline-flex items-center gap-1",
-                    "rounded-[var(--radius-6)]",
-                    "transition-colors duration-[var(--motion-fast)]",
-                    "hover:bg-[var(--gray-100)]",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue-700)] focus-visible:ring-offset-1",
-                    "px-1.5 h-6",
-                  )}
-                  style={{ color: "var(--gray-700)", backgroundColor: "transparent" }}
-                >
-                  <Kbd>⌘B</Kbd>
-                </button>
-              </Tooltip>
-            </div>
-          </>
+          <div className="flex flex-1 items-center justify-end shrink-0">
+            <Tooltip content="Collapse sidebar (⌘B)">
+              <button
+                type="button"
+                aria-label="Collapse sidebar"
+                onClick={toggle}
+                className={cn(
+                  "inline-flex items-center justify-center",
+                  "w-8 h-8 rounded-[var(--radius-6)]",
+                  "transition-colors duration-[var(--motion-fast)]",
+                  "hover:bg-[var(--gray-100)]",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue-700)] focus-visible:ring-offset-1",
+                )}
+                style={{ color: "var(--gray-700)", backgroundColor: "transparent" }}
+              >
+                <PanelLeftClose className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </Tooltip>
+          </div>
         )}
         {collapsed && (
-          <Tooltip content="Toggle sidebar (⌘B)">
+          <Tooltip content="Expand sidebar (⌘B)">
             <button
               type="button"
-              aria-label="Toggle sidebar"
+              aria-label="Expand sidebar"
               onClick={toggle}
               className={cn(
                 "inline-flex items-center justify-center",
@@ -442,9 +602,7 @@ export function Sidebar({ initialState }: SidebarProps) {
               )}
               style={{ color: "var(--gray-700)", backgroundColor: "transparent" }}
             >
-              <span aria-hidden="true" style={{ fontSize: "var(--text-body)" }}>
-                ›
-              </span>
+              <PanelLeft className="h-4 w-4" aria-hidden="true" />
             </button>
           </Tooltip>
         )}

@@ -122,11 +122,11 @@ describe("ProfilesPage", () => {
     expect(getByText("No profiles yet.")).toBeInTheDocument()
   })
 
-  it("renders New Profile button (primary action)", () => {
+  it("renders the New Profile button once, in the PageHeader (not duplicated in the empty row)", () => {
     mockUseLoaderData.mockReturnValue(emptyData)
     render(<ProfilesPage />)
-    // Empty state shows New Profile in the header AND in the empty table row — use getAllByRole
-    expect(screen.getAllByRole("button", { name: /new profile/i }).length).toBeGreaterThanOrEqual(1)
+    // The empty table row no longer carries a New Profile button — it's only in the header.
+    expect(screen.getAllByRole("button", { name: /new profile/i })).toHaveLength(1)
   })
 
   it("renders master-detail layout when profiles exist (F13)", () => {
@@ -221,10 +221,11 @@ describe("ProfilesPage", () => {
     expect(screen.getByRole("button", { name: /add route/i })).toBeInTheDocument()
   })
 
-  it("shows ComingSoon for 'Keys active' (N keys active ComingSoon guard)", () => {
+  it("does NOT render 'Keys active' (removed inc-25 feedback batch)", () => {
     mockUseLoaderData.mockReturnValue(populatedData)
     render(<ProfilesPage />)
-    expect(screen.getByText("Keys active")).toBeInTheDocument()
+    // The "N keys active" ComingSoon affordance was removed from the detail panel.
+    expect(screen.queryByText("Keys active")).not.toBeInTheDocument()
   })
 
   it("renders profile list filter input", () => {

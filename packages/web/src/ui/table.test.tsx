@@ -42,7 +42,7 @@ describe("TableGroupRow", () => {
     expect(getByText("openapi")).toBeInTheDocument()
   })
 
-  it("renders optional count when provided", () => {
+  it("renders optional count with the unit word (default 'items')", () => {
     const { getByText } = render(
       <table>
         <tbody>
@@ -50,7 +50,18 @@ describe("TableGroupRow", () => {
         </tbody>
       </table>,
     )
-    expect(getByText("3")).toBeInTheDocument()
+    expect(getByText("3 items")).toBeInTheDocument()
+  })
+
+  it("renders the count with a custom unit", () => {
+    const { getByText } = render(
+      <table>
+        <tbody>
+          <TableGroupRow colSpan={4} label="GitHub" count={3} unit="credentials" />
+        </tbody>
+      </table>,
+    )
+    expect(getByText("3 credentials")).toBeInTheDocument()
   })
 
   it("omits kind chip and count when not provided", () => {

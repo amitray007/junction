@@ -19,15 +19,19 @@ export function TooltipContent({ className, sideOffset = 4, ...props }: TooltipC
           "z-50 overflow-hidden",
           "rounded-[var(--radius-6)]",
           "px-2.5 py-1.5",
-          "transition-opacity duration-[var(--motion-fast)]",
-          "data-[state=delayed-open]:opacity-100 data-[state=closed]:opacity-0",
+          // Subtle origin-aware zoom + fade (scales from the trigger, not center).
+          "data-[state=delayed-open]:animate-in data-[state=delayed-open]:fade-in-0 data-[state=delayed-open]:zoom-in-95",
+          "data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
           className,
         )}
         style={{
-          backgroundColor: "var(--gray-1000)",
-          color: "var(--bg-100)",
+          // Dedicated tooltip tokens — a dark chip in BOTH themes (does NOT invert to a
+          // bright/white chip in dark mode, which read as too bright — feedback).
+          backgroundColor: "var(--tooltip-bg)",
+          color: "var(--tooltip-fg)",
           fontSize: "var(--text-caption)",
           boxShadow: "var(--shadow-md)",
+          transformOrigin: "var(--radix-tooltip-content-transform-origin)",
         }}
         {...props}
       />

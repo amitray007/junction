@@ -33,6 +33,7 @@ import {
   Field,
   Input,
   PageHeader,
+  RefreshButton,
   Select,
   SelectContent,
   SelectItem,
@@ -598,17 +599,20 @@ export function FlatCredentialsTable({
                       label={platform?.displayName ?? item.platformId}
                       kind={platform?.kind}
                       count={platformCounts.get(item.platformId)}
+                      unit="credentials"
                     />
                   )
                 }
                 const c = item.credential
-                // Truncate the ID for display (mono, first 12 chars + ellipsis).
-                const idDisplay = c.id.length > 13 ? `${c.id.slice(0, 12)}…` : c.id
+                // Show full ULID — feedback: ID was over-truncating despite available width.
                 const platformName = platformMap.get(c.platformId)?.displayName ?? c.platformId
                 return (
                   <TableRow key={c.id}>
-                    <TableCellMono title={c.id} style={{ color: "var(--gray-700)" }}>
-                      {idDisplay}
+                    <TableCellMono
+                      title={c.id}
+                      style={{ color: "var(--gray-700)", minWidth: "250px", width: "250px" }}
+                    >
+                      {c.id}
                     </TableCellMono>
                     <TableCellMono>
                       <MonoCode>{platformName}</MonoCode>
@@ -678,10 +682,13 @@ function CredentialsPage() {
         title="Credentials"
         count={credentials.length > 0 ? credentials.length : undefined}
         actions={
-          <Button variant="primary" onClick={() => setAddOpen(true)}>
-            <Plus className="h-4 w-4" aria-hidden="true" />
-            Add Credential
-          </Button>
+          <>
+            <RefreshButton />
+            <Button variant="primary" onClick={() => setAddOpen(true)}>
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              Add Credential
+            </Button>
+          </>
         }
       />
 

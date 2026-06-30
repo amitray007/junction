@@ -4,7 +4,10 @@
 /* Inc 24.5: complete rewrite from inc-23 instrument system (amber/zinc/Departure) */
 /* to Geist numbered-intent tokens. See docs/design/DESIGN.md for the contract.  */
 
+/* tw-animate-css provides the animate-in/animate-out + fade/zoom/slide enter-exit
+   utilities the Radix popovers use (Tailwind v4 ships none). Reduced-motion gated below. */
 @import "tailwindcss";
+@import "tw-animate-css";
 
 /* ─── Self-hosted fonts ──────────────────────────────────────────────────── */
 
@@ -62,6 +65,11 @@
   /* off / disabled: route toggled off */
   --status-off-fg: #8f8f8f;          /* = --gray-600 */
 
+  /* ── Tooltip — a solid dark chip in BOTH themes (never inverts to white).  */
+  /* Light: near-black chip, white text. (Dark override below keeps it dark.)  */
+  --tooltip-bg: #171717;
+  --tooltip-fg: #ffffff;
+
   /* ── Elevation — Geist two-layer shadows ─────────────────────────────── */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
   --shadow-md: 0 1px 1px rgba(0, 0, 0, 0.02), 0 4px 8px -4px rgba(0, 0, 0, 0.04), 0 16px 24px -8px rgba(0, 0, 0, 0.06);
@@ -99,6 +107,7 @@
   --motion-base: 200ms;    /* popover/tooltip/tab */
   --ease-enter: cubic-bezier(0.16, 1, 0.3, 1); /* expo-out: fast in, soft landing */
   --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1); /* iOS-like — sliding panels (sidebar) */
 
   /* ── Component geometry ─────────────────────────────────────────────── */
   --control-height: 2rem;       /* 32px — standard control */
@@ -119,7 +128,6 @@
 
   /* ── Z-index scale ──────────────────────────────────────────────────── */
   --z-sidebar: 50;
-  --z-topbar: 30;
   --z-overlay: 60;
 }
 
@@ -164,6 +172,11 @@ html[data-sidebar="collapsed"] {
     --status-error-fg: #ff6166;
     --status-off-fg: #8f8f8f;         /* = --gray-600 (same both themes) */
 
+    /* Tooltip stays a DARK chip in dark mode — a slightly-elevated dark surface that
+       pops off true-black, with light text. Never a bright/white chip. */
+    --tooltip-bg: #2a2a2a;
+    --tooltip-fg: #ededed;
+
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
     --shadow-md: 0 1px 1px rgba(0, 0, 0, 0.3), 0 4px 8px -4px rgba(0, 0, 0, 0.5), 0 16px 24px -8px rgba(0, 0, 0, 0.6);
   }
@@ -191,6 +204,10 @@ html[data-sidebar="collapsed"] {
   --status-warning-fg: #d99320;
   --status-error-fg: #ff6166;
   --status-off-fg: #8f8f8f;
+
+  /* Tooltip stays a dark chip in dark mode (see @media block above). */
+  --tooltip-bg: #2a2a2a;
+  --tooltip-fg: #ededed;
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
   --shadow-md: 0 1px 1px rgba(0, 0, 0, 0.3), 0 4px 8px -4px rgba(0, 0, 0, 0.5), 0 16px 24px -8px rgba(0, 0, 0, 0.6);
@@ -249,37 +266,20 @@ html[data-sidebar="collapsed"] {
   /* ── Layout tokens ───────────────────────────────────────────────── */
   --width-sidebar: var(--sidebar-width);
   --width-sidebar-icon: var(--sidebar-width-icon);
-  --height-topbar: var(--topbar-height);
 }
 
-/* ─── Stat strip — At-a-Glance equal-cell row (inc 25 phase 2) ──────────── */
-/* Three equal-width cells in a bordered row; collapses to 1 col below breakpoint.
-   Uses CSS grid so cells are mathematically equal at every viewport width —
-   no flex-wrap distortion. Each cell is bordered on the right except the last.  */
+/* ─── Profiles master-detail split ───────────────────────────────────────── */
+/* Two-column split: a left profiles list + the right route table. The full-width
+   ProfileHeaderBar renders ABOVE the split (profile name + serve + actions), so
+   both columns start at the same row naturally — no offset hack needed. Stacks
+   to one column below 700px. */
 
-.stat-strip {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  border: 1px solid var(--alpha-400);
-  border-radius: var(--radius-12);
-  background: var(--bg-100);
-  box-shadow: var(--shadow-sm);
-  overflow: hidden;
-}
-
-/* Vertical dividers between cells — right border on first two cells. */
-.stat-strip > li + li {
-  border-left: 1px solid var(--alpha-200);
-}
-
-@media (max-width: 28rem) {
-  .stat-strip {
-    grid-template-columns: 1fr;
+@media (max-width: 700px) {
+  .profiles-master-detail {
+    flex-direction: column !important;
   }
-  /* In 1-col mode: use bottom borders as dividers instead of left borders. */
-  .stat-strip > li + li {
-    border-left: none;
-    border-top: 1px solid var(--alpha-200);
+  .profiles-master-detail > *:first-child {
+    width: 100% !important;
   }
 }
 
@@ -342,6 +342,19 @@ body {
 /* Reduced-motion: fade only (no slide). Full-motion: fade + slight translate. */
 
 @media (prefers-reduced-motion: no-preference) {
+  /* Sidebar collapse/expand — smooth the width + content margin instead of snapping.
+     Occasional action (not a hot path), so the layout cost of animating width/margin is
+     acceptable for the smoother feel; the iOS-like drawer curve suits a sliding panel.
+     (Disabled in the reduced-motion block above.) */
+  aside[aria-label="Main navigation"] {
+    transition:
+      width var(--motion-base) var(--ease-drawer),
+      min-width var(--motion-base) var(--ease-drawer);
+  }
+  #shell-main {
+    transition: margin-left var(--motion-base) var(--ease-drawer);
+  }
+
   ::view-transition-old(root) {
     animation: vt-slide-out var(--motion-base) var(--ease-exit) both;
   }
