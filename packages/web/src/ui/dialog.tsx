@@ -48,8 +48,10 @@ export function DialogContent({
           "rounded-[var(--radius-12)] border border-[var(--alpha-400)]",
           "bg-[var(--bg-100)]",
           "p-6",
-          "transition-opacity duration-[var(--motion-base)]",
-          "data-[state=open]:opacity-100 data-[state=closed]:opacity-0",
+          // Fade + subtle scale-in. A modal is NOT anchored to a trigger, so it keeps
+          // center origin (the -translate-1/2 centering composes with the zoom utility).
+          "data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95",
+          "data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
           className,
         )}
         style={{ boxShadow: "var(--shadow-md)" }}

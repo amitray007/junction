@@ -19,8 +19,9 @@ export function TooltipContent({ className, sideOffset = 4, ...props }: TooltipC
           "z-50 overflow-hidden",
           "rounded-[var(--radius-6)]",
           "px-2.5 py-1.5",
-          "transition-opacity duration-[var(--motion-fast)]",
-          "data-[state=delayed-open]:opacity-100 data-[state=closed]:opacity-0",
+          // Subtle origin-aware zoom + fade (scales from the trigger, not center).
+          "data-[state=delayed-open]:animate-in data-[state=delayed-open]:fade-in-0 data-[state=delayed-open]:zoom-in-95",
+          "data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
           className,
         )}
         style={{
@@ -30,6 +31,7 @@ export function TooltipContent({ className, sideOffset = 4, ...props }: TooltipC
           color: "var(--tooltip-fg)",
           fontSize: "var(--text-caption)",
           boxShadow: "var(--shadow-md)",
+          transformOrigin: "var(--radix-tooltip-content-transform-origin)",
         }}
         {...props}
       />

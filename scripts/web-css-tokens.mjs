@@ -28,6 +28,10 @@ const RUNTIME_ALLOWLIST = new Set([
   // Radix UI Select injects these on the trigger element for popover positioning.
   "--radix-select-trigger-height",
   "--radix-select-trigger-width",
+  // Radix injects these on popover/tooltip/menu content for origin-aware scale-in
+  // (transform-origin = the trigger, not center). Used by tooltip + dropdown-menu.
+  "--radix-tooltip-content-transform-origin",
+  "--radix-dropdown-menu-content-transform-origin",
 ])
 
 // ── 1. Parse-guard ────────────────────────────────────────────────────────────

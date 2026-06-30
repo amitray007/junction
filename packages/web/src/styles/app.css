@@ -104,6 +104,7 @@
   --motion-base: 200ms;    /* popover/tooltip/tab */
   --ease-enter: cubic-bezier(0.16, 1, 0.3, 1); /* expo-out: fast in, soft landing */
   --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1); /* iOS-like — sliding panels (sidebar) */
 
   /* ── Component geometry ─────────────────────────────────────────────── */
   --control-height: 2rem;       /* 32px — standard control */
@@ -340,6 +341,19 @@ body {
 /* Reduced-motion: fade only (no slide). Full-motion: fade + slight translate. */
 
 @media (prefers-reduced-motion: no-preference) {
+  /* Sidebar collapse/expand — smooth the width + content margin instead of snapping.
+     Occasional action (not a hot path), so the layout cost of animating width/margin is
+     acceptable for the smoother feel; the iOS-like drawer curve suits a sliding panel.
+     (Disabled in the reduced-motion block above.) */
+  aside[aria-label="Main navigation"] {
+    transition:
+      width var(--motion-base) var(--ease-drawer),
+      min-width var(--motion-base) var(--ease-drawer);
+  }
+  #shell-main {
+    transition: margin-left var(--motion-base) var(--ease-drawer);
+  }
+
   ::view-transition-old(root) {
     animation: vt-slide-out var(--motion-base) var(--ease-exit) both;
   }

@@ -469,7 +469,8 @@ export function TableActionsHead({ className }: { readonly className?: string })
 const triggerButtonClassName = cn(
   "inline-flex items-center justify-center",
   "h-7 w-7 rounded-[var(--radius-6)]",
-  "transition-colors duration-[var(--motion-fast)]",
+  // Transition BOTH colors + opacity so the hover reveal fades in (was snapping 40→100%).
+  "transition-[color,background-color,opacity] duration-[var(--motion-fast)]",
   "hover:bg-[var(--gray-100)]",
   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue-700)] focus-visible:ring-offset-1",
   // Always visible: low-opacity at rest, full opacity on row hover/focus-within (E11a).
