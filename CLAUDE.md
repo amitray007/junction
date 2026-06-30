@@ -76,6 +76,27 @@ Every increment follows this loop (gates at step 4 and step 8):
 
 `docs/workflow.md` names the exact tool to use at each step.
 
+### Plan for parallelism by default (waves)
+
+**Standing principle:** when planning *any* increment, the orchestrator's default lens is **"how can this be done in parallel?"** — decompose so multiple builders can work at once wherever it's safe. This is the default, **not a mandate**: where work is a genuine dependency chain, say so plainly rather than manufacture fake independent slices (forcing it would violate correctness-over-speed and architecture-over-expedience). Full template + conventions: **`docs/methods/_waves.md`**.
+
+The discipline, in four moves:
+
+1. **Decompose for parallelism.** Actively split a big increment into a small **blocking core/shared slice** (lands first, alone — e.g. the `core` type/interface/op everything else needs) plus **independent leaf slices** (`cli` / `web` / `mcp/*` / tests) that fan out simultaneously. This is the highest-leverage move: it converts a serial chain into a fork. Tasks that *are* dependent get broken out to land later, behind the slice they need.
+2. **Make dependencies explicit.** Every method file carries frontmatter so what's parallelizable vs. serial is **computed from the graph, not guessed**:
+   ```yaml
+   ---
+   increment: 27
+   depends_on: [26]            # hard: needs that increment's merged code
+   soft_after: [24]            # nicer-if-first, non-blocking
+   touches: [core, mcp/server] # packages/paths this slice mutates — for collision detection
+   parallel_group: B           # slices in different groups may run together
+   ---
+   ```
+   **`touches` is load-bearing:** two slices may run in parallel **iff** their `touches` sets don't both mutate a shared file — especially `core`, which everything imports. That's the mechanical safety check, not vibes.
+3. **Group into waves.** A **wave** = a set of ready method files with no unmet `depends_on` and no colliding `touches`. The orchestrator computes the wave and the user approves the **wave** (not each slice one-by-one). Safety scales with the graph, not the user's attention.
+4. **Fan out into worktrees; merge serially.** One **Sonnet builder per `git` worktree/branch** (the Agent tool's `isolation: "worktree"`) — no file collisions by construction. Reviews run **per-worktree, in parallel** (cheap, no human yet). **Merge is the deliberate serial choke point** (protects behaviour #1): merge in DAG order — core slice first, then leaves — and **after each merge the next worktree rebases on the new `main` and re-runs `pnpm verify`** before its own merge. This catches the one real danger of parallel builds: semantic conflicts git merges cleanly but that break `tsc`/tests.
+
 ### Sessions — continue vs. new (cross-session continuity)
 
 Each increment may run in its own session. **At each increment boundary**, judge context load: **default to continuing here**; if context is heavy (long session / several increments done / context summarized), finish + merge the current increment, run step 9 (update `docs/STATE.md`), and **recommend the user start the next increment in a fresh session** — handing them `docs/STATE.md` as the lossless entry point. The user decides. A brand-new session **reads `docs/STATE.md` first** to resume (see the `junction-handover` skill).

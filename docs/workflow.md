@@ -15,6 +15,8 @@ How every increment of junction gets built. This is the durable checklist agents
 
 Before doing any work on an increment, the orchestrator writes **one method file**: `docs/methods/NN-<increment>.md`, containing the increment's **mini-spec + step-by-step implementation together**. It is the self-contained artifact handed to the Sonnet builder. The design spec stays the source of truth; method files are its executable slices. No parallel doc trail.
 
+**Plan for parallelism by default.** When the increment is more than a one-file change, the orchestrator's default lens is **"how can this be done in parallel?"** — split it into a small **blocking core/shared slice** (lands first, alone) + **independent leaf slices** (`cli`/`web`/`mcp/*`/tests) that fan out at once. Each method file carries `depends_on` / `soft_after` / `touches` / `parallel_group` frontmatter so parallelizability is **computed from the dependency graph, not guessed**. Full convention + the collision rule + the living wave plan: **`docs/methods/_waves.md`**. Parallelism is the default, not a mandate — a genuine dependency chain stays serial; say so plainly.
+
 ## Delegating to the builder — the brief
 
 The orchestrator thinks so the builder doesn't have to guess. A thin brief produces a thin increment. An effective builder brief (the method file + the delegation prompt) contains, in order:
@@ -63,6 +65,17 @@ After the builder reports "done", the orchestrator **independently verifies** �
 - **Security increments → adversarial e2e.** Prove the *negative*: injection inert, path traversal denied, secret not leaked — against the real backend (e.g. real Seatbelt/bwrap), not a unit stub.
 
 This is the step that catches a real issue nearly every increment. Budget for it.
+
+## Parallel waves — fan-out + serial merge
+
+When a wave (≥2 independent slices — see `docs/methods/_waves.md`) is approved, the build/review/merge steps run in parallel **except merge**, which is deliberately serialized:
+
+- **Fan out (build).** One **Sonnet builder per slice**, each in its **own `git` worktree + branch** (Agent tool `isolation: "worktree"`) so they can't collide on files. Each works from its own self-contained method file; they run concurrently in the background while the orchestrator QAs finished ones and plans the next wave.
+- **Review in parallel (cheap).** Run the warranted reviewers **per-worktree**, concurrently — no human gate yet.
+- **Merge serially (the choke point — this protects correctness-over-speed).** Merge in **DAG order**: the `core`/shared slice **first**, then the leaves. **After each merge, rebase the next worktree on the new `main` and re-run `pnpm verify`** before merging it. This is the only thing that catches **semantic conflicts** — slices that are green in isolation but break `tsc`/Vitest together. Stacked-PR hazards still apply (merge commits not squash; retarget children before merging a parent — see `STATE.md` §3).
+- **One user gate per wave**, not per slice: the user approves the wave at plan time and batch-tests at the end. Every PR reaching them is already green + already agent-reviewed, so the gate is judgment, not QA.
+
+A lone increment (the common case) skips all of this — no worktree, no wave, just the normal single-slice loop.
 
 ## Guardrails (always)
 
