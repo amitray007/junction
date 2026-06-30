@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@junction/core": "workspace:*",
-    "graphql": "^16.11.0",
+    "graphql": "^17.0.1",
     "neverthrow": "catalog:"
   },
   "devDependencies": {
