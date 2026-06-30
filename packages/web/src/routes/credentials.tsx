@@ -25,6 +25,7 @@ import {
   DialogContent,
   DialogDescription,
   DialogFooter,
+  DialogFormFooter,
   DialogHeader,
   DialogTitle,
   DropdownMenuContent,
@@ -239,14 +240,12 @@ function AddCredentialDialog({ open, onOpenChange, platforms, onSuccess }: AddDi
               placeholder="Paste your secret here"
             />
           </div>
-          <DialogFooter>
-            <Button type="button" variant="secondary" onClick={() => handleOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" variant="primary" disabled={submitting}>
-              {submitting ? "Adding…" : "Add Credential"}
-            </Button>
-          </DialogFooter>
+          <DialogFormFooter
+            onCancel={() => handleOpenChange(false)}
+            submitting={submitting}
+            submitLabel="Add Credential"
+            submittingLabel="Adding…"
+          />
         </form>
       </DialogContent>
     </Dialog>

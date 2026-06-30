@@ -6,6 +6,7 @@
 import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { X } from "lucide-react"
 import type { ComponentPropsWithoutRef } from "react"
+import { Button } from "./button.js"
 import { cn } from "./cn.js"
 
 export const Dialog = DialogPrimitive.Root
@@ -110,6 +111,36 @@ export function DialogHeader({ className, ...props }: React.HTMLAttributes<HTMLD
 
 export function DialogFooter({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return <div className={cn("flex justify-end gap-2 mt-6", className)} {...props} />
+}
+
+/**
+ * The standard form-dialog footer: a secondary Cancel + a primary submit button whose
+ * label flips while submitting. Every form dialog (Add Credential, Create Profile,
+ * Add Route, …) repeats this; share it so they stay consistent.
+ */
+export function DialogFormFooter({
+  onCancel,
+  submitting,
+  submitLabel,
+  submittingLabel,
+  cancelLabel = "Cancel",
+}: {
+  readonly onCancel: () => void
+  readonly submitting: boolean
+  readonly submitLabel: string
+  readonly submittingLabel: string
+  readonly cancelLabel?: string
+}) {
+  return (
+    <DialogFooter>
+      <Button type="button" variant="secondary" onClick={onCancel}>
+        {cancelLabel}
+      </Button>
+      <Button type="submit" variant="primary" disabled={submitting}>
+        {submitting ? submittingLabel : submitLabel}
+      </Button>
+    </DialogFooter>
+  )
 }
 
 export function DialogTitle({
