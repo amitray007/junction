@@ -45,6 +45,8 @@ export {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "./dropdown-menu.js"
+export type { FacetOption, FacetSelectProps } from "./facet-select.js"
+export { FacetSelect } from "./facet-select.js"
 export type { FieldProps } from "./field.js"
 export { Field } from "./field.js"
 export type { InputProps } from "./input.js"

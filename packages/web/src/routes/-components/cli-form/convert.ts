@@ -3,10 +3,10 @@
 // CliConnectionFormState → CliConnectionInput (submit), and the platform-detail
 // DTO's cliTools → CliConnectionFormState (edit-mode pre-fill).
 
+import type { CliArgInput, CliPolicyInput } from "../../../lib/cli-command.js"
 import { argvToCommandLine } from "../../../lib/cli-command.js"
 import type { CliToolArgInput, CliToolInput } from "../../../server/platform-mutations.functions.js"
 import type {
-  CliArgType,
   CliConnectionFormState,
   CliEnvAllowFormState,
   CliPathFormState,
@@ -102,23 +102,8 @@ export interface CliToolDetailLike {
   name: string
   description?: string
   commandLine: string
-  args: Array<{
-    name: string
-    description?: string
-    type: CliArgType
-    required: boolean
-    enum?: string[]
-    pattern?: string
-    maxLength?: number
-  }>
-  policy: {
-    cwd: string
-    readPaths: string[]
-    writePaths: string[]
-    network: { mode: "denied" } | { mode: "allow"; hosts: string[] }
-    timeoutMs: number
-    envAllow: Record<string, string>
-  }
+  args: CliArgInput[]
+  policy: CliPolicyInput
   reversible: boolean
   rawJson?: string
 }

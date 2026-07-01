@@ -33,6 +33,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   EmptyTableRow,
+  FacetSelect,
   Field,
   Input,
   PageHeader,
@@ -563,45 +564,30 @@ export function FlatCredentialsTable({
           style={{ maxWidth: "320px" }}
           aria-label="Search credentials"
         />
-        <Select value={platformFilter} onValueChange={setPlatformFilter}>
-          <SelectTrigger aria-label="Filter by platform" style={{ maxWidth: "180px" }}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL_FILTER}>All platforms</SelectItem>
-            {platformOptions.map(([id, displayName]) => (
-              <SelectItem key={id} value={id}>
-                {displayName}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={accountFilter} onValueChange={setAccountFilter}>
-          <SelectTrigger aria-label="Filter by account" style={{ maxWidth: "180px" }}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL_FILTER}>All accounts</SelectItem>
-            {accountOptions.map((account) => (
-              <SelectItem key={account} value={account}>
-                {account}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={kindFilter} onValueChange={setKindFilter}>
-          <SelectTrigger aria-label="Filter by kind" style={{ maxWidth: "180px" }}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value={ALL_FILTER}>All kinds</SelectItem>
-            {kindOptions.map((kind) => (
-              <SelectItem key={kind} value={kind}>
-                {kind}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <FacetSelect
+          ariaLabel="Filter by platform"
+          allLabel="All platforms"
+          allValue={ALL_FILTER}
+          value={platformFilter}
+          onValueChange={setPlatformFilter}
+          options={platformOptions.map(([id, displayName]) => ({ value: id, label: displayName }))}
+        />
+        <FacetSelect
+          ariaLabel="Filter by account"
+          allLabel="All accounts"
+          allValue={ALL_FILTER}
+          value={accountFilter}
+          onValueChange={setAccountFilter}
+          options={accountOptions.map((account) => ({ value: account }))}
+        />
+        <FacetSelect
+          ariaLabel="Filter by kind"
+          allLabel="All kinds"
+          allValue={ALL_FILTER}
+          value={kindFilter}
+          onValueChange={setKindFilter}
+          options={kindOptions.map((kind) => ({ value: kind }))}
+        />
       </div>
 
       <div>

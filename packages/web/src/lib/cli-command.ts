@@ -15,6 +15,35 @@ export type CliArgvSegment =
   | { kind: "literal"; value: string }
   | { kind: "arg"; name: string; prefix?: string }
 
+// ---------------------------------------------------------------------------
+// Shared CLI-tool shape — the arg-declaration + sandbox-policy fields that BOTH
+// the client form-state (cli-form/convert.ts) and the server assembler
+// (platform-mutations.server.ts) mirror. Defined once here (client-safe, no core
+// import) so the two boundaries share one structural type instead of duplicating
+// it. Mirrors core's CliArgSchema / CliPolicySchema shape (validated server-side).
+// ---------------------------------------------------------------------------
+
+export type CliArgType = "string" | "number" | "boolean" | "enum" | "path"
+
+export interface CliArgInput {
+  name: string
+  description?: string
+  type: CliArgType
+  required: boolean
+  enum?: string[]
+  pattern?: string
+  maxLength?: number
+}
+
+export interface CliPolicyInput {
+  cwd: string
+  readPaths: string[]
+  writePaths: string[]
+  network: { mode: "denied" } | { mode: "allow"; hosts: string[] }
+  timeoutMs: number
+  envAllow: Record<string, string>
+}
+
 const ARG_NAME_RE = /^[a-z][a-z0-9_]*$/
 
 // ---------------------------------------------------------------------------

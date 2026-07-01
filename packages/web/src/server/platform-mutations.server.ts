@@ -29,6 +29,7 @@ import {
   refreshOpenApiPlatform,
 } from "@junction/platform-orchestration"
 import { errAsync, type ResultAsync } from "neverthrow"
+import type { CliArgInput, CliPolicyInput } from "../lib/cli-command.js"
 import { tokenizeCommandLine } from "../lib/cli-command.js"
 import { withRepos } from "./shared.server.js"
 
@@ -49,16 +50,8 @@ export type SimpleAuthInput =
   | { scheme: "bearer" }
   | { scheme: "apiKey"; name: string }
 
-/** One declared arg slot on a CLI tool — mirrors core's CliArgSchema shape. */
-export interface CliToolArgInput {
-  name: string
-  description?: string
-  type: "string" | "number" | "boolean" | "enum" | "path"
-  required: boolean
-  enum?: string[]
-  pattern?: string
-  maxLength?: number
-}
+/** One declared arg slot on a CLI tool — the shared client-safe shape (see cli-command.ts). */
+export type CliToolArgInput = CliArgInput
 
 /** One CLI tool — the raw commandLine is tokenized server-side (authoritative). */
 export interface CliToolInput {
@@ -67,14 +60,7 @@ export interface CliToolInput {
   /** Raw "Command" input text, e.g. "/opt/homebrew/bin/rg --json $pattern". */
   commandLine: string
   args: CliToolArgInput[]
-  policy: {
-    cwd: string
-    readPaths: string[]
-    writePaths: string[]
-    network: { mode: "denied" } | { mode: "allow"; hosts: string[] }
-    timeoutMs: number
-    envAllow: Record<string, string>
-  }
+  policy: CliPolicyInput
   /**
    * The guided form's JSON escape hatch: when set, this parsed tool object
    * (already-built argv + args + policy, the pre-guided-form descriptor shape)
@@ -247,33 +233,39 @@ function assembleCliConnection(
 ):
   | { ok: true; connection: CliConnection }
   | { ok: false; message: string; fieldErrors: Record<string, string> } {
-  const rawTools = input.tools.map((tool) =>
-    // The JSON escape hatch: use the operator's raw tool object verbatim
-    // (CliConnectionSchema.parse below is still the final authority).
-    tool.advancedTool !== undefined
-      ? tool.advancedTool
-      : {
-          name: tool.name,
-          description: tool.description,
-          argv: tokenizeCommandLine(tool.commandLine),
-          args: tool.args.map((a) => ({
-            name: a.name,
-            description: a.description,
-            type: a.type,
-            required: a.required,
-            enum: a.enum,
-            pattern: a.pattern,
-            maxLength: a.maxLength,
-          })),
-          policy: {
-            cwd: tool.policy.cwd,
-            readPaths: tool.policy.readPaths,
-            writePaths: tool.policy.writePaths,
-            allowNet: tool.policy.network.mode === "allow" ? tool.policy.network.hosts : [],
-            timeoutMs: tool.policy.timeoutMs,
-            envAllow: tool.policy.envAllow,
-          },
-        },
+  const rawTools = input.tools.map(
+    (tool) =>
+      // The JSON escape hatch: use the operator's raw tool object verbatim
+      // (CliConnectionSchema.parse below is still the final authority).
+      tool.advancedTool !== undefined
+        ? tool.advancedTool
+        : /* jscpd:ignore-start — mirrors the CliTool arg/policy field shape that the
+           client-side cli-form/convert.ts also maps (client→wire) and that core's
+           CliConnectionSchema defines. It can't be factored to a shared module (the
+           client form file must not import server/core), so this structural mirror
+           across the client↔server boundary is permitted per the DRY policy. */
+          {
+            name: tool.name,
+            description: tool.description,
+            argv: tokenizeCommandLine(tool.commandLine),
+            args: tool.args.map((a) => ({
+              name: a.name,
+              description: a.description,
+              type: a.type,
+              required: a.required,
+              enum: a.enum,
+              pattern: a.pattern,
+              maxLength: a.maxLength,
+            })),
+            policy: {
+              cwd: tool.policy.cwd,
+              readPaths: tool.policy.readPaths,
+              writePaths: tool.policy.writePaths,
+              allowNet: tool.policy.network.mode === "allow" ? tool.policy.network.hosts : [],
+              timeoutMs: tool.policy.timeoutMs,
+              envAllow: tool.policy.envAllow,
+            },
+          } /* jscpd:ignore-end */,
   )
 
   const raw = {
@@ -355,10 +347,11 @@ function addByKind(
 }
 
 /**
- * Add a platform of any kind. Dispatches to the matching orchestration add* fn,
- * then upserts the resulting Platform. Returns metadata-only shape.
+ * Assemble a Platform from the per-kind input (addByKind) and upsert it, mapping
+ * orchestration + DB errors to the metadata-only result. Shared by add + update
+ * (update is a full rebuild through the same path — it just existence-checks first).
  */
-export async function mutateAddPlatform(input: AddPlatformInput): Promise<PlatformMetaResult> {
+async function assembleAndUpsert(input: AddPlatformInput): Promise<PlatformMetaResult> {
   const addResult = await addByKind(input)
   if (addResult.isErr()) {
     const e = addResult.error
@@ -377,6 +370,14 @@ export async function mutateAddPlatform(input: AddPlatformInput): Promise<Platfo
     }
     return toPlatformMeta(upsertResult.value)
   })
+}
+
+/**
+ * Add a platform of any kind. Dispatches to the matching orchestration add* fn,
+ * then upserts the resulting Platform. Returns metadata-only shape.
+ */
+export async function mutateAddPlatform(input: AddPlatformInput): Promise<PlatformMetaResult> {
+  return assembleAndUpsert(input)
 }
 
 /**
@@ -405,24 +406,8 @@ export async function mutateUpdatePlatform(
     return { ok: false, error: dbErrorMessage(existing.error.kind) }
   }
 
-  const addResult = await addByKind(input)
-  if (addResult.isErr()) {
-    const e = addResult.error
-    return {
-      ok: false,
-      error: orchestrationErrorMessage(e),
-      ...(e.fieldErrors ? { fieldErrors: e.fieldErrors as Record<string, string> } : {}),
-    }
-  }
-  const { platform } = addResult.value
-
-  return withRepos(async (repos) => {
-    const upsertResult = await repos.platforms.upsert(platform)
-    if (upsertResult.isErr()) {
-      return { ok: false as const, error: dbErrorMessage(upsertResult.error.kind) }
-    }
-    return toPlatformMeta(upsertResult.value)
-  })
+  // Full rebuild through the shared assemble+upsert path (same as add).
+  return assembleAndUpsert(input)
 }
 
 /**

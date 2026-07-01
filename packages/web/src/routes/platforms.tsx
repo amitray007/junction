@@ -36,6 +36,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   EmptyTableRow,
+  FacetSelect,
   Field,
   Input,
   PageHeader,
@@ -888,18 +889,13 @@ function PlatformsPage() {
           style={{ maxWidth: "320px" }}
           aria-label="Search platforms"
         />
-        <Select value={kindFilter} onValueChange={(v) => setKindFilter(v as KindFilter)}>
-          <SelectTrigger aria-label="Filter by kind" style={{ maxWidth: "180px" }}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All kinds</SelectItem>
-            <SelectItem value="mcp">mcp</SelectItem>
-            <SelectItem value="openapi">openapi</SelectItem>
-            <SelectItem value="graphql">graphql</SelectItem>
-            <SelectItem value="cli">cli</SelectItem>
-          </SelectContent>
-        </Select>
+        <FacetSelect
+          ariaLabel="Filter by kind"
+          allLabel="All kinds"
+          value={kindFilter}
+          onValueChange={(v) => setKindFilter(v as KindFilter)}
+          options={[{ value: "mcp" }, { value: "openapi" }, { value: "graphql" }, { value: "cli" }]}
+        />
       </div>
 
       {/* B3: always render the table — empty state is a full-width row, not bare text */}
