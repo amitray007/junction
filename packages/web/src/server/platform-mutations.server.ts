@@ -8,11 +8,19 @@
 //   - mcp-stdio: no auth sub-form (credential injection stays CLI-only for now)
 //   - openapi:   no-auth | bearer | apiKey (header) — basic + query/cookie apiKey deferred
 //   - graphql:   no-auth | bearer | apiKey (header) — same deferral as openapi
-//   - cli:       none (descriptor carries its own credentialEnvVar)
+//   - cli:       none (connection carries its own credentialEnvVar)
 // Full CLI auth-flag parity (query/cookie apiKey, basic) is deferred to a future
 // increment; this is a bearer-first subset, not the complete CLI surface (slice B).
+//
+// CLI assembly (inc 26 wave 3): the web form sends a structured CliConnectionInput
+// (tools with a raw `commandLine` string + declared args + policy), NOT pre-built
+// argv. This module is the ONE authoritative place that tokenizes commandLine into
+// argv (via the client-safe lib/cli-command.ts tokenizer) and runs
+// CliConnectionSchema.parse as the final authority before the descriptor reaches
+// addCliPlatform/validatePolicy/the sandbox. Never trust a client-sent argv array.
 
-import type { Platform } from "@junction/core"
+import type { CliConnection, Platform } from "@junction/core"
+import { CliConnectionSchema } from "@junction/core"
 import {
   addCliPlatform,
   addGraphQlPlatform,
@@ -21,7 +29,15 @@ import {
   refreshOpenApiPlatform,
 } from "@junction/platform-orchestration"
 import { errAsync, type ResultAsync } from "neverthrow"
+import { tokenizeCommandLine } from "../lib/cli-command.js"
 import { withRepos } from "./shared.server.js"
+
+// Structural shape of a Zod error's issues — avoids a direct `zod` type import
+// (web has no zod dep; zod is core's boundary validator). Matches what
+// CliConnectionSchema.safeParse(...).error exposes: an `issues` array of
+// { path, message }. Read structurally so the web package stays zod-free.
+type ZodIssueLike = { path: PropertyKey[]; message: string }
+type ZodErrorLike = { issues: ZodIssueLike[] }
 
 // ---------------------------------------------------------------------------
 // Input shapes — mirror the discriminated validator output in
@@ -32,6 +48,48 @@ export type SimpleAuthInput =
   | { scheme: "none" }
   | { scheme: "bearer" }
   | { scheme: "apiKey"; name: string }
+
+/** One declared arg slot on a CLI tool — mirrors core's CliArgSchema shape. */
+export interface CliToolArgInput {
+  name: string
+  description?: string
+  type: "string" | "number" | "boolean" | "enum" | "path"
+  required: boolean
+  enum?: string[]
+  pattern?: string
+  maxLength?: number
+}
+
+/** One CLI tool — the raw commandLine is tokenized server-side (authoritative). */
+export interface CliToolInput {
+  name: string
+  description?: string
+  /** Raw "Command" input text, e.g. "/opt/homebrew/bin/rg --json $pattern". */
+  commandLine: string
+  args: CliToolArgInput[]
+  policy: {
+    cwd: string
+    readPaths: string[]
+    writePaths: string[]
+    network: { mode: "denied" } | { mode: "allow"; hosts: string[] }
+    timeoutMs: number
+    envAllow: Record<string, string>
+  }
+  /**
+   * The guided form's JSON escape hatch: when set, this parsed tool object
+   * (already-built argv + args + policy, the pre-guided-form descriptor shape)
+   * is used VERBATIM instead of `commandLine`/`args`/`policy` above — for a
+   * tool whose argv can't round-trip through the command-line builder (see
+   * lib/cli-command.ts `isReversible`). Still re-validated by
+   * CliConnectionSchema.parse below; never trusted beyond that.
+   */
+  advancedTool?: unknown
+}
+
+export interface CliConnectionInput {
+  tools: CliToolInput[]
+  credentialEnvVar?: string
+}
 
 export type AddPlatformInput =
   | {
@@ -48,6 +106,8 @@ export type AddPlatformInput =
       command: string
       args?: string[]
       tokenEnvVar?: string
+      /** Static env vars for the child MCP server — passed straight through to addMcpPlatform. */
+      env?: Record<string, string>
     }
   | {
       kind: "openapi"
@@ -68,13 +128,15 @@ export type AddPlatformInput =
       kind: "cli"
       id: string
       displayName: string
-      /** Raw JSON descriptor text — parsed here, not in the pure validator. */
-      descriptor: string
+      connection: CliConnectionInput
     }
+
+/** Update = add's per-kind shape plus the existing platform's id. */
+export type UpdatePlatformInput = AddPlatformInput
 
 export type PlatformMetaResult =
   | { ok: true; platform: { id: string; kind: string; displayName: string; baseUrl?: string } }
-  | { ok: false; error: string }
+  | { ok: false; error: string; fieldErrors?: Record<string, string> }
 
 // ---------------------------------------------------------------------------
 // Human-readable error messages for orchestration + DB error kinds.
@@ -119,7 +181,7 @@ function orchestrationErrorMessage(e: { kind: string; [k: string]: unknown }): s
   }
 }
 
-function dbErrorMessage(kind: string): string {
+export function dbErrorMessage(kind: string): string {
   switch (kind) {
     case "not-found":
       return "Platform not found"
@@ -132,6 +194,17 @@ function dbErrorMessage(kind: string): string {
     default:
       return "Operation failed"
   }
+}
+
+/** Map a ZodError's issues to a flat field-name → message record for the UI. */
+function zodFieldErrors(error: ZodErrorLike): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const issue of error.issues) {
+    const key = issue.path.length > 0 ? issue.path.map(String).join(".") : "_root"
+    // First message per field wins — enough for inline field-level display.
+    if (!(key in out)) out[key] = issue.message
+  }
+  return out
 }
 
 function toPlatformMeta(p: Platform): PlatformMetaResult & { ok: true } {
@@ -159,6 +232,67 @@ function toAuthInput(
 }
 
 // ---------------------------------------------------------------------------
+// CLI assembly — the ONE authoritative client-input → CliConnection transform.
+// ---------------------------------------------------------------------------
+
+/**
+ * Assemble+validate a CliConnection from the web's structured CliConnectionInput.
+ * Re-tokenizes each tool's raw commandLine server-side (never trusts a client
+ * argv) and maps policy.network → allowNet, then runs CliConnectionSchema.parse
+ * as the final authority. Returns either the validated CliConnection or a
+ * {message, fieldErrors} pair derived from the ZodError.
+ */
+function assembleCliConnection(
+  input: CliConnectionInput,
+):
+  | { ok: true; connection: CliConnection }
+  | { ok: false; message: string; fieldErrors: Record<string, string> } {
+  const rawTools = input.tools.map((tool) =>
+    // The JSON escape hatch: use the operator's raw tool object verbatim
+    // (CliConnectionSchema.parse below is still the final authority).
+    tool.advancedTool !== undefined
+      ? tool.advancedTool
+      : {
+          name: tool.name,
+          description: tool.description,
+          argv: tokenizeCommandLine(tool.commandLine),
+          args: tool.args.map((a) => ({
+            name: a.name,
+            description: a.description,
+            type: a.type,
+            required: a.required,
+            enum: a.enum,
+            pattern: a.pattern,
+            maxLength: a.maxLength,
+          })),
+          policy: {
+            cwd: tool.policy.cwd,
+            readPaths: tool.policy.readPaths,
+            writePaths: tool.policy.writePaths,
+            allowNet: tool.policy.network.mode === "allow" ? tool.policy.network.hosts : [],
+            timeoutMs: tool.policy.timeoutMs,
+            envAllow: tool.policy.envAllow,
+          },
+        },
+  )
+
+  const raw = {
+    tools: rawTools,
+    ...(input.credentialEnvVar ? { credentialEnvVar: input.credentialEnvVar } : {}),
+  }
+
+  const parsed = CliConnectionSchema.safeParse(raw)
+  if (!parsed.success) {
+    return {
+      ok: false,
+      message: parsed.error.issues.map((i) => i.message).join(", "),
+      fieldErrors: zodFieldErrors(parsed.error),
+    }
+  }
+  return { ok: true, connection: parsed.data }
+}
+
+// ---------------------------------------------------------------------------
 // Dispatch: add a platform by kind, upsert on success.
 // ---------------------------------------------------------------------------
 
@@ -166,7 +300,7 @@ function addByKind(
   input: AddPlatformInput,
 ): ResultAsync<
   { platform: Platform; sandboxWarning?: string },
-  { kind: string; [k: string]: unknown }
+  { kind: string; fieldErrors?: Record<string, string>; [k: string]: unknown }
 > {
   switch (input.kind) {
     case "mcp-http":
@@ -185,6 +319,7 @@ function addByKind(
         command: input.command,
         args: input.args,
         tokenEnvVar: input.tokenEnvVar,
+        env: input.env,
       }).map((platform) => ({ platform }))
     case "openapi":
       return addOpenApiPlatform({
@@ -202,15 +337,19 @@ function addByKind(
         auth: toAuthInput(input.auth),
       }).map(({ platform }) => ({ platform }))
     case "cli": {
-      let descriptor: unknown
-      try {
-        descriptor = JSON.parse(input.descriptor)
-      } catch {
-        return errAsync({ kind: "invalid-descriptor", message: "descriptor is not valid JSON" })
+      const assembled = assembleCliConnection(input.connection)
+      if (!assembled.ok) {
+        return errAsync({
+          kind: "invalid-descriptor",
+          message: assembled.message,
+          fieldErrors: assembled.fieldErrors,
+        })
       }
-      return addCliPlatform({ id: input.id, displayName: input.displayName, descriptor }).map(
-        ({ platform, sandboxWarning }) => ({ platform, sandboxWarning }),
-      )
+      return addCliPlatform({
+        id: input.id,
+        displayName: input.displayName,
+        descriptor: assembled.connection,
+      }).map(({ platform, sandboxWarning }) => ({ platform, sandboxWarning }))
     }
   }
 }
@@ -222,7 +361,12 @@ function addByKind(
 export async function mutateAddPlatform(input: AddPlatformInput): Promise<PlatformMetaResult> {
   const addResult = await addByKind(input)
   if (addResult.isErr()) {
-    return { ok: false, error: orchestrationErrorMessage(addResult.error) }
+    const e = addResult.error
+    return {
+      ok: false,
+      error: orchestrationErrorMessage(e),
+      ...(e.fieldErrors ? { fieldErrors: e.fieldErrors as Record<string, string> } : {}),
+    }
   }
   const { platform } = addResult.value
 
@@ -236,22 +380,44 @@ export async function mutateAddPlatform(input: AddPlatformInput): Promise<Platfo
 }
 
 /**
- * Update a platform's displayName only (v1 — pragmatic edit scope).
- * Full re-add-as-edit (re-running the kind-specific add with new fields) is
- * deferred: it would re-fetch specs / re-probe sandboxes on a pure rename.
- * get + upsert preserves every field the edit form doesn't submit.
+ * Update a platform's full connection — a rebuild, not a patch. Dispatches
+ * through the SAME per-kind addByKind assembly used by add (openapi/graphql
+ * re-fetch/re-introspect on every edit, matching add semantics exactly — this
+ * is intentional: correctness over cleverness, no stale-field risk), then
+ * upserts. `input` carries the existing platform's `id`, so the upsert
+ * replaces the row in place (platforms.upsert is create-or-replace-by-id).
+ *
+ * No displayName-only fast path: the brief allows one as optional, but a
+ * two-path implementation doubles the surface for the same bug class this
+ * increment exists to fix (stale connection fields) for a marginal win (skip
+ * a spec fetch on a pure rename) — the full-rebuild path is simple, uniform,
+ * and honest. If spec-refetch-on-rename proves too slow/flaky in practice,
+ * add the fast path as a follow-up with its own test, not silently here.
  */
-export async function mutateUpdatePlatform(input: {
-  id: string
-  displayName: string
-}): Promise<PlatformMetaResult> {
-  return withRepos(async (repos) => {
-    const getResult = await repos.platforms.get(input.id)
-    if (getResult.isErr()) {
-      return { ok: false as const, error: dbErrorMessage(getResult.error.kind) }
+export async function mutateUpdatePlatform(
+  input: UpdatePlatformInput,
+): Promise<PlatformMetaResult> {
+  // Edit must not silently CREATE: upsert alone would insert a brand-new row for an
+  // unknown id. Verify the platform exists first, so editing a nonexistent id is a
+  // clean not-found rather than an accidental add.
+  const existing = await withRepos(async (repos) => repos.platforms.get(input.id))
+  if (existing.isErr()) {
+    return { ok: false, error: dbErrorMessage(existing.error.kind) }
+  }
+
+  const addResult = await addByKind(input)
+  if (addResult.isErr()) {
+    const e = addResult.error
+    return {
+      ok: false,
+      error: orchestrationErrorMessage(e),
+      ...(e.fieldErrors ? { fieldErrors: e.fieldErrors as Record<string, string> } : {}),
     }
-    const updated: Platform = { ...getResult.value, displayName: input.displayName }
-    const upsertResult = await repos.platforms.upsert(updated)
+  }
+  const { platform } = addResult.value
+
+  return withRepos(async (repos) => {
+    const upsertResult = await repos.platforms.upsert(platform)
     if (upsertResult.isErr()) {
       return { ok: false as const, error: dbErrorMessage(upsertResult.error.kind) }
     }
@@ -313,4 +479,174 @@ export async function mutateRefreshPlatform(
       ...(zeroToolsWarning ? { zeroToolsWarning } : {}),
     }
   })
+}
+
+// ---------------------------------------------------------------------------
+// getPlatformDetail — metadata-only DTO for pre-filling the Edit dialog.
+// ---------------------------------------------------------------------------
+
+export interface PlatformDetail {
+  id: string
+  kind: string
+  displayName: string
+  // mcp
+  transport?: "http" | "stdio"
+  url?: string
+  hasAuthHeader?: boolean
+  authHeaderName?: string
+  command?: string
+  args?: string[]
+  hasTokenEnvVar?: boolean
+  tokenEnvVarName?: string
+  /** Static env vars declared on an mcp-stdio connection (non-secret; pre-fills the env-var list). */
+  env?: Record<string, string>
+  // openapi
+  specUrl?: string
+  baseUrl?: string
+  authScheme?: "none" | "bearer" | "apiKey"
+  authHeaderOrName?: string
+  // graphql
+  endpoint?: string
+  // cli
+  cliTools?: Array<{
+    name: string
+    description?: string
+    commandLine: string
+    args: CliToolArgInput[]
+    policy: {
+      cwd: string
+      readPaths: string[]
+      writePaths: string[]
+      network: { mode: "denied" } | { mode: "allow"; hosts: string[] }
+      timeoutMs: number
+      envAllow: Record<string, string>
+    }
+    reversible: boolean
+    /** Only present when !reversible — the raw tool JSON for the per-tool JSON escape hatch. */
+    rawJson?: string
+  }>
+  cliCredentialEnvVar?: string
+}
+
+export type PlatformDetailResult =
+  | { ok: true; detail: PlatformDetail }
+  | { ok: false; error: string }
+
+/**
+ * Fetch a single platform's connection details for pre-filling the Edit dialog.
+ * CRITICAL: metadata-only — explicitly maps only the fields the guided forms
+ * need. Never spreads the raw core Platform (a future core field addition must
+ * not leak through this DTO by accident). No secretRef/secret ever appear here
+ * — the platform row itself never stores a secret (secrets live in the
+ * separate credential store).
+ */
+export async function getPlatformDetail(id: string): Promise<PlatformDetailResult> {
+  return withRepos(async (repos) => {
+    const result = await repos.platforms.get(id)
+    if (result.isErr()) {
+      return { ok: false as const, error: dbErrorMessage(result.error.kind) }
+    }
+    return { ok: true as const, detail: toPlatformDetail(result.value) }
+  })
+}
+
+function toPlatformDetail(p: Platform): PlatformDetail {
+  const base: PlatformDetail = { id: String(p.id), kind: p.kind, displayName: p.displayName }
+
+  if (p.kind === "mcp" && p.connection) {
+    if (p.connection.transport === "http") {
+      return {
+        ...base,
+        transport: "http",
+        url: p.connection.url,
+        hasAuthHeader: p.connection.auth !== undefined,
+        authHeaderName: p.connection.auth?.header,
+      }
+    }
+    return {
+      ...base,
+      transport: "stdio",
+      command: p.connection.command,
+      args: p.connection.args,
+      hasTokenEnvVar: p.connection.tokenEnvVar !== undefined,
+      tokenEnvVarName: p.connection.tokenEnvVar,
+      ...(p.connection.env ? { env: p.connection.env } : {}),
+    }
+  }
+
+  if (p.kind === "openapi" && p.openapi) {
+    const auth = p.openapi.auth
+    return {
+      ...base,
+      specUrl: p.openapi.spec.from === "url" ? p.openapi.spec.url : undefined,
+      baseUrl: p.openapi.baseUrl,
+      authScheme: auth === undefined ? "none" : auth.scheme === "apiKey" ? "apiKey" : "bearer",
+      authHeaderOrName:
+        auth?.scheme === "apiKey" ? auth.name : auth?.scheme === "bearer" ? auth.header : undefined,
+    }
+  }
+
+  if (p.kind === "graphql" && p.graphql) {
+    const auth = p.graphql.auth
+    return {
+      ...base,
+      endpoint: p.graphql.endpoint,
+      authScheme: auth === undefined ? "none" : auth.scheme === "apiKey" ? "apiKey" : "bearer",
+      authHeaderOrName:
+        auth?.scheme === "apiKey" ? auth.name : auth?.scheme === "bearer" ? auth.header : undefined,
+    }
+  }
+
+  if (p.kind === "cli" && p.cli) {
+    return {
+      ...base,
+      cliTools: p.cli.tools.map((tool) => {
+        const reversible = toolIsReversible(tool)
+        return {
+          name: tool.name,
+          description: tool.description,
+          commandLine: reversible ? argvToCommandLineLocal(tool.argv) : "",
+          args: tool.args.map((a) => ({
+            name: a.name,
+            description: a.description,
+            type: a.type,
+            required: a.required,
+            enum: a.enum,
+            pattern: a.pattern,
+            maxLength: a.maxLength,
+          })),
+          policy: {
+            cwd: tool.policy.cwd,
+            readPaths: tool.policy.readPaths,
+            writePaths: tool.policy.writePaths,
+            network:
+              tool.policy.allowNet.length > 0
+                ? { mode: "allow" as const, hosts: tool.policy.allowNet }
+                : { mode: "denied" as const },
+            timeoutMs: tool.policy.timeoutMs,
+            envAllow: tool.policy.envAllow ?? {},
+          },
+          reversible,
+          ...(reversible ? {} : { rawJson: JSON.stringify(tool, null, 2) }),
+        }
+      }),
+      cliCredentialEnvVar: p.cli.credentialEnvVar,
+    }
+  }
+
+  return base
+}
+
+// Local re-implementations of the lib/cli-command.ts helpers against the REAL
+// core CliTool/CliArgvSegment shape (structurally identical to the local type
+// lib/cli-command.ts declares) — reuse the same pure functions by importing them,
+// since core's CliArgvSegment is structurally assignable to the lib's local type.
+import { argvToCommandLine, isReversible } from "../lib/cli-command.js"
+
+function argvToCommandLineLocal(argv: CliConnection["tools"][number]["argv"]): string {
+  return argvToCommandLine(argv)
+}
+
+function toolIsReversible(tool: CliConnection["tools"][number]): boolean {
+  return isReversible({ argv: tool.argv, args: tool.args })
 }

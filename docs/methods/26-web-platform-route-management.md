@@ -359,6 +359,40 @@ JUNCTION_HOME=/tmp/jtest JUNCTION_STORE=file ./junction platform add --id demo -
 
 ---
 
+## 8b. Scope expansion — platform-form UX pass (Wave 3, user-driven at the test gate)
+
+At the inc-26 user test gate the user found the platform Add/Edit form under-polished and
+asked for it to be **perfect before merge** (not deferred). Five asks, built as a third wave
+on the same branch before shipping:
+
+- **E — MCP transport sub-selector.** Collapse the two top-level kinds `MCP (HTTP)` /
+  `MCP (stdio)` into one `MCP` kind + a transport sub-dropdown (HTTP/stdio). The server still
+  dispatches on `mcp-http`/`mcp-stdio`; the form maps `mcp` + transport → those at submit.
+- **I — auth "token via Credentials" note.** Selecting bearer/apiKey shows no token input —
+  **correct by design** (the secret lives in the encrypted CredentialStore, attached later via
+  a Credential + a Profile route; the platform `auth` descriptor is scheme-only). But the form
+  didn't say so → looked broken. Add an inline explanation (+ link to /credentials).
+- **F — full platform edit.** Today `mutateUpdatePlatform` is displayName-only (get→spread→
+  upsert). Make edit change the WHOLE platform: the edit dialog reuses the Add form pre-filled,
+  and `mutateUpdatePlatform` re-runs the kind-specific assembly (orchestration `add*` upsert-
+  replaces). Preserve/re-fetch specs thoughtfully on openapi edit.
+- **J — MCP stdio multiple env vars (CORE SCHEMA CHANGE).** `McpConnection` stdio currently has
+  only `tokenEnvVar` (single). Add an `env: Record<string,string>` map (operator-declared static
+  env) to the schema + thread it through `mcp/client` connect.ts's controlled-env spawn
+  (`connect.ts:126` — merge static env AFTER getDefaultEnvironment(), token LAST so a static
+  entry can't shadow the credential; never spill process.env — the inc-11 env-scrub gotcha).
+  **Security-review required** (env-scrub / no-secret-leak). Form: a key/value env list on the
+  stdio sub-form.
+- **G — CLI descriptor guided form.** Replace the raw `CliConnectionSchema` JSON textarea with a
+  guided form-builder (tools[], the argv literal/arg template, per-tool sandbox policy, arg
+  slots, credentialEnvVar). Design produced by an Opus design pass (`design-cli-form`). The
+  form emits a typed intermediate; `*.server.ts` assembles + `CliConnectionSchema.parse`
+  validates, mapping Zod issues back to field-level errors.
+
+Re-review the whole increment after Wave 3 (boundary/web/correctness + **security for J** /
+testing). The byte-identical CLI guarantee (slice B) is unaffected — Wave 3 is web + a
+backward-compatible core schema addition (optional `env`, no migration).
+
 ## 9. Notes / forward-looking
 
 - **`docs/futures/`:** record (a) the new `@junction/platform-orchestration` package + the

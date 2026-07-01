@@ -121,10 +121,17 @@ export function connectSource(
         // the child process can resolve binaries via PATH and authenticate via
         // HOME. Do NOT spread process.env — that would leak the full parent env
         // (including JUNCTION_MASTER_KEY and any other secrets).
+        //
+        // Merge order is load-bearing: defaults → operator's static `env`
+        // (non-secret config) → token LAST, so the injected credential can
+        // never be shadowed by a static entry (the schema refine already
+        // blocks a static key equal to tokenEnvVar, but token-last keeps the
+        // invariant true even if that refine is ever loosened).
         isStdio = true
         command = connection.command
         const env: Record<string, string> = {
           ...getDefaultEnvironment(),
+          ...(connection.env ?? {}),
           ...(connection.tokenEnvVar !== undefined && secret !== null
             ? { [connection.tokenEnvVar]: secret }
             : {}),

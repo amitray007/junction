@@ -145,25 +145,27 @@ describe("platform-mutations.server", () => {
     // correctly rejects that), so the policy's cwd/readPaths use a sibling dir instead.
     let cliScratchDir: string
 
-    function validDescriptor() {
-      return JSON.stringify({
+    // The web now sends a structured CliConnectionInput (raw commandLine + declared
+    // args + a policy with network as a discriminated mode) — the server tokenizes
+    // commandLine → argv and maps network → allowNet, then CliConnectionSchema.parse.
+    function validConnection() {
+      return {
         tools: [
           {
             name: "echo",
-            argv: [
-              { kind: "literal", value: "/bin/echo" },
-              { kind: "literal", value: "hello" },
-            ],
+            commandLine: "/bin/echo hello",
+            args: [],
             policy: {
               cwd: cliScratchDir,
               readPaths: [cliScratchDir],
               writePaths: [],
-              allowNet: [],
+              network: { mode: "denied" as const },
               timeoutMs: 5000,
+              envAllow: {},
             },
           },
         ],
-      })
+      }
     }
 
     beforeEach(async () => {
@@ -174,79 +176,143 @@ describe("platform-mutations.server", () => {
       await rm(cliScratchDir, { recursive: true, force: true })
     })
 
-    it("adds a cli platform from a valid JSON descriptor", async () => {
+    it("adds a cli platform from a structured connection input (tokenizes commandLine → argv)", async () => {
       const result = await mutateAddPlatform({
         kind: "cli",
         id: "local-cli",
         displayName: "Local CLI",
-        descriptor: validDescriptor(),
+        connection: validConnection(),
       })
       expect(result.ok).toBe(true)
       if (!result.ok) throw new Error("expected ok")
       expect(result.platform.kind).toBe("cli")
 
+      // Read back: the server must have tokenized "/bin/echo hello" into two literal segments.
       const repos = await makeRepos(tmpHome)
       const stored = await repos.platforms.get("local-cli")
       expect(stored.isOk()).toBe(true)
+      if (stored.isOk()) {
+        const argv = stored.value.cli?.tools[0]?.argv
+        expect(argv).toEqual([
+          { kind: "literal", value: "/bin/echo" },
+          { kind: "literal", value: "hello" },
+        ])
+      }
     })
 
-    it("returns an error for invalid JSON descriptor text", async () => {
+    it("returns an error when argv[0] is not an absolute path (CliConnectionSchema.parse rejects)", async () => {
       const result = await mutateAddPlatform({
         kind: "cli",
         id: "bad-cli",
         displayName: "Bad",
-        descriptor: "{not valid json",
+        connection: {
+          tools: [
+            {
+              name: "echo",
+              commandLine: "echo hello", // relative binary — argv[0] must be absolute
+              args: [],
+              policy: {
+                cwd: cliScratchDir,
+                readPaths: [cliScratchDir],
+                writePaths: [],
+                network: { mode: "denied" as const },
+                timeoutMs: 5000,
+                envAllow: {},
+              },
+            },
+          ],
+        },
       })
       expect(result.ok).toBe(false)
       if (result.ok) throw new Error("expected error")
-      expect(result.error).toMatch(/descriptor/i)
+      expect(result.error.length).toBeGreaterThan(0)
     })
 
-    it("returns an error for a descriptor missing required fields", async () => {
+    it("returns an error for a connection with no tools", async () => {
       const result = await mutateAddPlatform({
         kind: "cli",
         id: "bad-cli-2",
         displayName: "Bad",
-        descriptor: JSON.stringify({ tools: [] }),
+        connection: { tools: [] },
       })
       expect(result.ok).toBe(false)
     })
   })
 
   // ---------------------------------------------------------------------------
-  // mutateUpdatePlatform — displayName-only edit
+  // mutateUpdatePlatform — full per-kind rebuild (inc 26 wave 3)
   // ---------------------------------------------------------------------------
 
   describe("mutateUpdatePlatform", () => {
-    it("updates displayName only, preserving other fields", async () => {
+    it("edits the whole connection, not just displayName (changes the stored url)", async () => {
       const added = await mutateAddPlatform({
         kind: "mcp-http",
-        id: "rename-me",
+        id: "edit-me",
         displayName: "Old Name",
-        url: "https://example.com/mcp",
+        url: "https://old.example.com/mcp",
         authHeader: "X-Special",
       })
       expect(added.ok).toBe(true)
 
-      const result = await mutateUpdatePlatform({ id: "rename-me", displayName: "New Name" })
+      // Full edit: new url + new displayName + a new auth header — a real rebuild.
+      const result = await mutateUpdatePlatform({
+        kind: "mcp-http",
+        id: "edit-me",
+        displayName: "New Name",
+        url: "https://new.example.com/mcp",
+        authHeader: "X-Updated",
+      })
       expect(result.ok).toBe(true)
       if (!result.ok) throw new Error("expected ok")
       expect(result.platform.displayName).toBe("New Name")
 
-      // Connection field (authHeader) must survive the rename — get+upsert, not re-add.
       const repos = await makeRepos(tmpHome)
-      const stored = await repos.platforms.get("rename-me")
+      const stored = await repos.platforms.get("edit-me")
       expect(stored.isOk()).toBe(true)
-      if (stored.isOk()) {
-        expect(stored.value.connection?.transport).toBe("http")
-        if (stored.value.connection?.transport === "http") {
-          expect(stored.value.connection.auth?.header).toBe("X-Special")
-        }
+      if (stored.isOk() && stored.value.connection?.transport === "http") {
+        // The regression guard opposite to the old displayName-only behaviour:
+        // the url and auth header actually changed.
+        expect(stored.value.connection.url).toBe("https://new.example.com/mcp")
+        expect(stored.value.connection.auth?.header).toBe("X-Updated")
+      }
+    })
+
+    it("adds an env map to a stdio platform on edit and persists it", async () => {
+      const added = await mutateAddPlatform({
+        kind: "mcp-stdio",
+        id: "stdio-env",
+        displayName: "Stdio",
+        command: "my-mcp",
+      })
+      expect(added.ok).toBe(true)
+
+      const result = await mutateUpdatePlatform({
+        kind: "mcp-stdio",
+        id: "stdio-env",
+        displayName: "Stdio",
+        command: "my-mcp",
+        env: { NODE_ENV: "production", GH_HOST: "github.example.com" },
+      })
+      expect(result.ok).toBe(true)
+
+      const repos = await makeRepos(tmpHome)
+      const stored = await repos.platforms.get("stdio-env")
+      expect(stored.isOk()).toBe(true)
+      if (stored.isOk() && stored.value.connection?.transport === "stdio") {
+        expect(stored.value.connection.env).toEqual({
+          NODE_ENV: "production",
+          GH_HOST: "github.example.com",
+        })
       }
     })
 
     it("returns not-found for a nonexistent platform id", async () => {
-      const result = await mutateUpdatePlatform({ id: "nonexistent", displayName: "X" })
+      const result = await mutateUpdatePlatform({
+        kind: "mcp-http",
+        id: "nonexistent",
+        displayName: "X",
+        url: "https://example.com/mcp",
+      })
       expect(result.ok).toBe(false)
     })
   })

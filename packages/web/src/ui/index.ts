@@ -96,6 +96,8 @@ export {
   TableRow,
 } from "./table.js"
 export { Tabs, TabsContent, TabsList, TabsTrigger } from "./tabs.js"
+export type { TextareaProps } from "./textarea.js"
+export { Textarea } from "./textarea.js"
 export { Tooltip, TooltipContent, TooltipProvider } from "./tooltip.js"
 export { Wordmark } from "./wordmark.js"
 // status-rail: RETIRED in inc 24.5 — replaced by route-row as the signature element.

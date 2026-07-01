@@ -17,6 +17,8 @@ export interface AddMcpPlatformInput {
   command?: string
   args?: string[]
   tokenEnvVar?: string
+  /** Operator-declared static env vars for the child MCP server (non-secret; see McpConnectionSchema). */
+  env?: Record<string, string>
 }
 
 /**
@@ -46,6 +48,7 @@ export function addMcpPlatform(
       command: input.command,
       args: input.args ?? [],
       tokenEnvVar: input.tokenEnvVar,
+      ...(input.env ? { env: input.env } : {}),
     }
   } else {
     return errAsync({ kind: "invalid-transport", transport: input.transport })
