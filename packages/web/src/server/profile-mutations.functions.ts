@@ -14,6 +14,7 @@ import {
   mutateCreateProfile,
   mutateDeleteProfile,
   mutateRemoveRoute,
+  mutateSetRouteFilter,
   mutateToggleRoute,
 } from "./profile-mutations.server.js"
 
@@ -95,4 +96,23 @@ export const toggleRouteFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     assertLocalHost()
     return mutateToggleRoute(data.profileId, data.namespace, data.enabled)
+  })
+
+export const setRouteFilterFn = createServerFn({ method: "POST" })
+  .validator((raw: unknown) => {
+    const d = raw as Record<string, unknown>
+    // toolFilter optional: {allow?:string[]; deny?:string[]} — validate TYPE only (server Zod-validates contents)
+    const toolFilter =
+      d.toolFilter !== null && typeof d.toolFilter === "object" && !Array.isArray(d.toolFilter)
+        ? (d.toolFilter as { allow?: string[]; deny?: string[] })
+        : undefined
+    return {
+      profileId: requireString(d.profileId, "profileId"),
+      namespace: requireString(d.namespace, "namespace"),
+      toolFilter,
+    }
+  })
+  .handler(async ({ data }) => {
+    assertLocalHost()
+    return mutateSetRouteFilter(data.profileId, data.namespace, data.toolFilter)
   })

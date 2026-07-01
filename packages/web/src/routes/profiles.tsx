@@ -4,17 +4,27 @@
 // Right: selected profile detail — route rows table + editing actions.
 //
 // HONESTY GUARDS:
-// - Edit tool access (filter update in-place) = ComingSoon: no core op exists
-//   (SourceOp is only delete|setEnabled). Filter shown read-only with subtle hint.
-//   Filters are set at ADD-route time only.
 // - "N keys active" removed — was ComingSoon with no near-term plan (inc-25 feedback).
 // - No per-profile HTTP endpoint URL (single-endpoint model — show CLI command).
+//
+// Tool access (filter allow/deny) is editable in place via "Edit Tool Access" in the
+// route row's ⋯ menu (inc 26 slice D — core gained SourceOp.setFilter). The add-route
+// dialog still sets no filter at creation time (ComingSoon there) — use the in-place
+// editor after adding the route to set one.
 //
 // Responsive: at <700px the split stacks list-above-detail (CSS media query).
 // No @junction/core import. All core access via createServerFn.
 
 import { createFileRoute, useRouter } from "@tanstack/react-router"
-import { ChevronRight, Plus, PlusCircle, Power, PowerOff, Trash2 } from "lucide-react"
+import {
+  ChevronRight,
+  Plus,
+  PlusCircle,
+  Power,
+  PowerOff,
+  SlidersHorizontal,
+  Trash2,
+} from "lucide-react"
 import { useMemo, useState } from "react"
 import { toast } from "sonner"
 import type {
@@ -29,6 +39,7 @@ import {
   createProfileFn,
   deleteProfileFn,
   removeRouteFn,
+  setRouteFilterFn,
   toggleRouteFn,
 } from "../server/profile-mutations.functions.js"
 import { MonoCode } from "../ui/code.js"
@@ -474,6 +485,129 @@ function RemoveRouteDialog({ route, onOpenChange, profileId, onSuccess }: Remove
 }
 
 // ---------------------------------------------------------------------------
+// Edit tool filter dialog — in-place allow/deny editing (inc 26 slice D).
+// ---------------------------------------------------------------------------
+
+// Splits a comma/newline-separated tool-name list into a trimmed, non-empty array.
+function parseToolList(raw: string): string[] {
+  return raw
+    .split(/[,\n]/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+}
+
+interface EditFilterDialogProps {
+  readonly source: SourceMeta | null
+  readonly profileId: string
+  readonly onOpenChange: (open: boolean) => void
+  readonly onSuccess: () => void
+}
+
+function EditFilterDialog({ source, profileId, onOpenChange, onSuccess }: EditFilterDialogProps) {
+  const [allowText, setAllowText] = useState("")
+  const [denyText, setDenyText] = useState("")
+  const [submitting, setSubmitting] = useState(false)
+
+  // Prefill from the source's current filter whenever a new source is opened.
+  const sourceNamespace = source?.namespace
+  const [prefilledFor, setPrefilledFor] = useState<string | undefined>(undefined)
+  if (source && sourceNamespace !== prefilledFor) {
+    setAllowText(source.toolFilter?.allow?.join(", ") ?? "")
+    setDenyText(source.toolFilter?.deny?.join(", ") ?? "")
+    setPrefilledFor(sourceNamespace)
+  }
+
+  function reset() {
+    setAllowText("")
+    setDenyText("")
+    setSubmitting(false)
+    setPrefilledFor(undefined)
+  }
+
+  function handleOpenChange(next: boolean) {
+    if (!next) reset()
+    onOpenChange(next)
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!source) return
+    const allow = parseToolList(allowText)
+    const deny = parseToolList(denyText)
+    const toolFilter =
+      allow.length > 0 || deny.length > 0
+        ? { ...(allow.length > 0 ? { allow } : {}), ...(deny.length > 0 ? { deny } : {}) }
+        : undefined
+
+    setSubmitting(true)
+    try {
+      const result = await setRouteFilterFn({
+        data: { profileId, namespace: source.namespace, toolFilter },
+      })
+      if (!result.ok) {
+        toast.error(`Failed to update tool filter: ${result.error}`)
+        setSubmitting(false)
+        return
+      }
+      toast.success(`Tool filter updated for "${source.namespace}"`)
+      handleOpenChange(false)
+      onSuccess()
+    } catch {
+      toast.error("Failed to update tool filter")
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <Dialog open={source !== null} onOpenChange={handleOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Edit Tool Access</DialogTitle>
+          <DialogDescription>
+            Control which upstream tools are exposed for <MonoCode>{source?.namespace}</MonoCode>.
+            Leave both empty to expose all tools.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} noValidate>
+          <div className="flex flex-col gap-4">
+            <Field
+              id="filter-allow"
+              label="Allow"
+              description="Comma or newline separated tool names. If set, ONLY these tools are exposed."
+            >
+              <Input
+                id="filter-allow"
+                placeholder="e.g. list_repos, create_issue"
+                value={allowText}
+                onChange={(e) => setAllowText(e.target.value)}
+              />
+            </Field>
+            <Field
+              id="filter-deny"
+              label="Deny"
+              description="Comma or newline separated tool names to hide (applied after Allow)."
+            >
+              <Input
+                id="filter-deny"
+                placeholder="e.g. delete_repo"
+                value={denyText}
+                onChange={(e) => setDenyText(e.target.value)}
+              />
+            </Field>
+          </div>
+          <DialogFormFooter
+            onCancel={() => handleOpenChange(false)}
+            submitting={submitting}
+            submitLabel="Save Filter"
+            submittingLabel="Saving…"
+          />
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Route rows table — the right-panel detail table
 // ---------------------------------------------------------------------------
 
@@ -483,9 +617,10 @@ interface RouteTableProps {
   readonly profile: ProfileMeta
   readonly onToggle: (s: SourceMeta, enabled: boolean) => void
   readonly onRemove: (s: SourceMeta) => void
+  readonly onEditFilter: (s: SourceMeta) => void
 }
 
-function RouteTable({ profile, onToggle, onRemove }: RouteTableProps) {
+function RouteTable({ profile, onToggle, onRemove, onEditFilter }: RouteTableProps) {
   return (
     <Table>
       <TableHeader>
@@ -524,27 +659,14 @@ function RouteTable({ profile, onToggle, onRemove }: RouteTableProps) {
               </TableCell>
               <TableCellMono>{s.namespace}</TableCellMono>
               <TableCell>
-                {/* Filter is read-only; editing in-place = ComingSoon (no core op for update).
-                    The add-route dialog sets the filter at creation time. */}
                 <span
                   style={{
                     fontSize: "var(--text-caption)",
                     color: "var(--gray-700)",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "4px",
                   }}
-                  title="Edit coming soon — remove and re-add the route to change the filter"
+                  title="Tool access filter"
                 >
                   {filterSummary(s.toolFilter)}
-                  {s.toolFilter && (
-                    <span
-                      style={{ fontSize: "var(--text-caption)", color: "var(--gray-600)" }}
-                      aria-hidden="true"
-                    >
-                      (read-only)
-                    </span>
-                  )}
                 </span>
               </TableCell>
               <TableCell>
@@ -564,6 +686,10 @@ function RouteTable({ profile, onToggle, onRemove }: RouteTableProps) {
                         Enable Route
                       </DropdownMenuItem>
                     )}
+                    <DropdownMenuItem onSelect={() => onEditFilter(s)}>
+                      <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />
+                      Edit Tool Access
+                    </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
                       onSelect={() => onRemove(s)}
@@ -660,6 +786,8 @@ interface ProfileRoutesProps {
   readonly onAddRouteOpenChange: (open: boolean) => void
   readonly removingRoute: SourceMeta | null
   readonly onRemovingRouteChange: (route: SourceMeta | null) => void
+  readonly editingFilterRoute: SourceMeta | null
+  readonly onEditingFilterRouteChange: (route: SourceMeta | null) => void
   readonly onMutate: () => void
 }
 
@@ -671,6 +799,8 @@ function ProfileRoutes({
   onAddRouteOpenChange,
   removingRoute,
   onRemovingRouteChange,
+  editingFilterRoute,
+  onEditingFilterRouteChange,
   onMutate,
 }: ProfileRoutesProps) {
   async function handleToggle(s: SourceMeta, enabled: boolean) {
@@ -696,6 +826,7 @@ function ProfileRoutes({
         profile={profile}
         onToggle={handleToggle}
         onRemove={(s) => onRemovingRouteChange(s)}
+        onEditFilter={(s) => onEditingFilterRouteChange(s)}
       />
 
       {/* Dialogs */}
@@ -713,6 +844,14 @@ function ProfileRoutes({
           if (!open) onRemovingRouteChange(null)
         }}
         profileId={profile.id}
+        onSuccess={onMutate}
+      />
+      <EditFilterDialog
+        source={editingFilterRoute}
+        profileId={profile.id}
+        onOpenChange={(open) => {
+          if (!open) onEditingFilterRouteChange(null)
+        }}
         onSuccess={onMutate}
       />
     </div>
@@ -813,6 +952,7 @@ function ProfilesPage() {
   // row-actions both share the same dialog state.
   const [addRouteOpen, setAddRouteOpen] = useState(false)
   const [removingRoute, setRemovingRoute] = useState<SourceMeta | null>(null)
+  const [editingFilterRoute, setEditingFilterRoute] = useState<SourceMeta | null>(null)
 
   // The selected profile, falling back to the first one if selectedId no longer exists
   // (e.g. the selected profile was deleted out of band and the list was refreshed). This
@@ -963,6 +1103,8 @@ function ProfilesPage() {
                   onAddRouteOpenChange={setAddRouteOpen}
                   removingRoute={removingRoute}
                   onRemovingRouteChange={setRemovingRoute}
+                  editingFilterRoute={editingFilterRoute}
+                  onEditingFilterRouteChange={setEditingFilterRoute}
                   onMutate={invalidate}
                 />
               ) : (

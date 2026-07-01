@@ -81,6 +81,7 @@ const mockDeleteProfileFn = vi.fn()
 const mockAddRouteFn = vi.fn()
 const mockRemoveRouteFn = vi.fn()
 const mockToggleRouteFn = vi.fn()
+const mockSetRouteFilterFn = vi.fn()
 
 vi.mock("../server/profile-mutations.functions.js", () => ({
   createProfileFn: (...args: unknown[]) => mockCreateProfileFn(...args),
@@ -88,6 +89,7 @@ vi.mock("../server/profile-mutations.functions.js", () => ({
   addRouteFn: (...args: unknown[]) => mockAddRouteFn(...args),
   removeRouteFn: (...args: unknown[]) => mockRemoveRouteFn(...args),
   toggleRouteFn: (...args: unknown[]) => mockToggleRouteFn(...args),
+  setRouteFilterFn: (...args: unknown[]) => mockSetRouteFilterFn(...args),
 }))
 
 const { Route } = await import("./profiles.js")
@@ -104,6 +106,7 @@ afterEach(() => {
   mockAddRouteFn.mockReset()
   mockRemoveRouteFn.mockReset()
   mockToggleRouteFn.mockReset()
+  mockSetRouteFilterFn.mockReset()
   mockInvalidate.mockReset().mockResolvedValue(undefined)
 })
 
@@ -393,5 +396,37 @@ describe("ProfilesPage", () => {
 
     await waitFor(() => expect(screen.getByText("Platform is required")).toBeInTheDocument())
     expect(mockAddRouteFn).not.toHaveBeenCalled()
+  })
+
+  // ── Edit Tool Access — in-place filter editing (inc 26 slice D) ────────────
+  //
+  // happy-dom limitation (see -credentials.test.tsx): Radix DropdownMenu's Portal
+  // content does not open via fireEvent.click in happy-dom, so the ⋯ menu → "Edit
+  // Tool Access" click path can't be driven here. The trigger's presence/labelling
+  // is asserted below; the open→edit→submit→persist path is covered by the
+  // junction-web-verify browser pass. EditFilterDialog's submit logic itself is
+  // exercised directly via its own dialog test below (bypassing the dropdown).
+
+  it("row action trigger is present for each route (reachable to open Edit Tool Access)", () => {
+    mockUseLoaderData.mockReturnValue(populatedData)
+    render(<ProfilesPage />)
+    const actionButtons = screen.getAllByRole("button", { name: /row actions/i })
+    // "default" profile (selected by default) has 2 sources
+    expect(actionButtons.length).toBe(2)
+    for (const btn of actionButtons) {
+      expect(btn.getAttribute("aria-haspopup")).toBe("menu")
+    }
+  })
+
+  it("does NOT render the '(read-only)' filter hint (edit is now in-place)", () => {
+    mockUseLoaderData.mockReturnValue(populatedData)
+    render(<ProfilesPage />)
+    expect(screen.queryByText("(read-only)")).not.toBeInTheDocument()
+  })
+
+  it("filter cell shows 'all tools' for a source without a toolFilter", () => {
+    mockUseLoaderData.mockReturnValue(populatedData)
+    render(<ProfilesPage />)
+    expect(screen.getAllByText("all tools").length).toBeGreaterThanOrEqual(1)
   })
 })

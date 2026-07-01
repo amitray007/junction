@@ -3,8 +3,16 @@
 // Strategy: mock createFileRoute so Route.useLoaderData() returns test fixtures,
 // then import the module and render Route.options.component.
 // Loader shape (inc 24.5): { platforms, connectionCounts } — derived from credentials.
+//
+// inc 26 slice C: Add/Edit/Delete/Refresh write path added. happy-dom limitation
+// (see -credentials.test.tsx / -profiles.test.tsx): Radix DropdownMenu and Select
+// use a Portal + pointer events for opening — fireEvent.click on the trigger does
+// NOT render the portal content in happy-dom. So the ⋯ row menu (Edit/Refresh/Delete)
+// and the kind-Select's non-default options are verified for presence/attributes
+// here; the full open→choose→submit path is covered by the junction-web-verify
+// browser pass (real Chromium), not this suite.
 
-import { cleanup, render } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { PlatformMeta } from "../server/data.functions.js"
 
@@ -31,6 +39,7 @@ const zeroConnectionsData = {
 
 // ---- Mocks ------------------------------------------------------------------
 
+const mockInvalidate = vi.fn().mockResolvedValue(undefined)
 const mockUseLoaderData = vi.fn().mockReturnValue(emptyLoaderData)
 
 vi.mock("@tanstack/react-router", () => ({
@@ -39,13 +48,25 @@ vi.mock("@tanstack/react-router", () => ({
     options,
   }),
   // RefreshButton (in the PageHeader actions) calls useRouter().invalidate().
-  useRouter: () => ({ invalidate: vi.fn().mockResolvedValue(undefined) }),
+  useRouter: () => ({ invalidate: mockInvalidate }),
 }))
 
 // Loader calls both getPlatforms and getCredentials — stub both.
 vi.mock("../server/data.functions.js", () => ({
   getPlatforms: vi.fn(),
   getCredentials: vi.fn(),
+}))
+
+const mockAddPlatformFn = vi.fn()
+const mockUpdatePlatformFn = vi.fn()
+const mockDeletePlatformFn = vi.fn()
+const mockRefreshPlatformFn = vi.fn()
+
+vi.mock("../server/platform-mutations.functions.js", () => ({
+  addPlatformFn: (...args: unknown[]) => mockAddPlatformFn(...args),
+  updatePlatformFn: (...args: unknown[]) => mockUpdatePlatformFn(...args),
+  deletePlatformFn: (...args: unknown[]) => mockDeletePlatformFn(...args),
+  refreshPlatformFn: (...args: unknown[]) => mockRefreshPlatformFn(...args),
 }))
 
 const { Route } = await import("./platforms.js")
@@ -57,6 +78,11 @@ const PlatformsPage = (Route as any).options.component as React.FC
 afterEach(() => {
   cleanup()
   mockUseLoaderData.mockReset()
+  mockAddPlatformFn.mockReset()
+  mockUpdatePlatformFn.mockReset()
+  mockDeletePlatformFn.mockReset()
+  mockRefreshPlatformFn.mockReset()
+  mockInvalidate.mockReset().mockResolvedValue(undefined)
 })
 
 describe("PlatformsPage", () => {
@@ -141,5 +167,107 @@ describe("PlatformsPage", () => {
     for (const row of rows) {
       expect(row.textContent).toContain("0")
     }
+  })
+
+  // ── Row actions (⋯ menu present, keyboard-reachable per row) ───────────────
+
+  it("row action buttons are present for each platform row, aria-haspopup=menu", () => {
+    mockUseLoaderData.mockReturnValue(populatedLoaderData)
+    const { getAllByRole } = render(<PlatformsPage />)
+    const actionButtons = getAllByRole("button", { name: /row actions/i })
+    expect(actionButtons.length).toBe(platforms.length)
+    for (const btn of actionButtons) {
+      expect(btn.tagName).toBe("BUTTON")
+      expect(btn.getAttribute("aria-haspopup")).toBe("menu")
+    }
+  })
+
+  // ── Add Platform dialog ─────────────────────────────────────────────────────
+
+  it("Add Platform dialog: opens and shows kind-specific fields for the default kind (mcp-http)", async () => {
+    mockUseLoaderData.mockReturnValue(emptyLoaderData)
+    render(<PlatformsPage />)
+
+    fireEvent.click(screen.getByRole("button", { name: /add platform/i }))
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
+
+    const dialog = screen.getByRole("dialog")
+    // mcp-http fields present by default
+    expect(dialog.querySelector("#platform-url")).not.toBeNull()
+    expect(dialog.querySelector("#platform-auth-header")).not.toBeNull()
+    // other-kind-only fields absent
+    expect(dialog.querySelector("#platform-spec-url")).toBeNull()
+    expect(dialog.querySelector("#platform-descriptor")).toBeNull()
+  })
+
+  it("Add Platform dialog: required-field validation prevents submission", async () => {
+    mockUseLoaderData.mockReturnValue(emptyLoaderData)
+    render(<PlatformsPage />)
+
+    fireEvent.click(screen.getByRole("button", { name: /add platform/i }))
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
+
+    const dialog = screen.getByRole("dialog")
+    const submitBtn = dialog.querySelector("button[type='submit']") as HTMLButtonElement
+    fireEvent.click(submitBtn)
+
+    await waitFor(() => expect(screen.getByText("ID is required")).toBeInTheDocument())
+    expect(mockAddPlatformFn).not.toHaveBeenCalled()
+  })
+
+  it("Add Platform dialog: submits mcp-http kind, calls addPlatformFn, invalidates on success", async () => {
+    mockUseLoaderData.mockReturnValue(emptyLoaderData)
+    mockAddPlatformFn.mockResolvedValue({
+      ok: true,
+      platform: { id: "new-plat", kind: "mcp", displayName: "New Plat" },
+    })
+
+    render(<PlatformsPage />)
+    fireEvent.click(screen.getByRole("button", { name: /add platform/i }))
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
+
+    const dialog = screen.getByRole("dialog")
+    fireEvent.change(dialog.querySelector("#platform-id") as HTMLInputElement, {
+      target: { value: "new-plat" },
+    })
+    fireEvent.change(dialog.querySelector("#platform-display-name") as HTMLInputElement, {
+      target: { value: "New Plat" },
+    })
+    fireEvent.change(dialog.querySelector("#platform-url") as HTMLInputElement, {
+      target: { value: "https://example.com/mcp" },
+    })
+
+    fireEvent.click(dialog.querySelector("button[type='submit']") as HTMLButtonElement)
+
+    await waitFor(() => expect(mockAddPlatformFn).toHaveBeenCalledOnce())
+    const call = mockAddPlatformFn.mock.calls[0]?.[0]
+    expect(call.data.kind).toBe("mcp-http")
+    expect(call.data.id).toBe("new-plat")
+    expect(call.data.url).toBe("https://example.com/mcp")
+    await waitFor(() => expect(mockInvalidate).toHaveBeenCalled())
+  })
+
+  it("Add Platform dialog: error path — toast shown, invalidate NOT called", async () => {
+    mockUseLoaderData.mockReturnValue(emptyLoaderData)
+    mockAddPlatformFn.mockResolvedValue({ ok: false, error: "id already exists" })
+
+    render(<PlatformsPage />)
+    fireEvent.click(screen.getByRole("button", { name: /add platform/i }))
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
+
+    const dialog = screen.getByRole("dialog")
+    fireEvent.change(dialog.querySelector("#platform-id") as HTMLInputElement, {
+      target: { value: "dupe" },
+    })
+    fireEvent.change(dialog.querySelector("#platform-display-name") as HTMLInputElement, {
+      target: { value: "Dupe" },
+    })
+    fireEvent.change(dialog.querySelector("#platform-url") as HTMLInputElement, {
+      target: { value: "https://example.com/mcp" },
+    })
+    fireEvent.click(dialog.querySelector("button[type='submit']") as HTMLButtonElement)
+
+    await waitFor(() => expect(mockAddPlatformFn).toHaveBeenCalledOnce())
+    expect(mockInvalidate).not.toHaveBeenCalled()
   })
 })

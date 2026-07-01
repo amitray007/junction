@@ -5,26 +5,13 @@
 // SECURITY: all output is metadata-only — no secret, no secretRef.
 
 import {
-  createRepositories,
   deriveMcpEndpointPath,
   newProfileId,
   ProfileNameSchema,
   SourceRefSchema,
   ToolFilterSchema,
 } from "@junction/core"
-import { getDb } from "./shared.server.js"
-
-// ---------------------------------------------------------------------------
-// Shared helper: open memoised DB, call fn, propagate errors.
-// ---------------------------------------------------------------------------
-
-async function withRepos<T>(
-  fn: (repos: ReturnType<typeof createRepositories>) => Promise<T>,
-): Promise<T> {
-  const db = await getDb()
-  if (db === null) throw new Error("Database unavailable")
-  return fn(createRepositories(db))
-}
+import { withRepos } from "./shared.server.js"
 
 // ---------------------------------------------------------------------------
 // Human-readable error messages for DB error kinds.
@@ -169,6 +156,34 @@ export async function mutateToggleRoute(
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   return withRepos(async (repos) => {
     const result = await repos.profiles.setSourceEnabled(profileId, namespace, enabled)
+    if (result.isErr()) {
+      return { ok: false as const, error: profileErrorMessage(result.error.kind, namespace) }
+    }
+    return { ok: true as const }
+  })
+}
+
+/**
+ * Set (or clear) a route's tool filter (allow/deny) in place.
+ * Passing undefined clears the filter (all tools exposed).
+ */
+export async function mutateSetRouteFilter(
+  profileId: string,
+  namespace: string,
+  toolFilter?: { allow?: string[]; deny?: string[] },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  // Validate contents via ToolFilterSchema before touching the DB.
+  if (toolFilter !== undefined) {
+    const parsed = ToolFilterSchema.safeParse(toolFilter)
+    if (!parsed.success) {
+      return {
+        ok: false,
+        error: `Invalid filter: ${parsed.error.issues.map((i) => i.message).join("; ")}`,
+      }
+    }
+  }
+  return withRepos(async (repos) => {
+    const result = await repos.profiles.setSourceFilter(profileId, namespace, toolFilter)
     if (result.isErr()) {
       return { ok: false as const, error: profileErrorMessage(result.error.kind, namespace) }
     }
