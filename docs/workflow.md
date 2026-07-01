@@ -66,16 +66,16 @@ After the builder reports "done", the orchestrator **independently verifies** �
 
 This is the step that catches a real issue nearly every increment. Budget for it.
 
-## Parallel waves — fan-out + serial merge
+## Within-increment fan-out — parallel subagents + serial integration
 
-When a wave (≥2 independent slices — see `docs/methods/_waves.md`) is approved, the build/review/merge steps run in parallel **except merge**, which is deliberately serialized:
+When a **wide** increment (≥2 genuinely independent, non-trivial slices — see `docs/methods/_waves.md`) is approved, its build runs in parallel but integrates serially. Note this is **mode A** (slices of one increment via **subagents**); running *whole increments* in parallel via worktrees is **mode B**, deferred (`_waves.md` §8).
 
-- **Fan out (build).** One **Sonnet builder per slice**, each in its **own `git` worktree + branch** (Agent tool `isolation: "worktree"`) so they can't collide on files. Each works from its own self-contained method file; they run concurrently in the background while the orchestrator QAs finished ones and plans the next wave.
-- **Review in parallel (cheap).** Run the warranted reviewers **per-worktree**, concurrently — no human gate yet.
-- **Merge serially (the choke point — this protects correctness-over-speed).** Merge in **DAG order**: the `core`/shared slice **first**, then the leaves. **After each merge, rebase the next worktree on the new `main` and re-run `pnpm verify`** before merging it. This is the only thing that catches **semantic conflicts** — slices that are green in isolation but break `tsc`/Vitest together. Stacked-PR hazards still apply (merge commits not squash; retarget children before merging a parent — see `STATE.md` §3).
-- **One user gate per wave**, not per slice: the user approves the wave at plan time and batch-tests at the end. Every PR reaching them is already green + already agent-reviewed, so the gate is judgment, not QA.
+- **Fan out (build).** One **Sonnet builder *subagent* per slice** (the Agent tool, **no** `isolation` — not a worktree). The blocking **core/shared slice first**; once applied + verified, the leaf slices fan out as **parallel subagents** (dispatch in one shot). Each works from its own self-contained method-file slice.
+- **Review in parallel (cheap).** Run the warranted reviewers **per-slice**, concurrently — no human gate yet.
+- **Integrate serially (the choke point — this protects correctness-over-speed).** The orchestrator applies slices **in DAG order in the one working tree** — core slice first, then leaves — running **`pnpm verify` after each** before applying the next, then drives the **real built artifact**. This is what catches **semantic conflicts** — slices green in isolation but broken together. (No git-merge/rebase dance and no stacked-PR hazards, because there are no parallel branches — that's a mode-B concern.)
+- **One user gate**, not one per slice: the user approves the increment's design up front and tests the integrated result at the end. Everything reaching them is already verified + already agent-reviewed, so the gate is judgment, not QA.
 
-A lone increment (the common case) skips all of this — no worktree, no wave, just the normal single-slice loop.
+A narrow increment (the common case) skips all of this — no fan-out, just the normal single-builder loop. Fan out only when the slices are genuinely independent and non-trivial.
 
 ## Guardrails (always)
 
