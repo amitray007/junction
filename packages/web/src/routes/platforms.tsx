@@ -7,7 +7,7 @@
 // No @junction/core import. All core access via createServerFn.
 
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router"
-import { Plus, RefreshCw, SquarePen, Trash2 } from "lucide-react"
+import { Plus, RefreshCw, SquarePen, Trash2, X } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 import { toast } from "sonner"
 import { getCredentials, getPlatforms, type PlatformMeta } from "../server/data.functions.js"
@@ -184,9 +184,9 @@ function EnvVarListField({
             variant="ghost"
             size="sm"
             aria-label="Remove env variable"
-            onClick={() => onChange(rows.filter((_, idx) => idx !== i))}
+            onClick={() => onChange(rows.filter((r) => r.id !== row.id))}
           >
-            ×
+            <X className="h-4 w-4" aria-hidden="true" />
           </Button>
         </div>
       ))}

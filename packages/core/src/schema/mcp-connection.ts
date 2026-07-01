@@ -6,6 +6,20 @@
 
 import { z } from "zod"
 
+/**
+ * Env-var names forbidden in an operator-declared stdio `env` map because they
+ * hijack the dynamic linker or the interpreter runtime of the (UNSANDBOXED) MCP
+ * child → arbitrary code execution. Checked uppercase; `DYLD_*` is matched by
+ * prefix separately. PATH/HOME are intentionally NOT here (dual-use, grant nothing
+ * beyond the operator-declared command). See the stdio-env refine below.
+ */
+const INTERPRETER_ENV_DENYLIST = new Set([
+  "LD_PRELOAD",
+  "LD_LIBRARY_PATH",
+  "LD_AUDIT",
+  "NODE_OPTIONS",
+])
+
 // ---------------------------------------------------------------------------
 // McpConnectionSchema
 // ---------------------------------------------------------------------------
@@ -81,12 +95,24 @@ export const McpConnectionSchema = z.discriminatedUnion("transport", [
         if (stdio.tokenEnvVar !== undefined && keys.includes(stdio.tokenEnvVar)) return false
         if (keys.includes("JUNCTION_MASTER_KEY") || keys.includes("JUNCTION_MASTER_KEY_FILE"))
           return false
+        // SECURITY: the stdio MCP child is NOT sandboxed (plain spawn, full user
+        // privileges). A static env entry that hijacks the dynamic linker or the
+        // Node/interpreter runtime = arbitrary code execution in the child — the
+        // real threat is a pasted/imported platform config the operator didn't
+        // author (LD_PRELOAD → code injection, NODE_OPTIONS → --require arbitrary
+        // JS). PATH is deliberately NOT blocked — it's dual-use and grants nothing
+        // beyond the operator-declared command. Case-insensitive; DYLD_* by prefix.
+        for (const key of keys) {
+          const upper = key.toUpperCase()
+          if (INTERPRETER_ENV_DENYLIST.has(upper) || upper.startsWith("DYLD_")) return false
+        }
         return true
       },
       {
         message:
-          "env keys must not include tokenEnvVar or JUNCTION_MASTER_KEY/JUNCTION_MASTER_KEY_FILE " +
-          "(static env must not collide with or shadow the credential slot)",
+          "env keys must not include tokenEnvVar, JUNCTION_MASTER_KEY/JUNCTION_MASTER_KEY_FILE, " +
+          "or a dynamic-linker/interpreter name (LD_PRELOAD, LD_LIBRARY_PATH, LD_AUDIT, DYLD_*, " +
+          "NODE_OPTIONS) — those would let a pasted config run code in the unsandboxed MCP child",
         path: ["env"],
       },
     ),

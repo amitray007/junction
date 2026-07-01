@@ -30,38 +30,65 @@ const ARG_NAME_RE = /^[a-z][a-z0-9_]*$/
  *   - anything else                                          → {kind:"literal", value}
  */
 export function tokenizeCommandLine(commandLine: string): CliArgvSegment[] {
-  const tokens = splitTokens(commandLine)
-  return tokens.map(classifyToken)
+  return splitTokens(commandLine).map(classifyToken)
 }
 
-/** Split respecting "..."/'...' quoted sections; a quoted section is one token. */
-function splitTokens(input: string): string[] {
-  const tokens: string[] = []
+/**
+ * One whitespace-delimited token, with whether ANY of it came from inside a
+ * quoted section. `quoted` is load-bearing: a token that was quoted is ALWAYS a
+ * literal (quoting is how the operator says "this is not an arg slot"), so
+ * `$foo` inside quotes stays a literal instead of being read as an arg. This is
+ * what makes tokenize the exact inverse of argvToCommandLine.
+ */
+interface RawToken {
+  readonly text: string
+  readonly quoted: boolean
+}
+
+/**
+ * Split respecting "..."/'...' quoted sections + backslash escapes. A quoted
+ * section (incl. internal whitespace) is part of one token; inside double
+ * quotes, `\"` and `\\` are escapes (so a literal containing a quote or a
+ * backslash round-trips). A token is marked `quoted` if any part was quoted.
+ */
+function splitTokens(input: string): RawToken[] {
+  const tokens: RawToken[] = []
   let i = 0
   const n = input.length
 
   while (i < n) {
-    // Skip leading whitespace
     while (i < n && /\s/.test(input[i] as string)) i++
     if (i >= n) break
 
-    let token = ""
+    let text = ""
+    let quoted = false
     while (i < n && !/\s/.test(input[i] as string)) {
       const ch = input[i] as string
       if (ch === '"' || ch === "'") {
         const quote = ch
-        i++ // consume opening quote
+        quoted = true
+        i++ // opening quote
         while (i < n && input[i] !== quote) {
-          token += input[i]
+          // Inside double quotes, honour \" and \\ escapes so quotes/backslashes
+          // in a literal survive the round-trip (single quotes are literal-verbatim).
+          if (quote === '"' && input[i] === "\\" && i + 1 < n) {
+            const next = input[i + 1] as string
+            if (next === '"' || next === "\\") {
+              text += next
+              i += 2
+              continue
+            }
+          }
+          text += input[i]
           i++
         }
-        if (i < n) i++ // consume closing quote
+        if (i < n) i++ // closing quote
       } else {
-        token += ch
+        text += ch
         i++
       }
     }
-    tokens.push(token)
+    tokens.push({ text, quoted })
   }
 
   return tokens
@@ -70,20 +97,19 @@ function splitTokens(input: string): string[] {
 /** Match the whole token against `$name`, capturing an optional literal prefix. */
 const ARG_TOKEN_RE = /^(.*)\$([a-z][a-z0-9_]*)$/
 
-function classifyToken(token: string): CliArgvSegment {
-  const match = ARG_TOKEN_RE.exec(token)
-  if (match) {
-    const [, prefix, name] = match as unknown as [string, string, string]
-    // Guard: `name` must be the ENTIRE remainder after the last unescaped `$`,
-    // and it must match the arg-name pattern (already enforced by the regex
-    // char class). Reject if there's a stray `$` earlier in a way that would
-    // make this ambiguous — not needed here since the regex is greedy on the
-    // prefix and anchored at the end, so this always matches the last `$name`.
-    if (ARG_NAME_RE.test(name)) {
-      return prefix === "" ? { kind: "arg", name } : { kind: "arg", name, prefix }
+function classifyToken(token: RawToken): CliArgvSegment {
+  // A quoted token is ALWAYS a literal — quoting is the operator's explicit
+  // "not an arg slot" marker, so a literal like "$foo" round-trips as a literal.
+  if (!token.quoted) {
+    const match = ARG_TOKEN_RE.exec(token.text)
+    if (match) {
+      const [, prefix, name] = match as unknown as [string, string, string]
+      if (ARG_NAME_RE.test(name)) {
+        return prefix === "" ? { kind: "arg", name } : { kind: "arg", name, prefix }
+      }
     }
   }
-  return { kind: "literal", value: token }
+  return { kind: "literal", value: token.text }
 }
 
 // ---------------------------------------------------------------------------
@@ -107,11 +133,16 @@ function segmentToToken(segment: CliArgvSegment): string {
   return quoteLiteralIfNeeded(segment.value)
 }
 
-/** Wrap in double quotes (escaping internal `"`) if the literal needs it to round-trip. */
+/**
+ * Wrap in double quotes if the literal needs it to round-trip. A literal needs
+ * quoting when it's empty or contains whitespace, `$`, or a quote character.
+ * Backslash and double-quote are escaped (matching splitTokens' `\\`/`\"`
+ * un-escaping) so a literal containing either survives the round-trip.
+ */
 function quoteLiteralIfNeeded(value: string): string {
-  const needsQuoting = value === "" || /[\s$"']/.test(value)
+  const needsQuoting = value === "" || /[\s$"'\\]/.test(value)
   if (!needsQuoting) return value
-  const escaped = value.replace(/"/g, '\\"')
+  const escaped = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
   return `"${escaped}"`
 }
 
@@ -126,14 +157,21 @@ export interface ReversibilityCheckTool {
 }
 
 /**
- * A tool's argv is reversible through the guided command-line editor iff:
- *   - every {kind:"arg"} segment references a distinct arg name (no two argv
- *     segments naming the same arg — that can't map back to two independent
- *     command-line positions), AND
- *   - every {kind:"arg"} segment's name is present in the tool's declared args[].
- * Tools failing either check get a read-only notice + a per-tool JSON escape
- * hatch in the guided form (they are NOT auto-corrected).
+ * A tool's argv is reversible through the guided command-line editor iff EVERY
+ * segment round-trips through argvToCommandLine → tokenizeCommandLine:
+ *   - every {kind:"arg"} references a DISTINCT arg name (two argv segments naming
+ *     the same arg can't map back to two independent command-line positions),
+ *   - every {kind:"arg"} name is present in the tool's declared args[], AND
+ *   - every {kind:"arg"} prefix is "safe" — no whitespace / quote / `$` — because
+ *     a prefix carrying those would re-tokenize into different segments.
+ * (Literal contents no longer break reversibility — the tokenizer/serializer are
+ * true inverses for literals via quoting + escaping. Prefix is the one arg field
+ * the serializer emits UNQUOTED, so it's the remaining reversibility hazard.)
+ * Tools failing any check get a read-only notice + a per-tool JSON escape hatch
+ * in the guided form (they are NOT auto-corrected).
  */
+const UNSAFE_PREFIX_RE = /[\s$"']/
+
 export function isReversible(tool: ReversibilityCheckTool): boolean {
   const declaredNames = new Set(tool.args.map((a) => a.name))
   const seenArgNames = new Set<string>()
@@ -141,6 +179,7 @@ export function isReversible(tool: ReversibilityCheckTool): boolean {
     if (segment.kind !== "arg") continue
     if (!declaredNames.has(segment.name)) return false
     if (seenArgNames.has(segment.name)) return false
+    if (segment.prefix !== undefined && UNSAFE_PREFIX_RE.test(segment.prefix)) return false
     seenArgNames.add(segment.name)
   }
   return true

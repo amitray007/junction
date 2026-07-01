@@ -197,6 +197,35 @@ describe("McpConnectionSchema", () => {
       })
       expect(result.success).toBe(false)
     })
+
+    // SECURITY: the stdio child is unsandboxed — dynamic-linker / interpreter env
+    // names must be rejected (a pasted config could run code in the child).
+    it.each([
+      "LD_PRELOAD",
+      "LD_LIBRARY_PATH",
+      "LD_AUDIT",
+      "NODE_OPTIONS",
+      "DYLD_INSERT_LIBRARIES",
+      "DYLD_LIBRARY_PATH",
+      "ld_preload", // case-insensitive
+      "Node_Options",
+    ])("rejects a dangerous interpreter/linker env key: %s", (key) => {
+      const result = McpConnectionSchema.safeParse({
+        transport: "stdio",
+        command: "npx",
+        env: { [key]: "anything" },
+      })
+      expect(result.success).toBe(false)
+    })
+
+    it("ACCEPTS PATH and HOME overrides (dual-use, intentionally not blocked)", () => {
+      const result = McpConnectionSchema.safeParse({
+        transport: "stdio",
+        command: "npx",
+        env: { PATH: "/opt/toolchain/bin:/usr/bin", HOME: "/alt/home" },
+      })
+      expect(result.success).toBe(true)
+    })
   })
 
   it("rejects unknown transport (discriminated union is strict)", () => {

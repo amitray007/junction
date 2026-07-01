@@ -157,6 +157,22 @@ export const CliToolSchema = z
         'argv[0] must be a {kind:"literal"} segment with an absolute binary path (starts with "/")',
     },
   )
+  .refine(
+    (tool) => {
+      // Every {kind:"arg"} segment must reference a DECLARED arg. An argv slot
+      // naming an undeclared arg would, at call time, resolve to undefined and be
+      // SILENTLY OMITTED from argv (buildArgv) — the operator's intended argument
+      // vanishes. This is the authoritative backstop for a mis-assembled descriptor
+      // (e.g. the web edit path serialising a literal `$foo` into an arg segment):
+      // catch it here at parse rather than let a corrupted command execute.
+      const declared = new Set(tool.args.map((a) => a.name))
+      return tool.argv.every((seg) => seg.kind !== "arg" || declared.has(seg.name))
+    },
+    {
+      message:
+        "every argv arg segment must reference a declared arg (an undeclared arg slot is silently dropped at call time)",
+    },
+  )
 
 export type CliTool = z.infer<typeof CliToolSchema>
 

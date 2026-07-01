@@ -19,6 +19,9 @@ import {
 // Fixtures
 // ---------------------------------------------------------------------------
 
+/** Terse literal-segment constructor for the adversarial round-trip fixtures. */
+const lit = (value: string): CliArgvSegment => ({ kind: "literal", value })
+
 const RIPGREP_ARGV: CliArgvSegment[] = [
   { kind: "literal", value: "/opt/homebrew/bin/rg" },
   { kind: "literal", value: "--json" },
@@ -126,6 +129,22 @@ describe("round-trip: tokenizeCommandLine(argvToCommandLine(argv)) === argv", ()
     { name: "literal with internal space", argv: SPACE_LITERAL_ARGV },
     { name: "prefixed arg", argv: PREFIXED_ARG_ARGV },
     { name: "literal containing a literal $", argv: DOLLAR_LITERAL_ARGV },
+    // Adversarial cases the original fixture set omitted (found by the inc-26
+    // wave-3 correctness review — the tokenizer was NOT a true inverse for these):
+    // a literal that looks like a $name-slot must stay a literal (was mis-read as
+    // an arg → the argument silently vanished at execution on the edit path).
+    { name: "literal that looks like $name", argv: [lit("/bin/echo"), lit("$foo")] },
+    // a literal that looks like a prefixed arg must stay a literal.
+    { name: "literal that looks like --out=$file", argv: [lit("/bin/echo"), lit("--out=$file")] },
+    // a literal containing a double quote (serializer escapes \", tokenizer un-escapes).
+    { name: "literal containing a double quote", argv: [lit("/bin/echo"), lit('a"b')] },
+    // a literal containing a backslash (serializer escapes \\, tokenizer un-escapes).
+    { name: "literal containing a backslash", argv: [lit("/bin/echo"), lit("a\\b")] },
+    // a literal containing a single quote.
+    { name: "literal containing a single quote", argv: [lit("/bin/echo"), lit("it's")] },
+    // an empty-string literal round-trips as an empty literal (core rejects it later,
+    // but the tokenizer must not silently drop or transform it).
+    { name: "empty-string literal", argv: [lit("/bin/echo"), lit("")] },
   ]
 
   for (const { name, argv } of fixtures) {
