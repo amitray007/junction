@@ -27,6 +27,8 @@ import {
 } from "lucide-react"
 import { useMemo, useState } from "react"
 import { toast } from "sonner"
+import type { SortDirection, TableColumn } from "../lib/use-table-view.js"
+import { useTableView } from "../lib/use-table-view.js"
 import type {
   CredentialMeta,
   PlatformMeta,
@@ -75,6 +77,7 @@ import {
   TableCellMono,
   TableHead,
   TableHeader,
+  TablePagination,
   TableRow,
   TableSkeleton,
 } from "../ui/index.js"
@@ -613,6 +616,15 @@ function EditFilterDialog({ source, profileId, onOpenChange, onSuccess }: EditFi
 
 const ROUTE_COL_COUNT = 6
 
+// Sortable columns for the route table — Platform / Account / Namespace / Status.
+// Filter stays unsortable (a formatted summary string, not a natural sort key).
+const routeColumns: TableColumn<SourceMeta>[] = [
+  { key: "platform", compare: (a, b) => a.platform.localeCompare(b.platform) },
+  { key: "account", compare: (a, b) => a.credentialAccount.localeCompare(b.credentialAccount) },
+  { key: "namespace", compare: (a, b) => a.namespace.localeCompare(b.namespace) },
+  { key: "status", compare: (a, b) => sourceStatus(a).localeCompare(sourceStatus(b)) },
+]
+
 interface RouteTableProps {
   readonly profile: ProfileMeta
   readonly onToggle: (s: SourceMeta, enabled: boolean) => void
@@ -621,91 +633,163 @@ interface RouteTableProps {
 }
 
 function RouteTable({ profile, onToggle, onRemove, onEditFilter }: RouteTableProps) {
+  const {
+    search,
+    setSearch,
+    toggleSort,
+    sortDirectionFor,
+    page,
+    pageCount,
+    setPage,
+    total,
+    pageRows,
+  } = useTableView<SourceMeta>({
+    rows: profile.sources,
+    searchFields: (s) => [s.platform, s.credentialAccount, s.namespace],
+    columns: routeColumns,
+  })
+
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Platform</TableHead>
-          <TableHead>Account</TableHead>
-          <TableHead>Namespace</TableHead>
-          <TableHead>Filter</TableHead>
-          <TableHead>Status</TableHead>
-          <TableActionsHead />
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {profile.sources.length === 0 ? (
-          <EmptyTableRow
-            colSpan={ROUTE_COL_COUNT}
-            message="No routes in this profile."
-            action={
-              <span style={{ fontSize: "var(--text-body)", color: "var(--gray-700)" }}>
-                Use <strong>Add Route</strong> to add one.
-              </span>
-            }
-          />
-        ) : (
-          profile.sources.map((s) => (
-            <TableRow key={s.namespace}>
-              <TableCellMono>
-                <MonoCode>{s.platform}</MonoCode>
-              </TableCellMono>
-              <TableCell>
-                {s.credentialAccount === "(none)" ? (
-                  <span style={{ color: "var(--gray-600)", fontStyle: "italic" }}>No Auth</span>
-                ) : (
-                  s.credentialAccount
-                )}
-              </TableCell>
-              <TableCellMono>{s.namespace}</TableCellMono>
-              <TableCell>
-                <span
-                  style={{
-                    fontSize: "var(--text-caption)",
-                    color: "var(--gray-700)",
-                  }}
-                  title="Tool access filter"
-                >
-                  {filterSummary(s.toolFilter)}
-                </span>
-              </TableCell>
-              <TableCell>
-                <StatusBadge status={sourceStatus(s)} />
-              </TableCell>
-              <TableActionsCell
-                menu={
-                  <DropdownMenuContent align="end">
-                    {s.enabled ? (
-                      <DropdownMenuItem onSelect={() => onToggle(s, false)}>
-                        <PowerOff className="h-4 w-4" aria-hidden="true" />
-                        Disable Route
+    <div className="flex flex-col gap-3">
+      {/* Search — labeled for a11y (DESIGN.md: labeled inputs) */}
+      <div>
+        <label
+          htmlFor="route-search"
+          style={{
+            fontSize: "var(--text-label)",
+            color: "var(--gray-700)",
+            display: "block",
+            marginBottom: "6px",
+          }}
+        >
+          Search
+        </label>
+        <Input
+          id="route-search"
+          type="search"
+          placeholder="Search routes…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{ maxWidth: "320px" }}
+          aria-label="Search routes"
+        />
+      </div>
+
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead
+              sortDirection={sortDirectionFor("platform")}
+              onSort={() => toggleSort("platform")}
+            >
+              Platform
+            </TableHead>
+            <TableHead
+              sortDirection={sortDirectionFor("account")}
+              onSort={() => toggleSort("account")}
+            >
+              Account
+            </TableHead>
+            <TableHead
+              sortDirection={sortDirectionFor("namespace")}
+              onSort={() => toggleSort("namespace")}
+            >
+              Namespace
+            </TableHead>
+            <TableHead>Filter</TableHead>
+            <TableHead
+              sortDirection={sortDirectionFor("status")}
+              onSort={() => toggleSort("status")}
+            >
+              Status
+            </TableHead>
+            <TableActionsHead />
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {total === 0 ? (
+            <EmptyTableRow
+              colSpan={ROUTE_COL_COUNT}
+              message={
+                search.trim().length > 0
+                  ? "No routes match your search."
+                  : "No routes in this profile."
+              }
+              action={
+                search.trim().length > 0 ? undefined : (
+                  <span style={{ fontSize: "var(--text-body)", color: "var(--gray-700)" }}>
+                    Use <strong>Add Route</strong> to add one.
+                  </span>
+                )
+              }
+            />
+          ) : (
+            pageRows.map((s) => (
+              <TableRow key={s.namespace}>
+                <TableCellMono>
+                  <MonoCode>{s.platform}</MonoCode>
+                </TableCellMono>
+                <TableCell>
+                  {s.credentialAccount === "(none)" ? (
+                    <span style={{ color: "var(--gray-600)", fontStyle: "italic" }}>No Auth</span>
+                  ) : (
+                    s.credentialAccount
+                  )}
+                </TableCell>
+                <TableCellMono>{s.namespace}</TableCellMono>
+                <TableCell>
+                  <span
+                    style={{
+                      fontSize: "var(--text-caption)",
+                      color: "var(--gray-700)",
+                    }}
+                    title="Tool access filter"
+                  >
+                    {filterSummary(s.toolFilter)}
+                  </span>
+                </TableCell>
+                <TableCell>
+                  <StatusBadge status={sourceStatus(s)} />
+                </TableCell>
+                <TableActionsCell
+                  menu={
+                    <DropdownMenuContent align="end">
+                      {s.enabled ? (
+                        <DropdownMenuItem onSelect={() => onToggle(s, false)}>
+                          <PowerOff className="h-4 w-4" aria-hidden="true" />
+                          Disable Route
+                        </DropdownMenuItem>
+                      ) : (
+                        <DropdownMenuItem onSelect={() => onToggle(s, true)}>
+                          <Power className="h-4 w-4" aria-hidden="true" />
+                          Enable Route
+                        </DropdownMenuItem>
+                      )}
+                      <DropdownMenuItem onSelect={() => onEditFilter(s)}>
+                        <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />
+                        Edit Tool Access
                       </DropdownMenuItem>
-                    ) : (
-                      <DropdownMenuItem onSelect={() => onToggle(s, true)}>
-                        <Power className="h-4 w-4" aria-hidden="true" />
-                        Enable Route
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onSelect={() => onRemove(s)}
+                        style={{ color: "var(--status-error-fg)" }}
+                      >
+                        <Trash2 className="h-4 w-4" aria-hidden="true" />
+                        Remove Route
                       </DropdownMenuItem>
-                    )}
-                    <DropdownMenuItem onSelect={() => onEditFilter(s)}>
-                      <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />
-                      Edit Tool Access
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      onSelect={() => onRemove(s)}
-                      style={{ color: "var(--status-error-fg)" }}
-                    >
-                      <Trash2 className="h-4 w-4" aria-hidden="true" />
-                      Remove Route
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                }
-              />
-            </TableRow>
-          ))
-        )}
-      </TableBody>
-    </Table>
+                    </DropdownMenuContent>
+                  }
+                />
+              </TableRow>
+            ))
+          )}
+        </TableBody>
+      </Table>
+
+      {/* Pagination footer — a profile rarely has >25 routes, but the hook + footer
+          are included for consistency; the footer only shows page controls when useful. */}
+      <TablePagination page={page} pageCount={pageCount} total={total} onPageChange={setPage} />
+    </div>
   )
 }
 
@@ -859,6 +943,44 @@ function ProfileRoutes({
 }
 
 // ---------------------------------------------------------------------------
+// Profile list sort button — compact sort toggle for the <nav> list panel.
+// Not a <table>, so TableHead's button (which sets aria-sort on a <th>) isn't
+// reusable here — aria-sort is only valid on a columnheader/th role. Same
+// chevron affordance, but the accessible state is conveyed via aria-pressed +
+// a direction-aware aria-label instead.
+// ---------------------------------------------------------------------------
+
+interface ProfileListSortButtonProps {
+  readonly label: string
+  readonly direction: SortDirection
+  readonly onClick: () => void
+}
+
+function ProfileListSortButton({ label, direction, onClick }: ProfileListSortButtonProps) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={direction !== "none"}
+      aria-label={`Sort by ${label}${direction === "none" ? "" : `, ${direction}`}`}
+      className="inline-flex items-center gap-1 hover:text-[var(--gray-1000)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue-700)] focus-visible:ring-offset-1 focus-visible:rounded-[var(--radius-6)] cursor-pointer select-none"
+      style={{
+        fontSize: "var(--text-caption)",
+        color: "var(--gray-700)",
+        background: "none",
+        border: "none",
+        padding: "2px 0",
+      }}
+    >
+      {label}
+      <span aria-hidden="true" style={{ flexShrink: 0, opacity: direction === "none" ? 0.4 : 1 }}>
+        {direction === "ascending" ? "↑" : direction === "descending" ? "↓" : "↕"}
+      </span>
+    </button>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Profile list item (left panel row)
 // ---------------------------------------------------------------------------
 
@@ -930,6 +1052,14 @@ function ProfileListItem({ profile, selected, onSelect }: ProfileListItemProps) 
   )
 }
 
+// Sortable "columns" for the profiles list panel — Name (alpha) / Routes (count).
+// The panel itself is a <nav> list (not a <table>), so these drive compact sort
+// buttons above the list rather than TableHead.
+const profileListColumns: TableColumn<ProfileMeta>[] = [
+  { key: "name", compare: (a, b) => a.name.localeCompare(b.name) },
+  { key: "routes", compare: (a, b) => a.sources.length - b.sources.length },
+]
+
 // ---------------------------------------------------------------------------
 // Main page — master-detail layout
 // ---------------------------------------------------------------------------
@@ -947,7 +1077,6 @@ function ProfilesPage() {
   )
   const [createOpen, setCreateOpen] = useState(false)
   const [deletingProfile, setDeletingProfile] = useState<ProfileMeta | null>(null)
-  const [filterQuery, setFilterQuery] = useState("")
   // Hoisted from ProfileDetail so the header-bar buttons and the route table
   // row-actions both share the same dialog state.
   const [addRouteOpen, setAddRouteOpen] = useState(false)
@@ -962,15 +1091,20 @@ function ProfilesPage() {
     [profiles, selectedId],
   )
 
-  const filteredProfiles = useMemo(() => {
-    const q = filterQuery.trim().toLowerCase()
-    if (!q) return profiles
-    return profiles.filter(
-      (p: ProfileMeta) =>
-        p.name.toLowerCase().includes(q) ||
-        p.sources.some((s: SourceMeta) => s.platform.toLowerCase().includes(q)),
-    )
-  }, [profiles, filterQuery])
+  const {
+    search: filterQuery,
+    setSearch: setFilterQuery,
+    toggleSort: toggleProfileSort,
+    sortDirectionFor: profileSortDirectionFor,
+    pageRows: filteredProfiles,
+  } = useTableView<ProfileMeta>({
+    rows: profiles,
+    searchFields: (p) => [p.name, p.id, ...p.sources.map((s) => s.platform)],
+    columns: profileListColumns,
+    // The list panel has no pagination footer (a profile count that large is
+    // unlikely and the panel is a nav, not a table) — pageSize covers all rows.
+    pageSize: Number.MAX_SAFE_INTEGER,
+  })
 
   async function invalidate() {
     await router.invalidate()
@@ -1064,6 +1198,27 @@ function ProfilesPage() {
                   onChange={(e) => setFilterQuery(e.target.value)}
                   aria-label="Filter profiles"
                   style={{ fontSize: "var(--text-caption)" }}
+                />
+              </div>
+
+              {/* Sort controls — the panel is a <nav> list, not a <table>, so these
+                  are compact buttons rather than TableHead. */}
+              <div
+                style={{
+                  display: "flex",
+                  gap: "var(--space-2)",
+                  padding: "0 4px",
+                }}
+              >
+                <ProfileListSortButton
+                  label="Name"
+                  direction={profileSortDirectionFor("name")}
+                  onClick={() => toggleProfileSort("name")}
+                />
+                <ProfileListSortButton
+                  label="Routes"
+                  direction={profileSortDirectionFor("routes")}
+                  onClick={() => toggleProfileSort("routes")}
                 />
               </div>
               <nav aria-label="Profiles">

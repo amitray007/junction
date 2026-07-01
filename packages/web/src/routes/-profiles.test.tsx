@@ -429,4 +429,43 @@ describe("ProfilesPage", () => {
     render(<ProfilesPage />)
     expect(screen.getAllByText("all tools").length).toBeGreaterThanOrEqual(1)
   })
+
+  // ── Route table search + sort (shared useTableView hook) ───────────────────
+
+  it("route table: search input is present and labeled", () => {
+    mockUseLoaderData.mockReturnValue(populatedData)
+    render(<ProfilesPage />)
+    expect(screen.getByRole("searchbox", { name: /search routes/i })).toBeInTheDocument()
+  })
+
+  it("route table: search filters routes by namespace", () => {
+    mockUseLoaderData.mockReturnValue(populatedData)
+    render(<ProfilesPage />)
+
+    const searchInput = screen.getByRole("searchbox", { name: /search routes/i })
+    fireEvent.change(searchInput, { target: { value: "linear" } })
+
+    const rows = screen.getByRole("table").querySelectorAll("tbody tr")
+    expect(rows.length).toBe(1)
+    expect(rows[0]?.textContent).toContain("linear")
+  })
+
+  it("route table: clicking the Namespace header sorts asc then desc", () => {
+    mockUseLoaderData.mockReturnValue(populatedData)
+    render(<ProfilesPage />)
+
+    const namespaceHeader = screen.getByRole("columnheader", { name: "Namespace" })
+    const sortBtn = namespaceHeader.querySelector("button[type='button']") as HTMLElement
+    expect(sortBtn).not.toBeNull()
+
+    fireEvent.click(sortBtn)
+    expect(namespaceHeader.getAttribute("aria-sort")).toBe("ascending")
+    let rows = screen.getByRole("table").querySelectorAll("tbody tr")
+    expect(rows[0]?.textContent).toContain("github")
+
+    fireEvent.click(sortBtn)
+    expect(namespaceHeader.getAttribute("aria-sort")).toBe("descending")
+    rows = screen.getByRole("table").querySelectorAll("tbody tr")
+    expect(rows[0]?.textContent).toContain("linear")
+  })
 })

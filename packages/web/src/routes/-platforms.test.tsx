@@ -191,6 +191,52 @@ describe("PlatformsPage", () => {
     }
   })
 
+  // ── Search + sort (shared useTableView hook) ────────────────────────────────
+
+  it("search input is present and labeled", () => {
+    mockUseLoaderData.mockReturnValue(populatedLoaderData)
+    const { getByRole } = render(<PlatformsPage />)
+    expect(getByRole("searchbox", { name: /search platforms/i })).toBeInTheDocument()
+  })
+
+  it("search filters rows by displayName (case-insensitive)", () => {
+    mockUseLoaderData.mockReturnValue(populatedLoaderData)
+    const { getByRole, queryByText, getByText } = render(<PlatformsPage />)
+    fireEvent.change(getByRole("searchbox", { name: /search platforms/i }), {
+      target: { value: "LINEAR" },
+    })
+    expect(getByText("Linear")).toBeInTheDocument()
+    expect(queryByText("GitHub")).not.toBeInTheDocument()
+  })
+
+  it("search with no match shows the empty-search message", () => {
+    mockUseLoaderData.mockReturnValue(populatedLoaderData)
+    const { getByRole, getByText } = render(<PlatformsPage />)
+    fireEvent.change(getByRole("searchbox", { name: /search platforms/i }), {
+      target: { value: "nonexistent" },
+    })
+    expect(getByText(/no platforms match/i)).toBeInTheDocument()
+  })
+
+  it("clicking the Name column header sorts rows asc then desc", () => {
+    mockUseLoaderData.mockReturnValue(populatedLoaderData)
+    const { getByRole } = render(<PlatformsPage />)
+    const table = getByRole("table")
+    const nameHeaderBtn = table.querySelector("th button[type='button']") as HTMLElement
+    expect(nameHeaderBtn).not.toBeNull()
+
+    fireEvent.click(nameHeaderBtn)
+    const th = nameHeaderBtn.closest("th") as HTMLElement
+    expect(th.getAttribute("aria-sort")).toBe("ascending")
+    let rows = Array.from(table.querySelectorAll("tbody tr"))
+    expect(rows[0]?.textContent).toContain("GitHub")
+
+    fireEvent.click(nameHeaderBtn)
+    expect(th.getAttribute("aria-sort")).toBe("descending")
+    rows = Array.from(table.querySelectorAll("tbody tr"))
+    expect(rows[0]?.textContent).toContain("Linear")
+  })
+
   // ── Add Platform dialog ─────────────────────────────────────────────────────
 
   it("Add Platform dialog: opens and shows kind-specific fields for the default kind (mcp/http)", async () => {

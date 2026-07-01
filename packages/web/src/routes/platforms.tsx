@@ -8,8 +8,10 @@
 
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router"
 import { Plus, RefreshCw, SquarePen, Trash2, X } from "lucide-react"
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
+import type { TableColumn } from "../lib/use-table-view.js"
+import { useTableView } from "../lib/use-table-view.js"
 import { getCredentials, getPlatforms, type PlatformMeta } from "../server/data.functions.js"
 import {
   type AddPlatformInput,
@@ -50,6 +52,7 @@ import {
   TableCell,
   TableHead,
   TableHeader,
+  TablePagination,
   TableRow,
   TableSkeleton,
 } from "../ui/index.js"
@@ -770,6 +773,21 @@ function DeletePlatformDialog({ platform, onOpenChange, onSuccess }: DeletePlatf
 // Main page
 // ---------------------------------------------------------------------------
 
+// Sortable columns for the Platforms table — Connections sorts numerically off
+// the connectionCounts record (not a field on PlatformMeta itself).
+function buildPlatformColumns(
+  connectionCounts: Record<string, number>,
+): TableColumn<PlatformMeta>[] {
+  return [
+    { key: "name", compare: (a, b) => a.displayName.localeCompare(b.displayName) },
+    { key: "kind", compare: (a, b) => a.kind.localeCompare(b.kind) },
+    {
+      key: "connections",
+      compare: (a, b) => (connectionCounts[a.id] ?? 0) - (connectionCounts[b.id] ?? 0),
+    },
+  ]
+}
+
 function PlatformsPage() {
   const { platforms, connectionCounts } = Route.useLoaderData()
   const router = useRouter()
@@ -777,6 +795,23 @@ function PlatformsPage() {
   const [editingPlatform, setEditingPlatform] = useState<PlatformMeta | null>(null)
   const [deletingPlatform, setDeletingPlatform] = useState<PlatformMeta | null>(null)
   const [refreshingId, setRefreshingId] = useState<string | null>(null)
+
+  const columns = useMemo(() => buildPlatformColumns(connectionCounts), [connectionCounts])
+  const {
+    search,
+    setSearch,
+    toggleSort,
+    sortDirectionFor,
+    page,
+    pageCount,
+    setPage,
+    total,
+    pageRows,
+  } = useTableView<PlatformMeta>({
+    rows: platforms,
+    searchFields: (p) => [p.id, p.displayName, p.kind],
+    columns,
+  })
 
   async function invalidate() {
     await router.invalidate()
@@ -823,30 +858,67 @@ function PlatformsPage() {
         }
       />
 
+      {/* Search — labeled for a11y (DESIGN.md: labeled inputs) */}
+      <div style={{ marginBottom: "var(--space-2)" }}>
+        <label
+          htmlFor="platform-search"
+          style={{
+            fontSize: "var(--text-label)",
+            color: "var(--gray-700)",
+            display: "block",
+            marginBottom: "6px",
+          }}
+        >
+          Search
+        </label>
+        <Input
+          id="platform-search"
+          type="search"
+          placeholder="Search platforms…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{ maxWidth: "320px" }}
+          aria-label="Search platforms"
+        />
+      </div>
+
       {/* B3: always render the table — empty state is a full-width row, not bare text */}
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>Name</TableHead>
-            <TableHead>Kind</TableHead>
-            <TableHead>Connections</TableHead>
+            <TableHead sortDirection={sortDirectionFor("name")} onSort={() => toggleSort("name")}>
+              Name
+            </TableHead>
+            <TableHead sortDirection={sortDirectionFor("kind")} onSort={() => toggleSort("kind")}>
+              Kind
+            </TableHead>
+            <TableHead
+              sortDirection={sortDirectionFor("connections")}
+              onSort={() => toggleSort("connections")}
+            >
+              Connections
+            </TableHead>
             {/* Base URL column removed inc 24.6 — always `—` for MCP platforms, pure noise. */}
             <TableActionsHead />
           </TableRow>
         </TableHeader>
         <TableBody>
-          {platforms.length === 0 ? (
+          {total === 0 ? (
             <EmptyTableRow
               colSpan={4}
-              message="No platforms yet."
+              message={
+                search.trim().length > 0 ? "No platforms match your search." : "No platforms yet."
+              }
               action={
-                <span style={{ fontSize: "var(--text-body)", color: "var(--gray-700)" }}>
-                  Use <strong>Add Platform</strong> above.
-                </span>
+                search.trim().length > 0 ? undefined : (
+                  <span style={{ fontSize: "var(--text-body)", color: "var(--gray-700)" }}>
+                    Use <strong>Add Platform</strong> above.
+                  </span>
+                )
               }
             />
           ) : (
-            platforms.map((p: PlatformMeta) => (
+            pageRows.map((p: PlatformMeta) => (
               <TableRow key={p.id}>
                 <TableCell>
                   <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
@@ -906,6 +978,9 @@ function PlatformsPage() {
           )}
         </TableBody>
       </Table>
+
+      {/* Pagination footer — hidden seed sizes here just mean 1 page (correct, not a bug) */}
+      <TablePagination page={page} pageCount={pageCount} total={total} onPageChange={setPage} />
 
       {/* Dialogs — Add and Edit share PlatformDialog (see its header comment). */}
       <PlatformDialog
