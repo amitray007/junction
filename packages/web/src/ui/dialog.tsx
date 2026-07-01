@@ -57,6 +57,14 @@ export function DialogContent({
         className={cn(
           "fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2",
           "w-full max-w-lg",
+          // Bounded height + internal scroll: a tall form (e.g. the CLI guided form
+          // with several tool cards) must not grow past the viewport — an
+          // unbounded DialogContent pushes its top above y=0, and a control near
+          // the bottom then sits outside the dialog's actual clickable/visible
+          // area (a real click there can land on the overlay behind it and close
+          // the dialog). max-h-[85vh] + overflow-y-auto keeps the whole dialog,
+          // including its footer, reachable regardless of content length.
+          "max-h-[85vh] overflow-y-auto",
           "rounded-[var(--radius-12)] border border-[var(--alpha-400)]",
           "bg-[var(--bg-100)]",
           "p-6",

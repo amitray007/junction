@@ -1130,6 +1130,113 @@ describe("repositories", () => {
   })
 
   // ---------------------------------------------------------------------------
+  // profiles.setSourceFilter — edit toolFilter in place (inc 26)
+  // ---------------------------------------------------------------------------
+  describe("profiles.setSourceFilter", () => {
+    async function seedProfileWithSource() {
+      const platformId = newPlatformId()
+      const credId = newCredentialId()
+      const profileId = newProfileId()
+      await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
+      await repos.credentials.create({
+        id: credId,
+        platformId,
+        profileName: "work",
+        kind: "bearer" as const,
+        secretRef: "ref_ssf_test",
+      })
+      await repos.profiles.create({
+        id: profileId,
+        name: "ssf-test",
+        mcpEndpointPath: "/profiles/ssf-test/mcp",
+        sources: [{ platformId, credentialId: credId, toolNamespace: "myns", enabled: true }],
+      })
+      return { profileId, platformId, credId }
+    }
+
+    it("sets an allow-only filter and round-trips it", async () => {
+      const { profileId } = await seedProfileWithSource()
+      const result = await repos.profiles.setSourceFilter(profileId, "myns", {
+        allow: ["list_items", "get_item"],
+      })
+      expect(result.isOk()).toBe(true)
+
+      const fetched = await repos.profiles.get(profileId)
+      expect(fetched.isOk()).toBe(true)
+      if (fetched.isOk()) {
+        expect(fetched.value.sources[0]?.toolFilter).toEqual({ allow: ["list_items", "get_item"] })
+      }
+    })
+
+    it("sets a deny-only filter and round-trips it", async () => {
+      const { profileId } = await seedProfileWithSource()
+      const result = await repos.profiles.setSourceFilter(profileId, "myns", {
+        deny: ["delete_item"],
+      })
+      expect(result.isOk()).toBe(true)
+
+      const fetched = await repos.profiles.get(profileId)
+      expect(fetched.isOk()).toBe(true)
+      if (fetched.isOk()) {
+        expect(fetched.value.sources[0]?.toolFilter).toEqual({ deny: ["delete_item"] })
+      }
+    })
+
+    it("sets both allow and deny and round-trips them", async () => {
+      const { profileId } = await seedProfileWithSource()
+      const result = await repos.profiles.setSourceFilter(profileId, "myns", {
+        allow: ["list_items", "get_item"],
+        deny: ["delete_item"],
+      })
+      expect(result.isOk()).toBe(true)
+
+      const fetched = await repos.profiles.get(profileId)
+      expect(fetched.isOk()).toBe(true)
+      if (fetched.isOk()) {
+        expect(fetched.value.sources[0]?.toolFilter).toEqual({
+          allow: ["list_items", "get_item"],
+          deny: ["delete_item"],
+        })
+      }
+    })
+
+    it("clears an existing filter when called with no toolFilter", async () => {
+      const { profileId } = await seedProfileWithSource()
+      await repos.profiles.setSourceFilter(profileId, "myns", { allow: ["list_items"] })
+
+      const clearResult = await repos.profiles.setSourceFilter(profileId, "myns")
+      expect(clearResult.isOk()).toBe(true)
+
+      const fetched = await repos.profiles.get(profileId)
+      expect(fetched.isOk()).toBe(true)
+      if (fetched.isOk()) {
+        expect(fetched.value.sources[0]?.toolFilter).toBeUndefined()
+      }
+
+      // The raw DB column must be NULL (all tools exposed)
+      const rows = db.all<{ tool_filter: string | null }>(
+        sql`SELECT tool_filter FROM source_refs WHERE profile_id = ${profileId} AND tool_namespace = 'myns'`,
+      )
+      expect(rows[0]?.tool_filter).toBeNull()
+    })
+
+    it("returns not-found for a namespace that does not exist in the profile", async () => {
+      const { profileId } = await seedProfileWithSource()
+      const result = await repos.profiles.setSourceFilter(profileId, "ghost", {
+        allow: ["x"],
+      })
+      expect(result.isErr()).toBe(true)
+      if (result.isErr()) {
+        expect(result.error.kind).toBe("not-found")
+        if (result.error.kind === "not-found") {
+          expect(result.error.entity).toBe("source")
+          expect(result.error.id).toBe("ghost")
+        }
+      }
+    })
+  })
+
+  // ---------------------------------------------------------------------------
   // addCredential helper — secrets-as-references (inc 10)
   // ---------------------------------------------------------------------------
   describe("addCredential — secrets-as-references (security.md)", () => {

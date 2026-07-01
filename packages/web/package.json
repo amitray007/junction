@@ -6,6 +6,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev",
+    "clean:stale-js": "find src -name '*.js' ! -name 'entry-server.js' ! -name 'entry-client.js' -delete",
+    "prebuild": "pnpm run clean:stale-js",
     "build": "vite build",
     "start": "node serve.mjs",
     "typecheck": "tsr generate && tsc --noEmit",
@@ -16,6 +18,7 @@
   },
   "dependencies": {
     "@junction/core": "workspace:*",
+    "@junction/platform-orchestration": "workspace:*",
     "@radix-ui/react-checkbox": "^1.3.6",
     "@radix-ui/react-dialog": "^1.1.18",
     "@radix-ui/react-dropdown-menu": "^2.1.19",
@@ -31,6 +34,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.22.0",
+    "neverthrow": "catalog:",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "sonner": "^2.0.7",

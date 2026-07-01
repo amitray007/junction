@@ -81,6 +81,7 @@ const mockDeleteProfileFn = vi.fn()
 const mockAddRouteFn = vi.fn()
 const mockRemoveRouteFn = vi.fn()
 const mockToggleRouteFn = vi.fn()
+const mockSetRouteFilterFn = vi.fn()
 
 vi.mock("../server/profile-mutations.functions.js", () => ({
   createProfileFn: (...args: unknown[]) => mockCreateProfileFn(...args),
@@ -88,6 +89,7 @@ vi.mock("../server/profile-mutations.functions.js", () => ({
   addRouteFn: (...args: unknown[]) => mockAddRouteFn(...args),
   removeRouteFn: (...args: unknown[]) => mockRemoveRouteFn(...args),
   toggleRouteFn: (...args: unknown[]) => mockToggleRouteFn(...args),
+  setRouteFilterFn: (...args: unknown[]) => mockSetRouteFilterFn(...args),
 }))
 
 const { Route } = await import("./profiles.js")
@@ -104,6 +106,7 @@ afterEach(() => {
   mockAddRouteFn.mockReset()
   mockRemoveRouteFn.mockReset()
   mockToggleRouteFn.mockReset()
+  mockSetRouteFilterFn.mockReset()
   mockInvalidate.mockReset().mockResolvedValue(undefined)
 })
 
@@ -137,26 +140,29 @@ describe("ProfilesPage", () => {
     expect(screen.getByRole("button", { name: /readonly/i })).toBeInTheDocument()
   })
 
-  it("selects first profile by default and shows its detail (F13)", () => {
+  it("selects first profile by default (F13)", () => {
     mockUseLoaderData.mockReturnValue(populatedData)
     render(<ProfilesPage />)
-    // The first profile's name appears in the detail heading (h2)
-    expect(screen.getByRole("heading", { level: 2, name: "default" })).toBeInTheDocument()
+    // Selection is shown by aria-current on the left-list item (no detail h2 anymore).
+    expect(screen.getByRole("button", { name: /default/i })).toHaveAttribute("aria-current", "page")
   })
 
-  it("clicking a profile list item switches the detail panel (selection behavior)", async () => {
+  it("clicking a profile list item switches the selection", async () => {
     mockUseLoaderData.mockReturnValue(populatedData)
     render(<ProfilesPage />)
 
     // Initially "default" is selected
-    expect(screen.getByRole("heading", { level: 2, name: "default" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /default/i })).toHaveAttribute("aria-current", "page")
 
     // Click the "readonly" list item
     fireEvent.click(screen.getByRole("button", { name: /readonly/i }))
 
-    // Detail panel switches to "readonly"
+    // Selection moves to "readonly"
     await waitFor(() =>
-      expect(screen.getByRole("heading", { level: 2, name: "readonly" })).toBeInTheDocument(),
+      expect(screen.getByRole("button", { name: /readonly/i })).toHaveAttribute(
+        "aria-current",
+        "page",
+      ),
     )
   })
 
@@ -208,13 +214,6 @@ describe("ProfilesPage", () => {
     expect(screen.queryByText("/profiles/readonly/mcp")).not.toBeInTheDocument()
   })
 
-  it("shows CLI serve command (single-endpoint model) in detail panel", () => {
-    mockUseLoaderData.mockReturnValue(populatedData)
-    render(<ProfilesPage />)
-    // CLI serve command — the correct no-HTTP affordance
-    expect(screen.getByText(/junction mcp serve --profile default/)).toBeInTheDocument()
-  })
-
   it("shows Add Route button in detail panel", () => {
     mockUseLoaderData.mockReturnValue(populatedData)
     render(<ProfilesPage />)
@@ -254,10 +253,10 @@ describe("ProfilesPage", () => {
     mockUseLoaderData.mockReturnValue(populatedData)
     render(<ProfilesPage />)
 
-    // Initially "default" (first profile) is selected
-    expect(screen.getByRole("heading", { level: 2, name: "default" })).toBeInTheDocument()
+    // Initially "default" (first profile) is selected (aria-current on the list item)
+    expect(screen.getByRole("button", { name: /default/i })).toHaveAttribute("aria-current", "page")
 
-    // Click Delete button in the detail panel
+    // Click Delete button in the route-table toolbar
     const deleteBtn = screen.getByRole("button", { name: /^delete$/i })
     fireEvent.click(deleteBtn)
 
@@ -269,7 +268,10 @@ describe("ProfilesPage", () => {
 
     // Selection must still be "default" — NOT jumped to another profile
     await waitFor(() =>
-      expect(screen.getByRole("heading", { level: 2, name: "default" })).toBeInTheDocument(),
+      expect(screen.getByRole("button", { name: /default/i })).toHaveAttribute(
+        "aria-current",
+        "page",
+      ),
     )
     // invalidate must NOT have been called (no mutation happened)
     expect(mockInvalidate).not.toHaveBeenCalled()
@@ -393,5 +395,76 @@ describe("ProfilesPage", () => {
 
     await waitFor(() => expect(screen.getByText("Platform is required")).toBeInTheDocument())
     expect(mockAddRouteFn).not.toHaveBeenCalled()
+  })
+
+  // ── Edit Tool Access — in-place filter editing (inc 26 slice D) ────────────
+  //
+  // happy-dom limitation (see -credentials.test.tsx): Radix DropdownMenu's Portal
+  // content does not open via fireEvent.click in happy-dom, so the ⋯ menu → "Edit
+  // Tool Access" click path can't be driven here. The trigger's presence/labelling
+  // is asserted below. The mutation itself (setRouteFilter set/clear/round-trip) is
+  // covered at the server layer in profile-mutations.server.test.ts, and the full
+  // open→edit→submit→persist UI path by the junction-web-verify browser pass.
+
+  it("row action trigger is present for each route (reachable to open Edit Tool Access)", () => {
+    mockUseLoaderData.mockReturnValue(populatedData)
+    render(<ProfilesPage />)
+    const actionButtons = screen.getAllByRole("button", { name: /row actions/i })
+    // "default" profile (selected by default) has 2 sources
+    expect(actionButtons.length).toBe(2)
+    for (const btn of actionButtons) {
+      expect(btn.getAttribute("aria-haspopup")).toBe("menu")
+    }
+  })
+
+  it("does NOT render the '(read-only)' filter hint (edit is now in-place)", () => {
+    mockUseLoaderData.mockReturnValue(populatedData)
+    render(<ProfilesPage />)
+    expect(screen.queryByText("(read-only)")).not.toBeInTheDocument()
+  })
+
+  it("filter cell shows 'all tools' for a source without a toolFilter", () => {
+    mockUseLoaderData.mockReturnValue(populatedData)
+    render(<ProfilesPage />)
+    expect(screen.getAllByText("all tools").length).toBeGreaterThanOrEqual(1)
+  })
+
+  // ── Route table search + sort (shared useTableView hook) ───────────────────
+
+  it("route table: search input is present and labeled", () => {
+    mockUseLoaderData.mockReturnValue(populatedData)
+    render(<ProfilesPage />)
+    expect(screen.getByRole("searchbox", { name: /search routes/i })).toBeInTheDocument()
+  })
+
+  it("route table: search filters routes by namespace", () => {
+    mockUseLoaderData.mockReturnValue(populatedData)
+    render(<ProfilesPage />)
+
+    const searchInput = screen.getByRole("searchbox", { name: /search routes/i })
+    fireEvent.change(searchInput, { target: { value: "linear" } })
+
+    const rows = screen.getByRole("table").querySelectorAll("tbody tr")
+    expect(rows.length).toBe(1)
+    expect(rows[0]?.textContent).toContain("linear")
+  })
+
+  it("route table: clicking the Namespace header sorts asc then desc", () => {
+    mockUseLoaderData.mockReturnValue(populatedData)
+    render(<ProfilesPage />)
+
+    const namespaceHeader = screen.getByRole("columnheader", { name: "Namespace" })
+    const sortBtn = namespaceHeader.querySelector("button[type='button']") as HTMLElement
+    expect(sortBtn).not.toBeNull()
+
+    fireEvent.click(sortBtn)
+    expect(namespaceHeader.getAttribute("aria-sort")).toBe("ascending")
+    let rows = screen.getByRole("table").querySelectorAll("tbody tr")
+    expect(rows[0]?.textContent).toContain("github")
+
+    fireEvent.click(sortBtn)
+    expect(namespaceHeader.getAttribute("aria-sort")).toBe("descending")
+    rows = screen.getByRole("table").querySelectorAll("tbody tr")
+    expect(rows[0]?.textContent).toContain("linear")
   })
 })

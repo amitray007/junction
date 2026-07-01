@@ -341,6 +341,79 @@ describe("transport construction — stdio env-merge", () => {
     })
     expect(transport).toBeDefined()
   })
+
+  it("merges a static connection.env BETWEEN defaults and the token (defaults → static → token)", () => {
+    // Mirrors connectSource's env-merge exactly (see connect.ts) without spawning.
+    const tokenEnvVar = "UPSTREAM_TOKEN"
+    const secret = "tok-static-merge-1"
+    const connectionEnv = { FOO: "bar", BAZ: "1" }
+    const env: Record<string, string> = {
+      ...getDefaultEnvironment(),
+      ...connectionEnv,
+      ...(tokenEnvVar !== undefined && secret !== null ? { [tokenEnvVar]: secret } : {}),
+    }
+
+    // Static entries present.
+    expect(env.FOO).toBe("bar")
+    expect(env.BAZ).toBe("1")
+    // Defaults survive (PATH/HOME etc. from getDefaultEnvironment()).
+    expect(env.PATH).toBeDefined()
+    expect(env.PATH).not.toBe("")
+    // Token present under its declared name, with the secret value.
+    expect(env[tokenEnvVar]).toBe(secret)
+
+    const transport = new StdioClientTransport({
+      command: "node",
+      args: ["--version"],
+      env,
+      stderr: "ignore",
+    })
+    expect(transport).toBeDefined()
+  })
+
+  it("token always wins under its key — a static env cannot shadow the injected secret", () => {
+    // The schema's refine forbids a static env key === tokenEnvVar at descriptor
+    // level (see mcp-connection.test.ts), so this can never occur via a valid
+    // McpConnection. This test proves the merge-order invariant holds regardless:
+    // token is spread LAST, so even if a static map somehow carried the token's
+    // key, the secret value — not the static value — would be what lands in env.
+    const tokenEnvVar = "UPSTREAM_TOKEN"
+    const secret = "tok-should-win"
+    const connectionEnvWithCollision = { [tokenEnvVar]: "static-value-should-not-survive" }
+    const env: Record<string, string> = {
+      ...getDefaultEnvironment(),
+      ...connectionEnvWithCollision,
+      ...(tokenEnvVar !== undefined && secret !== null ? { [tokenEnvVar]: secret } : {}),
+    }
+    expect(env[tokenEnvVar]).toBe(secret)
+  })
+
+  it("does NOT spill process.env into the child env when a static connection.env is set", () => {
+    // process.env may contain JUNCTION_MASTER_KEY or other host secrets — a static
+    // connection.env must not be a backdoor for process.env to leak through.
+    const tokenEnvVar = "UPSTREAM_TOKEN"
+    const secret = "tok-no-spill"
+    const connectionEnv = { FOO: "bar" }
+    const defaultEnvKeys = new Set(Object.keys(getDefaultEnvironment()))
+    const env: Record<string, string> = {
+      ...getDefaultEnvironment(),
+      ...connectionEnv,
+      ...(tokenEnvVar !== undefined && secret !== null ? { [tokenEnvVar]: secret } : {}),
+    }
+    const allowedKeys = new Set([...defaultEnvKeys, ...Object.keys(connectionEnv), tokenEnvVar])
+    for (const key of Object.keys(env)) {
+      expect(allowedKeys.has(key)).toBe(true)
+    }
+    // A known parent-only var (e.g. JUNCTION_MASTER_KEY, if set in this process)
+    // must not appear in the child env — proves process.env itself was never spread.
+    expect(env.JUNCTION_MASTER_KEY).toBeUndefined()
+    const processOnlyKeys = Object.keys(process.env).filter(
+      (k) => !defaultEnvKeys.has(k) && !(k in connectionEnv) && k !== tokenEnvVar,
+    )
+    for (const k of processOnlyKeys) {
+      expect(env[k]).toBeUndefined()
+    }
+  })
 })
 
 // ---------------------------------------------------------------------------

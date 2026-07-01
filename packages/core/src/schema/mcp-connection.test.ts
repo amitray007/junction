@@ -132,6 +132,100 @@ describe("McpConnectionSchema", () => {
       const result = McpConnectionSchema.safeParse({ transport: "stdio", command: "" })
       expect(result.success).toBe(false)
     })
+
+    it("parses a stdio connection with a static env map", () => {
+      const result = McpConnectionSchema.safeParse({
+        transport: "stdio",
+        command: "npx",
+        env: { NODE_ENV: "production", GH_HOST: "github.example.com" },
+      })
+      expect(result.success).toBe(true)
+      if (result.success && result.data.transport === "stdio") {
+        expect(result.data.env).toEqual({
+          NODE_ENV: "production",
+          GH_HOST: "github.example.com",
+        })
+      }
+    })
+
+    it("parses a stdio connection WITHOUT env (backward-compat)", () => {
+      const result = McpConnectionSchema.safeParse({
+        transport: "stdio",
+        command: "npx",
+        args: ["-y", "@modelcontextprotocol/server-example"],
+        tokenEnvVar: "MCP_TOKEN",
+      })
+      expect(result.success).toBe(true)
+      if (result.success && result.data.transport === "stdio") {
+        expect(result.data.env).toBeUndefined()
+      }
+    })
+
+    it("rejects an env key that is not a valid env-var identifier", () => {
+      const result = McpConnectionSchema.safeParse({
+        transport: "stdio",
+        command: "npx",
+        env: { "not-a-valid-name": "x" },
+      })
+      expect(result.success).toBe(false)
+    })
+
+    it("rejects an env key equal to tokenEnvVar (would shadow the credential slot)", () => {
+      const result = McpConnectionSchema.safeParse({
+        transport: "stdio",
+        command: "npx",
+        tokenEnvVar: "GITHUB_TOKEN",
+        env: { GITHUB_TOKEN: "static-value" },
+      })
+      expect(result.success).toBe(false)
+    })
+
+    it("rejects an env key of JUNCTION_MASTER_KEY", () => {
+      const result = McpConnectionSchema.safeParse({
+        transport: "stdio",
+        command: "npx",
+        env: { JUNCTION_MASTER_KEY: "x" },
+      })
+      expect(result.success).toBe(false)
+    })
+
+    it("rejects an env key of JUNCTION_MASTER_KEY_FILE", () => {
+      const result = McpConnectionSchema.safeParse({
+        transport: "stdio",
+        command: "npx",
+        env: { JUNCTION_MASTER_KEY_FILE: "/path" },
+      })
+      expect(result.success).toBe(false)
+    })
+
+    // SECURITY: the stdio child is unsandboxed — dynamic-linker / interpreter env
+    // names must be rejected (a pasted config could run code in the child).
+    it.each([
+      "LD_PRELOAD",
+      "LD_LIBRARY_PATH",
+      "LD_AUDIT",
+      "NODE_OPTIONS",
+      "DYLD_INSERT_LIBRARIES",
+      "DYLD_LIBRARY_PATH",
+      "ld_preload", // case-insensitive
+      "Node_Options",
+    ])("rejects a dangerous interpreter/linker env key: %s", (key) => {
+      const result = McpConnectionSchema.safeParse({
+        transport: "stdio",
+        command: "npx",
+        env: { [key]: "anything" },
+      })
+      expect(result.success).toBe(false)
+    })
+
+    it("ACCEPTS PATH and HOME overrides (dual-use, intentionally not blocked)", () => {
+      const result = McpConnectionSchema.safeParse({
+        transport: "stdio",
+        command: "npx",
+        env: { PATH: "/opt/toolchain/bin:/usr/bin", HOME: "/alt/home" },
+      })
+      expect(result.success).toBe(true)
+    })
   })
 
   it("rejects unknown transport (discriminated union is strict)", () => {

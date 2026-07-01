@@ -14,6 +14,7 @@ import {
   mutateCreateProfile,
   mutateDeleteProfile,
   mutateRemoveRoute,
+  mutateSetRouteFilter,
   mutateToggleRoute,
 } from "./profile-mutations.server.js"
 
@@ -195,6 +196,61 @@ describe("profile-mutations.server", () => {
 
       const enable = await mutateToggleRoute(created.id, "tns", true)
       expect(enable.ok).toBe(true)
+    })
+  })
+
+  describe("mutateSetRouteFilter", () => {
+    it("returns not-found for a namespace that does not exist", async () => {
+      const created = await mutateCreateProfile("filter-notfound")
+      if (!created.ok) throw new Error("create failed")
+      const result = await mutateSetRouteFilter(created.id, "nons", { allow: ["a"] })
+      expect(result.ok).toBe(false)
+    })
+
+    it("sets an allow filter on an existing route and it round-trips via getByName", async () => {
+      const created = await mutateCreateProfile("filter-set")
+      if (!created.ok) throw new Error("create failed")
+
+      const repos = await makeRepos(tmpHome)
+      const platformId = newPlatformId()
+      await repos.platforms.create({ id: platformId, kind: "mcp", displayName: "T" })
+      await mutateAddRoute({
+        profileId: created.id,
+        platformId: String(platformId),
+        namespace: "fns",
+      })
+
+      const result = await mutateSetRouteFilter(created.id, "fns", { allow: ["list_repos"] })
+      expect(result.ok).toBe(true)
+
+      const profile = await repos.profiles.getByName("filter-set")
+      expect(profile.isOk()).toBe(true)
+      if (!profile.isOk()) throw new Error("expected ok")
+      const source = profile.value.sources.find((s) => s.toolNamespace === "fns")
+      expect(source?.toolFilter?.allow).toEqual(["list_repos"])
+    })
+
+    it("clears a filter when toolFilter is undefined", async () => {
+      const created = await mutateCreateProfile("filter-clear")
+      if (!created.ok) throw new Error("create failed")
+
+      const repos = await makeRepos(tmpHome)
+      const platformId = newPlatformId()
+      await repos.platforms.create({ id: platformId, kind: "mcp", displayName: "T" })
+      await mutateAddRoute({
+        profileId: created.id,
+        platformId: String(platformId),
+        namespace: "cns",
+      })
+
+      await mutateSetRouteFilter(created.id, "cns", { deny: ["dangerous_tool"] })
+      const cleared = await mutateSetRouteFilter(created.id, "cns", undefined)
+      expect(cleared.ok).toBe(true)
+
+      const profile = await repos.profiles.getByName("filter-clear")
+      if (!profile.isOk()) throw new Error("expected ok")
+      const source = profile.value.sources.find((s) => s.toolNamespace === "cns")
+      expect(source?.toolFilter).toBeUndefined()
     })
   })
 

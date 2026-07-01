@@ -8,8 +8,10 @@
 
 import { createFileRoute, useRouter } from "@tanstack/react-router"
 import { Plus, RefreshCw, Trash2 } from "lucide-react"
-import { useMemo, useState } from "react"
+import { useCallback, useMemo, useState } from "react"
 import { toast } from "sonner"
+import type { TableColumn } from "../lib/use-table-view.js"
+import { useTableView } from "../lib/use-table-view.js"
 import type { CredentialMeta, PlatformMeta } from "../server/data.functions.js"
 import { getCredentials, getPlatforms } from "../server/data.functions.js"
 import {
@@ -31,6 +33,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   EmptyTableRow,
+  FacetSelect,
   Field,
   Input,
   PageHeader,
@@ -396,9 +399,6 @@ function DeleteCredentialDialog({ credential, onOpenChange, onSuccess }: DeleteD
 // This is documented here so the behavior is predictable and easy to extend.
 // ---------------------------------------------------------------------------
 
-type SortKey = "platform" | "account" | "none"
-type SortDir = "ascending" | "descending"
-
 interface FlatTableProps {
   readonly credentials: CredentialMeta[]
   readonly platforms: PlatformMeta[]
@@ -410,6 +410,10 @@ interface FlatTableProps {
 
 // Exported for direct unit testing of the search/sort/pagination logic (the
 // pageSize prop lets a test exercise a real second page without 25+ fixtures).
+// Facet filter sentinel — "all" clears that facet (composes as AND across
+// platform/account/kind + the search box, via useTableView's predicate).
+const ALL_FILTER = "all"
+
 export function FlatCredentialsTable({
   credentials,
   platforms,
@@ -417,78 +421,96 @@ export function FlatCredentialsTable({
   onDelete,
   pageSize = PAGE_SIZE,
 }: FlatTableProps) {
-  const [search, setSearch] = useState("")
-  const [sortKey, setSortKey] = useState<SortKey>("none")
-  const [sortDir, setSortDir] = useState<SortDir>("ascending")
-  const [page, setPage] = useState(1)
-
   // Build a lookup from platformId → PlatformMeta for display names and kinds.
   const platformMap = useMemo(
     () => new Map<string, PlatformMeta>(platforms.map((p) => [p.id, p])),
     [platforms],
   )
 
-  // Filter by search query (case-insensitive substring over id, account, platform name).
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    if (!q) return credentials
-    return credentials.filter((c) => {
-      const displayName = platformMap.get(c.platformId)?.displayName ?? c.platformId
-      return (
-        c.id.toLowerCase().includes(q) ||
-        c.account.toLowerCase().includes(q) ||
-        displayName.toLowerCase().includes(q) ||
-        c.platformId.toLowerCase().includes(q)
-      )
-    })
-  }, [credentials, platformMap, search])
+  const [platformFilter, setPlatformFilter] = useState(ALL_FILTER)
+  const [accountFilter, setAccountFilter] = useState(ALL_FILTER)
+  const [kindFilter, setKindFilter] = useState(ALL_FILTER)
 
-  // Sort. When sorted by Account, drop group dividers (flatten).
-  // When sorted by Platform or unsorted, keep platform grouping.
-  const { sorted, grouped } = useMemo(() => {
-    const isByAccount = sortKey === "account"
-    const isByPlatform = sortKey === "platform"
-
-    const items = [...filtered]
-    if (isByAccount) {
-      items.sort((a, b) => {
-        const cmp = a.account.localeCompare(b.account)
-        return sortDir === "ascending" ? cmp : -cmp
-      })
-      return { sorted: items, grouped: false }
+  // Distinct facet options derived from the actual credentials present (not
+  // hardcoded — Platform/Account naturally vary per install; Kind is currently
+  // single-valued ("bearer") but derived the same way for when that changes).
+  const platformOptions = useMemo(() => {
+    const seen = new Map<string, string>() // platformId -> displayName
+    for (const c of credentials) {
+      if (!seen.has(c.platformId)) {
+        seen.set(c.platformId, platformMap.get(c.platformId)?.displayName ?? c.platformId)
+      }
     }
+    return Array.from(seen.entries()).sort((a, b) => a[1].localeCompare(b[1]))
+  }, [credentials, platformMap])
 
-    if (isByPlatform) {
-      items.sort((a, b) => {
-        const aN = platformMap.get(a.platformId)?.displayName ?? a.platformId
-        const bN = platformMap.get(b.platformId)?.displayName ?? b.platformId
-        const cmp = aN.localeCompare(bN)
-        return sortDir === "ascending" ? cmp : -cmp
-      })
-    }
-    // else: preserve loader order (already grouped by platform)
-    return { sorted: items, grouped: true }
-  }, [filtered, sortKey, sortDir, platformMap])
+  const accountOptions = useMemo(
+    () => Array.from(new Set(credentials.map((c) => c.account))).sort((a, b) => a.localeCompare(b)),
+    [credentials],
+  )
 
-  // Pagination — page resets when search/sort changes.
-  const pageCount = Math.max(1, Math.ceil(sorted.length / pageSize))
-  const clampedPage = Math.min(page, pageCount)
-  const pageStart = (clampedPage - 1) * pageSize
-  const pageSlice = sorted.slice(pageStart, pageStart + pageSize)
+  const kindOptions = useMemo(
+    () => Array.from(new Set(credentials.map((c) => c.kind))).sort((a, b) => a.localeCompare(b)),
+    [credentials],
+  )
 
-  function handleSort(key: SortKey) {
-    if (sortKey === key) {
-      setSortDir((d) => (d === "ascending" ? "descending" : "ascending"))
-    } else {
-      setSortKey(key)
-      setSortDir("ascending")
-    }
-    setPage(1)
-  }
+  const predicate = useCallback(
+    (c: CredentialMeta) =>
+      (platformFilter === ALL_FILTER || c.platformId === platformFilter) &&
+      (accountFilter === ALL_FILTER || c.account === accountFilter) &&
+      (kindFilter === ALL_FILTER || c.kind === kindFilter),
+    [platformFilter, accountFilter, kindFilter],
+  )
 
-  function handleSearch(q: string) {
-    setSearch(q)
-    setPage(1)
+  // Sortable columns — Platform sorts by the joined display name; Account by the
+  // credential's own field. Kept in a ref-stable array via useMemo on platformMap.
+  const columns: TableColumn<CredentialMeta>[] = useMemo(
+    () => [
+      {
+        key: "platform",
+        compare: (a, b) => {
+          const aN = platformMap.get(a.platformId)?.displayName ?? a.platformId
+          const bN = platformMap.get(b.platformId)?.displayName ?? b.platformId
+          return aN.localeCompare(bN)
+        },
+      },
+      { key: "account", compare: (a, b) => a.account.localeCompare(b.account) },
+    ],
+    [platformMap],
+  )
+
+  const {
+    search,
+    setSearch,
+    sortKey,
+    toggleSort,
+    sortDirectionFor,
+    page,
+    pageCount,
+    setPage,
+    total,
+    pageRows: pageSlice,
+    filteredSortedRows: sorted,
+  } = useTableView<CredentialMeta>({
+    rows: credentials,
+    searchFields: (c) => [
+      c.id,
+      c.account,
+      c.platformId,
+      platformMap.get(c.platformId)?.displayName,
+    ],
+    columns,
+    pageSize,
+    predicate,
+  })
+
+  // Group dividers stay ONLY when unsorted or sorted-by-platform; sorting by
+  // Account flattens the list (dropping dividers) — same behavior as before the
+  // useTableView refactor, now derived from the hook's sortKey/pageRows.
+  const grouped = sortKey !== "account"
+
+  function handleSort(key: "platform" | "account") {
+    toggleSort(key)
   }
 
   // Build the row content. When grouped, insert a TableGroupRow before the first
@@ -522,31 +544,49 @@ export function FlatCredentialsTable({
     return counts
   }, [sorted])
 
-  const isEmptySearch = sorted.length === 0 && search.trim().length > 0
+  const isEmptySearch =
+    total === 0 &&
+    (search.trim().length > 0 ||
+      platformFilter !== ALL_FILTER ||
+      accountFilter !== ALL_FILTER ||
+      kindFilter !== ALL_FILTER)
 
   return (
     <div className="flex flex-col gap-3">
-      {/* Search input — labeled for a11y (DESIGN.md: labeled inputs) */}
-      <div>
-        <label
-          htmlFor="cred-search"
-          style={{
-            fontSize: "var(--text-label)",
-            color: "var(--gray-700)",
-            display: "block",
-            marginBottom: "6px",
-          }}
-        >
-          Search
-        </label>
+      {/* Search + Platform/Account/Kind facet filters — row, composes as AND. */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-2)" }}>
         <Input
           id="cred-search"
           type="search"
           placeholder="Filter by platform, account, or ID"
           value={search}
-          onChange={(e) => handleSearch(e.target.value)}
+          onChange={(e) => setSearch(e.target.value)}
           style={{ maxWidth: "320px" }}
           aria-label="Search credentials"
+        />
+        <FacetSelect
+          ariaLabel="Filter by platform"
+          allLabel="All platforms"
+          allValue={ALL_FILTER}
+          value={platformFilter}
+          onValueChange={setPlatformFilter}
+          options={platformOptions.map(([id, displayName]) => ({ value: id, label: displayName }))}
+        />
+        <FacetSelect
+          ariaLabel="Filter by account"
+          allLabel="All accounts"
+          allValue={ALL_FILTER}
+          value={accountFilter}
+          onValueChange={setAccountFilter}
+          options={accountOptions.map((account) => ({ value: account }))}
+        />
+        <FacetSelect
+          ariaLabel="Filter by kind"
+          allLabel="All kinds"
+          allValue={ALL_FILTER}
+          value={kindFilter}
+          onValueChange={setKindFilter}
+          options={kindOptions.map((kind) => ({ value: kind }))}
         />
       </div>
 
@@ -556,13 +596,13 @@ export function FlatCredentialsTable({
             <TableRow>
               <TableHead>ID</TableHead>
               <TableHead
-                sortDirection={sortKey === "platform" ? sortDir : "none"}
+                sortDirection={sortDirectionFor("platform")}
                 onSort={() => handleSort("platform")}
               >
                 Platform
               </TableHead>
               <TableHead
-                sortDirection={sortKey === "account" ? sortDir : "none"}
+                sortDirection={sortDirectionFor("account")}
                 onSort={() => handleSort("account")}
               >
                 Account
@@ -573,7 +613,7 @@ export function FlatCredentialsTable({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {sorted.length === 0 ? (
+            {total === 0 ? (
               <EmptyTableRow
                 colSpan={COL_COUNT}
                 message={
@@ -649,12 +689,7 @@ export function FlatCredentialsTable({
         </Table>
 
         {/* Pagination footer — always rendered so the control is present even with 1 page */}
-        <TablePagination
-          page={clampedPage}
-          pageCount={pageCount}
-          total={sorted.length}
-          onPageChange={setPage}
-        />
+        <TablePagination page={page} pageCount={pageCount} total={total} onPageChange={setPage} />
       </div>
     </div>
   )

@@ -50,6 +50,12 @@
   --blue-700: #0072f5;        /* focus ring, links */
   --blue-text: #0068d6;       /* namespace chips, endpoint, syntax keys */
   --blue-bg: #f0f7ff;         /* namespace/endpoint chip background */
+  /* Focus: a subtle soft ring for text controls — the border shifts to the
+     accent + a low-alpha glow (no harsh 2px offset ring). --focus-ring is the
+     box-shadow glow; --focus-border is the accent the border takes on focus. */
+  --focus-ring: rgba(0, 114, 245, 0.25);
+  --focus-border: #0072f5;
+  --focus-ring-error: rgba(229, 72, 77, 0.22);   /* error-state focus glow */
 
   /* ── Status — named pairs (components use var(--status-*-fg) only) ───── */
   /* configured: stored but not live-probed (inc 23–27 default) */
@@ -164,6 +170,9 @@ html[data-sidebar="collapsed"] {
     --blue-700: #3b9eff;
     --blue-text: #6cb6ff;
     --blue-bg: #0f1b2d;
+    --focus-ring: rgba(59, 158, 255, 0.30);
+    --focus-border: #3b9eff;
+    --focus-ring-error: rgba(255, 97, 102, 0.28);
 
     --status-configured-fg: #a0a0a0;  /* = --gray-900 in dark */
     --status-ok-fg: #62c073;

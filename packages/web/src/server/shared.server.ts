@@ -5,7 +5,7 @@
 // This module holds the single process-lifetime cache keyed by JUNCTION_HOME.
 // Imported by data.server.ts and mutations.server.ts — never by client modules.
 
-import { type Db, getDatabase, getPaths } from "@junction/core"
+import { createRepositories, type Db, getDatabase, getPaths } from "@junction/core"
 
 // Keyed by home path: prod has one fixed JUNCTION_HOME → one cached connection
 // reused for the server's lifetime; keying (rather than a single global) also
@@ -34,4 +34,20 @@ export function getDb(): Promise<Db | null> {
   })()
   dbCache.set(home, created)
   return created
+}
+
+/**
+ * Open the memoized DB, build the repositories, and run `fn` against them.
+ * Throws "Database unavailable" if the connection can't be opened — mutation
+ * handlers surface that as an error result. Shared by the profile + platform
+ * mutation helpers (the throw-on-null flavor); `data.server.ts` uses a
+ * fallback-returning variant and `mutations.server.ts` a store-bearing one,
+ * which differ enough to stay local.
+ */
+export async function withRepos<T>(
+  fn: (repos: ReturnType<typeof createRepositories>) => Promise<T>,
+): Promise<T> {
+  const db = await getDb()
+  if (db === null) throw new Error("Database unavailable")
+  return fn(createRepositories(db))
 }

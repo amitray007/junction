@@ -6,6 +6,20 @@
 
 import { z } from "zod"
 
+/**
+ * Env-var names forbidden in an operator-declared stdio `env` map because they
+ * hijack the dynamic linker or the interpreter runtime of the (UNSANDBOXED) MCP
+ * child → arbitrary code execution. Checked uppercase; `DYLD_*` is matched by
+ * prefix separately. PATH/HOME are intentionally NOT here (dual-use, grant nothing
+ * beyond the operator-declared command). See the stdio-env refine below.
+ */
+const INTERPRETER_ENV_DENYLIST = new Set([
+  "LD_PRELOAD",
+  "LD_LIBRARY_PATH",
+  "LD_AUDIT",
+  "NODE_OPTIONS",
+])
+
 // ---------------------------------------------------------------------------
 // McpConnectionSchema
 // ---------------------------------------------------------------------------
@@ -45,14 +59,63 @@ export const McpConnectionSchema = z.discriminatedUnion("transport", [
    * command: executable to run (e.g. "npx", "uvx", "/usr/local/bin/my-mcp").
    * args: arguments passed to the command (default []).
    * tokenEnvVar: environment variable the bearer token is injected into (optional).
+   * env: operator-declared static environment variables (optional, non-secret).
    */
-  z.object({
-    transport: z.literal("stdio"),
-    command: z.string().min(1),
-    args: z.array(z.string()).default([]),
-    /** Env-var name the bearer token is injected into (e.g. "GITHUB_TOKEN"). */
-    tokenEnvVar: z.string().min(1).optional(),
-  }),
+  z
+    .object({
+      transport: z.literal("stdio"),
+      command: z.string().min(1),
+      args: z.array(z.string()).default([]),
+      /** Env-var name the bearer token is injected into (e.g. "GITHUB_TOKEN"). */
+      tokenEnvVar: z.string().min(1).optional(),
+      /**
+       * Operator-declared static environment variables passed to the child MCP server
+       * (e.g. { NODE_ENV: "production", GH_HOST: "github.example.com" }). These are
+       * NON-SECRET config — the credential secret still rides ONLY in tokenEnvVar.
+       * Keys must be valid env-var identifiers. Merged into the controlled child env
+       * AFTER getDefaultEnvironment() and BEFORE the tokenEnvVar injection, so a static
+       * entry can neither overwrite the injected credential nor is it allowed to clobber
+       * the credential key (see connect.ts).
+       */
+      env: z
+        .record(
+          z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "env var name must be a valid identifier"),
+          z.string(),
+        )
+        .optional(),
+    })
+    .refine(
+      (stdio) => {
+        if (!stdio.env) return true
+        // SECURITY: a static env key must not collide with the credential slot
+        // (would let a static value pre-empt/shadow the injected secret) or with
+        // the master-key names (never let an operator inject/shadow the master
+        // key into a child). Mirrors CliConnectionSchema's credentialEnvVar denylist.
+        const keys = Object.keys(stdio.env)
+        if (stdio.tokenEnvVar !== undefined && keys.includes(stdio.tokenEnvVar)) return false
+        if (keys.includes("JUNCTION_MASTER_KEY") || keys.includes("JUNCTION_MASTER_KEY_FILE"))
+          return false
+        // SECURITY: the stdio MCP child is NOT sandboxed (plain spawn, full user
+        // privileges). A static env entry that hijacks the dynamic linker or the
+        // Node/interpreter runtime = arbitrary code execution in the child — the
+        // real threat is a pasted/imported platform config the operator didn't
+        // author (LD_PRELOAD → code injection, NODE_OPTIONS → --require arbitrary
+        // JS). PATH is deliberately NOT blocked — it's dual-use and grants nothing
+        // beyond the operator-declared command. Case-insensitive; DYLD_* by prefix.
+        for (const key of keys) {
+          const upper = key.toUpperCase()
+          if (INTERPRETER_ENV_DENYLIST.has(upper) || upper.startsWith("DYLD_")) return false
+        }
+        return true
+      },
+      {
+        message:
+          "env keys must not include tokenEnvVar, JUNCTION_MASTER_KEY/JUNCTION_MASTER_KEY_FILE, " +
+          "or a dynamic-linker/interpreter name (LD_PRELOAD, LD_LIBRARY_PATH, LD_AUDIT, DYLD_*, " +
+          "NODE_OPTIONS) — those would let a pasted config run code in the unsandboxed MCP child",
+        path: ["env"],
+      },
+    ),
 ])
 
 export type McpConnection = z.infer<typeof McpConnectionSchema>

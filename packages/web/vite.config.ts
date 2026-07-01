@@ -15,7 +15,16 @@ import { defineConfig } from "vite"
 // client. `@junction/core` transitively pulls in native .node binaries (better-sqlite3,
 // @napi-rs/keyring) which Vite's dep optimizer (`vite dev`) cannot load — it would fail
 // with UNLOADABLE_DEPENDENCY. They are server-only by design (reached via createServerFn).
-const SERVER_ONLY = ["better-sqlite3", "@napi-rs/keyring", "@junction/core"]
+// `@junction/platform-orchestration` depends on @junction/core (same native chain) plus
+// the openapi/graphql spec parsers — also server-only (reached only via *.server.ts).
+const SERVER_ONLY = [
+  "better-sqlite3",
+  "@napi-rs/keyring",
+  "@junction/core",
+  "@junction/platform-orchestration",
+  "@scalar/openapi-parser",
+  "graphql",
+]
 
 export default defineConfig({
   server: {

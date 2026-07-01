@@ -15,6 +15,9 @@ const mcpServerSrc = fileURLToPath(new URL("./packages/mcp/server/src", import.m
 const mcpClientSrc = fileURLToPath(new URL("./packages/mcp/client/src", import.meta.url))
 const openapiClientSrc = fileURLToPath(new URL("./packages/openapi-client/src", import.meta.url))
 const graphqlClientSrc = fileURLToPath(new URL("./packages/graphql-client/src", import.meta.url))
+const platformOrchestrationSrc = fileURLToPath(
+  new URL("./packages/platform-orchestration/src", import.meta.url),
+)
 
 // Shared alias map — must appear in BOTH projects (inc-18 gotcha).
 const alias = {
@@ -24,6 +27,7 @@ const alias = {
   "@junction/mcp-client": `${mcpClientSrc}/index.ts`,
   "@junction/openapi-client": `${openapiClientSrc}/index.ts`,
   "@junction/graphql-client": `${graphqlClientSrc}/index.ts`,
+  "@junction/platform-orchestration": `${platformOrchestrationSrc}/index.ts`,
 }
 
 // The 6 child-process integration suites that spawn `node packages/cli/dist/index.js`
