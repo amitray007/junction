@@ -8,11 +8,13 @@ import type { CliToolArgInput, CliToolInput } from "../../../server/platform-mut
 import type {
   CliArgType,
   CliConnectionFormState,
+  CliEnvAllowFormState,
+  CliPathFormState,
   CliPolicyFormState,
   CliToolArgFormState,
   CliToolFormState,
 } from "./types.js"
-import { nextKey } from "./types.js"
+import { emptyEnvAllowRow, emptyPathRow, nextKey } from "./types.js"
 
 // ---------------------------------------------------------------------------
 // Form state → wire input (submit path)
@@ -30,7 +32,7 @@ function toArgInput(arg: CliToolArgFormState): CliToolArgInput {
   }
 }
 
-function toEnvAllowRecord(entries: Array<{ key: string; value: string }>): Record<string, string> {
+function toEnvAllowRecord(entries: CliEnvAllowFormState[]): Record<string, string> {
   const out: Record<string, string> = {}
   for (const { key, value } of entries) {
     if (key.trim()) out[key.trim()] = value
@@ -38,14 +40,19 @@ function toEnvAllowRecord(entries: Array<{ key: string; value: string }>): Recor
   return out
 }
 
+/** Strip client-only stable ids and blank entries from a path-row list (form → wire). */
+function toPathArray(paths: CliPathFormState[]): string[] {
+  return paths.map((p) => p.value.trim()).filter(Boolean)
+}
+
 function toPolicyInput(policy: CliPolicyFormState): CliToolInput["policy"] {
   return {
     cwd: policy.cwd.trim(),
-    readPaths: policy.readPaths.map((p) => p.trim()).filter(Boolean),
-    writePaths: policy.writePaths.map((p) => p.trim()).filter(Boolean),
+    readPaths: toPathArray(policy.readPaths),
+    writePaths: toPathArray(policy.writePaths),
     network:
       policy.network.mode === "allow"
-        ? { mode: "allow", hosts: policy.network.hosts.map((h) => h.trim()).filter(Boolean) }
+        ? { mode: "allow", hosts: toPathArray(policy.network.hosts) }
         : { mode: "denied" },
     timeoutMs: Number(policy.timeoutMs) || 15_000,
     envAllow: toEnvAllowRecord(policy.envAllow),
@@ -132,14 +139,14 @@ function argFromDetail(arg: CliToolDetailLike["args"][number]): CliToolArgFormSt
 function policyFromDetail(policy: CliToolDetailLike["policy"]): CliPolicyFormState {
   return {
     cwd: policy.cwd,
-    readPaths: [...policy.readPaths],
-    writePaths: [...policy.writePaths],
+    readPaths: policy.readPaths.map((value) => emptyPathRow(value)),
+    writePaths: policy.writePaths.map((value) => emptyPathRow(value)),
     network:
       policy.network.mode === "allow"
-        ? { mode: "allow", hosts: [...policy.network.hosts] }
+        ? { mode: "allow", hosts: policy.network.hosts.map((value) => emptyPathRow(value)) }
         : { mode: "denied" },
     timeoutMs: String(policy.timeoutMs),
-    envAllow: Object.entries(policy.envAllow).map(([key, value]) => ({ key, value })),
+    envAllow: Object.entries(policy.envAllow).map(([key, value]) => emptyEnvAllowRow(key, value)),
   }
 }
 

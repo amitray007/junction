@@ -1,16 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Platforms route — Add/Edit/Delete/Refresh write path (inc 26 slice C).
+// Platforms route — Add/Edit/Delete/Refresh write path (inc 26 slice C + wave 3 follow-up).
 // inc 24.6: Base URL column removed (always `—`; noise). baseUrl shown inline under Name when present.
+// wave 3: Add + Edit now share one PlatformDialog (mode: "add" | "edit"); kind Select is
+// MCP/OpenAPI/GraphQL/CLI with an MCP transport sub-selector; CLI uses the guided
+// CliConnectionForm; an auth-scheme note points at the Credentials page.
 // No @junction/core import. All core access via createServerFn.
 
-import { createFileRoute, useRouter } from "@tanstack/react-router"
+import { createFileRoute, Link, useRouter } from "@tanstack/react-router"
 import { Plus, RefreshCw, SquarePen, Trash2 } from "lucide-react"
-import { useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { toast } from "sonner"
 import { getCredentials, getPlatforms, type PlatformMeta } from "../server/data.functions.js"
 import {
+  type AddPlatformInput,
   addPlatformFn,
   deletePlatformFn,
+  getPlatformDetailFn,
+  type PlatformDetail,
   refreshPlatformFn,
   updatePlatformFn,
 } from "../server/platform-mutations.functions.js"
@@ -47,6 +53,10 @@ import {
   TableRow,
   TableSkeleton,
 } from "../ui/index.js"
+import { CliConnectionForm } from "./-components/cli-form/cli-connection-form.js"
+import { connectionFromDetail, toConnectionInput } from "./-components/cli-form/convert.js"
+import type { CliConnectionFormState } from "./-components/cli-form/types.js"
+import { emptyConnection } from "./-components/cli-form/types.js"
 
 export const Route = createFileRoute("/platforms")({
   loader: async () => {
@@ -81,58 +91,255 @@ function PlatformsPending() {
 }
 
 // ---------------------------------------------------------------------------
-// Add Platform dialog — kind-select + kind-specific fields.
+// Shared PlatformDialog — Add and Edit are the same form, differing only in
+// mode (add: blank state, submit → addPlatformFn) vs edit (mode: pre-filled
+// from getPlatformDetailFn, submit → updatePlatformFn). See
+// platform-mutations.server.ts mutateUpdatePlatform for why edit is a full
+// rebuild (re-fetch/re-introspect on save), not a displayName-only patch.
+//
+// Kind Select offers MCP / OpenAPI / GraphQL / CLI. MCP has a Transport
+// sub-select (HTTP / stdio); at submit, (kind===mcp, transport) maps to the
+// server's discriminated "mcp-http" | "mcp-stdio".
 //
 // Auth exposed per kind (bearer-first subset — see platform-mutations.server.ts header):
 //   mcp-http:  authHeader override only (bearer implied by the connection).
 //   mcp-stdio: none (credential injection via tokenEnvVar stays a CLI-only flow).
 //   openapi:   none | bearer | apiKey (header name).
 //   graphql:   none | bearer | apiKey (header name).
-//   cli:       none (descriptor JSON carries its own credentialEnvVar).
+//   cli:       none (connection carries its own credentialEnvVar).
 // ---------------------------------------------------------------------------
 
-type PlatformKindOption = "mcp-http" | "mcp-stdio" | "openapi" | "graphql" | "cli"
+type PlatformKind = "mcp" | "openapi" | "graphql" | "cli"
+type McpTransport = "http" | "stdio"
 type SimpleAuthScheme = "none" | "bearer" | "apiKey"
 
-interface AddPlatformDialogProps {
-  readonly open: boolean
+/** Auth-scheme note — points at the Credentials page where the actual secret is bound. */
+function AuthSchemeNote() {
+  return (
+    <p style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)" }}>
+      This declares the auth scheme only. Add the actual token on the{" "}
+      <Link to="/credentials" style={{ color: "var(--blue-text)" }}>
+        Credentials page
+      </Link>
+      , then bind it to this platform in a Profile.
+    </p>
+  )
+}
+
+interface EnvVarRow {
+  readonly id: string
+  key: string
+  value: string
+}
+
+let envRowCounter = 0
+function emptyEnvVarRow(key = "", value = ""): EnvVarRow {
+  envRowCounter += 1
+  return { id: `env-${envRowCounter}`, key, value }
+}
+
+function envRowsToRecord(rows: EnvVarRow[]): Record<string, string> | undefined {
+  const out: Record<string, string> = {}
+  for (const { key, value } of rows) {
+    if (key.trim()) out[key.trim()] = value
+  }
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
+/** Repeatable [key][value][×] list for static env vars — used by mcp-stdio. */
+function EnvVarListField({
+  rows,
+  onChange,
+}: {
+  readonly rows: EnvVarRow[]
+  readonly onChange: (rows: EnvVarRow[]) => void
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <span style={{ fontSize: "var(--text-label)", fontWeight: 500, color: "var(--gray-1000)" }}>
+        Env Vars
+      </span>
+      {rows.map((row, i) => (
+        <div key={row.id} className="flex gap-2">
+          <Input
+            placeholder="KEY"
+            value={row.key}
+            onChange={(e) => {
+              const next = [...rows]
+              next[i] = { ...row, key: e.target.value }
+              onChange(next)
+            }}
+          />
+          <Input
+            placeholder="value"
+            value={row.value}
+            onChange={(e) => {
+              const next = [...rows]
+              next[i] = { ...row, value: e.target.value }
+              onChange(next)
+            }}
+          />
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            aria-label="Remove env variable"
+            onClick={() => onChange(rows.filter((_, idx) => idx !== i))}
+          >
+            ×
+          </Button>
+        </div>
+      ))}
+      <Button
+        type="button"
+        variant="secondary"
+        size="sm"
+        className="self-start"
+        onClick={() => onChange([...rows, emptyEnvVarRow()])}
+      >
+        <Plus className="h-4 w-4" aria-hidden="true" />
+        Add variable
+      </Button>
+    </div>
+  )
+}
+
+interface PlatformFormState {
+  kind: PlatformKind
+  transport: McpTransport
+  id: string
+  displayName: string
+  url: string
+  authHeader: string
+  command: string
+  args: string
+  tokenEnvVar: string
+  env: EnvVarRow[]
+  specUrl: string
+  baseUrl: string
+  endpoint: string
+  authScheme: SimpleAuthScheme
+  authName: string
+  cli: CliConnectionFormState
+}
+
+function emptyFormState(): PlatformFormState {
+  return {
+    kind: "mcp",
+    transport: "http",
+    id: "",
+    displayName: "",
+    url: "",
+    authHeader: "",
+    command: "",
+    args: "",
+    tokenEnvVar: "",
+    env: [],
+    specUrl: "",
+    baseUrl: "",
+    endpoint: "",
+    authScheme: "none",
+    authName: "",
+    cli: emptyConnection(),
+  }
+}
+
+/** Map a getPlatformDetailFn DTO into the shared form's pre-filled state. */
+function formStateFromDetail(detail: PlatformDetail): PlatformFormState {
+  const base = emptyFormState()
+  const authScheme: SimpleAuthScheme = detail.authScheme ?? "none"
+  if (detail.kind === "mcp") {
+    return {
+      ...base,
+      kind: "mcp",
+      transport: detail.transport ?? "http",
+      id: detail.id,
+      displayName: detail.displayName,
+      url: detail.url ?? "",
+      authHeader: detail.authHeaderName ?? "",
+      command: detail.command ?? "",
+      args: (detail.args ?? []).join(", "),
+      tokenEnvVar: detail.tokenEnvVarName ?? "",
+      env: Object.entries(detail.env ?? {}).map(([key, value]) => emptyEnvVarRow(key, value)),
+    }
+  }
+  if (detail.kind === "openapi") {
+    return {
+      ...base,
+      kind: "openapi",
+      id: detail.id,
+      displayName: detail.displayName,
+      specUrl: detail.specUrl ?? "",
+      baseUrl: detail.baseUrl ?? "",
+      authScheme,
+      authName: authScheme === "apiKey" ? (detail.authHeaderOrName ?? "") : "",
+    }
+  }
+  if (detail.kind === "graphql") {
+    return {
+      ...base,
+      kind: "graphql",
+      id: detail.id,
+      displayName: detail.displayName,
+      endpoint: detail.endpoint ?? "",
+      authScheme,
+      authName: authScheme === "apiKey" ? (detail.authHeaderOrName ?? "") : "",
+    }
+  }
+  // cli
+  return {
+    ...base,
+    kind: "cli",
+    id: detail.id,
+    displayName: detail.displayName,
+    cli: connectionFromDetail(detail),
+  }
+}
+
+type PlatformDialogMode = "add" | "edit"
+
+interface PlatformDialogProps {
+  readonly mode: PlatformDialogMode
+  /** Non-null in edit mode: the platform being edited (also used as the open-sentinel). */
+  readonly platform: PlatformMeta | null
+  /** Add mode's own open flag (edit mode derives "open" from `platform !== null`). */
+  readonly open?: boolean
   readonly onOpenChange: (open: boolean) => void
   readonly onSuccess: () => void
 }
 
-function AddPlatformDialog({ open, onOpenChange, onSuccess }: AddPlatformDialogProps) {
-  const [kind, setKind] = useState<PlatformKindOption>("mcp-http")
-  const [id, setId] = useState("")
-  const [displayName, setDisplayName] = useState("")
-  const [url, setUrl] = useState("")
-  const [authHeader, setAuthHeader] = useState("")
-  const [command, setCommand] = useState("")
-  const [args, setArgs] = useState("")
-  const [tokenEnvVar, setTokenEnvVar] = useState("")
-  const [specUrl, setSpecUrl] = useState("")
-  const [baseUrl, setBaseUrl] = useState("")
-  const [endpoint, setEndpoint] = useState("")
-  const [descriptor, setDescriptor] = useState("")
-  const [authScheme, setAuthScheme] = useState<SimpleAuthScheme>("none")
-  const [authName, setAuthName] = useState("")
+function PlatformDialog({ mode, platform, open, onOpenChange, onSuccess }: PlatformDialogProps) {
+  const isOpen = mode === "edit" ? platform !== null : (open ?? false)
+  const [state, setState] = useState<PlatformFormState>(emptyFormState())
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
+  const [loadingDetail, setLoadingDetail] = useState(false)
+
+  const platformId = platform?.id
+
+  const prefillFromDetail = useCallback(async (id: string) => {
+    setLoadingDetail(true)
+    try {
+      const result = await getPlatformDetailFn({ data: { id } })
+      if (!result.ok) {
+        toast.error(`Failed to load platform: ${result.error}`)
+        return
+      }
+      setState(formStateFromDetail(result.detail))
+    } catch {
+      toast.error("Failed to load platform")
+    } finally {
+      setLoadingDetail(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (mode !== "edit" || !isOpen || !platformId) return
+    void prefillFromDetail(platformId)
+  }, [mode, isOpen, platformId, prefillFromDetail])
 
   function reset() {
-    setKind("mcp-http")
-    setId("")
-    setDisplayName("")
-    setUrl("")
-    setAuthHeader("")
-    setCommand("")
-    setArgs("")
-    setTokenEnvVar("")
-    setSpecUrl("")
-    setBaseUrl("")
-    setEndpoint("")
-    setDescriptor("")
-    setAuthScheme("none")
-    setAuthName("")
+    setState(emptyFormState())
     setErrors({})
     setSubmitting(false)
   }
@@ -146,108 +353,148 @@ function AddPlatformDialog({ open, onOpenChange, onSuccess }: AddPlatformDialogP
     if (errors[field]) setErrors((prev) => ({ ...prev, [field]: "" }))
   }
 
+  function set<K extends keyof PlatformFormState>(key: K, value: PlatformFormState[K]) {
+    setState((prev) => ({ ...prev, [key]: value }))
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     const newErrors: Record<string, string> = {}
-    if (!id.trim()) newErrors.id = "ID is required"
-    if (!displayName.trim()) newErrors.displayName = "Display name is required"
-    if (kind === "mcp-http" && !url.trim()) newErrors.url = "URL is required"
-    if (kind === "mcp-stdio" && !command.trim()) newErrors.command = "Command is required"
-    if (kind === "openapi" && !specUrl.trim()) newErrors.specUrl = "Spec URL is required"
-    if (kind === "graphql" && !endpoint.trim()) newErrors.endpoint = "Endpoint is required"
-    if (kind === "cli" && !descriptor.trim()) newErrors.descriptor = "Descriptor is required"
-    if (authScheme === "apiKey" && !authName.trim()) newErrors.authName = "Header name is required"
+    if (!state.id.trim()) newErrors.id = "ID is required"
+    if (!state.displayName.trim()) newErrors.displayName = "Display name is required"
+    if (state.kind === "mcp" && state.transport === "http" && !state.url.trim()) {
+      newErrors.url = "URL is required"
+    }
+    if (state.kind === "mcp" && state.transport === "stdio" && !state.command.trim()) {
+      newErrors.command = "Command is required"
+    }
+    if (state.kind === "openapi" && !state.specUrl.trim())
+      newErrors.specUrl = "Spec URL is required"
+    if (state.kind === "graphql" && !state.endpoint.trim())
+      newErrors.endpoint = "Endpoint is required"
+    if (state.authScheme === "apiKey" && !state.authName.trim()) {
+      newErrors.authName = "Header name is required"
+    }
     if (Object.keys(newErrors).length > 0) {
       setErrors(newErrors)
       return
     }
 
     const auth =
-      authScheme === "none"
+      state.authScheme === "none"
         ? undefined
-        : authScheme === "bearer"
+        : state.authScheme === "bearer"
           ? { scheme: "bearer" as const }
-          : { scheme: "apiKey" as const, name: authName.trim() }
+          : { scheme: "apiKey" as const, name: state.authName.trim() }
 
-    const data =
-      kind === "mcp-http"
-        ? {
-            kind,
-            id: id.trim(),
-            displayName: displayName.trim(),
-            url: url.trim(),
-            ...(authHeader.trim() ? { authHeader: authHeader.trim() } : {}),
-          }
-        : kind === "mcp-stdio"
-          ? {
-              kind,
-              id: id.trim(),
-              displayName: displayName.trim(),
-              command: command.trim(),
-              ...(args.trim() ? { args: args.split(",").map((a) => a.trim()) } : {}),
-              ...(tokenEnvVar.trim() ? { tokenEnvVar: tokenEnvVar.trim() } : {}),
-            }
-          : kind === "openapi"
+    let data: AddPlatformInput
+    try {
+      data =
+        state.kind === "mcp"
+          ? state.transport === "http"
             ? {
-                kind,
-                id: id.trim(),
-                displayName: displayName.trim(),
-                specUrl: specUrl.trim(),
-                ...(baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}),
+                kind: "mcp-http" as const,
+                id: state.id.trim(),
+                displayName: state.displayName.trim(),
+                url: state.url.trim(),
+                ...(state.authHeader.trim() ? { authHeader: state.authHeader.trim() } : {}),
+              }
+            : {
+                kind: "mcp-stdio" as const,
+                id: state.id.trim(),
+                displayName: state.displayName.trim(),
+                command: state.command.trim(),
+                ...(state.args.trim() ? { args: state.args.split(",").map((a) => a.trim()) } : {}),
+                ...(state.tokenEnvVar.trim() ? { tokenEnvVar: state.tokenEnvVar.trim() } : {}),
+                ...(envRowsToRecord(state.env) ? { env: envRowsToRecord(state.env) } : {}),
+              }
+          : state.kind === "openapi"
+            ? {
+                kind: "openapi" as const,
+                id: state.id.trim(),
+                displayName: state.displayName.trim(),
+                specUrl: state.specUrl.trim(),
+                ...(state.baseUrl.trim() ? { baseUrl: state.baseUrl.trim() } : {}),
                 ...(auth ? { auth } : {}),
               }
-            : kind === "graphql"
+            : state.kind === "graphql"
               ? {
-                  kind,
-                  id: id.trim(),
-                  displayName: displayName.trim(),
-                  endpoint: endpoint.trim(),
+                  kind: "graphql" as const,
+                  id: state.id.trim(),
+                  displayName: state.displayName.trim(),
+                  endpoint: state.endpoint.trim(),
                   ...(auth ? { auth } : {}),
                 }
               : {
-                  kind,
-                  id: id.trim(),
-                  displayName: displayName.trim(),
-                  descriptor: descriptor.trim(),
+                  kind: "cli" as const,
+                  id: state.id.trim(),
+                  displayName: state.displayName.trim(),
+                  connection: toConnectionInput(state.cli),
                 }
+    } catch {
+      // JSON.parse failure from a CLI tool's advanced-mode rawJson escape hatch.
+      toast.error("One or more tool descriptors have invalid JSON")
+      return
+    }
 
     setSubmitting(true)
     try {
-      const result = await addPlatformFn({ data })
+      const result =
+        mode === "add" ? await addPlatformFn({ data }) : await updatePlatformFn({ data })
       if (!result.ok) {
-        toast.error(`Failed to add platform: ${result.error}`)
+        toast.error(`Failed to ${mode === "add" ? "add" : "update"} platform: ${result.error}`)
+        if (result.fieldErrors) setErrors((prev) => ({ ...prev, ...result.fieldErrors }))
         setSubmitting(false)
         return
       }
-      toast.success(`Platform "${result.platform.displayName}" added`)
+      toast.success(
+        mode === "add" ? `Platform "${result.platform.displayName}" added` : "Platform updated",
+      )
       handleOpenChange(false)
       onSuccess()
     } catch {
-      toast.error("Failed to add platform")
+      toast.error(`Failed to ${mode === "add" ? "add" : "update"} platform`)
       setSubmitting(false)
     }
   }
 
+  const showAuthNote =
+    state.kind === "openapi" || state.kind === "graphql"
+      ? state.authScheme !== "none"
+      : state.kind === "mcp" && state.transport === "http"
+
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
+    <Dialog open={isOpen} onOpenChange={handleOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Add Platform</DialogTitle>
+          <DialogTitle>{mode === "add" ? "Add Platform" : "Edit Platform"}</DialogTitle>
           <DialogDescription>
-            Add a source platform. Junction discovers its tools and namespaces them under the
-            platform's ID.
+            {mode === "add" ? (
+              <>
+                Add a source platform. Junction discovers its tools and namespaces them under the
+                platform's ID.
+              </>
+            ) : (
+              <>
+                Edit <MonoCode>{platform?.id}</MonoCode>'s connection. Saving re-runs discovery
+                (re-fetches the spec for OpenAPI/GraphQL) — the same as adding fresh.
+              </>
+            )}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} noValidate>
           <div className="flex flex-col gap-4">
             <Field id="platform-kind" label="Kind">
-              <Select value={kind} onValueChange={(v) => setKind(v as PlatformKindOption)}>
+              <Select
+                value={state.kind}
+                onValueChange={(v) => set("kind", v as PlatformKind)}
+                disabled={mode === "edit" && loadingDetail}
+              >
                 <SelectTrigger id="platform-kind">
                   <SelectValue placeholder="Select a kind" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="mcp-http">MCP (HTTP)</SelectItem>
-                  <SelectItem value="mcp-stdio">MCP (stdio)</SelectItem>
+                  <SelectItem value="mcp">MCP</SelectItem>
                   <SelectItem value="openapi">OpenAPI</SelectItem>
                   <SelectItem value="graphql">GraphQL</SelectItem>
                   <SelectItem value="cli">CLI (sandboxed)</SelectItem>
@@ -259,13 +506,14 @@ function AddPlatformDialog({ open, onOpenChange, onSuccess }: AddPlatformDialogP
               <Input
                 id="platform-id"
                 placeholder="e.g. github"
-                value={id}
+                value={state.id}
                 onChange={(e) => {
-                  setId(e.target.value)
+                  set("id", e.target.value)
                   clearError("id")
                 }}
                 hasError={!!errors.id}
                 aria-required="true"
+                disabled={mode === "edit"}
               />
             </Field>
 
@@ -273,9 +521,9 @@ function AddPlatformDialog({ open, onOpenChange, onSuccess }: AddPlatformDialogP
               <Input
                 id="platform-display-name"
                 placeholder="e.g. GitHub"
-                value={displayName}
+                value={state.displayName}
                 onChange={(e) => {
-                  setDisplayName(e.target.value)
+                  set("displayName", e.target.value)
                   clearError("displayName")
                 }}
                 hasError={!!errors.displayName}
@@ -283,87 +531,106 @@ function AddPlatformDialog({ open, onOpenChange, onSuccess }: AddPlatformDialogP
               />
             </Field>
 
-            {kind === "mcp-http" && (
+            {state.kind === "mcp" && (
               <>
-                <Field id="platform-url" label="URL" error={errors.url}>
-                  <Input
-                    id="platform-url"
-                    placeholder="https://example.com/mcp"
-                    value={url}
-                    onChange={(e) => {
-                      setUrl(e.target.value)
-                      clearError("url")
-                    }}
-                    hasError={!!errors.url}
-                    aria-required="true"
-                  />
+                <Field id="platform-transport" label="Transport">
+                  <Select
+                    value={state.transport}
+                    onValueChange={(v) => set("transport", v as McpTransport)}
+                  >
+                    <SelectTrigger id="platform-transport">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="http">HTTP</SelectItem>
+                      <SelectItem value="stdio">stdio</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </Field>
-                <Field
-                  id="platform-auth-header"
-                  label="Auth Header"
-                  description='Header name for the bearer token. Defaults to "Authorization".'
-                >
-                  <Input
-                    id="platform-auth-header"
-                    placeholder="Authorization"
-                    value={authHeader}
-                    onChange={(e) => setAuthHeader(e.target.value)}
-                  />
-                </Field>
+
+                {state.transport === "http" ? (
+                  <>
+                    <Field id="platform-url" label="URL" error={errors.url}>
+                      <Input
+                        id="platform-url"
+                        placeholder="https://example.com/mcp"
+                        value={state.url}
+                        onChange={(e) => {
+                          set("url", e.target.value)
+                          clearError("url")
+                        }}
+                        hasError={!!errors.url}
+                        aria-required="true"
+                      />
+                    </Field>
+                    <Field
+                      id="platform-auth-header"
+                      label="Auth Header"
+                      description='Header name for the bearer token. Defaults to "Authorization".'
+                    >
+                      <Input
+                        id="platform-auth-header"
+                        placeholder="Authorization"
+                        value={state.authHeader}
+                        onChange={(e) => set("authHeader", e.target.value)}
+                      />
+                    </Field>
+                    <AuthSchemeNote />
+                  </>
+                ) : (
+                  <>
+                    <Field id="platform-command" label="Command" error={errors.command}>
+                      <Input
+                        id="platform-command"
+                        placeholder="e.g. npx"
+                        value={state.command}
+                        onChange={(e) => {
+                          set("command", e.target.value)
+                          clearError("command")
+                        }}
+                        hasError={!!errors.command}
+                        aria-required="true"
+                      />
+                    </Field>
+                    <Field
+                      id="platform-args"
+                      label="Args"
+                      description="Comma-separated command arguments."
+                    >
+                      <Input
+                        id="platform-args"
+                        placeholder="-y, @some/mcp-server"
+                        value={state.args}
+                        onChange={(e) => set("args", e.target.value)}
+                      />
+                    </Field>
+                    <Field
+                      id="platform-token-env-var"
+                      label="Token Env Var"
+                      description="Env var name the credential secret is injected under (optional)."
+                    >
+                      <Input
+                        id="platform-token-env-var"
+                        placeholder="e.g. GITHUB_TOKEN"
+                        value={state.tokenEnvVar}
+                        onChange={(e) => set("tokenEnvVar", e.target.value)}
+                      />
+                    </Field>
+                    <EnvVarListField rows={state.env} onChange={(env) => set("env", env)} />
+                  </>
+                )}
               </>
             )}
 
-            {kind === "mcp-stdio" && (
-              <>
-                <Field id="platform-command" label="Command" error={errors.command}>
-                  <Input
-                    id="platform-command"
-                    placeholder="e.g. npx"
-                    value={command}
-                    onChange={(e) => {
-                      setCommand(e.target.value)
-                      clearError("command")
-                    }}
-                    hasError={!!errors.command}
-                    aria-required="true"
-                  />
-                </Field>
-                <Field
-                  id="platform-args"
-                  label="Args"
-                  description="Comma-separated command arguments."
-                >
-                  <Input
-                    id="platform-args"
-                    placeholder="-y, @some/mcp-server"
-                    value={args}
-                    onChange={(e) => setArgs(e.target.value)}
-                  />
-                </Field>
-                <Field
-                  id="platform-token-env-var"
-                  label="Token Env Var"
-                  description="Env var name the credential secret is injected under (optional)."
-                >
-                  <Input
-                    id="platform-token-env-var"
-                    placeholder="e.g. GITHUB_TOKEN"
-                    value={tokenEnvVar}
-                    onChange={(e) => setTokenEnvVar(e.target.value)}
-                  />
-                </Field>
-              </>
-            )}
-
-            {kind === "openapi" && (
+            {state.kind === "openapi" && (
               <>
                 <Field id="platform-spec-url" label="Spec URL" error={errors.specUrl}>
                   <Input
                     id="platform-spec-url"
                     placeholder="https://example.com/openapi.json"
-                    value={specUrl}
+                    value={state.specUrl}
                     onChange={(e) => {
-                      setSpecUrl(e.target.value)
+                      set("specUrl", e.target.value)
                       clearError("specUrl")
                     }}
                     hasError={!!errors.specUrl}
@@ -378,21 +645,21 @@ function AddPlatformDialog({ open, onOpenChange, onSuccess }: AddPlatformDialogP
                   <Input
                     id="platform-base-url"
                     placeholder="https://api.example.com"
-                    value={baseUrl}
-                    onChange={(e) => setBaseUrl(e.target.value)}
+                    value={state.baseUrl}
+                    onChange={(e) => set("baseUrl", e.target.value)}
                   />
                 </Field>
               </>
             )}
 
-            {kind === "graphql" && (
+            {state.kind === "graphql" && (
               <Field id="platform-endpoint" label="Endpoint" error={errors.endpoint}>
                 <Input
                   id="platform-endpoint"
                   placeholder="https://example.com/graphql"
-                  value={endpoint}
+                  value={state.endpoint}
                   onChange={(e) => {
-                    setEndpoint(e.target.value)
+                    set("endpoint", e.target.value)
                     clearError("endpoint")
                   }}
                   hasError={!!errors.endpoint}
@@ -401,40 +668,16 @@ function AddPlatformDialog({ open, onOpenChange, onSuccess }: AddPlatformDialogP
               </Field>
             )}
 
-            {kind === "cli" && (
-              <Field
-                id="platform-descriptor"
-                label="Descriptor (JSON)"
-                description="A sandboxed CLI connection descriptor — see the CLI docs for the shape."
-                error={errors.descriptor}
-              >
-                <textarea
-                  id="platform-descriptor"
-                  className="w-full rounded-[var(--radius-6)] border px-3 py-2 font-mono"
-                  style={{
-                    fontSize: "var(--text-mono)",
-                    borderColor: errors.descriptor ? "var(--status-error-fg)" : "var(--alpha-400)",
-                    background: "var(--bg-100)",
-                    color: "var(--gray-1000)",
-                    minHeight: "120px",
-                  }}
-                  placeholder='{"tools":[{"name":"...","argv":[...],"policy":{...}}]}'
-                  value={descriptor}
-                  onChange={(e) => {
-                    setDescriptor(e.target.value)
-                    clearError("descriptor")
-                  }}
-                  aria-required="true"
-                />
-              </Field>
+            {state.kind === "cli" && (
+              <CliConnectionForm connection={state.cli} onChange={(cli) => set("cli", cli)} />
             )}
 
-            {(kind === "openapi" || kind === "graphql") && (
+            {(state.kind === "openapi" || state.kind === "graphql") && (
               <>
                 <Field id="platform-auth-scheme" label="Auth">
                   <Select
-                    value={authScheme}
-                    onValueChange={(v) => setAuthScheme(v as SimpleAuthScheme)}
+                    value={state.authScheme}
+                    onValueChange={(v) => set("authScheme", v as SimpleAuthScheme)}
                   >
                     <SelectTrigger id="platform-auth-scheme">
                       <SelectValue placeholder="No auth" />
@@ -446,14 +689,14 @@ function AddPlatformDialog({ open, onOpenChange, onSuccess }: AddPlatformDialogP
                     </SelectContent>
                   </Select>
                 </Field>
-                {authScheme === "apiKey" && (
+                {state.authScheme === "apiKey" && (
                   <Field id="platform-auth-name" label="Header Name" error={errors.authName}>
                     <Input
                       id="platform-auth-name"
                       placeholder="e.g. X-API-Key"
-                      value={authName}
+                      value={state.authName}
                       onChange={(e) => {
-                        setAuthName(e.target.value)
+                        set("authName", e.target.value)
                         clearError("authName")
                       }}
                       hasError={!!errors.authName}
@@ -461,102 +704,15 @@ function AddPlatformDialog({ open, onOpenChange, onSuccess }: AddPlatformDialogP
                     />
                   </Field>
                 )}
+                {showAuthNote && <AuthSchemeNote />}
               </>
             )}
           </div>
           <DialogFormFooter
             onCancel={() => handleOpenChange(false)}
             submitting={submitting}
-            submitLabel="Add Platform"
-            submittingLabel="Adding…"
-          />
-        </form>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Edit Platform dialog — displayName only (v1; see platform-mutations.server.ts
-// mutateUpdatePlatform for the get+upsert rationale).
-// ---------------------------------------------------------------------------
-
-interface EditPlatformDialogProps {
-  readonly platform: PlatformMeta | null
-  readonly onOpenChange: (open: boolean) => void
-  readonly onSuccess: () => void
-}
-
-function EditPlatformDialog({ platform, onOpenChange, onSuccess }: EditPlatformDialogProps) {
-  const [displayName, setDisplayName] = useState(platform?.displayName ?? "")
-  const [error, setError] = useState<string | undefined>()
-  const [submitting, setSubmitting] = useState(false)
-
-  function handleOpenChange(next: boolean) {
-    if (next && platform) setDisplayName(platform.displayName)
-    if (!next) {
-      setError(undefined)
-      setSubmitting(false)
-    }
-    onOpenChange(next)
-  }
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!displayName.trim()) {
-      setError("Display name is required")
-      return
-    }
-    if (!platform) return
-    setSubmitting(true)
-    try {
-      const result = await updatePlatformFn({
-        data: { id: platform.id, displayName: displayName.trim() },
-      })
-      if (!result.ok) {
-        toast.error(`Failed to update platform: ${result.error}`)
-        setSubmitting(false)
-        return
-      }
-      toast.success("Platform updated")
-      handleOpenChange(false)
-      onSuccess()
-    } catch {
-      toast.error("Failed to update platform")
-      setSubmitting(false)
-    }
-  }
-
-  return (
-    <Dialog open={platform !== null} onOpenChange={handleOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Edit Platform</DialogTitle>
-          <DialogDescription>
-            Rename <MonoCode>{platform?.id}</MonoCode>. Other fields (connection, auth) are not
-            editable here — remove and re-add the platform to change them.
-          </DialogDescription>
-        </DialogHeader>
-        <form onSubmit={handleSubmit} noValidate>
-          <div className="flex flex-col gap-4">
-            <Field id="edit-display-name" label="Display Name" error={error}>
-              <Input
-                id="edit-display-name"
-                value={displayName}
-                onChange={(e) => {
-                  setDisplayName(e.target.value)
-                  if (error) setError(undefined)
-                }}
-                hasError={!!error}
-                aria-required="true"
-              />
-            </Field>
-          </div>
-          <DialogFormFooter
-            onCancel={() => handleOpenChange(false)}
-            submitting={submitting}
-            submitLabel="Save"
-            submittingLabel="Saving…"
+            submitLabel={mode === "add" ? "Add Platform" : "Save Changes"}
+            submittingLabel={mode === "add" ? "Adding…" : "Saving…"}
           />
         </form>
       </DialogContent>
@@ -751,9 +907,16 @@ function PlatformsPage() {
         </TableBody>
       </Table>
 
-      {/* Dialogs */}
-      <AddPlatformDialog open={addOpen} onOpenChange={setAddOpen} onSuccess={invalidate} />
-      <EditPlatformDialog
+      {/* Dialogs — Add and Edit share PlatformDialog (see its header comment). */}
+      <PlatformDialog
+        mode="add"
+        platform={null}
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        onSuccess={invalidate}
+      />
+      <PlatformDialog
+        mode="edit"
         platform={editingPlatform}
         onOpenChange={(open) => {
           if (!open) setEditingPlatform(null)

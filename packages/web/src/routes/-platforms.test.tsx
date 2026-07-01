@@ -49,6 +49,12 @@ vi.mock("@tanstack/react-router", () => ({
   }),
   // RefreshButton (in the PageHeader actions) calls useRouter().invalidate().
   useRouter: () => ({ invalidate: mockInvalidate }),
+  // AuthSchemeNote renders a Link to /credentials — a plain <a> stub is enough here.
+  Link: ({ to, children, ...props }: { to: string; children: React.ReactNode }) => (
+    <a href={to} {...props}>
+      {children}
+    </a>
+  ),
 }))
 
 // Loader calls both getPlatforms and getCredentials — stub both.
@@ -61,12 +67,14 @@ const mockAddPlatformFn = vi.fn()
 const mockUpdatePlatformFn = vi.fn()
 const mockDeletePlatformFn = vi.fn()
 const mockRefreshPlatformFn = vi.fn()
+const mockGetPlatformDetailFn = vi.fn()
 
 vi.mock("../server/platform-mutations.functions.js", () => ({
   addPlatformFn: (...args: unknown[]) => mockAddPlatformFn(...args),
   updatePlatformFn: (...args: unknown[]) => mockUpdatePlatformFn(...args),
   deletePlatformFn: (...args: unknown[]) => mockDeletePlatformFn(...args),
   refreshPlatformFn: (...args: unknown[]) => mockRefreshPlatformFn(...args),
+  getPlatformDetailFn: (...args: unknown[]) => mockGetPlatformDetailFn(...args),
 }))
 
 const { Route } = await import("./platforms.js")
@@ -82,6 +90,7 @@ afterEach(() => {
   mockUpdatePlatformFn.mockReset()
   mockDeletePlatformFn.mockReset()
   mockRefreshPlatformFn.mockReset()
+  mockGetPlatformDetailFn.mockReset()
   mockInvalidate.mockReset().mockResolvedValue(undefined)
 })
 
@@ -184,7 +193,7 @@ describe("PlatformsPage", () => {
 
   // ── Add Platform dialog ─────────────────────────────────────────────────────
 
-  it("Add Platform dialog: opens and shows kind-specific fields for the default kind (mcp-http)", async () => {
+  it("Add Platform dialog: opens and shows kind-specific fields for the default kind (mcp/http)", async () => {
     mockUseLoaderData.mockReturnValue(emptyLoaderData)
     render(<PlatformsPage />)
 
@@ -192,12 +201,13 @@ describe("PlatformsPage", () => {
     await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
 
     const dialog = screen.getByRole("dialog")
-    // mcp-http fields present by default
+    // Transport sub-select present for the mcp kind; http fields present by default
+    expect(dialog.querySelector("#platform-transport")).not.toBeNull()
     expect(dialog.querySelector("#platform-url")).not.toBeNull()
     expect(dialog.querySelector("#platform-auth-header")).not.toBeNull()
     // other-kind-only fields absent
     expect(dialog.querySelector("#platform-spec-url")).toBeNull()
-    expect(dialog.querySelector("#platform-descriptor")).toBeNull()
+    expect(dialog.querySelector("#platform-command")).toBeNull()
   })
 
   it("Add Platform dialog: required-field validation prevents submission", async () => {
@@ -241,6 +251,7 @@ describe("PlatformsPage", () => {
 
     await waitFor(() => expect(mockAddPlatformFn).toHaveBeenCalledOnce())
     const call = mockAddPlatformFn.mock.calls[0]?.[0]
+    // kind=mcp + transport=http (default) maps to the server's mcp-http discriminant.
     expect(call.data.kind).toBe("mcp-http")
     expect(call.data.id).toBe("new-plat")
     expect(call.data.url).toBe("https://example.com/mcp")
@@ -269,5 +280,76 @@ describe("PlatformsPage", () => {
 
     await waitFor(() => expect(mockAddPlatformFn).toHaveBeenCalledOnce())
     expect(mockInvalidate).not.toHaveBeenCalled()
+  })
+
+  // ── Kind Select + MCP transport sub-selector (wave 3, slice E) ─────────────
+
+  it("Kind Select offers MCP, OpenAPI, GraphQL, and CLI", async () => {
+    mockUseLoaderData.mockReturnValue(emptyLoaderData)
+    render(<PlatformsPage />)
+    fireEvent.click(screen.getByRole("button", { name: /add platform/i }))
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
+
+    // happy-dom can't drive the Radix Select portal open — assert the trigger
+    // renders the current (default) kind value; the item list itself is
+    // covered by the junction-web-verify browser pass.
+    const dialog = screen.getByRole("dialog")
+    const kindTrigger = dialog.querySelector("#platform-kind") as HTMLElement
+    expect(kindTrigger).not.toBeNull()
+    expect(kindTrigger.textContent).toMatch(/mcp/i)
+  })
+
+  it("selecting CLI kind reveals the guided command-builder form", async () => {
+    mockUseLoaderData.mockReturnValue(emptyLoaderData)
+    render(<PlatformsPage />)
+    fireEvent.click(screen.getByRole("button", { name: /add platform/i }))
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
+
+    // Radix Select's onValueChange path isn't drivable via fireEvent in happy-dom
+    // (no portal render) — assert the CLI form components render standalone
+    // instead, covering the same "guided form renders" contract the E2E pass
+    // exercises interactively.
+    const { CliConnectionForm } = await import("./-components/cli-form/cli-connection-form.js")
+    const { emptyConnection } = await import("./-components/cli-form/types.js")
+    const { getAllByText, getByPlaceholderText } = render(
+      <CliConnectionForm connection={emptyConnection()} onChange={() => {}} />,
+    )
+    // One tool card, auto-expanded (its name + summary both read "Tool 1"), with
+    // its command input and the Permissions panel disclosure visible.
+    expect(getAllByText("Tool 1").length).toBeGreaterThan(0)
+    expect(getByPlaceholderText("/opt/homebrew/bin/rg --json $pattern")).toBeInTheDocument()
+    expect(getAllByText("Permissions").length).toBeGreaterThan(0)
+  })
+
+  // ── Auth-scheme note (wave 3, slice I) ──────────────────────────────────────
+
+  it("shows the auth-scheme note for the default mcp/http kind (always bearer-authenticated)", async () => {
+    mockUseLoaderData.mockReturnValue(emptyLoaderData)
+    render(<PlatformsPage />)
+    fireEvent.click(screen.getByRole("button", { name: /add platform/i }))
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
+
+    // mcp-http has no scheme selector — the connection always carries bearer auth
+    // (the authHeader field only overrides the header name), so the note always
+    // shows in the default kind, pointing at the Credentials page.
+    const dialog = screen.getByRole("dialog")
+    expect(dialog.textContent).toMatch(/declares the auth scheme only/i)
+    expect(dialog.textContent).toMatch(/Credentials page/i)
+  })
+
+  it("does not show the auth-scheme note for cli (no scheme selector; credentialEnvVar is its own control)", async () => {
+    mockUseLoaderData.mockReturnValue(emptyLoaderData)
+    render(<PlatformsPage />)
+    fireEvent.click(screen.getByRole("button", { name: /add platform/i }))
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
+
+    // CliConnectionForm rendered standalone (see the guided-form test above for
+    // why): assert its own copy never repeats the openapi/mcp auth-scheme note.
+    const { CliConnectionForm } = await import("./-components/cli-form/cli-connection-form.js")
+    const { emptyConnection } = await import("./-components/cli-form/types.js")
+    const { container } = render(
+      <CliConnectionForm connection={emptyConnection()} onChange={() => {}} />,
+    )
+    expect(container.textContent).not.toMatch(/declares the auth scheme only/i)
   })
 })

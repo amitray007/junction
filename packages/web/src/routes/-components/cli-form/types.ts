@@ -18,15 +18,28 @@ export interface CliToolArgFormState {
   maxLength: string
 }
 
-export type CliNetworkFormState = { mode: "denied" } | { mode: "allow"; hosts: string[] }
+/** One path row in a PathRepeater (readPaths/writePaths/network.hosts) — `id` is a stable client-only React key. */
+export interface CliPathFormState {
+  readonly id: string
+  value: string
+}
+
+export type CliNetworkFormState = { mode: "denied" } | { mode: "allow"; hosts: CliPathFormState[] }
+
+/** One env-var row in the Static Env Vars repeater — `id` is a stable client-only React key. */
+export interface CliEnvAllowFormState {
+  readonly id: string
+  key: string
+  value: string
+}
 
 export interface CliPolicyFormState {
   cwd: string
-  readPaths: string[]
-  writePaths: string[]
+  readPaths: CliPathFormState[]
+  writePaths: CliPathFormState[]
   network: CliNetworkFormState
   timeoutMs: string
-  envAllow: Array<{ key: string; value: string }>
+  envAllow: CliEnvAllowFormState[]
 }
 
 export interface CliToolFormState {
@@ -52,6 +65,16 @@ let keyCounter = 0
 export function nextKey(prefix: string): string {
   keyCounter += 1
   return `${prefix}-${keyCounter}`
+}
+
+/** Build a stable-keyed path row for a PathRepeater (readPaths/writePaths/network.hosts). */
+export function emptyPathRow(value = ""): CliPathFormState {
+  return { id: nextKey("path"), value }
+}
+
+/** Build a stable-keyed env-var row for the Static Env Vars repeater. */
+export function emptyEnvAllowRow(key = "", value = ""): CliEnvAllowFormState {
+  return { id: nextKey("env"), key, value }
 }
 
 export function emptyPolicy(): CliPolicyFormState {

@@ -5,7 +5,8 @@
 import { Plus, X } from "lucide-react"
 import { useState } from "react"
 import { Button, Field, Input } from "../../../ui/index.js"
-import type { CliPolicyFormState } from "./types.js"
+import type { CliEnvAllowFormState, CliPathFormState, CliPolicyFormState } from "./types.js"
+import { emptyEnvAllowRow, emptyPathRow } from "./types.js"
 
 interface PolicyPanelProps {
   readonly toolKey: string
@@ -27,8 +28,8 @@ function PathRepeater({
   onChange,
 }: {
   readonly label: string
-  readonly paths: string[]
-  readonly onChange: (paths: string[]) => void
+  readonly paths: CliPathFormState[]
+  readonly onChange: (paths: CliPathFormState[]) => void
 }) {
   return (
     <div className="flex flex-col gap-2">
@@ -36,14 +37,13 @@ function PathRepeater({
         {label}
       </span>
       {paths.map((p, i) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: paths reorder rarely; index is stable enough for this repeater
-        <div key={i} className="flex gap-2">
+        <div key={p.id} className="flex gap-2">
           <Input
-            value={p}
+            value={p.value}
             placeholder="/absolute/path"
             onChange={(e) => {
               const next = [...paths]
-              next[i] = e.target.value
+              next[i] = { ...p, value: e.target.value }
               onChange(next)
             }}
           />
@@ -58,7 +58,12 @@ function PathRepeater({
           </Button>
         </div>
       ))}
-      <Button type="button" variant="secondary" size="sm" onClick={() => onChange([...paths, ""])}>
+      <Button
+        type="button"
+        variant="secondary"
+        size="sm"
+        onClick={() => onChange([...paths, emptyPathRow()])}
+      >
         <Plus className="h-4 w-4" aria-hidden="true" />
         Add Path
       </Button>
@@ -163,7 +168,6 @@ export function PolicyPanel({ toolKey, policy, onChange }: PolicyPanelProps) {
           </Field>
 
           <EnvAllowRepeater
-            toolKey={toolKey}
             entries={policy.envAllow}
             onChange={(envAllow) => set("envAllow", envAllow)}
           />
@@ -174,13 +178,11 @@ export function PolicyPanel({ toolKey, policy, onChange }: PolicyPanelProps) {
 }
 
 function EnvAllowRepeater({
-  toolKey,
   entries,
   onChange,
 }: {
-  readonly toolKey: string
-  readonly entries: Array<{ key: string; value: string }>
-  readonly onChange: (entries: Array<{ key: string; value: string }>) => void
+  readonly entries: CliEnvAllowFormState[]
+  readonly onChange: (entries: CliEnvAllowFormState[]) => void
 }) {
   const [expanded, setExpanded] = useState(false)
 
@@ -202,8 +204,7 @@ function EnvAllowRepeater({
       {expanded && (
         <div className="flex flex-col gap-2">
           {entries.map((entry, i) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: env rows reorder rarely; index is stable enough for this repeater
-            <div key={`${toolKey}-env-${i}`} className="flex gap-2">
+            <div key={entry.id} className="flex gap-2">
               <Input
                 placeholder="KEY"
                 value={entry.key}
@@ -237,7 +238,7 @@ function EnvAllowRepeater({
             type="button"
             variant="secondary"
             size="sm"
-            onClick={() => onChange([...entries, { key: "", value: "" }])}
+            onClick={() => onChange([...entries, emptyEnvAllowRow()])}
           >
             <Plus className="h-4 w-4" aria-hidden="true" />
             Add Variable

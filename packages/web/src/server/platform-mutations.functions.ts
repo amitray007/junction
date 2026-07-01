@@ -28,6 +28,7 @@ import {
 // a direct import from platform-mutations.server.ts (server-only by convention —
 // mirrors data.functions.ts's re-export of PlatformMeta/CredentialMeta/etc.).
 export type {
+  AddPlatformInput,
   CliConnectionInput,
   CliToolArgInput,
   CliToolInput,
