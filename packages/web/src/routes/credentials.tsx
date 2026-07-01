@@ -8,7 +8,7 @@
 
 import { createFileRoute, useRouter } from "@tanstack/react-router"
 import { Plus, RefreshCw, Trash2 } from "lucide-react"
-import { useMemo, useState } from "react"
+import { useCallback, useMemo, useState } from "react"
 import { toast } from "sonner"
 import type { TableColumn } from "../lib/use-table-view.js"
 import { useTableView } from "../lib/use-table-view.js"
@@ -409,6 +409,10 @@ interface FlatTableProps {
 
 // Exported for direct unit testing of the search/sort/pagination logic (the
 // pageSize prop lets a test exercise a real second page without 25+ fixtures).
+// Facet filter sentinel — "all" clears that facet (composes as AND across
+// platform/account/kind + the search box, via useTableView's predicate).
+const ALL_FILTER = "all"
+
 export function FlatCredentialsTable({
   credentials,
   platforms,
@@ -420,6 +424,41 @@ export function FlatCredentialsTable({
   const platformMap = useMemo(
     () => new Map<string, PlatformMeta>(platforms.map((p) => [p.id, p])),
     [platforms],
+  )
+
+  const [platformFilter, setPlatformFilter] = useState(ALL_FILTER)
+  const [accountFilter, setAccountFilter] = useState(ALL_FILTER)
+  const [kindFilter, setKindFilter] = useState(ALL_FILTER)
+
+  // Distinct facet options derived from the actual credentials present (not
+  // hardcoded — Platform/Account naturally vary per install; Kind is currently
+  // single-valued ("bearer") but derived the same way for when that changes).
+  const platformOptions = useMemo(() => {
+    const seen = new Map<string, string>() // platformId -> displayName
+    for (const c of credentials) {
+      if (!seen.has(c.platformId)) {
+        seen.set(c.platformId, platformMap.get(c.platformId)?.displayName ?? c.platformId)
+      }
+    }
+    return Array.from(seen.entries()).sort((a, b) => a[1].localeCompare(b[1]))
+  }, [credentials, platformMap])
+
+  const accountOptions = useMemo(
+    () => Array.from(new Set(credentials.map((c) => c.account))).sort((a, b) => a.localeCompare(b)),
+    [credentials],
+  )
+
+  const kindOptions = useMemo(
+    () => Array.from(new Set(credentials.map((c) => c.kind))).sort((a, b) => a.localeCompare(b)),
+    [credentials],
+  )
+
+  const predicate = useCallback(
+    (c: CredentialMeta) =>
+      (platformFilter === ALL_FILTER || c.platformId === platformFilter) &&
+      (accountFilter === ALL_FILTER || c.account === accountFilter) &&
+      (kindFilter === ALL_FILTER || c.kind === kindFilter),
+    [platformFilter, accountFilter, kindFilter],
   )
 
   // Sortable columns — Platform sorts by the joined display name; Account by the
@@ -461,6 +500,7 @@ export function FlatCredentialsTable({
     ],
     columns,
     pageSize,
+    predicate,
   })
 
   // Group dividers stay ONLY when unsorted or sorted-by-platform; sorting by
@@ -503,23 +543,17 @@ export function FlatCredentialsTable({
     return counts
   }, [sorted])
 
-  const isEmptySearch = total === 0 && search.trim().length > 0
+  const isEmptySearch =
+    total === 0 &&
+    (search.trim().length > 0 ||
+      platformFilter !== ALL_FILTER ||
+      accountFilter !== ALL_FILTER ||
+      kindFilter !== ALL_FILTER)
 
   return (
     <div className="flex flex-col gap-3">
-      {/* Search input — labeled for a11y (DESIGN.md: labeled inputs) */}
-      <div>
-        <label
-          htmlFor="cred-search"
-          style={{
-            fontSize: "var(--text-label)",
-            color: "var(--gray-700)",
-            display: "block",
-            marginBottom: "6px",
-          }}
-        >
-          Search
-        </label>
+      {/* Search + Platform/Account/Kind facet filters — row, composes as AND. */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-2)" }}>
         <Input
           id="cred-search"
           type="search"
@@ -529,6 +563,45 @@ export function FlatCredentialsTable({
           style={{ maxWidth: "320px" }}
           aria-label="Search credentials"
         />
+        <Select value={platformFilter} onValueChange={setPlatformFilter}>
+          <SelectTrigger aria-label="Filter by platform" style={{ maxWidth: "180px" }}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL_FILTER}>All platforms</SelectItem>
+            {platformOptions.map(([id, displayName]) => (
+              <SelectItem key={id} value={id}>
+                {displayName}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={accountFilter} onValueChange={setAccountFilter}>
+          <SelectTrigger aria-label="Filter by account" style={{ maxWidth: "180px" }}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL_FILTER}>All accounts</SelectItem>
+            {accountOptions.map((account) => (
+              <SelectItem key={account} value={account}>
+                {account}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Select value={kindFilter} onValueChange={setKindFilter}>
+          <SelectTrigger aria-label="Filter by kind" style={{ maxWidth: "180px" }}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALL_FILTER}>All kinds</SelectItem>
+            {kindOptions.map((kind) => (
+              <SelectItem key={kind} value={kind}>
+                {kind}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       <div>

@@ -30,6 +30,13 @@ export interface UseTableViewOptions<T> {
   /** Page size; defaults to 25. */
   readonly pageSize?: number
   readonly initialSortKey?: string
+  /**
+   * Optional facet pre-filter, applied BEFORE search (row must pass predicate
+   * AND match search). Callers derive this from their own dropdown state (e.g.
+   * a Kind/Platform/Account Select) — this is the composition point that lets
+   * facet filters and free-text search combine as AND.
+   */
+  readonly predicate?: (row: T) => boolean
 }
 
 export interface UseTableViewResult<T> {
@@ -58,6 +65,7 @@ export function useTableView<T>({
   columns,
   pageSize = DEFAULT_PAGE_SIZE,
   initialSortKey,
+  predicate,
 }: UseTableViewOptions<T>): UseTableViewResult<T> {
   const [search, setSearchState] = useState("")
   const [sortKey, setSortKey] = useState<string | null>(initialSortKey ?? null)
@@ -88,10 +96,13 @@ export function useTableView<T>({
   const columnMap = useMemo(() => new Map(columns.map((c) => [c.key, c])), [columns])
 
   const filtered = useMemo(() => {
+    const preFiltered = predicate ? rows.filter(predicate) : rows
     const q = search.trim().toLowerCase()
-    if (!q) return rows
-    return rows.filter((row) => searchFields(row).some((field) => field?.toLowerCase().includes(q)))
-  }, [rows, search, searchFields])
+    if (!q) return preFiltered
+    return preFiltered.filter((row) =>
+      searchFields(row).some((field) => field?.toLowerCase().includes(q)),
+    )
+  }, [rows, search, searchFields, predicate])
 
   const filteredSortedRows = useMemo(() => {
     const column = sortKey !== null ? columnMap.get(sortKey) : undefined

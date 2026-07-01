@@ -143,8 +143,12 @@ describe("ProfilesPage", () => {
   it("selects first profile by default and shows its detail (F13)", () => {
     mockUseLoaderData.mockReturnValue(populatedData)
     render(<ProfilesPage />)
-    // The first profile's name appears in the detail heading (h2)
-    expect(screen.getByRole("heading", { level: 2, name: "default" })).toBeInTheDocument()
+    // The profile-name h2 was removed from the header bar (inc 26 slice — header
+    // bar now carries the profiles-list search/sort instead). Selection is shown
+    // by the left-list item's aria-current, and the detail panel's serve caption
+    // (unique per profile) is the proxy for "which profile's detail is showing".
+    expect(screen.getByRole("button", { name: /default/i })).toHaveAttribute("aria-current", "page")
+    expect(screen.getByText(/junction mcp serve --profile default/)).toBeInTheDocument()
   })
 
   it("clicking a profile list item switches the detail panel (selection behavior)", async () => {
@@ -152,14 +156,18 @@ describe("ProfilesPage", () => {
     render(<ProfilesPage />)
 
     // Initially "default" is selected
-    expect(screen.getByRole("heading", { level: 2, name: "default" })).toBeInTheDocument()
+    expect(screen.getByText(/junction mcp serve --profile default/)).toBeInTheDocument()
 
     // Click the "readonly" list item
     fireEvent.click(screen.getByRole("button", { name: /readonly/i }))
 
     // Detail panel switches to "readonly"
     await waitFor(() =>
-      expect(screen.getByRole("heading", { level: 2, name: "readonly" })).toBeInTheDocument(),
+      expect(screen.getByText(/junction mcp serve --profile readonly/)).toBeInTheDocument(),
+    )
+    expect(screen.getByRole("button", { name: /readonly/i })).toHaveAttribute(
+      "aria-current",
+      "page",
     )
   })
 
@@ -224,6 +232,37 @@ describe("ProfilesPage", () => {
     expect(screen.getByRole("button", { name: /add route/i })).toBeInTheDocument()
   })
 
+  // ── Header bar restructure (inc 26 slice) ──────────────────────────────────
+
+  it("header bar no longer renders a profile-name <h2> (moved to the list search+sort)", () => {
+    mockUseLoaderData.mockReturnValue(populatedData)
+    render(<ProfilesPage />)
+    // The name is still findable — as the selected item in the left list —
+    // just not as its own heading in the header bar.
+    expect(screen.queryByRole("heading", { level: 2 })).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /default/i })).toHaveAttribute("aria-current", "page")
+  })
+
+  it("header bar shows the profiles-list search + Add Route/Delete together", () => {
+    mockUseLoaderData.mockReturnValue(populatedData)
+    render(<ProfilesPage />)
+    expect(screen.getByRole("searchbox", { name: /filter profiles/i })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /add route/i })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /^delete$/i })).toBeInTheDocument()
+  })
+
+  it("serve command is still findable — relocated to a caption above the route table", () => {
+    mockUseLoaderData.mockReturnValue(populatedData)
+    render(<ProfilesPage />)
+    expect(screen.getByText(/junction mcp serve --profile default/)).toBeInTheDocument()
+  })
+
+  it("no visible 'Search' label renders anywhere on the page (aria-label carries the a11y name)", () => {
+    mockUseLoaderData.mockReturnValue(populatedData)
+    const { queryByText } = render(<ProfilesPage />)
+    expect(queryByText("Search")).not.toBeInTheDocument()
+  })
+
   it("does NOT render 'Keys active' (removed inc-25 feedback batch)", () => {
     mockUseLoaderData.mockReturnValue(populatedData)
     render(<ProfilesPage />)
@@ -258,7 +297,7 @@ describe("ProfilesPage", () => {
     render(<ProfilesPage />)
 
     // Initially "default" (first profile) is selected
-    expect(screen.getByRole("heading", { level: 2, name: "default" })).toBeInTheDocument()
+    expect(screen.getByText(/junction mcp serve --profile default/)).toBeInTheDocument()
 
     // Click Delete button in the detail panel
     const deleteBtn = screen.getByRole("button", { name: /^delete$/i })
@@ -272,7 +311,7 @@ describe("ProfilesPage", () => {
 
     // Selection must still be "default" — NOT jumped to another profile
     await waitFor(() =>
-      expect(screen.getByRole("heading", { level: 2, name: "default" })).toBeInTheDocument(),
+      expect(screen.getByText(/junction mcp serve --profile default/)).toBeInTheDocument(),
     )
     // invalidate must NOT have been called (no mutation happened)
     expect(mockInvalidate).not.toHaveBeenCalled()

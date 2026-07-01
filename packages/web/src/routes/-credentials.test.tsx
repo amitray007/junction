@@ -186,6 +186,12 @@ describe("CredentialsPage", () => {
     expect(searchInput).toBeInTheDocument()
   })
 
+  it("no visible 'Search' label renders above the search box (aria-label carries the a11y name)", () => {
+    mockUseLoaderData.mockReturnValue({ credentials: populatedCredentials, platforms })
+    const { queryByText } = render(<CredentialsPage />)
+    expect(queryByText("Search")).not.toBeInTheDocument()
+  })
+
   it("search filters credentials by account (case-insensitive)", () => {
     // Put two accounts under the same platform to verify filtering.
     const creds: CredentialMeta[] = [
@@ -212,6 +218,38 @@ describe("CredentialsPage", () => {
     })
 
     expect(getByText(/no credentials match/i)).toBeInTheDocument()
+  })
+
+  // ── Facet filters (Platform / Account / Kind) ──────────────────────────────
+  //
+  // happy-dom can't drive the Radix Select portal open (see -platforms.test.tsx
+  // for the same limitation) — these assert the three triggers are present,
+  // labeled, and default to their "All …" sentinel. The compose-as-AND filtering
+  // behavior itself is covered by use-table-view.test.tsx's predicate tests
+  // (the exact mechanism these dropdowns feed); the open→choose→filter UI path
+  // is covered by the junction-web-verify browser pass.
+
+  it("Platform/Account/Kind filter dropdowns are present, labeled, default to 'All …'", () => {
+    mockUseLoaderData.mockReturnValue({ credentials: populatedCredentials, platforms })
+    const { getByRole } = render(<CredentialsPage />)
+
+    const platformTrigger = getByRole("combobox", { name: /filter by platform/i })
+    expect(platformTrigger).toBeInTheDocument()
+    expect(platformTrigger.textContent).toMatch(/all platforms/i)
+
+    const accountTrigger = getByRole("combobox", { name: /filter by account/i })
+    expect(accountTrigger).toBeInTheDocument()
+    expect(accountTrigger.textContent).toMatch(/all accounts/i)
+
+    const kindTrigger = getByRole("combobox", { name: /filter by kind/i })
+    expect(kindTrigger).toBeInTheDocument()
+    expect(kindTrigger.textContent).toMatch(/all kinds/i)
+  })
+
+  it("does NOT render a Status filter (status is single-valued today — deferred to inc 28)", () => {
+    mockUseLoaderData.mockReturnValue({ credentials: populatedCredentials, platforms })
+    const { queryByRole } = render(<CredentialsPage />)
+    expect(queryByRole("combobox", { name: /filter by status/i })).not.toBeInTheDocument()
   })
 
   // ── Sort (F12) ────────────────────────────────────────────────────────────

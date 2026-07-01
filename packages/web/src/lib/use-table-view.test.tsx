@@ -144,4 +144,29 @@ describe("useTableView", () => {
     // pageRows is just the first slice
     expect(result.current.pageRows.map((r) => r.name)).toEqual(["alice"])
   })
+
+  // ── predicate (facet pre-filter) ──────────────────────────────────────────
+
+  it("no predicate: all rows pass (baseline, same as omitting the option)", () => {
+    const { result } = setup()
+    expect(result.current.pageRows.map((r) => r.id)).toEqual(["r1", "r2", "r3"])
+  })
+
+  it("predicate alone narrows rows without any search term", () => {
+    const { result } = setup({ predicate: (r) => r.count >= 2 })
+    expect(result.current.pageRows.map((r) => r.id).sort()).toEqual(["r1", "r3"])
+  })
+
+  it("predicate composes with search as AND", () => {
+    // Only rows with count >= 2 AND name containing "b" (case-insensitive).
+    const { result } = setup({ predicate: (r) => r.count >= 2 })
+    act(() => result.current.setSearch("bob"))
+    expect(result.current.pageRows.map((r) => r.id)).toEqual(["r3"])
+  })
+
+  it("predicate excluding everything yields zero rows even with a matching search", () => {
+    const { result } = setup({ predicate: () => false })
+    act(() => result.current.setSearch("alice"))
+    expect(result.current.total).toBe(0)
+  })
 })

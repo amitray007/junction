@@ -651,19 +651,8 @@ function RouteTable({ profile, onToggle, onRemove, onEditFilter }: RouteTablePro
 
   return (
     <div className="flex flex-col gap-3">
-      {/* Search — labeled for a11y (DESIGN.md: labeled inputs) */}
+      {/* Search — aria-label is the accessible name; no visible label (a11y unchanged). */}
       <div>
-        <label
-          htmlFor="route-search"
-          style={{
-            fontSize: "var(--text-label)",
-            color: "var(--gray-700)",
-            display: "block",
-            marginBottom: "6px",
-          }}
-        >
-          Search
-        </label>
         <Input
           id="route-search"
           type="search"
@@ -795,16 +784,37 @@ function RouteTable({ profile, onToggle, onRemove, onEditFilter }: RouteTablePro
 
 // ---------------------------------------------------------------------------
 // Profile header bar — full-width, rendered ABOVE the master-detail split.
-// Contains: profile name (h2) + CLI serve line (left), Add Route + Delete (right).
+// Contains: profiles-LIST search + sort (left — moved in from the list panel,
+// filters/sorts the left nav, NOT the selected profile's route table), Add
+// Route + Delete for the selected profile (right).
+//
+// The profile-name <h2> and the "Serve via junction mcp serve --profile …"
+// caption that used to live here were removed (this bar is about the list +
+// selected-profile actions, not identity/detail). The name is still visible
+// as the highlighted item in the left list; the serve command moved to a
+// muted caption just above the RouteTable in ProfileRoutes (still discoverable,
+// right next to the routes it configures).
 // ---------------------------------------------------------------------------
 
 interface ProfileHeaderBarProps {
   readonly profile: ProfileMeta
+  readonly filterQuery: string
+  readonly onFilterQueryChange: (q: string) => void
+  readonly profileSortDirectionFor: (key: string) => SortDirection
+  readonly onToggleProfileSort: (key: string) => void
   readonly onAddRoute: () => void
   readonly onDeleteProfile: (p: ProfileMeta) => void
 }
 
-function ProfileHeaderBar({ profile, onAddRoute, onDeleteProfile }: ProfileHeaderBarProps) {
+function ProfileHeaderBar({
+  profile,
+  filterQuery,
+  onFilterQueryChange,
+  profileSortDirectionFor,
+  onToggleProfileSort,
+  onAddRoute,
+  onDeleteProfile,
+}: ProfileHeaderBarProps) {
   return (
     <div
       style={{
@@ -816,30 +826,29 @@ function ProfileHeaderBar({ profile, onAddRoute, onDeleteProfile }: ProfileHeade
         marginBottom: "var(--space-4)",
       }}
     >
-      <div style={{ minWidth: 0 }}>
-        <h2
-          style={{
-            fontSize: "var(--text-h2)",
-            fontWeight: 600,
-            color: "var(--gray-1000)",
-            margin: 0,
-          }}
-        >
-          {profile.name}
-        </h2>
-        {/* CLI serve command — the single-endpoint model (no per-profile HTTP URL) */}
-        <p
-          style={{
-            fontSize: "var(--text-caption)",
-            color: "var(--gray-700)",
-            margin: "4px 0 0",
-          }}
-        >
-          Serve via{" "}
-          <MonoCode style={{ color: "var(--blue-text)" }}>
-            junction mcp serve --profile {profile.name}
-          </MonoCode>
-        </p>
+      {/* Left — profiles-list search + sort (aria-label is the accessible name;
+          no visible label, matching the other search boxes). */}
+      <div style={{ display: "flex", flexDirection: "column", gap: "6px", minWidth: 0 }}>
+        <Input
+          type="search"
+          placeholder="Filter profiles…"
+          value={filterQuery}
+          onChange={(e) => onFilterQueryChange(e.target.value)}
+          aria-label="Filter profiles"
+          style={{ maxWidth: "260px" }}
+        />
+        <div style={{ display: "flex", gap: "var(--space-2)" }}>
+          <ProfileListSortButton
+            label="Name"
+            direction={profileSortDirectionFor("name")}
+            onClick={() => onToggleProfileSort("name")}
+          />
+          <ProfileListSortButton
+            label="Routes"
+            direction={profileSortDirectionFor("routes")}
+            onClick={() => onToggleProfileSort("routes")}
+          />
+        </div>
       </div>
 
       {/* Actions */}
@@ -905,6 +914,24 @@ function ProfileRoutes({
 
   return (
     <div style={{ minWidth: 0 }}>
+      {/* CLI serve command — the single-endpoint model (no per-profile HTTP URL).
+          Moved here (inc 26 slice) from the header bar, which now carries the
+          profiles-list search/sort instead; a muted one-liner right above the
+          route table it configures keeps it discoverable without competing for
+          the header's attention. */}
+      <p
+        style={{
+          fontSize: "var(--text-caption)",
+          color: "var(--gray-700)",
+          margin: "0 0 var(--space-2)",
+        }}
+      >
+        Serve via{" "}
+        <MonoCode style={{ color: "var(--blue-text)" }}>
+          junction mcp serve --profile {profile.name}
+        </MonoCode>
+      </p>
+
       {/* Routes table */}
       <RouteTable
         profile={profile}
@@ -1157,6 +1184,10 @@ function ProfilesPage() {
           {selectedProfile !== null && (
             <ProfileHeaderBar
               profile={selectedProfile}
+              filterQuery={filterQuery}
+              onFilterQueryChange={setFilterQuery}
+              profileSortDirectionFor={profileSortDirectionFor}
+              onToggleProfileSort={toggleProfileSort}
               onAddRoute={() => setAddRouteOpen(true)}
               onDeleteProfile={(p) => setDeletingProfile(p)}
             />
@@ -1189,38 +1220,8 @@ function ProfilesPage() {
                 boxShadow: "var(--shadow-sm)",
               }}
             >
-              {/* List filter */}
-              <div style={{ padding: "4px 4px 0" }}>
-                <Input
-                  type="search"
-                  placeholder="Filter profiles…"
-                  value={filterQuery}
-                  onChange={(e) => setFilterQuery(e.target.value)}
-                  aria-label="Filter profiles"
-                  style={{ fontSize: "var(--text-caption)" }}
-                />
-              </div>
-
-              {/* Sort controls — the panel is a <nav> list, not a <table>, so these
-                  are compact buttons rather than TableHead. */}
-              <div
-                style={{
-                  display: "flex",
-                  gap: "var(--space-2)",
-                  padding: "0 4px",
-                }}
-              >
-                <ProfileListSortButton
-                  label="Name"
-                  direction={profileSortDirectionFor("name")}
-                  onClick={() => toggleProfileSort("name")}
-                />
-                <ProfileListSortButton
-                  label="Routes"
-                  direction={profileSortDirectionFor("routes")}
-                  onClick={() => toggleProfileSort("routes")}
-                />
-              </div>
+              {/* Search + sort for this list moved to ProfileHeaderBar (above the split) —
+                  this panel is now just the <nav> list itself. */}
               <nav aria-label="Profiles">
                 {filteredProfiles.length === 0 ? (
                   <p

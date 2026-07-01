@@ -788,6 +788,12 @@ function buildPlatformColumns(
   ]
 }
 
+// Kind facet options — hardcoded to the 4 known platform kinds (simpler than
+// deriving from the loaded data, per the method-file note). "all" is the
+// clear-filter sentinel ("All kinds").
+const KIND_FILTER_OPTIONS = ["all", "mcp", "openapi", "graphql", "cli"] as const
+type KindFilter = (typeof KIND_FILTER_OPTIONS)[number]
+
 function PlatformsPage() {
   const { platforms, connectionCounts } = Route.useLoaderData()
   const router = useRouter()
@@ -795,8 +801,13 @@ function PlatformsPage() {
   const [editingPlatform, setEditingPlatform] = useState<PlatformMeta | null>(null)
   const [deletingPlatform, setDeletingPlatform] = useState<PlatformMeta | null>(null)
   const [refreshingId, setRefreshingId] = useState<string | null>(null)
+  const [kindFilter, setKindFilter] = useState<KindFilter>("all")
 
   const columns = useMemo(() => buildPlatformColumns(connectionCounts), [connectionCounts])
+  const predicate = useCallback(
+    (p: PlatformMeta) => kindFilter === "all" || p.kind === kindFilter,
+    [kindFilter],
+  )
   const {
     search,
     setSearch,
@@ -811,6 +822,7 @@ function PlatformsPage() {
     rows: platforms,
     searchFields: (p) => [p.id, p.displayName, p.kind],
     columns,
+    predicate,
   })
 
   async function invalidate() {
@@ -858,19 +870,15 @@ function PlatformsPage() {
         }
       />
 
-      {/* Search — labeled for a11y (DESIGN.md: labeled inputs) */}
-      <div style={{ marginBottom: "var(--space-2)" }}>
-        <label
-          htmlFor="platform-search"
-          style={{
-            fontSize: "var(--text-label)",
-            color: "var(--gray-700)",
-            display: "block",
-            marginBottom: "6px",
-          }}
-        >
-          Search
-        </label>
+      {/* Search + Kind facet filter — row, composes as AND (Task 5's predicate). */}
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          gap: "var(--space-2)",
+          marginBottom: "var(--space-2)",
+        }}
+      >
         <Input
           id="platform-search"
           type="search"
@@ -880,6 +888,18 @@ function PlatformsPage() {
           style={{ maxWidth: "320px" }}
           aria-label="Search platforms"
         />
+        <Select value={kindFilter} onValueChange={(v) => setKindFilter(v as KindFilter)}>
+          <SelectTrigger aria-label="Filter by kind" style={{ maxWidth: "180px" }}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All kinds</SelectItem>
+            <SelectItem value="mcp">mcp</SelectItem>
+            <SelectItem value="openapi">openapi</SelectItem>
+            <SelectItem value="graphql">graphql</SelectItem>
+            <SelectItem value="cli">cli</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       {/* B3: always render the table — empty state is a full-width row, not bare text */}
@@ -907,10 +927,12 @@ function PlatformsPage() {
             <EmptyTableRow
               colSpan={4}
               message={
-                search.trim().length > 0 ? "No platforms match your search." : "No platforms yet."
+                search.trim().length > 0 || kindFilter !== "all"
+                  ? "No platforms match your search."
+                  : "No platforms yet."
               }
               action={
-                search.trim().length > 0 ? undefined : (
+                search.trim().length > 0 || kindFilter !== "all" ? undefined : (
                   <span style={{ fontSize: "var(--text-body)", color: "var(--gray-700)" }}>
                     Use <strong>Add Platform</strong> above.
                   </span>

@@ -199,6 +199,12 @@ describe("PlatformsPage", () => {
     expect(getByRole("searchbox", { name: /search platforms/i })).toBeInTheDocument()
   })
 
+  it("no visible 'Search' label renders above the search box (aria-label carries the a11y name)", () => {
+    mockUseLoaderData.mockReturnValue(populatedLoaderData)
+    const { queryByText } = render(<PlatformsPage />)
+    expect(queryByText("Search")).not.toBeInTheDocument()
+  })
+
   it("search filters rows by displayName (case-insensitive)", () => {
     mockUseLoaderData.mockReturnValue(populatedLoaderData)
     const { getByRole, queryByText, getByText } = render(<PlatformsPage />)
@@ -216,6 +222,18 @@ describe("PlatformsPage", () => {
       target: { value: "nonexistent" },
     })
     expect(getByText(/no platforms match/i)).toBeInTheDocument()
+  })
+
+  it("Kind filter dropdown is present, labeled, defaults to 'All kinds'", () => {
+    mockUseLoaderData.mockReturnValue(populatedLoaderData)
+    const { getByRole } = render(<PlatformsPage />)
+    // happy-dom can't drive the Radix Select portal open (see the Add Platform
+    // Kind-Select tests below) — assert the trigger renders labeled and at its
+    // default value; the open→choose→filter path is covered by the
+    // junction-web-verify browser pass.
+    const trigger = getByRole("combobox", { name: /filter by kind/i })
+    expect(trigger).toBeInTheDocument()
+    expect(trigger.textContent).toMatch(/all kinds/i)
   })
 
   it("clicking the Name column header sorts rows asc then desc", () => {
