@@ -87,6 +87,15 @@ function runSourceMutation(
             .where(eq(sourceRefs.id, existing.id))
             .run()
           break
+        default: {
+          // Exhaustiveness guard: a defaultless switch does NOT error when a new
+          // SourceOp kind is added (verified against the pinned tsc) — it silently
+          // falls through and this fn returns ok() having written nothing. The
+          // `never` assignment (no cast — a cast would defeat it) forces a compile
+          // error the moment a kind is added without a case here.
+          const _exhaustive: never = op
+          throw new Error(`unhandled SourceOp kind: ${JSON.stringify(_exhaustive)}`)
+        }
       }
     })
     return okAsync(undefined)

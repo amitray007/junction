@@ -403,9 +403,9 @@ describe("ProfilesPage", () => {
   // happy-dom limitation (see -credentials.test.tsx): Radix DropdownMenu's Portal
   // content does not open via fireEvent.click in happy-dom, so the ⋯ menu → "Edit
   // Tool Access" click path can't be driven here. The trigger's presence/labelling
-  // is asserted below; the open→edit→submit→persist path is covered by the
-  // junction-web-verify browser pass. EditFilterDialog's submit logic itself is
-  // exercised directly via its own dialog test below (bypassing the dropdown).
+  // is asserted below. The mutation itself (setRouteFilter set/clear/round-trip) is
+  // covered at the server layer in profile-mutations.server.test.ts, and the full
+  // open→edit→submit→persist UI path by the junction-web-verify browser pass.
 
   it("row action trigger is present for each route (reachable to open Edit Tool Access)", () => {
     mockUseLoaderData.mockReturnValue(populatedData)

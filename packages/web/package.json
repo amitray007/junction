@@ -6,6 +6,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev",
+    "clean:stale-js": "find src -name '*.js' ! -name 'entry-server.js' ! -name 'entry-client.js' -delete",
+    "prebuild": "pnpm run clean:stale-js",
     "build": "vite build",
     "start": "node serve.mjs",
     "typecheck": "tsr generate && tsc --noEmit",

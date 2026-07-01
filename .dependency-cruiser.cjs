@@ -29,9 +29,10 @@ module.exports = {
       // This rule is STRUCTURAL, not an enumeration: `from` = "any non-app package"
       // (so a future package is automatically a governed lib), `to` = "the apps only"
       // (cli/web). Therefore:
-      //   - core → anything-in-repo: core has no in-repo deps in practice, but if it
-      //     ever imported a peer lib that would now be ALLOWED by this rule (core
-      //     staying dependency-free is enforced by discipline/review, not this rule).
+      //   - core → anything-in-repo: NOT governed by THIS rule anymore (the lib-DAG
+      //     relaxation would permit a non-cyclic core→leaf-lib edge, which no-circular
+      //     can't catch). The dedicated `core-imports-nothing-in-repo` rule below closes
+      //     that gap structurally — core stays the dependency-free root.
       //   - mcp/server → mcp/client (and reverse), any-lib → any-lib: ALLOWED (lib DAG).
       //   - mcp/* → cli/web, new-pkg → cli/web: BLOCKED (a lib may never reach an app).
       //   - apps (cli/web) are exempt as importers (from.pathNot) — they may import any lib.
@@ -53,6 +54,27 @@ module.exports = {
       to: {
         // The only forbidden targets for a lib are the apps.
         path: "^packages/(cli|web)/",
+      },
+    },
+    {
+      // Increment 26: closes the narrow gap the lib-DAG relaxation opened. The
+      // `libs-import-only-core` rule above now permits lib→lib, which would also
+      // permit a NON-CYCLIC core→leaf-lib edge (no-circular only catches cycles).
+      // core is the dependency-free root of the DAG — it must import NOTHING in-repo.
+      // This is structural (not "core stays clean by discipline"): any core→any-other-
+      // package edge errors, independent of the lib-DAG rule.
+      name: "core-imports-nothing-in-repo",
+      comment:
+        "core is the root of the lib DAG — it must not import any other in-repo package " +
+        "(everything imports core; core imports nothing in-repo). Keeps core embeddable.",
+      severity: "error",
+      from: {
+        path: "^packages/core/",
+      },
+      to: {
+        path: "^packages/",
+        // Its own files are fine; every other in-repo package is forbidden.
+        pathNot: "^packages/core/",
       },
     },
     {
