@@ -14,28 +14,35 @@ module.exports = {
     },
     {
       // Increment 7 (structural app-vs-lib model — closes the enumeration gaps the
-      // inc-7 boundary review found). The topology:
+      // inc-7 boundary review found), amended in increment 26 to allow lib→lib.
+      // The topology:
       //   APPS (composition roots): cli (package name "junction"), web. May import any
       //     lib; must not import each other; nothing may import an app.
-      //   LIBS: every package that is NOT an app — core, mcp/server, mcp/client, AND any
-      //     package added later. A lib may import ONLY core (+ its own files).
+      //   LIBS: every package that is NOT an app — core, mcp/server, mcp/client,
+      //     openapi-client, graphql-client, platform-orchestration, AND any package
+      //     added later. A lib may import core AND other libs (a lib DAG) — but never
+      //     an app. (Increment 26: platform-orchestration is the first package to
+      //     import peer libs — openapi-client + graphql-client — motivating this change
+      //     from "only core" to "any lib". no-circular above still catches lib↔lib
+      //     cycles; this rule only governs direction relative to apps.)
       //
       // This rule is STRUCTURAL, not an enumeration: `from` = "any non-app package"
-      // (so a future package is automatically a governed lib), `to` = "any in-repo
-      // package except core and except the importer's own package". Therefore:
-      //   - core → anything-in-repo (incl. a new package): BLOCKED (core is a lib whose
-      //     only allowed target is core itself ⇒ core imports nothing in-repo).
-      //   - mcp/server → mcp/client (and reverse), mcp/* → cli/web: BLOCKED (peer lib / app).
-      //   - new-pkg → cli/web/mcp/*: BLOCKED (a new lib may only reach core).
-      //   - any-lib → core, any-lib → its own internal files: ALLOWED.
+      // (so a future package is automatically a governed lib), `to` = "the apps only"
+      // (cli/web). Therefore:
+      //   - core → anything-in-repo: core has no in-repo deps in practice, but if it
+      //     ever imported a peer lib that would now be ALLOWED by this rule (core
+      //     staying dependency-free is enforced by discipline/review, not this rule).
+      //   - mcp/server → mcp/client (and reverse), any-lib → any-lib: ALLOWED (lib DAG).
+      //   - mcp/* → cli/web, new-pkg → cli/web: BLOCKED (a lib may never reach an app).
       //   - apps (cli/web) are exempt as importers (from.pathNot) — they may import any lib.
       // The cli is reached by name "junction" via tsconfig.depcruise.json paths, so its
       // PATH packages/cli/ is what the regexes match.
       name: "libs-import-only-core",
       comment:
-        "A lib (any package that is not an app: core, mcp/server, mcp/client, or any " +
-        "future package) may import ONLY core and its own files — never an app (cli/web), " +
-        "never a peer lib. Apps are exempt as importers (they are composition roots).",
+        "A lib (any package that is not an app: core, mcp/server, mcp/client, " +
+        "openapi-client, graphql-client, platform-orchestration, or any future package) " +
+        "may import core and other libs (a lib DAG) — but never an app (cli/web). " +
+        "Apps are exempt as importers (they are composition roots).",
       severity: "error",
       from: {
         // Capture the importer's package dir ($1), including nested mcp/<sub>.
@@ -44,9 +51,8 @@ module.exports = {
         pathNot: "^packages/(cli|web)/",
       },
       to: {
-        path: "^packages/",
-        // Allow importing core and the importer's own package; block everything else.
-        pathNot: "^packages/core/|^packages/$1/",
+        // The only forbidden targets for a lib are the apps.
+        path: "^packages/(cli|web)/",
       },
     },
     {

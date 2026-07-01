@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "types": ["node"]
+  },
+  "include": ["src"],
+  "exclude": ["**/*.test.ts"],
+  "references": [
+    { "path": "../core" },
+    { "path": "../openapi-client" },
+    { "path": "../graphql-client" }
+  ]
+}

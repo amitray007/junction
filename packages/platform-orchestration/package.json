@@ -1,0 +1,25 @@
+{
+  "name": "@junction/platform-orchestration",
+  "version": "0.0.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsdown"
+  },
+  "dependencies": {
+    "@junction/core": "workspace:*",
+    "@junction/openapi-client": "workspace:*",
+    "@junction/graphql-client": "workspace:*",
+    "neverthrow": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.1"
+  }
+}

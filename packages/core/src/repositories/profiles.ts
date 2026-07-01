@@ -12,7 +12,7 @@ import type { DbError } from "../errors/index.js"
 import { newSourceRefId } from "../ids/index.js"
 import type { Profile } from "../schema/profile.js"
 import { ProfileSchema } from "../schema/profile.js"
-import type { SourceRef } from "../schema/source-ref.js"
+import type { SourceRef, ToolFilter } from "../schema/source-ref.js"
 import { SourceRefSchema, ToolFilterSchema } from "../schema/source-ref.js"
 
 // Sentinel symbols for custom transaction errors (avoids instanceof checks on plain Error)
@@ -29,10 +29,11 @@ function isSourceNotFound(cause: unknown): boolean {
 }
 
 /**
- * Shared transaction helper for source mutations (removeSource, setSourceEnabled).
- * Within a transaction: looks up the source_ref by (profileId, toolNamespace),
- * throws the sentinel if absent, then applies the requested operation by the
- * found row id (avoiding re-building the compound where clause in each caller).
+ * Shared transaction helper for source mutations (removeSource, setSourceEnabled,
+ * setSourceFilter). Within a transaction: looks up the source_ref by
+ * (profileId, toolNamespace), throws the sentinel if absent, then applies the
+ * requested operation by the found row id (avoiding re-building the compound
+ * where clause in each caller).
  *
  * Uses a discriminated op union so the caller never needs to type the drizzle
  * transaction object (SQLiteTransaction ≠ Db — they share query methods but differ
@@ -40,7 +41,10 @@ function isSourceNotFound(cause: unknown): boolean {
  *
  * Returns a typed ResultAsync so both callers reduce to a single `return` expression.
  */
-type SourceOp = { kind: "delete" } | { kind: "setEnabled"; enabled: boolean }
+type SourceOp =
+  | { kind: "delete" }
+  | { kind: "setEnabled"; enabled: boolean }
+  | { kind: "setFilter"; toolFilter?: ToolFilter }
 
 function runSourceMutation(
   db: Db,
@@ -63,13 +67,26 @@ function runSourceMutation(
           { _sentinel: _SOURCE_NOT_FOUND, _namespace: toolNamespace },
         )
       }
-      if (op.kind === "delete") {
-        tx.delete(sourceRefs).where(eq(sourceRefs.id, existing.id)).run()
-      } else {
-        tx.update(sourceRefs)
-          .set({ enabled: op.enabled })
-          .where(eq(sourceRefs.id, existing.id))
-          .run()
+      switch (op.kind) {
+        case "delete":
+          tx.delete(sourceRefs).where(eq(sourceRefs.id, existing.id)).run()
+          break
+        case "setEnabled":
+          tx.update(sourceRefs)
+            .set({ enabled: op.enabled })
+            .where(eq(sourceRefs.id, existing.id))
+            .run()
+          break
+        case "setFilter":
+          tx.update(sourceRefs)
+            .set({
+              toolFilter: op.toolFilter
+                ? JSON.stringify(ToolFilterSchema.parse(op.toolFilter))
+                : null,
+            })
+            .where(eq(sourceRefs.id, existing.id))
+            .run()
+          break
       }
     })
     return okAsync(undefined)
@@ -295,6 +312,20 @@ export function createProfilesRepo(db: Db) {
       enabled: boolean,
     ): ResultAsync<void, DbError> {
       return runSourceMutation(db, profileId, toolNamespace, { kind: "setEnabled", enabled })
+    },
+
+    /**
+     * Set (or clear) the toolFilter on a SourceRef in place.
+     * Transactional: verifies existence, then updates the stored JSON filter.
+     * Passing no/undefined toolFilter clears it (null = all tools).
+     * Returns not-found if the (profile, namespace) pair doesn't exist.
+     */
+    setSourceFilter(
+      profileId: string,
+      toolNamespace: string,
+      toolFilter?: ToolFilter,
+    ): ResultAsync<void, DbError> {
+      return runSourceMutation(db, profileId, toolNamespace, { kind: "setFilter", toolFilter })
     },
   }
 }
