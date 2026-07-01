@@ -1,6 +1,6 @@
 # Waves — parallel increment planning
 
-> **Why this file exists.** Junction's default planning lens is **"how can this be done in parallel?"** (see `CLAUDE.md` → *Plan for parallelism by default*). A **wave** is a set of increment slices that can be built **at the same time** because none of them blocks another and none of them edit the same files. This file is the convention + the living wave plan.
+> **Why this file exists.** Junction's default planning lens is **"how can this be done in parallel?"** (see `CLAUDE.md` → *Plan for parallelism by default*). A **wave** is a set of **slices of one increment** that can be built **at the same time** because none of them blocks another and none of them edit the same files (this is **mode A** — see §0). "Wave" always means slices-within-an-increment; running *whole* increments in parallel is a different thing (**mode B**, §8), and to avoid overloading the word we call that a **batch**, never a wave. This file is the convention + the living wave plan.
 >
 > Parallelism is the **default, not a mandate.** A tight dependency chain stays serial — say so plainly; don't manufacture fake independent slices to look parallel.
 
@@ -10,7 +10,7 @@
 
 There are **two** kinds of parallelism, and they use **different tools**. Keep them separate.
 
-| | **A. Within-increment fan-out** | **B. Cross-increment waves** |
+| | **A. Within-increment fan-out (waves)** | **B. Cross-increment batches** |
 |---|---|---|
 | **What runs in parallel** | slices of *one* increment (core slice + leaf slices) | *whole* independent increments |
 | **Status** | **ACTIVE** — use it now for wide increments | **DEFERRED** — not until `core` stabilizes (see §8) |
@@ -103,4 +103,4 @@ Running **whole increments** in parallel (worktrees, one per increment) is **not
 2. **The roadmap has ≥2 genuinely independent surface areas** with little/no shared-`core` overlap (e.g. a web track and an audit track that don't touch the same files).
 3. **Single-stream throughput — not the design conversation — is the bottleneck.**
 
-When that trigger fires: revisit this file, promote worktrees + the wave-grouping/`touches`-collision machinery from "advisory" to "active," and record the first cross-increment wave in §7. (Cross-referenced in `docs/futures/revisit-when.md`.)
+When that trigger fires: revisit this file, promote worktrees + the batch-grouping/`touches`-collision machinery from "advisory" to "active," and record the first cross-increment batch in §7. (Cross-referenced in `docs/futures/revisit-when.md`.)
