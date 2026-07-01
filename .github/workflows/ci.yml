@@ -57,13 +57,13 @@ jobs:
         with:
           node-version: 22
       - run: pnpm install --frozen-lockfile
-      # Build core first (web imports it server-side; Rolldown must resolve the
-      # workspace dist), then web, leak-check, smoke-test the running server, and
-      # web tests/typecheck — all via the SAME scripts `pnpm verify:web` runs
-      # locally, so CI and the local loop can never diverge (the inc-23 trap where
-      # local passed but CI failed). serve.mjs in web:smoke needs a built CLI for
-      # nothing — it uses a throwaway JUNCTION_HOME — so no extra setup.
-      - run: pnpm --filter @junction/core build
+      # Build ALL of web's workspace lib dependencies first (core, openapi-client,
+      # graphql-client, platform-orchestration — Rolldown must resolve each ssr.external
+      # workspace dist during the SSR build; a missing one fails with "failed to resolve
+      # import"). `{@junction/web}^...` = "the dependencies of web, excluding web itself".
+      # Then web, leak-check, smoke, tests, typecheck — via the SAME scripts `verify:web`
+      # runs locally, so CI and the local loop can't diverge (the inc-23 trap).
+      - run: pnpm --filter "{packages/web}^..." build
       - run: pnpm --filter @junction/web build
       - run: pnpm run web:leakcheck # existence guard + negative + positive control
       - run: pnpm run web:smoke # boots serve.mjs, asserts styled/SSR-correct/leak-free responses
