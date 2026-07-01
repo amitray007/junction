@@ -23,13 +23,15 @@ export function Input({ className, hasError, ref, ...props }: InputProps) {
         "h-[var(--control-height)] px-[var(--cell-padding-x)]",
         "rounded-[var(--radius-6)] border",
         "text-[var(--text-body)] font-sans",
-        "transition-colors duration-[var(--motion-fast)]",
+        // Smooth border + shadow (the focus glow) transition in/out.
+        "transition-[color,border-color,box-shadow] duration-[var(--motion-fast)]",
         "placeholder:text-[var(--gray-600)]",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue-700)] focus-visible:ring-offset-1",
-        "disabled:cursor-not-allowed disabled:opacity-50",
+        // Subtle focus: accent border + a soft low-alpha ring (no harsh 2px offset).
+        "outline-none",
         hasError
-          ? "border-[var(--status-error-fg)] ring-1 ring-[var(--status-error-fg)]/30"
-          : "border-[var(--alpha-400)]",
+          ? "border-[var(--status-error-fg)] focus-visible:shadow-[0_0_0_3px_var(--focus-ring-error)]"
+          : "border-[var(--alpha-400)] hover:border-[var(--gray-600)] focus-visible:border-[var(--focus-border)] focus-visible:shadow-[0_0_0_3px_var(--focus-ring)]",
+        "disabled:cursor-not-allowed disabled:opacity-50",
         className,
       )}
       style={{
