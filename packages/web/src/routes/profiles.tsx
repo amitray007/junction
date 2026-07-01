@@ -630,9 +630,18 @@ interface RouteTableProps {
   readonly onToggle: (s: SourceMeta, enabled: boolean) => void
   readonly onRemove: (s: SourceMeta) => void
   readonly onEditFilter: (s: SourceMeta) => void
+  readonly onAddRoute: () => void
+  readonly onDeleteProfile: (p: ProfileMeta) => void
 }
 
-function RouteTable({ profile, onToggle, onRemove, onEditFilter }: RouteTableProps) {
+function RouteTable({
+  profile,
+  onToggle,
+  onRemove,
+  onEditFilter,
+  onAddRoute,
+  onDeleteProfile,
+}: RouteTableProps) {
   const {
     search,
     setSearch,
@@ -651,8 +660,17 @@ function RouteTable({ profile, onToggle, onRemove, onEditFilter }: RouteTablePro
 
   return (
     <div className="flex flex-col gap-3">
-      {/* Search — aria-label is the accessible name; no visible label (a11y unchanged). */}
-      <div>
+      {/* Toolbar: route search (left) + profile actions (right). The old full-width
+          ProfileHeaderBar is gone — the profile name lives in the left list. */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: "var(--space-4)",
+          flexWrap: "wrap",
+        }}
+      >
         <Input
           id="route-search"
           type="search"
@@ -662,6 +680,16 @@ function RouteTable({ profile, onToggle, onRemove, onEditFilter }: RouteTablePro
           style={{ maxWidth: "320px" }}
           aria-label="Search routes"
         />
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+          <Button variant="secondary" onClick={onAddRoute}>
+            <PlusCircle className="h-4 w-4" aria-hidden="true" />
+            Add Route
+          </Button>
+          <Button variant="destructive" onClick={() => onDeleteProfile(profile)}>
+            <Trash2 className="h-4 w-4" aria-hidden="true" />
+            Delete
+          </Button>
+        </div>
       </div>
 
       <Table>
@@ -783,92 +811,9 @@ function RouteTable({ profile, onToggle, onRemove, onEditFilter }: RouteTablePro
 }
 
 // ---------------------------------------------------------------------------
-// Profile header bar — full-width, rendered ABOVE the master-detail split.
-// Contains: profiles-LIST search + sort (left — moved in from the list panel,
-// filters/sorts the left nav, NOT the selected profile's route table), Add
-// Route + Delete for the selected profile (right).
-//
-// The profile-name <h2> and the "Serve via junction mcp serve --profile …"
-// caption that used to live here were removed (this bar is about the list +
-// selected-profile actions, not identity/detail). The name is still visible
-// as the highlighted item in the left list; the serve command moved to a
-// muted caption just above the RouteTable in ProfileRoutes (still discoverable,
-// right next to the routes it configures).
-// ---------------------------------------------------------------------------
-
-interface ProfileHeaderBarProps {
-  readonly profile: ProfileMeta
-  readonly filterQuery: string
-  readonly onFilterQueryChange: (q: string) => void
-  readonly profileSortDirectionFor: (key: string) => SortDirection
-  readonly onToggleProfileSort: (key: string) => void
-  readonly onAddRoute: () => void
-  readonly onDeleteProfile: (p: ProfileMeta) => void
-}
-
-function ProfileHeaderBar({
-  profile,
-  filterQuery,
-  onFilterQueryChange,
-  profileSortDirectionFor,
-  onToggleProfileSort,
-  onAddRoute,
-  onDeleteProfile,
-}: ProfileHeaderBarProps) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "flex-start",
-        justifyContent: "space-between",
-        gap: "var(--space-4)",
-        flexWrap: "wrap",
-        marginBottom: "var(--space-4)",
-      }}
-    >
-      {/* Left — profiles-list search + sort (aria-label is the accessible name;
-          no visible label, matching the other search boxes). */}
-      <div style={{ display: "flex", flexDirection: "column", gap: "6px", minWidth: 0 }}>
-        <Input
-          type="search"
-          placeholder="Filter profiles…"
-          value={filterQuery}
-          onChange={(e) => onFilterQueryChange(e.target.value)}
-          aria-label="Filter profiles"
-          style={{ maxWidth: "260px" }}
-        />
-        <div style={{ display: "flex", gap: "var(--space-2)" }}>
-          <ProfileListSortButton
-            label="Name"
-            direction={profileSortDirectionFor("name")}
-            onClick={() => onToggleProfileSort("name")}
-          />
-          <ProfileListSortButton
-            label="Routes"
-            direction={profileSortDirectionFor("routes")}
-            onClick={() => onToggleProfileSort("routes")}
-          />
-        </div>
-      </div>
-
-      {/* Actions */}
-      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
-        <Button variant="secondary" onClick={onAddRoute}>
-          <PlusCircle className="h-4 w-4" aria-hidden="true" />
-          Add Route
-        </Button>
-        <Button variant="destructive" onClick={() => onDeleteProfile(profile)}>
-          <Trash2 className="h-4 w-4" aria-hidden="true" />
-          Delete
-        </Button>
-      </div>
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Profile routes panel (right side) — route table + dialogs only (no header).
-// Header has been lifted to ProfileHeaderBar (full-width above the split).
+// Profile routes panel (right side) — a route-table toolbar (search + Add Route
+// + Delete) then the route table + dialogs. There is no separate header bar; the
+// profile name lives in the left list, the actions sit beside the route search.
 // ---------------------------------------------------------------------------
 
 interface ProfileRoutesProps {
@@ -881,6 +826,7 @@ interface ProfileRoutesProps {
   readonly onRemovingRouteChange: (route: SourceMeta | null) => void
   readonly editingFilterRoute: SourceMeta | null
   readonly onEditingFilterRouteChange: (route: SourceMeta | null) => void
+  readonly onDeleteProfile: (p: ProfileMeta) => void
   readonly onMutate: () => void
 }
 
@@ -894,6 +840,7 @@ function ProfileRoutes({
   onRemovingRouteChange,
   editingFilterRoute,
   onEditingFilterRouteChange,
+  onDeleteProfile,
   onMutate,
 }: ProfileRoutesProps) {
   async function handleToggle(s: SourceMeta, enabled: boolean) {
@@ -914,30 +861,14 @@ function ProfileRoutes({
 
   return (
     <div style={{ minWidth: 0 }}>
-      {/* CLI serve command — the single-endpoint model (no per-profile HTTP URL).
-          Moved here (inc 26 slice) from the header bar, which now carries the
-          profiles-list search/sort instead; a muted one-liner right above the
-          route table it configures keeps it discoverable without competing for
-          the header's attention. */}
-      <p
-        style={{
-          fontSize: "var(--text-caption)",
-          color: "var(--gray-700)",
-          margin: "0 0 var(--space-2)",
-        }}
-      >
-        Serve via{" "}
-        <MonoCode style={{ color: "var(--blue-text)" }}>
-          junction mcp serve --profile {profile.name}
-        </MonoCode>
-      </p>
-
       {/* Routes table */}
       <RouteTable
         profile={profile}
         onToggle={handleToggle}
         onRemove={(s) => onRemovingRouteChange(s)}
         onEditFilter={(s) => onEditingFilterRouteChange(s)}
+        onAddRoute={() => onAddRouteOpenChange(true)}
+        onDeleteProfile={onDeleteProfile}
       />
 
       {/* Dialogs */}
@@ -1178,22 +1109,9 @@ function ProfilesPage() {
         </Table>
       ) : (
         <>
-          {/* Full-width profile header bar — rendered ABOVE the split when a profile is
-              selected, so both the left list panel and the right route table start at the
-              same row naturally (no offset hack needed). */}
-          {selectedProfile !== null && (
-            <ProfileHeaderBar
-              profile={selectedProfile}
-              filterQuery={filterQuery}
-              onFilterQueryChange={setFilterQuery}
-              profileSortDirectionFor={profileSortDirectionFor}
-              onToggleProfileSort={toggleProfileSort}
-              onAddRoute={() => setAddRouteOpen(true)}
-              onDeleteProfile={(p) => setDeletingProfile(p)}
-            />
-          )}
-
-          {/* Master-detail split */}
+          {/* Master-detail split. The old full-width ProfileHeaderBar is gone — the
+              profile name is the selected item in the left list, and Add Route /
+              Delete live in the route-table toolbar on the right. */}
           <div
             className="profiles-master-detail"
             style={{
@@ -1202,8 +1120,7 @@ function ProfilesPage() {
               alignItems: "flex-start",
             }}
           >
-            {/* Left — profiles list. No marginTop offset needed: the header bar lives
-                above the split, so both columns naturally top-align. */}
+            {/* Left — profiles list. */}
             <section
               aria-label="Profile list"
               style={{
@@ -1220,8 +1137,38 @@ function ProfilesPage() {
                 boxShadow: "var(--shadow-sm)",
               }}
             >
-              {/* Search + sort for this list moved to ProfileHeaderBar (above the split) —
-                  this panel is now just the <nav> list itself. */}
+              {/* List filter */}
+              <div style={{ padding: "4px 4px 0" }}>
+                <Input
+                  type="search"
+                  placeholder="Filter profiles…"
+                  value={filterQuery}
+                  onChange={(e) => setFilterQuery(e.target.value)}
+                  aria-label="Filter profiles"
+                  style={{ fontSize: "var(--text-caption)" }}
+                />
+              </div>
+
+              {/* Sort controls — the panel is a <nav> list, not a <table>, so these
+                  are compact buttons rather than TableHead. */}
+              <div
+                style={{
+                  display: "flex",
+                  gap: "var(--space-2)",
+                  padding: "0 4px",
+                }}
+              >
+                <ProfileListSortButton
+                  label="Name"
+                  direction={profileSortDirectionFor("name")}
+                  onClick={() => toggleProfileSort("name")}
+                />
+                <ProfileListSortButton
+                  label="Routes"
+                  direction={profileSortDirectionFor("routes")}
+                  onClick={() => toggleProfileSort("routes")}
+                />
+              </div>
               <nav aria-label="Profiles">
                 {filteredProfiles.length === 0 ? (
                   <p
@@ -1261,6 +1208,7 @@ function ProfilesPage() {
                   onRemovingRouteChange={setRemovingRoute}
                   editingFilterRoute={editingFilterRoute}
                   onEditingFilterRouteChange={setEditingFilterRoute}
+                  onDeleteProfile={(p) => setDeletingProfile(p)}
                   onMutate={invalidate}
                 />
               ) : (
