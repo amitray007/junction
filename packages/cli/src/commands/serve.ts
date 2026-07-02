@@ -22,156 +22,21 @@
 // — a slow/failing write must never delay or fail auth (§2.1 / repo doc).
 
 import {
-  type CredentialStore,
   createCredentialStore,
   createProfileProxy,
   createRepositories,
   createScopedProxy,
-  err,
   getDatabase,
   getMcpPort,
   getPaths,
   isValidMcpPort,
-  ok,
-  type Repositories,
-  type Result,
-  ResultAsync,
   type ScopedProxyEntry,
-  type SourceRef,
-  type ToolFilter,
-  type ToolProvider,
-  type UpstreamError,
   verifyApiKey,
 } from "@junction/core"
 import type { AuthedKey, AuthedKeyResult, McpServerHandlers } from "@junction/mcp-server"
 import { defineCommand } from "citty"
 import { consola } from "consola"
-import { buildProvider } from "../providers.js"
-
-// ---------------------------------------------------------------------------
-// resolveProvider — identical shape/discipline to commands/mcp.ts.
-// ---------------------------------------------------------------------------
-
-type ProviderResolution = {
-  provider: ToolProvider
-  toolNamespace: string
-  toolFilter?: ToolFilter | undefined
-}
-
-function makeResolveProvider(
-  repos: Repositories,
-  store: CredentialStore | null,
-  paths: ReturnType<typeof getPaths>,
-) {
-  return (sourceRef: SourceRef): ResultAsync<ProviderResolution, UpstreamError> => {
-    const work = async (): Promise<Result<ProviderResolution, UpstreamError>> => {
-      const platformResult = await repos.platforms.get(sourceRef.platformId)
-      if (platformResult.isErr()) {
-        consola.warn(
-          `junction serve: source "${sourceRef.toolNamespace}": platform "${sourceRef.platformId}" not found — skipping`,
-        )
-        return err({ kind: "connect-failed" as const, cause: platformResult.error })
-      }
-      const platform = platformResult.value
-
-      if (platform.kind !== "mcp" && platform.kind !== "openapi") {
-        consola.warn(
-          `junction serve: source "${sourceRef.toolNamespace}": platform kind "${platform.kind}" not yet supported — skipping`,
-        )
-        return err({ kind: "unsupported-source-kind" as const, platformKind: platform.kind })
-      }
-
-      let secret: string | null = null
-      if (sourceRef.credentialId === undefined) {
-        const authDeclared =
-          (platform.kind === "mcp" &&
-            platform.connection !== undefined &&
-            (platform.connection.transport === "http"
-              ? platform.connection.auth !== undefined
-              : platform.connection.tokenEnvVar !== undefined)) ||
-          (platform.kind === "openapi" &&
-            platform.openapi !== undefined &&
-            platform.openapi.auth !== undefined)
-        if (authDeclared) {
-          consola.warn(
-            `junction serve: source "${sourceRef.toolNamespace}": platform "${sourceRef.platformId}" declares auth but no credential is attached — calls may be unauthorized`,
-          )
-        }
-      } else {
-        const credResult = await repos.credentials.get(sourceRef.credentialId)
-        if (credResult.isErr()) {
-          consola.warn(
-            `junction serve: source "${sourceRef.toolNamespace}": credential "${sourceRef.credentialId}" not found — skipping`,
-          )
-          return err({ kind: "connect-failed" as const, cause: credResult.error })
-        }
-        const credential = credResult.value
-        if (store !== null) {
-          const secretResult = await store.get(credential.secretRef)
-          if (secretResult.isErr()) {
-            consola.warn(
-              `junction serve: source "${sourceRef.toolNamespace}": credential store read failed — skipping`,
-            )
-            return err({ kind: "connect-failed" as const, cause: secretResult.error })
-          }
-          secret = secretResult.value
-        }
-      }
-
-      const providerResult = await buildProvider(platform, secret, paths)
-      if (providerResult.isErr()) {
-        const cause =
-          "cause" in providerResult.error ? String(providerResult.error.cause ?? "") : ""
-        consola.warn(
-          `junction serve: source "${sourceRef.toolNamespace}": connection failed — skipping${cause ? ` (${cause})` : ""}`,
-        )
-        return err(providerResult.error)
-      }
-
-      return ok({
-        provider: providerResult.value,
-        toolNamespace: sourceRef.toolNamespace,
-        toolFilter: sourceRef.toolFilter,
-      })
-    }
-    return new ResultAsync(work())
-  }
-}
-
-/** Adapt a core ScopedProxy (ResultAsync-based) to McpServerHandlers (Promise-based). */
-function adaptToMcpHandlers(scoped: {
-  listTools: () => ResultAsync<
-    Array<{ name: string; description?: string; inputSchema: object }>,
-    UpstreamError
-  >
-  callTool: (
-    name: string,
-    args: Record<string, unknown>,
-  ) => ResultAsync<{ content: unknown; isError?: boolean }, UpstreamError>
-}): McpServerHandlers {
-  return {
-    async listTools() {
-      const result = await scoped.listTools()
-      if (result.isErr())
-        return { tools: [] as Array<{ name: string; description?: string; inputSchema: object }> }
-      return { tools: result.value }
-    },
-    async callTool(name: string, callArgs: Record<string, unknown>) {
-      const result = await scoped.callTool(name, callArgs)
-      if (result.isErr()) {
-        const { safeUpstreamMessage } = await import("@junction/mcp-server")
-        return {
-          isError: true as const,
-          content: [{ type: "text" as const, text: safeUpstreamMessage(result.error) }],
-        }
-      }
-      return {
-        content: result.value.content as Array<{ type: "text"; text: string }>,
-        isError: result.value.isError,
-      }
-    },
-  }
-}
+import { adaptToMcpHandlers, makeResolveProvider } from "../providers.js"
 
 // ---------------------------------------------------------------------------
 // serve command
@@ -232,7 +97,10 @@ export const serveCommand = defineCommand({
       )
     }
     const store = storeResult.isOk() ? storeResult.value : null
-    const resolveProvider = makeResolveProvider(repos, store, paths)
+    const resolveProvider = makeResolveProvider(repos, store, paths, {
+      logPrefix: "junction serve",
+      log: (msg: string) => consola.warn(msg),
+    })
 
     // ── authenticate: verifyApiKey, RE-RESOLVED on every request ───────────
     const authenticate = async (token: string): Promise<AuthedKeyResult> => {

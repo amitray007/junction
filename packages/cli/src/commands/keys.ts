@@ -14,17 +14,11 @@ import { defineCommand } from "citty"
 import { consola } from "consola"
 import { collectRepeatableFlag, JSON_ARG } from "../args.js"
 import { openDb } from "../db.js"
-import { reportDbError } from "../format.js"
+import { reportDbError, reportError } from "../format.js"
 
 // ---------------------------------------------------------------------------
 // create
 // ---------------------------------------------------------------------------
-
-function writeError(json: boolean, msg: string): void {
-  if (json) process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
-  else consola.error(msg)
-  process.exitCode = 1
-}
 
 /**
  * Render mintApiKey's error union (ApiKeyError | DbError) as a safe message.
@@ -88,11 +82,11 @@ const createCommand = defineCommand({
 
     // --global and --profile are mutually exclusive.
     if (isGlobal && profileNames.length > 0) {
-      writeError(json, "--global and --profile are mutually exclusive")
+      reportError(json, "--global and --profile are mutually exclusive")
       return
     }
     if (!isGlobal && profileNames.length === 0) {
-      writeError(json, "specify --global or at least one --profile <name>")
+      reportError(json, "specify --global or at least one --profile <name>")
       return
     }
 
@@ -111,7 +105,7 @@ const createCommand = defineCommand({
       for (const name of profileNames) {
         const profileResult = await repos.profiles.getByName(name)
         if (profileResult.isErr()) {
-          writeError(json, `unknown profile "${name}" — mint aborted`)
+          reportError(json, `unknown profile "${name}" — mint aborted`)
           return
         }
         resolvedIds.add(profileResult.value.id)
@@ -122,7 +116,7 @@ const createCommand = defineCommand({
 
     const mintResult = await mintApiKey({ label: args.label, scope, profileIds }, repos.apiKeys)
     if (mintResult.isErr()) {
-      writeError(json, formatMintError(mintResult.error))
+      reportError(json, formatMintError(mintResult.error))
       return
     }
 
@@ -237,7 +231,7 @@ const revokeCommand = defineCommand({
     const revokeResult = await repos.apiKeys.revoke(keyId)
     if (revokeResult.isErr()) {
       if (revokeResult.error.kind === "not-found") {
-        writeError(json, `key "${keyId}" not found`)
+        reportError(json, `key "${keyId}" not found`)
         return
       }
       reportDbError(revokeResult.error, json)
