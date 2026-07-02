@@ -117,8 +117,8 @@ describe("KeysPage — table columns + scope facet", () => {
     mockUseLoaderData.mockReturnValue(populatedData)
     const { getByRole } = render(<KeysPage />)
     const table = getByRole("table")
-    expect(table.textContent).toContain("Label")
-    expect(table.textContent).toContain("Key")
+    expect(table.textContent).toContain("Name")
+    expect(table.textContent).toContain("Key ID")
     expect(table.textContent).toContain("Scope")
     expect(table.textContent).toContain("Created")
     expect(table.textContent).toContain("Last Used")
@@ -290,7 +290,7 @@ describe("KeysPage — mint dialog: display-once", () => {
     fireEvent.click(screen.getAllByRole("button", { name: /create key/i })[0] as HTMLElement)
     await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
 
-    fireEvent.change(screen.getByLabelText("Label"), { target: { value: "new-agent" } })
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "new-agent" } })
     // "work" profile checkbox exists by default (populatedData has profiles).
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("checkbox", { name: "work" }))
 
@@ -314,7 +314,7 @@ describe("KeysPage — mint dialog: display-once", () => {
     render(<KeysPage />)
     fireEvent.click(screen.getAllByRole("button", { name: /create key/i })[0] as HTMLElement)
     await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
-    fireEvent.change(screen.getByLabelText("Label"), { target: { value: "new-agent" } })
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "new-agent" } })
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("checkbox", { name: "work" }))
     fireEvent.click(
       within(screen.getByRole("dialog")).getByRole("button", { name: /^create key$/i }),
@@ -340,7 +340,7 @@ describe("KeysPage — mint dialog: display-once", () => {
     render(<KeysPage />)
     fireEvent.click(screen.getAllByRole("button", { name: /create key/i })[0] as HTMLElement)
     await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
-    fireEvent.change(screen.getByLabelText("Label"), { target: { value: "new-agent" } })
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "new-agent" } })
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("checkbox", { name: "work" }))
     fireEvent.click(
       within(screen.getByRole("dialog")).getByRole("button", { name: /^create key$/i }),
@@ -354,7 +354,7 @@ describe("KeysPage — mint dialog: display-once", () => {
     fireEvent.click(screen.getAllByRole("button", { name: /create key/i })[0] as HTMLElement)
     await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
     expect(screen.queryByText(PLAINTEXT)).not.toBeInTheDocument()
-    expect(screen.getByLabelText("Label")).toBeInTheDocument()
+    expect(screen.getByLabelText("Name")).toBeInTheDocument()
   })
 
   it("plaintext never appears in the table/loader-backed list", () => {
@@ -409,7 +409,7 @@ describe("KeysPage — zero-profiles mint dialog (global-only)", () => {
     fireEvent.click(screen.getAllByRole("button", { name: /create key/i })[0] as HTMLElement)
     await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
 
-    fireEvent.change(screen.getByLabelText("Label"), { target: { value: "global-agent" } })
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "global-agent" } })
     fireEvent.click(
       within(screen.getByRole("dialog")).getByRole("button", { name: /^create key$/i }),
     )

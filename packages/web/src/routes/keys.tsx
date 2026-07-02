@@ -178,7 +178,7 @@ function MintKeyDialog({ open, onOpenChange, profiles, onSuccess }: MintDialogPr
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     const newErrors: typeof errors = {}
-    if (!label.trim()) newErrors.label = "Label is required"
+    if (!label.trim()) newErrors.label = "Name is required"
     if (!isGlobal && selectedProfileIds.length === 0) {
       newErrors.scope = "Select at least one profile, or choose Global scope"
     }
@@ -196,16 +196,16 @@ function MintKeyDialog({ open, onOpenChange, profiles, onSuccess }: MintDialogPr
         },
       })
       if (!result.ok) {
-        toast.error(`Failed to mint key: ${result.error}`)
+        toast.error(`Failed to create key: ${result.error}`)
         setSubmitting(false)
         return
       }
       setMintedKey(result.plaintext)
-      toast.success("API key minted")
+      toast.success("API key created")
       setSubmitting(false)
       onSuccess()
     } catch {
-      toast.error("Failed to mint key")
+      toast.error("Failed to create key")
       setSubmitting(false)
     }
   }
@@ -227,10 +227,10 @@ function MintKeyDialog({ open, onOpenChange, profiles, onSuccess }: MintDialogPr
         {mintedKey ? (
           <>
             <DialogHeader>
-              <DialogTitle>API Key Minted</DialogTitle>
+              <DialogTitle>Save your API key now</DialogTitle>
               <DialogDescription>
-                Copy this key now — you won&apos;t see it again. If you miss it, revoke this key and
-                mint a new one.
+                This is the only time the full key is shown — junction stores only a hash and cannot
+                show it again. Copy it now; if you lose it, revoke this key and create a new one.
               </DialogDescription>
             </DialogHeader>
             <div className="flex flex-col gap-4">
@@ -280,7 +280,7 @@ function MintKeyDialog({ open, onOpenChange, profiles, onSuccess }: MintDialogPr
             </DialogHeader>
             <form onSubmit={handleSubmit} noValidate>
               <div className="flex flex-col gap-4">
-                <Field id="mint-label" label="Label" error={errors.label}>
+                <Field id="mint-label" label="Name" error={errors.label}>
                   <Input
                     id="mint-label"
                     placeholder="e.g. claude-code, cursor-work"
@@ -441,7 +441,7 @@ function MintKeyDialog({ open, onOpenChange, profiles, onSuccess }: MintDialogPr
                 onCancel={() => handleOpenChange(false)}
                 submitting={submitting}
                 submitLabel="Create Key"
-                submittingLabel="Minting…"
+                submittingLabel="Creating…"
               />
             </form>
           </>
@@ -618,7 +618,7 @@ export function KeysTable({
         <Input
           id="keys-search"
           type="search"
-          placeholder="Filter by label or key id"
+          placeholder="Filter by name or key id"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           style={{ maxWidth: "320px" }}
@@ -653,9 +653,9 @@ export function KeysTable({
                 sortDirection={sortDirectionFor("label")}
                 onSort={() => toggleSort("label")}
               >
-                Label
+                Name
               </TableHead>
-              <TableHead>Key</TableHead>
+              <TableHead>Key ID</TableHead>
               <TableHead>Scope</TableHead>
               <TableHead
                 sortDirection={sortDirectionFor("created")}
@@ -695,11 +695,7 @@ export function KeysTable({
                     <TableCellMono>
                       <MonoCode>jct_{k.id}</MonoCode>
                     </TableCellMono>
-                    <TableCell>
-                      <span style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)" }}>
-                        {scopeLabel(k, profileNameById)}
-                      </span>
-                    </TableCell>
+                    <TableCell>{scopeLabel(k, profileNameById)}</TableCell>
                     <TableCellMono>{formatDate(k.createdAt)}</TableCellMono>
                     <TableCellMono>{formatDate(k.lastUsedAt)}</TableCellMono>
                     <TableCell>
