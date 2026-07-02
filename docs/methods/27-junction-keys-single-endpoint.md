@@ -88,11 +88,14 @@ single-user endpoint is a self-DoS lever, not a defense. Both notes go into the 
 - **Unknown/stale `mcp-session-id` → 404** (Streamable HTTP spec semantics — this is what
   lets clients auto-re-initialize after a serve restart). 401 is reserved for auth failures,
   including the fixation case (known session, different key — §2.3).
-- **Revocation is the only key mutation.** Keys are immutable after mint (no scope edit, no
-  label edit, **no hard delete in inc 27** — revoked rows are retained for inc-31 audit;
-  the web UI must NOT invent a Delete action). `keys revoke` is **idempotent** (revoking a
-  revoked key succeeds), takes a bare keyid **or** a full pasted token (parse via §2.1 regex,
-  discard the secret), and unknown keyid → not-found error.
+- **Revoke, then Delete.** Keys are otherwise immutable (no scope/label edit). `keys revoke`
+  is **idempotent** (revoking a revoked key succeeds), takes a bare keyid **or** a full pasted
+  token (parse via §2.1 regex, discard the secret), and unknown keyid → not-found error.
+  **A REVOKED key may then be hard-deleted** (`keys delete` / the web ⋯ menu on revoked rows);
+  the core `remove(id)` op **refuses an active key** (`in-use` → "revoke first"), so the
+  active-key lifecycle stays auditable for inc 31 — a key is only ever removed *after* it was
+  explicitly revoked. (Post-ship refinement: originally "no hard delete at all"; changed on
+  user request to revoke-then-delete-revoked-only, which keeps the audit invariant intact.)
 - **Labels:** one shared Zod schema in core (`api-keys/`): trimmed, non-empty, ≤64 chars;
   duplicates allowed (the keyid is the handle). CLI and web both consume it.
 - **Default port 4322** (web is 4321 — adjacent, memorable). Precedence: `--port` flag >
@@ -250,7 +253,7 @@ validated by the shared core schema.
 - Table via `useTableView` (search/sort/pagination) + `FacetSelect` (scope, status).
   Columns: label · `jct_<keyid>` (mono) · scope badges (profile names / "global") ·
   created · lastUsed · status (active/revoked). ⋯ menu → Revoke (ConfirmDialog; hidden/
-  disabled on already-revoked rows; **no Delete action** — §1). Empty state per the
+  disabled on already-revoked rows; a revoked row shows **Delete** instead — §1). Empty state per the
   `credentials.tsx` pattern with a mint CTA.
 - **Mint dialog:** label + scope selector (global toggle | profile multi-picker). On success
   shows the full key ONCE with a copy button + "you won't see this again — if you miss it,
