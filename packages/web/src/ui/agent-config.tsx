@@ -1,17 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// AgentConfig — Connect-an-Agent block.
-// Phase 3 (D5): when mcpHost is set, renders a REAL copyable endpoint + config.
-// When unset, falls back to the <your-junction-host> placeholder + a prompt to set it.
+// AgentConfig — Connect-an-Agent block. LIVE (inc 27): the shared HTTP MCP
+// endpoint is real — `junction serve` binds it. §2.6 of
+// docs/methods/27-junction-keys-single-endpoint.md.
 //
-// HONESTY GUARD: The shared HTTP MCP endpoint does NOT exist yet — the server is
-// stdio-only. Either way (host set or unset), the "isn't live yet" note MUST remain.
-// A Copy button is legitimate once the user has provided a real host (it copies a
-// real string they wrote), but the note makes clear it isn't a live endpoint today.
+// LOAD-BEARING INVARIANTS:
+// - Endpoint display is ALWAYS `http://127.0.0.1:<port>/mcp`, regardless of
+//   mcpHost. Do NOT derive the endpoint from mcpHost — a non-loopback mcpHost
+//   would produce a config the loopback Host guard 403s. If mcpHost is set and
+//   non-loopback, render an honest note instead of a broken URL.
+// - The dashboard cannot know whether `junction serve` is actually running —
+//   never fake liveness. An honest "requires junction serve running" line is
+//   always shown alongside the config.
+// - Config snippets carry a real `Bearer <paste-your-key>` placeholder + a
+//   link to /keys — never a fake/example key.
 
 import { Link } from "@tanstack/react-router"
 import { useState } from "react"
+import { isLocalHost } from "../server/host-guard.js"
 import { MonoCode } from "./code.js"
-import { ComingSoon } from "./coming-soon.js"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./tabs.js"
 
 // ---------------------------------------------------------------------------
@@ -19,55 +25,44 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "./tabs.js"
 // ---------------------------------------------------------------------------
 
 interface AgentConfigProps {
-  /** The resolved MCP host (config ?? JUNCTION_MCP_HOST ?? undefined). */
+  /** The resolved MCP HTTP port (config ?? JUNCTION_MCP_PORT ?? 4322). */
+  readonly mcpPort: number
+  /** The resolved MCP host setting — used ONLY to detect a non-loopback value
+   *  for the honest-note branch. NEVER used to build the endpoint URL. */
   readonly mcpHost: string | undefined
 }
 
 // ---------------------------------------------------------------------------
-// Config string builders — only called when mcpHost is set.
+// Config string builders — always localhost, never derived from mcpHost.
 // ---------------------------------------------------------------------------
 
-function buildEndpoint(host: string): string {
-  return `https://${host}/mcp`
+const BEARER_PLACEHOLDER = "<paste-your-key>"
+
+function buildEndpoint(port: number): string {
+  return `http://127.0.0.1:${port}/mcp`
 }
 
-function buildClaudeConfig(host: string): string {
+function buildClaudeConfig(port: number): string {
   return `{
   "mcpServers": {
     "junction": {
-      "url": "https://${host}/mcp",
-      "headers": { "Authorization": "Bearer <your-key>" }
+      "type": "http",
+      "url": "${buildEndpoint(port)}",
+      "headers": { "Authorization": "Bearer ${BEARER_PLACEHOLDER}" }
     }
   }
 }`
 }
 
-function buildCursorConfig(host: string): string {
+function buildCursorConfig(port: number): string {
   return `junction:
-  url: https://${host}/mcp
+  url: ${buildEndpoint(port)}
   headers:
-    Authorization: Bearer <your-key>`
+    Authorization: Bearer ${BEARER_PLACEHOLDER}`
 }
 
-// The stdio "today" config is always the same — not host-dependent.
+// The stdio "today" config is always the same — not host/port-dependent.
 const STDIO_CONFIG = "junction mcp serve --profile <name>"
-
-// Placeholder strings when no host is set (non-copyable).
-const PLACEHOLDER = {
-  endpoint: "https://<your-junction-host>/mcp",
-  claudeConfig: `{
-  "mcpServers": {
-    "junction": {
-      "url": "https://<your-junction-host>/mcp",
-      "headers": { "Authorization": "Bearer <your-key>" }
-    }
-  }
-}`,
-  cursorConfig: `junction:
-  url: https://<your-junction-host>/mcp
-  headers:
-    Authorization: Bearer <your-key>`,
-}
 
 // ---------------------------------------------------------------------------
 // Mono code block — non-copyable illustration
@@ -98,7 +93,7 @@ function MonoBlock({ children }: { readonly children: string }) {
 }
 
 // ---------------------------------------------------------------------------
-// Copy button — only rendered when mcpHost is set (real string to copy).
+// Copy button
 // ---------------------------------------------------------------------------
 
 function CopyButton({ text, label }: { readonly text: string; readonly label: string }) {
@@ -138,20 +133,28 @@ function CopyButton({ text, label }: { readonly text: string; readonly label: st
 }
 
 // ---------------------------------------------------------------------------
-// Honesty note — always present regardless of host state
+// Honesty notes
 // ---------------------------------------------------------------------------
 
-function HonestyNote() {
+// Always present: the dashboard cannot know whether `junction serve` is
+// actually running — never fake liveness (probing is a later increment).
+function ServeRequiredNote() {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-      <ComingSoon />
-      <p style={{ fontSize: "var(--text-body)", color: "var(--gray-700)", margin: 0 }}>
-        Shared HTTP endpoint isn&apos;t live yet — today, connect via stdio:{" "}
-        <MonoCode style={{ color: "var(--blue-text)" }}>
-          junction mcp serve --profile &lt;name&gt;
-        </MonoCode>
-      </p>
-    </div>
+    <p style={{ fontSize: "var(--text-body)", color: "var(--gray-700)", margin: 0 }}>
+      Requires <MonoCode style={{ color: "var(--blue-text)" }}>junction serve</MonoCode> to be
+      running.
+    </p>
+  )
+}
+
+// Shown ONLY when mcpHost is set and non-loopback — the endpoint is still
+// localhost-only in this version; do not render a broken/misleading URL.
+function NonLoopbackHostNote() {
+  return (
+    <p style={{ fontSize: "var(--text-caption)", color: "var(--status-warning-fg)", margin: 0 }}>
+      Networked HTTP serving is deferred — the endpoint is localhost-only in this version, even
+      though a non-loopback MCP host is configured.
+    </p>
   )
 }
 
@@ -159,12 +162,11 @@ function HonestyNote() {
 // AgentConfig
 // ---------------------------------------------------------------------------
 
-export function AgentConfig({ mcpHost }: AgentConfigProps) {
-  const hasHost = mcpHost !== undefined && mcpHost !== ""
-
-  const endpoint = hasHost ? buildEndpoint(mcpHost) : PLACEHOLDER.endpoint
-  const claudeConfig = hasHost ? buildClaudeConfig(mcpHost) : PLACEHOLDER.claudeConfig
-  const cursorConfig = hasHost ? buildCursorConfig(mcpHost) : PLACEHOLDER.cursorConfig
+export function AgentConfig({ mcpPort, mcpHost }: AgentConfigProps) {
+  const endpoint = buildEndpoint(mcpPort)
+  const claudeConfig = buildClaudeConfig(mcpPort)
+  const cursorConfig = buildCursorConfig(mcpPort)
+  const nonLoopbackHostConfigured = mcpHost !== undefined && mcpHost !== "" && !isLocalHost(mcpHost)
 
   return (
     <section
@@ -175,7 +177,7 @@ export function AgentConfig({ mcpHost }: AgentConfigProps) {
         gap: "16px",
       }}
     >
-      {/* Endpoint row */}
+      {/* Endpoint row — ALWAYS 127.0.0.1:<port>/mcp, never derived from mcpHost. */}
       <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
         <p
           id="agent-config-heading"
@@ -203,24 +205,16 @@ export function AgentConfig({ mcpHost }: AgentConfigProps) {
             style={{
               fontFamily: "var(--font-mono)",
               fontSize: "var(--text-mono)",
-              color: hasHost ? "var(--blue-text)" : "var(--gray-600)",
+              color: "var(--blue-text)",
               flex: 1,
-              userSelect: hasHost ? "text" : "none",
+              userSelect: "text",
             }}
           >
             {endpoint}
           </span>
-          {hasHost && <CopyButton text={endpoint} label="Copy MCP endpoint URL" />}
+          <CopyButton text={endpoint} label="Copy MCP endpoint URL" />
         </div>
-        {!hasHost && (
-          <p style={{ fontSize: "var(--text-caption)", color: "var(--gray-600)", margin: 0 }}>
-            Set your MCP host in{" "}
-            <Link to="/settings" style={{ color: "var(--blue-text)", textDecoration: "underline" }}>
-              Settings
-            </Link>{" "}
-            to see the real endpoint here.
-          </p>
-        )}
+        {nonLoopbackHostConfigured && <NonLoopbackHostNote />}
       </div>
 
       {/* Tabbed agent config */}
@@ -242,28 +236,20 @@ export function AgentConfig({ mcpHost }: AgentConfigProps) {
             <TabsTrigger value="raw">Today (stdio)</TabsTrigger>
           </TabsList>
           <TabsContent value="claude">
-            {hasHost ? (
-              <div style={{ position: "relative" }}>
-                <MonoBlock>{claudeConfig}</MonoBlock>
-                <div style={{ position: "absolute", top: "8px", right: "8px" }}>
-                  <CopyButton text={claudeConfig} label="Copy Claude MCP config" />
-                </div>
-              </div>
-            ) : (
+            <div style={{ position: "relative" }}>
               <MonoBlock>{claudeConfig}</MonoBlock>
-            )}
+              <div style={{ position: "absolute", top: "8px", right: "8px" }}>
+                <CopyButton text={claudeConfig} label="Copy Claude MCP config" />
+              </div>
+            </div>
           </TabsContent>
           <TabsContent value="cursor">
-            {hasHost ? (
-              <div style={{ position: "relative" }}>
-                <MonoBlock>{cursorConfig}</MonoBlock>
-                <div style={{ position: "absolute", top: "8px", right: "8px" }}>
-                  <CopyButton text={cursorConfig} label="Copy Cursor MCP config" />
-                </div>
-              </div>
-            ) : (
+            <div style={{ position: "relative" }}>
               <MonoBlock>{cursorConfig}</MonoBlock>
-            )}
+              <div style={{ position: "absolute", top: "8px", right: "8px" }}>
+                <CopyButton text={cursorConfig} label="Copy Cursor MCP config" />
+              </div>
+            </div>
           </TabsContent>
           <TabsContent value="raw">
             <MonoBlock>{STDIO_CONFIG}</MonoBlock>
@@ -271,13 +257,17 @@ export function AgentConfig({ mcpHost }: AgentConfigProps) {
         </Tabs>
       </div>
 
-      {/* Key → profile — demoted to a quiet one-liner (Phase 2 note; not restructured here) */}
-      <p style={{ fontSize: "var(--text-body)", color: "var(--gray-600)", margin: 0 }}>
-        A junction key will select which profile an agent gets — coming soon.
+      {/* Key hint — points at /keys where a real key is minted. */}
+      <p style={{ fontSize: "var(--text-body)", color: "var(--gray-700)", margin: 0 }}>
+        Replace <MonoCode>{BEARER_PLACEHOLDER}</MonoCode> with a real key from{" "}
+        <Link to="/keys" style={{ color: "var(--blue-text)", textDecoration: "underline" }}>
+          Keys
+        </Link>
+        . The key selects which profile(s) the agent gets.
       </p>
 
-      {/* Honesty note — ALWAYS present regardless of host state */}
-      <HonestyNote />
+      {/* Honesty note — ALWAYS present: we cannot know if `junction serve` is running. */}
+      <ServeRequiredNote />
     </section>
   )
 }

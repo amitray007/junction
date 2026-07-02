@@ -12,7 +12,7 @@
 //   4. CallTool wiring: the CallToolRequestSchema handler routes through handlers.callTool.
 
 import type { Profile } from "@junction/core"
-import { deriveMcpEndpointPath, ProfileIdSchema } from "@junction/core"
+import { ProfileIdSchema } from "@junction/core"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
@@ -28,7 +28,6 @@ function makeProfile(name: string): Profile {
     id: ProfileIdSchema.parse(`profile-${name}`),
     name,
     sources: [],
-    mcpEndpointPath: deriveMcpEndpointPath(name),
   }
 }
 

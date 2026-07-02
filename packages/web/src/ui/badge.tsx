@@ -121,7 +121,15 @@ export function StatusBadge({
   status,
   className,
 }: {
-  readonly status: "connected" | "configured" | "no-auth" | "expiring" | "auth-failed" | "disabled"
+  readonly status:
+    | "connected"
+    | "configured"
+    | "no-auth"
+    | "expiring"
+    | "auth-failed"
+    | "disabled"
+    | "active"
+    | "revoked"
   readonly className?: string
 }) {
   const map = {
@@ -131,6 +139,10 @@ export function StatusBadge({
     expiring: { variant: "warning" as const, label: "Expiring" },
     "auth-failed": { variant: "error" as const, label: "Auth Failed" },
     disabled: { variant: "off" as const, label: "Disabled" },
+    // API-key lifecycle (inc 27) — an active key is NOT liveness-probed, so it
+    // gets its own honest label rather than reusing "Connected".
+    active: { variant: "ok" as const, label: "Active" },
+    revoked: { variant: "off" as const, label: "Revoked" },
   } as const
 
   const { variant, label } = map[status]

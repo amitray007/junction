@@ -8,7 +8,6 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
   createRepositories,
-  deriveMcpEndpointPath,
   getDatabase,
   getPaths,
   newCredentialId,
@@ -164,7 +163,6 @@ describe("data.server", () => {
       id: profileId,
       name: profileName,
       sources: [],
-      mcpEndpointPath: deriveMcpEndpointPath(profileName),
     })
     await repos.profiles.addSource(String(profileId), {
       platformId,
@@ -203,7 +201,6 @@ describe("data.server", () => {
       id: profileId,
       name: profileName,
       sources: [],
-      mcpEndpointPath: deriveMcpEndpointPath(profileName),
     })
     await repos.profiles.addSource(String(profileId), {
       platformId,

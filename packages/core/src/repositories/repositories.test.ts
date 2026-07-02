@@ -205,7 +205,6 @@ describe("repositories", () => {
       const profile = {
         id: profileId,
         name: "my-profile",
-        mcpEndpointPath: "/profiles/my-profile/mcp",
         sources: [
           {
             platformId,
@@ -239,7 +238,6 @@ describe("repositories", () => {
       const first = await repos.profiles.create({
         id: newProfileId(),
         name: "dup",
-        mcpEndpointPath: "/profiles/dup/mcp",
         sources: [],
       })
       expect(first.isOk()).toBe(true)
@@ -247,7 +245,6 @@ describe("repositories", () => {
       const second = await repos.profiles.create({
         id: newProfileId(),
         name: "dup",
-        mcpEndpointPath: "/profiles/dup/mcp",
         sources: [],
       })
       expect(second.isErr()).toBe(true)
@@ -272,7 +269,6 @@ describe("repositories", () => {
       const profile = {
         id: profileId,
         name: "cascade-test",
-        mcpEndpointPath: "/profiles/cascade-test/mcp",
         sources: [
           {
             platformId,
@@ -316,7 +312,6 @@ describe("repositories", () => {
       const result = await repos.profiles.create({
         id: newProfileId(),
         name: "fk-cred-test",
-        mcpEndpointPath: "/profiles/fk-cred-test/mcp",
         sources: [
           {
             platformId,
@@ -346,7 +341,6 @@ describe("repositories", () => {
       await repos.profiles.create({
         id: profileId,
         name: "cred-del-test",
-        mcpEndpointPath: "/profiles/cred-del-test/mcp",
         sources: [{ platformId, credentialId: credId, toolNamespace: "gh", enabled: true }],
       })
 
@@ -365,13 +359,11 @@ describe("repositories", () => {
       await repos.profiles.create({
         id: newProfileId(),
         name: "a",
-        mcpEndpointPath: "/profiles/a/mcp",
         sources: [],
       })
       await repos.profiles.create({
         id: newProfileId(),
         name: "b",
-        mcpEndpointPath: "/profiles/b/mcp",
         sources: [],
       })
       const list = await repos.profiles.list()
@@ -391,7 +383,6 @@ describe("repositories", () => {
       await repos.profiles.create({
         id: profileId,
         name: "m0004-null",
-        mcpEndpointPath: "/profiles/m0004-null/mcp",
         sources: [],
       })
 
@@ -426,7 +417,6 @@ describe("repositories", () => {
       await repos.profiles.create({
         id: profileId,
         name: "m0004-cred",
-        mcpEndpointPath: "/profiles/m0004-cred/mcp",
         sources: [{ platformId, credentialId: credId, toolNamespace: "cred_ns", enabled: true }],
       })
 
@@ -640,7 +630,6 @@ describe("repositories", () => {
       await repos.profiles.create({
         id: profileId,
         name: "add-source-test",
-        mcpEndpointPath: "/profiles/add-source-test/mcp",
         sources: [],
       })
 
@@ -675,7 +664,6 @@ describe("repositories", () => {
       await repos.profiles.create({
         id: profileId,
         name: "filter-test",
-        mcpEndpointPath: "/profiles/filter-test/mcp",
         sources: [],
       })
 
@@ -712,7 +700,6 @@ describe("repositories", () => {
       await repos.profiles.create({
         id: profileId,
         name: "dup-ns-test",
-        mcpEndpointPath: "/profiles/dup-ns-test/mcp",
         sources: [],
       })
 
@@ -755,13 +742,11 @@ describe("repositories", () => {
       await repos.profiles.create({
         id: profileIdA,
         name: "profile-a",
-        mcpEndpointPath: "/profiles/profile-a/mcp",
         sources: [],
       })
       await repos.profiles.create({
         id: profileIdB,
         name: "profile-b",
-        mcpEndpointPath: "/profiles/profile-b/mcp",
         sources: [],
       })
 
@@ -788,7 +773,6 @@ describe("repositories", () => {
       await repos.profiles.create({
         id: profileId,
         name: "fk-cred-as",
-        mcpEndpointPath: "/profiles/fk-cred-as/mcp",
         sources: [],
       })
 
@@ -812,7 +796,6 @@ describe("repositories", () => {
       await repos.profiles.create({
         id: profileId,
         name: "no-cred-source",
-        mcpEndpointPath: "/profiles/no-cred-source/mcp",
         sources: [],
       })
 
@@ -855,7 +838,6 @@ describe("repositories", () => {
       await repos.profiles.create({
         id: profileId,
         name: "cred-source",
-        mcpEndpointPath: "/profiles/cred-source/mcp",
         sources: [],
       })
 
@@ -889,7 +871,6 @@ describe("repositories", () => {
       await repos.profiles.create({
         id: profileId,
         name: "restrict-test",
-        mcpEndpointPath: "/profiles/restrict-test/mcp",
         sources: [{ platformId, credentialId: credId, toolNamespace: "ns", enabled: true }],
       })
 
@@ -914,7 +895,6 @@ describe("repositories", () => {
       await repos.profiles.create({
         id: profileId,
         name: "null-exempt-test",
-        mcpEndpointPath: "/profiles/null-exempt-test/mcp",
         sources: [],
       })
 
@@ -950,7 +930,6 @@ describe("repositories", () => {
       await repos.profiles.create({
         id: profileId,
         name: "rs-test",
-        mcpEndpointPath: "/profiles/rs-test/mcp",
         sources: [
           { platformId, credentialId: credId, toolNamespace: "ns1", enabled: true },
           { platformId, credentialId: credId, toolNamespace: "ns2", enabled: true },
@@ -1001,13 +980,11 @@ describe("repositories", () => {
       await repos.profiles.create({
         id: profileA,
         name: "rs-a",
-        mcpEndpointPath: "/profiles/rs-a/mcp",
         sources: [{ platformId, credentialId: credId, toolNamespace: "ns", enabled: true }],
       })
       await repos.profiles.create({
         id: profileB,
         name: "rs-b",
-        mcpEndpointPath: "/profiles/rs-b/mcp",
         sources: [{ platformId, credentialId: credId, toolNamespace: "ns", enabled: true }],
       })
 
@@ -1038,7 +1015,6 @@ describe("repositories", () => {
       await repos.profiles.create({
         id: profileId,
         name: "sse-test",
-        mcpEndpointPath: "/profiles/sse-test/mcp",
         sources: [{ platformId, credentialId: credId, toolNamespace: "myns", enabled: true }],
       })
 
@@ -1067,7 +1043,6 @@ describe("repositories", () => {
       await repos.profiles.create({
         id: profileId,
         name: "sse-re",
-        mcpEndpointPath: "/profiles/sse-re/mcp",
         sources: [{ platformId, credentialId: credId, toolNamespace: "myns", enabled: false }],
       })
 
@@ -1086,7 +1061,6 @@ describe("repositories", () => {
       await repos.profiles.create({
         id: profileId,
         name: "sse-nf",
-        mcpEndpointPath: "/profiles/sse-nf/mcp",
         sources: [],
       })
 
@@ -1112,7 +1086,6 @@ describe("repositories", () => {
       await repos.profiles.create({
         id: profileId,
         name: "idem-disable",
-        mcpEndpointPath: "/profiles/idem-disable/mcp",
         sources: [{ platformId, credentialId: credId, toolNamespace: "myns", enabled: false }],
       })
 
@@ -1148,7 +1121,6 @@ describe("repositories", () => {
       await repos.profiles.create({
         id: profileId,
         name: "ssf-test",
-        mcpEndpointPath: "/profiles/ssf-test/mcp",
         sources: [{ platformId, credentialId: credId, toolNamespace: "myns", enabled: true }],
       })
       return { profileId, platformId, credId }
@@ -1455,7 +1427,6 @@ describe("repositories", () => {
       await repos.profiles.create({
         id: profileId,
         name: "inuse-test",
-        mcpEndpointPath: "/profiles/inuse-test/mcp",
         sources: [{ platformId, credentialId: credId, toolNamespace: "ns", enabled: true }],
       })
 
@@ -1552,7 +1523,6 @@ describe("repositories", () => {
       await repos.profiles.create({
         id: profileId,
         name: "lifecycle-test",
-        mcpEndpointPath: "/profiles/lifecycle-test/mcp",
         sources: [{ platformId, credentialId: credId, toolNamespace: "ns", enabled: true }],
       })
 
@@ -1590,7 +1560,6 @@ describe("repositories", () => {
       const result = await repos.profiles.create({
         id: newProfileId(),
         name: "dup-ns-create",
-        mcpEndpointPath: "/profiles/dup-ns-create/mcp",
         sources: [
           { platformId, credentialId: credId, toolNamespace: "myns", enabled: true },
           { platformId, credentialId: credId, toolNamespace: "myns", enabled: true },
@@ -1647,7 +1616,6 @@ describe("repositories", () => {
       await repos.profiles.create({
         id: profileId,
         name: "legacy-sr",
-        mcpEndpointPath: "/profiles/legacy-sr/mcp",
         sources: [{ platformId, credentialId: credId, toolNamespace: "ns", enabled: true }],
       })
 
@@ -1708,8 +1676,8 @@ describe("repositories", () => {
       })
       // Insert source_ref row with corrupt tool_filter directly
       db.run(
-        sql`INSERT INTO profiles (id, name, mcp_endpoint_path)
-            VALUES (${String(profileId)}, 'corrupt-filter', '/profiles/corrupt-filter/mcp')`,
+        sql`INSERT INTO profiles (id, name)
+            VALUES (${String(profileId)}, 'corrupt-filter')`,
       )
       db.run(
         sql`INSERT INTO source_refs (id, profile_id, platform_id, credential_id, tool_namespace, enabled, tool_filter)
@@ -1942,5 +1910,153 @@ describe("migration 0005 — graphql column", () => {
     expect(raw).not.toBeNull()
     const parsed = JSON.parse(raw ?? "") as { endpoint: string }
     expect(parsed.endpoint).toBe("https://gql.example.com/graphql")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Migration 0007 — junction-keys / single-endpoint MCP auth (inc 27)
+//
+// Mirrors the inc-16 "migration 0004 — cross-version data preservation"
+// pattern: apply migrations 0000→0006 (the schema BEFORE 0007) on a raw
+// better-sqlite3 DB, seed profiles WITH the mcp_endpoint_path value + a full
+// source_refs row the OLD way, THEN apply 0007 (which both drops
+// profiles.mcp_endpoint_path AND creates api_keys/api_key_profiles), and
+// assert the pre-existing rows survived, the column is gone, and the new
+// tables exist.
+// ---------------------------------------------------------------------------
+describe("migration 0007 — cross-version data preservation + new tables", () => {
+  const migrationsDir = fileURLToPath(new URL("../db/migrations/", import.meta.url))
+
+  /** Apply one migration .sql file statement-by-statement (split on drizzle's breakpoint). */
+  async function applyMigration(rawDb: Database.Database, tag: string): Promise<void> {
+    const sqlText = await readFile(join(migrationsDir, `${tag}.sql`), "utf8")
+    for (const stmt of sqlText.split("--> statement-breakpoint")) {
+      const trimmed = stmt.trim()
+      if (trimmed.length > 0) rawDb.exec(trimmed)
+    }
+  }
+
+  it("preserves pre-existing profile + source_refs rows through the 0007 column drop, and creates api_keys/api_key_profiles", async () => {
+    const rawDb = new Database(":memory:")
+    try {
+      rawDb.pragma("foreign_keys = ON")
+
+      // ── Build the PRE-0007 schema exactly as a real post-0006 DB would look ──
+      for (const tag of [
+        "0000_odd_amazoness",
+        "0001_illegal_kingpin",
+        "0002_natural_lady_bullseye",
+        "0003_add_openapi_column",
+        "0004_neat_spirit",
+        "0005_confused_swordsman",
+        "0006_violet_kinsey_walden",
+      ]) {
+        await applyMigration(rawDb, tag)
+      }
+
+      // Seed a full pre-27 profile + credentialed source_ref, WITH the
+      // mcp_endpoint_path value that 0007 is about to drop.
+      rawDb.exec(`
+        INSERT INTO platforms (id, kind, display_name) VALUES ('plat_m7', 'mcp', 'M7 Platform');
+        INSERT INTO credentials (id, platform_id, profile_name, kind, secret_ref)
+          VALUES ('cred_m7', 'plat_m7', 'work', 'bearer', 'ref_m7');
+        INSERT INTO profiles (id, name, mcp_endpoint_path)
+          VALUES ('prof_m7', 'm7-legacy', '/profiles/m7-legacy/mcp');
+        INSERT INTO source_refs (id, profile_id, platform_id, credential_id, tool_namespace, enabled)
+          VALUES ('sr_m7', 'prof_m7', 'plat_m7', 'cred_m7', 'm7_ns', 1);
+      `)
+
+      // ── The migration under test ──
+      await applyMigration(rawDb, "0007_burly_elektra")
+
+      // 1. The pre-existing profile row survived; the column is gone.
+      const profileCols = rawDb
+        .prepare("SELECT name FROM pragma_table_info('profiles')")
+        .all() as Array<{ name: string }>
+      expect(profileCols.map((c) => c.name)).not.toContain("mcp_endpoint_path")
+
+      const profileRow = rawDb
+        .prepare("SELECT id, name FROM profiles WHERE id = ?")
+        .get("prof_m7") as { id: string; name: string } | undefined
+      expect(profileRow).toBeDefined()
+      expect(profileRow?.name).toBe("m7-legacy")
+
+      // 2. The source_refs row (a full row, not touched by this migration) survived intact.
+      const sourceRow = rawDb
+        .prepare(
+          "SELECT profile_id, platform_id, credential_id, tool_namespace, enabled FROM source_refs WHERE id = ?",
+        )
+        .get("sr_m7") as
+        | {
+            profile_id: string
+            platform_id: string
+            credential_id: string
+            tool_namespace: string
+            enabled: number
+          }
+        | undefined
+      expect(sourceRow).toBeDefined()
+      expect(sourceRow?.profile_id).toBe("prof_m7")
+      expect(sourceRow?.tool_namespace).toBe("m7_ns")
+      expect(sourceRow?.enabled).toBe(1)
+
+      // 3. profiles.name unique index survived.
+      const profileIndexes = rawDb
+        .prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='profiles'")
+        .all() as Array<{ name: string }>
+      expect(profileIndexes.map((i) => i.name)).toContain("profiles_name_unique")
+
+      // 4. api_keys + api_key_profiles now exist with the expected shape.
+      const tables = rawDb
+        .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+        .all() as Array<{ name: string }>
+      const tableNames = tables.map((t) => t.name)
+      expect(tableNames).toContain("api_keys")
+      expect(tableNames).toContain("api_key_profiles")
+
+      const apiKeysCols = rawDb
+        .prepare("SELECT name FROM pragma_table_info('api_keys')")
+        .all() as Array<{ name: string }>
+      expect(apiKeysCols.map((c) => c.name)).toEqual(
+        expect.arrayContaining([
+          "id",
+          "label",
+          "secret_hash",
+          "scope",
+          "created_at",
+          "last_used_at",
+          "revoked_at",
+        ]),
+      )
+
+      // 5. api_keys.secret_hash unique index survived.
+      const apiKeysIndexes = rawDb
+        .prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='api_keys'")
+        .all() as Array<{ name: string }>
+      expect(apiKeysIndexes.map((i) => i.name)).toContain("api_keys_secret_hash_unique")
+
+      // 6. A fresh api_keys + api_key_profiles round-trip works post-migration.
+      rawDb.exec(`
+        INSERT INTO api_keys (id, label, secret_hash, scope, created_at)
+          VALUES ('key_m7', 'demo', 'deadbeef', 'profile', 1700000000000);
+        INSERT INTO api_key_profiles (api_key_id, profile_id) VALUES ('key_m7', 'prof_m7');
+      `)
+      const joinRow = rawDb
+        .prepare("SELECT api_key_id, profile_id FROM api_key_profiles WHERE api_key_id = ?")
+        .get("key_m7") as { api_key_id: string; profile_id: string } | undefined
+      expect(joinRow?.profile_id).toBe("prof_m7")
+
+      // 7. api_key_profiles cascades when the referenced profile is deleted.
+      rawDb.exec("DELETE FROM profiles WHERE id = 'prof_m7'")
+      const afterDelete = rawDb
+        .prepare("SELECT * FROM api_key_profiles WHERE api_key_id = ?")
+        .all("key_m7")
+      expect(afterDelete.length).toBe(0)
+      // The key row itself is retained (only the join row cascades).
+      const keyStillThere = rawDb.prepare("SELECT id FROM api_keys WHERE id = ?").get("key_m7")
+      expect(keyStillThere).toBeDefined()
+    } finally {
+      rawDb.close()
+    }
   })
 })

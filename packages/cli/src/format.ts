@@ -172,10 +172,20 @@ export function formatCredentialError(e: CredentialError): string {
  * Extracted from the remove-credential / remove-platform pair to share the
  * json / human branching + exitCode without duplicating the structure.
  */
-export function reportInUseError(json: boolean, msg: string): void {
+/**
+ * Report an error message in the appropriate format and set exitCode=1.
+ * The shared primitive behind every command's json/human error branch —
+ * `if (json) write {ok:false,error} else consola.error; exitCode=1`.
+ */
+export function reportError(json: boolean, msg: string): void {
   if (json) process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
   else consola.error(msg)
   process.exitCode = 1
+}
+
+/** @deprecated name — a thin alias of reportError; kept for existing call sites. */
+export function reportInUseError(json: boolean, msg: string): void {
+  reportError(json, msg)
 }
 
 /**

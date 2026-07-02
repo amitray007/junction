@@ -131,12 +131,13 @@ type Credential = {
   oauthMeta?: OAuthMeta; // refresh token/expiry/scopes — slot present day one, refresh loop later
 };
 
-// What an agent sees. Gets its OWN MCP endpoint (/profiles/{name}/mcp).
+// What an agent sees. Served over the single keyed /mcp endpoint (inc 27) —
+// a junction API key selects which profile(s) a consumer gets. (The original
+// per-profile `mcpEndpointPath` field was removed in inc 27; see the note below.)
 type Profile = {
   id: string;
   name: string;
   sources: SourceRef[];
-  mcpEndpointPath: string; // "/profiles/work/mcp"
 };
 
 // An activated (Platform, Credential) pair inside a Profile.
@@ -149,8 +150,8 @@ type SourceRef = {
 ```
 
 **Conventions adopted day one (renaming later breaks every agent prompt):**
-- **Double-underscore tool namespacing:** `<namespace>__<tool>` (e.g. `github_work__list_issues`).
-- **Per-profile endpoints**, not filters on a shared endpoint. An agent points at a profile URL; the account switch happens at *connection* time, not call time (the `~/.aws` + Chrome-profile pattern).
+- **Double-underscore tool namespacing:** `<namespace>__<tool>` (e.g. `github_work__list_issues`) for a single-profile consumer; **`<profile>__<namespace>__<tool>`** for a consumer (a multi-profile or global API key) spanning several profiles. Arity is fixed at key-mint time. The charsets that make the first-`__` split unambiguous are load-bearing (profile names carry no `_`; namespaces carry no `__`).
+- **~~Per-profile endpoints~~ → REVISED (inc 27): a single keyed `/mcp` endpoint.** Originally each profile had its own endpoint path (`/profiles/{name}/mcp`) and the account switch happened at connection time. **This never shipped as running code** (serving was stdio-only until inc 27). Inc 27 replaced it with one shared HTTP `/mcp` endpoint (`junction serve`, localhost-only) that authenticates by a junction-minted API key; the **key selects which profile(s)** the consumer gets. Per-profile isolation is preserved behind the shared endpoint. See CLAUDE.md (Architecture) + `docs/methods/27-junction-keys-single-endpoint.md`.
 
 **Credential security invariant:** credential plaintext never leaves the process. The MCP endpoint never returns credential values; secrets are injected at tool-call time and exist in plaintext only in memory.
 
@@ -229,7 +230,7 @@ Each increment is a complete, tested, runnable thing. The §7 workflow loop runs
 3. **`cli` boots over core** — citty CLI: `junction init` (creates home, writes default config via @clack/prompts) + `junction status` (reads + prints, `--json` supported). *Proof:* `npx junction init` then `status` works end-to-end. The terminal experience has three layers: **citty** owns `junction <cmd>` + flags + the `npx` entry; **@clack/prompts** handles inline wizard steps; **OpenTUI** (increment 9) becomes the full-screen interactive surface. Scriptable/`--json` paths always remain so agents can drive the CLI.
 
 **Phase B — The spine (typed, persisted, no features)**
-4. **Data model in `core`** — `Platform`/`Credential`/`Profile`/`SourceRef` Zod schemas + inferred types; `__` namespace + per-profile-endpoint conventions encoded. *Proof:* schema tests incl. the wedge (two GitHub credentials, one platform).
+4. **Data model in `core`** — `Platform`/`Credential`/`Profile`/`SourceRef` Zod schemas + inferred types; `__` namespace convention encoded (the per-profile-endpoint convention was revised to the single keyed `/mcp` endpoint in inc 27 — see above). *Proof:* schema tests incl. the wedge (two GitHub credentials, one platform).
 5. **Persistence** — Drizzle + better-sqlite3, migrated schema, repository layer in `core`. *Proof:* CRUD tests; `junction profile list` reads an empty table.
 6. **`CredentialStore` interface + impls** — interface, `KeyringStore` (@napi-rs/keyring), `EncryptedFileStore` (AES-256-GCM), runtime selection by environment. *Proof:* secrets round-trip encrypted; a test asserts plaintext never hits disk.
 

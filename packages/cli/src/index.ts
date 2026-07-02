@@ -5,9 +5,11 @@ import { defineCommand, runMain } from "citty"
 import { credentialCommand } from "./commands/credential.js"
 import { debugCommand } from "./commands/debug.js"
 import { initCommand } from "./commands/init.js"
+import { keysCommand } from "./commands/keys.js"
 import { mcpCommand } from "./commands/mcp.js"
 import { platformCommand } from "./commands/platform.js"
 import { profileCommand } from "./commands/profile.js"
+import { serveCommand } from "./commands/serve.js"
 import { runStatus, statusCommand } from "./commands/status.js"
 import { webCommand } from "./commands/web.js"
 
@@ -26,6 +28,8 @@ const main = defineCommand({
     status: statusCommand,
     debug: debugCommand,
     web: webCommand,
+    serve: serveCommand,
+    keys: keysCommand,
   },
 })
 

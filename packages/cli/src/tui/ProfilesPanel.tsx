@@ -26,6 +26,12 @@ export function ProfilesPanel({
       borderColor={focused ? "green" : "gray"}
       paddingX={1}
       flexGrow={1}
+      // Explicit minWidth: since inc 27 removed the (wide) mcpEndpointPath
+      // column, this panel's natural content (just the profile name) is
+      // short, so Yoga's flex-grow distribution would otherwise squeeze it
+      // to a width that wraps profile names mid-word. 20 matches the name
+      // column width convention used elsewhere in the dashboard (padEnd(16) + margin).
+      minWidth={20}
     >
       <Box marginBottom={1}>
         <Text bold color={focused ? "green" : "white"}>
@@ -42,9 +48,7 @@ export function ProfilesPanel({
               <Box>
                 <Text color={isSelected ? "green" : undefined} bold={isSelected}>
                   {isSelected ? "▶ " : "  "}
-                  {p.name.padEnd(16)}
-                  {"  "}
-                  {p.mcpEndpointPath}
+                  {p.name}
                 </Text>
               </Box>
               {p.sources.map((src) => (

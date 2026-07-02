@@ -36,7 +36,6 @@ function makeSynthSnapshot(): DashboardSnapshot {
       {
         id: "p1",
         name: "work",
-        mcpEndpointPath: "/profiles/work/mcp",
         sources: [],
       },
     ],
@@ -220,7 +219,6 @@ describe("loadDashboardSnapshot (DB integration)", () => {
     await repos.profiles.create({
       id: profileId,
       name: "work",
-      mcpEndpointPath: "/profiles/work/mcp",
       sources: [],
     })
 
@@ -297,7 +295,6 @@ describe("loadDashboardSnapshot (DB integration)", () => {
     const profileResult = await repos.profiles.create({
       id: profileId,
       name: "srctest",
-      mcpEndpointPath: "/profiles/srctest/mcp",
       sources: [
         { platformId, credentialId: credId, toolNamespace: "enabled_ns", enabled: true },
         { platformId, credentialId: credId, toolNamespace: "disabled_ns", enabled: false },

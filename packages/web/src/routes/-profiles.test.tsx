@@ -30,7 +30,6 @@ const populatedData = {
     {
       id: "prof-1",
       name: "default",
-      mcpEndpointPath: "/profiles/default/mcp",
       sources: [
         {
           namespace: "github",
@@ -49,7 +48,6 @@ const populatedData = {
     {
       id: "prof-2",
       name: "readonly",
-      mcpEndpointPath: "/profiles/readonly/mcp",
       sources: [],
     },
   ] satisfies ProfileMeta[],
@@ -92,6 +90,15 @@ vi.mock("../server/profile-mutations.functions.js", () => ({
   setRouteFilterFn: (...args: unknown[]) => mockSetRouteFilterFn(...args),
 }))
 
+// countKeysReferencingProfileFn — the delete-profile "N key(s) reference this
+// profile" warning (inc 27 slice C). Defaults to 0 so existing delete tests
+// (written before keys existed) keep passing unchanged.
+const mockCountKeysReferencingProfileFn = vi.fn().mockResolvedValue({ count: 0 })
+
+vi.mock("../server/keys-mutations.functions.js", () => ({
+  countKeysReferencingProfileFn: (...args: unknown[]) => mockCountKeysReferencingProfileFn(...args),
+}))
+
 const { Route } = await import("./profiles.js")
 // biome-ignore lint/suspicious/noExplicitAny: test utility — typing the internal options shape is not worth the boilerplate
 const ProfilesPage = (Route as any).options.component as React.FC
@@ -107,6 +114,7 @@ afterEach(() => {
   mockRemoveRouteFn.mockReset()
   mockToggleRouteFn.mockReset()
   mockSetRouteFilterFn.mockReset()
+  mockCountKeysReferencingProfileFn.mockReset().mockResolvedValue({ count: 0 })
   mockInvalidate.mockReset().mockResolvedValue(undefined)
 })
 
@@ -195,7 +203,6 @@ describe("ProfilesPage", () => {
         {
           id: "prof-2",
           name: "readonly",
-          mcpEndpointPath: "/profiles/readonly/mcp",
           sources: [],
         },
       ],
@@ -206,10 +213,12 @@ describe("ProfilesPage", () => {
     expect(screen.getByText("No routes in this profile.")).toBeInTheDocument()
   })
 
-  it("does not render mcpEndpointPath anywhere (single-endpoint model)", () => {
+  it("does not render an mcpEndpointPath-shaped path anywhere (single-endpoint model)", () => {
     mockUseLoaderData.mockReturnValue(populatedData)
     render(<ProfilesPage />)
-    // The mcpEndpointPath (/profiles/default/mcp) must NOT appear literally in the UI.
+    // Increment 27 removed the per-profile endpoint path entirely — ProfileMeta
+    // no longer carries the field, so this regression-guards against any UI
+    // code inventing a /profiles/<name>/mcp-shaped string from `name` alone.
     expect(screen.queryByText("/profiles/default/mcp")).not.toBeInTheDocument()
     expect(screen.queryByText("/profiles/readonly/mcp")).not.toBeInTheDocument()
   })
@@ -361,6 +370,42 @@ describe("ProfilesPage", () => {
 
     await waitFor(() => expect(mockDeleteProfileFn).toHaveBeenCalledOnce())
     await waitFor(() => expect(mockInvalidate).toHaveBeenCalled())
+  })
+
+  // ── Delete profile — referencing-key warning (inc 27 slice C) ──────────────
+
+  it("delete profile: shows a warning when N keys reference the profile", async () => {
+    mockUseLoaderData.mockReturnValue(populatedData)
+    mockCountKeysReferencingProfileFn.mockResolvedValue({ count: 2 })
+
+    render(<ProfilesPage />)
+
+    fireEvent.click(screen.getByRole("button", { name: /^delete$/i }))
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
+
+    await waitFor(() =>
+      expect(mockCountKeysReferencingProfileFn).toHaveBeenCalledWith({
+        data: { profileId: "prof-1" },
+      }),
+    )
+    await waitFor(() =>
+      expect(
+        screen.getByText(/2 keys reference this profile and will lose it/i),
+      ).toBeInTheDocument(),
+    )
+  })
+
+  it("delete profile: shows NO warning when zero keys reference the profile", async () => {
+    mockUseLoaderData.mockReturnValue(populatedData)
+    mockCountKeysReferencingProfileFn.mockResolvedValue({ count: 0 })
+
+    render(<ProfilesPage />)
+
+    fireEvent.click(screen.getByRole("button", { name: /^delete$/i }))
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
+
+    await waitFor(() => expect(mockCountKeysReferencingProfileFn).toHaveBeenCalled())
+    expect(screen.queryByText(/reference this profile/i)).not.toBeInTheDocument()
   })
 
   // ── FIX 6: Add Route dialog contains credential select ─────────────────────

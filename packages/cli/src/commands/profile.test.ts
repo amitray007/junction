@@ -68,7 +68,6 @@ describe("profile list command (unit)", () => {
     await repos.profiles.create({
       id: newProfileId(),
       name: "work",
-      mcpEndpointPath: "/profiles/work/mcp",
       sources: [],
     })
 

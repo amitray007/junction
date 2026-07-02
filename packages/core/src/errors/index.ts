@@ -24,6 +24,20 @@ export type CredentialError =
   | { kind: "io-failed"; cause: unknown }
   | { kind: "invalid-input"; reason: string }
 
+/**
+ * Errors from minting/verifying/revoking junction API keys (increment 27).
+ * `invalid-format` / `unknown-key` / `revoked` / `empty-scope` all collapse to
+ * the SAME uniform 401 at the HTTP boundary (mcp/server) — never distinguished
+ * in the response, only internally/in logs (never with the presented token).
+ */
+export type ApiKeyError =
+  | { kind: "invalid-format"; reason: string }
+  | { kind: "unknown-key" }
+  | { kind: "revoked" }
+  | { kind: "empty-scope" }
+  | { kind: "not-found"; id: string }
+  | { kind: "db-error"; cause: unknown }
+
 export type SandboxError =
   | { kind: "runtime-unavailable"; runtime: "deno"; cause?: unknown }
   | { kind: "unsupported-platform"; platform: string }

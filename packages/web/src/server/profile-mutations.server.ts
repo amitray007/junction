@@ -4,13 +4,7 @@
 // Profile mutations need only the DB (getDb); no credential store required.
 // SECURITY: all output is metadata-only — no secret, no secretRef.
 
-import {
-  deriveMcpEndpointPath,
-  newProfileId,
-  ProfileNameSchema,
-  SourceRefSchema,
-  ToolFilterSchema,
-} from "@junction/core"
+import { newProfileId, ProfileNameSchema, SourceRefSchema, ToolFilterSchema } from "@junction/core"
 import { withRepos } from "./shared.server.js"
 
 // ---------------------------------------------------------------------------
@@ -56,7 +50,6 @@ export async function mutateCreateProfile(
     const result = await repos.profiles.create({
       id,
       name: parsed.data,
-      mcpEndpointPath: deriveMcpEndpointPath(parsed.data),
       sources: [],
     })
     if (result.isErr()) {

@@ -26,6 +26,32 @@ export type ProfileId = z.infer<typeof ProfileIdSchema>
 export const SourceRefIdSchema = z.string().min(1).brand("SourceRefId")
 export type SourceRefId = z.infer<typeof SourceRefIdSchema>
 
+/**
+ * Opaque API-key identifier — the Crockford-base32 ULID that doubles as the
+ * `keyid` segment of the `jct_<keyid>_<secret>` token (increment 27 §2.1).
+ * Constrained to exactly 26 chars of the Crockford b32 alphabet (no I/L/O/U)
+ * so the token regex `/^jct_([0-9A-HJKMNP-TV-Z]{26})_(.+)$/` can parse it
+ * deterministically — the keyid charset never contains `_`, which is what
+ * lets the first two `_` delimiters split the token unambiguously even
+ * though base64url secrets may themselves contain `_`.
+ */
+export const ApiKeyIdSchema = z
+  .string()
+  .regex(/^[0-9A-HJKMNP-TV-Z]{26}$/, {
+    message: "ApiKeyId must be a 26-char Crockford-base32 ULID (no I/L/O/U)",
+  })
+  .brand("ApiKeyId")
+export type ApiKeyId = z.infer<typeof ApiKeyIdSchema>
+
+/** API-key label: trimmed, non-empty, ≤64 chars. Duplicates allowed — the
+ *  keyid is the stable handle, the label is purely descriptive. */
+export const ApiKeyLabelSchema = z
+  .string()
+  .trim()
+  .min(1, { message: "label must be non-empty" })
+  .max(64, { message: "label must be ≤64 characters" })
+export type ApiKeyLabel = z.infer<typeof ApiKeyLabelSchema>
+
 // ---------------------------------------------------------------------------
 // Naming-convention schemas
 // ---------------------------------------------------------------------------
@@ -34,15 +60,29 @@ export type SourceRefId = z.infer<typeof SourceRefIdSchema>
  *  segments. Consecutive underscores are forbidden so the `<namespace>__<tool>`
  *  convention (double underscore, design spec §4) splits unambiguously — a
  *  namespace or tool containing `__` would break the split.
- *  Valid: "github_work", "list_issues". Invalid: "a__b", "_x", "x_". */
+ *  Valid: "github_work", "list_issues". Invalid: "a__b", "_x", "x_".
+ *
+ *  ⚠️ LOAD-BEARING (increment 27): the multi-profile scoped-proxy naming
+ *  layer (`sources/scoped-proxy.ts`) prepends `<profileName>__` and splits
+ *  the assembled name on the FIRST `__` to recover the profile. That split
+ *  is only deterministic because a namespace can never itself contain `__`.
+ *  Loosening this schema to allow `__` would make multi-profile tool-name
+ *  parsing ambiguous — see the regression test asserting `__` is rejected. */
 export const ToolNamespaceSchema = z.string().regex(/^[a-z0-9]+(_[a-z0-9]+)*$/, {
   message:
     "must match ^[a-z0-9]+(_[a-z0-9]+)*$ (lowercase/digits, single underscores between segments, no '__')",
 })
 
 /** Profile name: URL-safe lowercase alphanumeric + hyphens.
- *  Validated per the `/profiles/{name}/mcp` endpoint convention.
- *  Example: "work", "personal", "client-acme" */
+ *  Example: "work", "personal", "client-acme"
+ *
+ *  ⚠️ LOAD-BEARING (increment 27): the multi-profile scoped-proxy naming
+ *  layer prepends `<profileName>__` to tool names for `profiles`/`global`
+ *  scoped keys. That charset (`^[a-z0-9-]+$`, no underscore) is what
+ *  guarantees a profile name can never contain `_`, so the FIRST `__` in a
+ *  `<profileName>__<namespace>__<tool>` name is unambiguously the
+ *  profile/namespace boundary. Loosening this schema to allow `_` would
+ *  break that parse — see the regression test asserting `_` is rejected. */
 export const ProfileNameSchema = z.string().regex(/^[a-z0-9-]+$/, {
   message: "profileName must match ^[a-z0-9-]+$ (lowercase, digits, hyphens only)",
 })
@@ -74,20 +114,4 @@ export function namespacedTool(namespace: string, tool: string): string {
     }
   }
   return `${namespace}__${tool}`
-}
-
-/**
- * Derive the per-profile MCP endpoint path from a profile name.
- * Convention: `/profiles/{name}/mcp` (design spec §4).
- *
- * @throws {Error} if profileName is not valid per ProfileNameSchema
- */
-export function deriveMcpEndpointPath(profileName: string): string {
-  const result = ProfileNameSchema.safeParse(profileName)
-  if (!result.success) {
-    throw new Error(
-      `Invalid profile name "${profileName}": ${result.error.issues.map((i) => i.message).join(", ")}`,
-    )
-  }
-  return `/profiles/${profileName}/mcp`
 }

@@ -31,21 +31,13 @@ import {
   createCredentialStore,
   createProfileProxy,
   createRepositories,
-  deriveMcpEndpointPath,
-  err,
   getDatabase,
   getPaths,
-  ok,
   type Profile,
   ProfileIdSchema,
-  type Result,
-  ResultAsync,
-  type SourceRef,
-  type ToolProvider,
-  type UpstreamError,
 } from "@junction/core"
 import { defineCommand } from "citty"
-import { buildProvider } from "../providers.js"
+import { adaptToMcpHandlers, makeResolveProvider } from "../providers.js"
 
 // ---------------------------------------------------------------------------
 // Default (synthetic) profile — used when no DB is available
@@ -57,7 +49,6 @@ function defaultProfile(): Profile {
     id: ProfileIdSchema.parse("default"),
     name: "default",
     sources: [],
-    mcpEndpointPath: deriveMcpEndpointPath("default"),
   }
 }
 
@@ -95,7 +86,8 @@ const serveCommand = defineCommand({
   async run({ args }) {
     // Lazy import: mcp/server is only loaded when this command runs.
     // mcp/client and openapi-client are lazy-imported inside buildProvider (providers.ts).
-    const { serveStdio, safeUpstreamMessage } = await import("@junction/mcp-server")
+    // safeUpstreamMessage is lazy-imported inside adaptToMcpHandlers (providers.ts).
+    const { serveStdio } = await import("@junction/mcp-server")
 
     const profileName = args.profile
 
@@ -154,146 +146,20 @@ const serveCommand = defineCommand({
     // leaks secret values. The secret is returned in the ToolProvider's transport
     // and flows only to the upstream; it is never logged or serialized.
     //
-    // DISPATCH BY KIND: switches on platform.kind so future source types plug in
-    // without touching the proxy. unsupported-source-kind → skipped per-source.
-
-    type ProviderResolution = {
-      provider: ToolProvider
-      toolNamespace: string
-      toolFilter?: import("@junction/core").ToolFilter | undefined
-    }
-
-    const resolveProvider = (
-      sourceRef: SourceRef,
-    ): ResultAsync<ProviderResolution, UpstreamError> => {
-      const work = async (): Promise<Result<ProviderResolution, UpstreamError>> => {
-        // Resolve the platform.
-        const platformResult = await repos.platforms.get(sourceRef.platformId)
-        if (platformResult.isErr()) {
-          process.stderr.write(
-            `junction mcp serve: source "${sourceRef.toolNamespace}": platform "${sourceRef.platformId}" not found — skipping\n`,
-          )
-          return err({
-            kind: "connect-failed" as const,
-            cause: platformResult.error,
-          } satisfies UpstreamError)
-        }
-        const platform = platformResult.value
-
-        // ── Dispatch by kind — unsupported kinds are cleanly skipped ──────
-        if (platform.kind !== "mcp" && platform.kind !== "openapi") {
-          process.stderr.write(
-            `junction mcp serve: source "${sourceRef.toolNamespace}": platform kind "${platform.kind}" not yet supported — skipping\n`,
-          )
-          return err({
-            kind: "unsupported-source-kind" as const,
-            platformKind: platform.kind,
-          } satisfies UpstreamError)
-        }
-
-        // ── Resolve credential (skip entirely when no credentialId — public source) ──────
-        let secret: string | null = null
-        if (sourceRef.credentialId === undefined) {
-          // No credential attached — public/no-auth source. secret stays null.
-          // Warn on stderr if the platform declares auth (informative, not blocking).
-          const authDeclared =
-            (platform.kind === "mcp" &&
-              platform.connection !== undefined &&
-              (platform.connection.transport === "http"
-                ? platform.connection.auth !== undefined
-                : platform.connection.tokenEnvVar !== undefined)) ||
-            (platform.kind === "openapi" &&
-              platform.openapi !== undefined &&
-              platform.openapi.auth !== undefined)
-          if (authDeclared) {
-            process.stderr.write(
-              `junction mcp serve: source "${sourceRef.toolNamespace}": platform "${sourceRef.platformId}" declares auth but no credential is attached — calls may be unauthorized\n`,
-            )
-          }
-        } else {
-          const credResult = await repos.credentials.get(sourceRef.credentialId)
-          if (credResult.isErr()) {
-            process.stderr.write(
-              `junction mcp serve: source "${sourceRef.toolNamespace}": credential "${sourceRef.credentialId}" not found — skipping\n`,
-            )
-            return err({
-              kind: "connect-failed" as const,
-              cause: credResult.error,
-            } satisfies UpstreamError)
-          }
-          const credential = credResult.value
-
-          // Resolve the plaintext secret from the store.
-          // If store is null (store unavailable), secret is null (no auth).
-          if (store !== null) {
-            const secretResult = await store.get(credential.secretRef)
-            if (secretResult.isErr()) {
-              process.stderr.write(
-                `junction mcp serve: source "${sourceRef.toolNamespace}": credential store read failed — skipping\n`,
-              )
-              return err({
-                kind: "connect-failed" as const,
-                cause: secretResult.error,
-              } satisfies UpstreamError)
-            }
-            secret = secretResult.value
-          }
-        }
-
-        // ── Build the provider via the shared primitive (providers.ts) ─────
-        // buildProvider dispatches by kind (mcp/openapi/else), lazy-imports the
-        // right lib, and normalises the MCP/OpenAPI async asymmetry. It never
-        // writes stderr — we write the per-source skipping note on error here.
-        const providerResult = await buildProvider(platform, secret, paths)
-        if (providerResult.isErr()) {
-          // buildProvider returns the cause (e.g. missing connection/openapi descriptor,
-          // ENOENT on the cached spec path); surface it so the skip is diagnosable.
-          const cause =
-            "cause" in providerResult.error ? String(providerResult.error.cause ?? "") : ""
-          process.stderr.write(
-            `junction mcp serve: source "${sourceRef.toolNamespace}": connection failed — skipping${cause ? ` (${cause})` : ""}\n`,
-          )
-          return err(providerResult.error)
-        }
-
-        return ok({
-          provider: providerResult.value,
-          toolNamespace: sourceRef.toolNamespace,
-          toolFilter: sourceRef.toolFilter,
-        })
-      }
-      return new ResultAsync(work())
-    }
+    // Shared with `junction serve` (commands/serve.ts) via providers.ts —
+    // both build the identical resolution pipeline; only the log
+    // prefix/sink differs (this command writes stderr directly to keep
+    // stdout pure for the MCP channel — see the file-level note above).
+    const resolveProvider = makeResolveProvider(repos, store, paths, {
+      logPrefix: "junction mcp serve",
+    })
 
     // ── Build the profile proxy (core) ────────────────────────────────────
     const proxy = createProfileProxy(profile.sources, resolveProvider)
 
     // ── Adapt proxy ResultAsync → Promise handlers for mcp/server ─────────
-    const handlers = {
-      async listTools() {
-        const result = await proxy.listTools()
-        // listTools always Ok (per-source resilience); if somehow Err, return empty.
-        if (result.isErr())
-          return { tools: [] as Array<{ name: string; description?: string; inputSchema: object }> }
-        return { tools: result.value }
-      },
-      async callTool(name: string, callArgs: Record<string, unknown>) {
-        const result = await proxy.callTool(name, callArgs)
-        if (result.isErr()) {
-          // Map to a safe MCP error response — NO secret in the message.
-          return {
-            isError: true as const,
-            content: [{ type: "text" as const, text: safeUpstreamMessage(result.error) }],
-          }
-        }
-        // Forward the upstream result. Content comes from the upstream MCP server
-        // (data, not secrets). isError reflects whether the upstream flagged an error.
-        return {
-          content: result.value.content as Array<{ type: "text"; text: string }>,
-          isError: result.value.isError,
-        }
-      },
-    }
+    // Shared with `junction serve` (commands/serve.ts) via providers.ts.
+    const handlers = adaptToMcpHandlers(proxy)
 
     // ── Serve ─────────────────────────────────────────────────────────────
     await serveStdio(profile, handlers)

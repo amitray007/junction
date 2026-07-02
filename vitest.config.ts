@@ -40,6 +40,8 @@ const INTEGRATION_FILES = [
   "packages/cli/src/commands/profile.test.ts",
   "packages/cli/src/commands/platform.test.ts",
   "packages/cli/src/commands/mcp.test.ts",
+  "packages/cli/src/commands/serve.test.ts",
+  "packages/cli/src/commands/keys.test.ts",
   "packages/core/src/sandbox/sandbox.test.ts",
 ]
 

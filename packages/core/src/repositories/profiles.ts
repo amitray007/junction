@@ -114,7 +114,6 @@ function reconstructProfile(
   return ProfileSchema.parse({
     id: profileRow.id,
     name: profileRow.name,
-    mcpEndpointPath: profileRow.mcpEndpointPath,
     sources: sourceRefRows.map((sr) => ({
       platformId: sr.platformId,
       // NULL DB value → undefined in schema (optional credentialId — public source)
@@ -154,7 +153,6 @@ export function createProfilesRepo(db: Db) {
             .values({
               id: validated.id,
               name: validated.name,
-              mcpEndpointPath: validated.mcpEndpointPath,
             })
             .run()
           for (const sr of validated.sources) {

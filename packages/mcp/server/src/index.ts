@@ -3,5 +3,14 @@
 /** @junction/mcp-server — public API. */
 
 export { serveStdio } from "./serve.js"
+export type {
+  AuthedKey,
+  AuthedKeyResult,
+  AuthenticateFn,
+  BuildHandlersFn,
+  ServeHttpHandle,
+  ServeHttpOptions,
+} from "./serve-http.js"
+export { serveHttp } from "./serve-http.js"
 export type { McpServerHandlers } from "./server.js"
 export { createMcpServer, safeUpstreamMessage } from "./server.js"
