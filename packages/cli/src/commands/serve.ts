@@ -34,9 +34,10 @@ import {
   verifyApiKey,
 } from "@junction/core"
 import type { AuthedKey, AuthedKeyResult, McpServerHandlers } from "@junction/mcp-server"
+import { makeResolveProvider } from "@junction/source-runtime"
 import { defineCommand } from "citty"
 import { consola } from "consola"
-import { adaptToMcpHandlers, makeResolveProvider } from "../providers.js"
+import { adaptToMcpHandlers } from "../providers.js"
 
 // ---------------------------------------------------------------------------
 // serve command

@@ -78,6 +78,9 @@ importers:
       '@junction/platform-orchestration':
         specifier: workspace:*
         version: link:../platform-orchestration
+      '@junction/source-runtime':
+        specifier: workspace:*
+        version: link:../source-runtime
       '@junction/web':
         specifier: workspace:*
         version: link:../web
@@ -222,6 +225,25 @@ importers:
       neverthrow:
         specifier: 'catalog:'
         version: 8.2.0
+    devDependencies:
+      '@types/node':
+        specifier: ^26.0.1
+        version: 26.0.1
+
+  packages/source-runtime:
+    dependencies:
+      '@junction/core':
+        specifier: workspace:*
+        version: link:../core
+      '@junction/graphql-client':
+        specifier: workspace:*
+        version: link:../graphql-client
+      '@junction/mcp-client':
+        specifier: workspace:*
+        version: link:../mcp/client
+      '@junction/openapi-client':
+        specifier: workspace:*
+        version: link:../openapi-client
     devDependencies:
       '@types/node':
         specifier: ^26.0.1

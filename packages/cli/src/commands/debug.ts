@@ -13,12 +13,12 @@
 
 import type { UpstreamError } from "@junction/core"
 import { getPaths, namespaceToolName, ToolNamespaceSchema } from "@junction/core"
+import { buildProvider, resolveCredentialSecret } from "@junction/source-runtime"
 import { defineCommand } from "citty"
 import { consola } from "consola"
 import { JSON_ARG } from "../args.js"
 import { openDb } from "../db.js"
 import { reportCredentialError, reportDbError } from "../format.js"
-import { buildProvider, resolveCredentialSecret } from "../providers.js"
 
 // ---------------------------------------------------------------------------
 // UpstreamError formatter (exhaustive — compile error on new kind)

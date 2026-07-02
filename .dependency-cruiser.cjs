@@ -78,6 +78,29 @@ module.exports = {
       },
     },
     {
+      // Increment 28: source-runtime is a SOURCE-RUNNING lib (buildProvider /
+      // resolveCredentialSecret / makeResolveProvider — build a ToolProvider and
+      // resolve secrets). mcp-server is the SERVING composition layer (McpServer +
+      // handler shapes). A source-running lib must NOT depend on the serving lib —
+      // the app (cli) is the composition root that wires the two together
+      // (adaptToMcpHandlers lives in cli for exactly this reason). Without this rule
+      // the edge is "green but blind": mcp-server is itself a lib, so the generic
+      // libs-import-only-core rule permits lib→lib and would let source-runtime import
+      // mcp-server silently (raised in the inc-28 boundary review). This makes the
+      // method-file invariant mechanically enforced, not discipline-only.
+      name: "source-runtime-not-mcp-server",
+      comment:
+        "source-runtime (source-running lib) must not import mcp-server (serving lib) — " +
+        "the app composition root wires them; adaptToMcpHandlers stays in cli.",
+      severity: "error",
+      from: {
+        path: "^packages/source-runtime/",
+      },
+      to: {
+        path: "^packages/mcp/server/",
+      },
+    },
+    {
       // Apps (cli, web) are composition roots — they may import any lib but NOT each
       // other. One rule covers both directions: $1 captures the importing app, and
       // to.pathNot excludes only the importer's own package, so cli→web and web→cli

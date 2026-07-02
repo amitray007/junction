@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// providers.ts unit tests — buildProvider (dispatch-by-kind + asymmetry normalisation)
-// and resolveCredentialSecret (no-credential fast-path + credential resolution).
+// buildProvider (dispatch-by-kind + asymmetry normalisation) and
+// resolveCredentialSecret (no-credential fast-path + credential resolution)
+// unit tests. Moved verbatim from packages/cli/src/providers.test.ts
+// (increment 28 — source-runtime extraction); only the import path changed.
 //
 // MCP: @junction/mcp-client is mocked so we never need a real MCP transport.
 // OpenAPI: a real spec fixture is written to a temp dir (no HTTP server needed to
@@ -25,7 +27,8 @@ import {
 } from "@junction/core"
 import { withTempHome } from "@junction/core/testing"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { buildProvider, resolveCredentialSecret } from "./providers.js"
+import { buildProvider } from "./build-provider.js"
+import { resolveCredentialSecret } from "./resolve-credential.js"
 
 // ---------------------------------------------------------------------------
 // Mock @junction/mcp-client so MCP tests never open a real transport

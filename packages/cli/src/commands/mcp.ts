@@ -36,8 +36,9 @@ import {
   type Profile,
   ProfileIdSchema,
 } from "@junction/core"
+import { makeResolveProvider } from "@junction/source-runtime"
 import { defineCommand } from "citty"
-import { adaptToMcpHandlers, makeResolveProvider } from "../providers.js"
+import { adaptToMcpHandlers } from "../providers.js"
 
 // ---------------------------------------------------------------------------
 // Default (synthetic) profile — used when no DB is available
