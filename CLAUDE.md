@@ -157,7 +157,8 @@ packages/
 - **`core` has no HTTP server and no daemon** — it stays embeddable and testable.
 - **Credentials never leave the process.** Plaintext exists only in memory during a tool call; the MCP endpoint never returns credential values.
 - **`Credential` (not `Platform`) is the unit a `Profile` references** — this encodes the multi-account wedge.
-- **Tool namespacing is `<namespace>__<tool>`** (double underscore). **Per-profile MCP endpoints**, not shared-endpoint filters. Both are load-bearing — renaming later breaks agent prompts.
+- **Tool namespacing is `<namespace>__<tool>`** (double underscore) for a single-profile consumer; **`<profile>__<namespace>__<tool>`** when one consumer (a multi-profile or global API key) spans several profiles. The arity is fixed at key-mint time. Load-bearing — renaming later breaks agent prompts. The charsets that make the first-`__` split unambiguous are themselves a contract: **profile names carry no `_`**, **namespaces carry no `__`**.
+- **A single shared MCP endpoint, keyed** (increment 27): one `/mcp` HTTP endpoint authenticates by a junction-minted API key, and the **key selects which profile(s)** the consumer gets. This **supersedes the original "per-profile endpoints, not shared-endpoint filters" rule** — that earlier invariant is retired (it never shipped as running code; serving was stdio-only until inc 27). Per-profile isolation is preserved *behind* the shared endpoint (a key resolves to its scoped profiles; the toolset is their union, prefixed by arity above). Keys are hashed-at-rest (SHA-256), display-once, revocable; the endpoint is **localhost-only** (networked serving stays deferred). Stdio serving (`junction mcp serve --profile <name>`) remains for direct local wiring.
 - **Web login ≠ platform-token vault.** The vault lives in `core` (arctic + encrypted Drizzle table + keyring). better-auth, if ever adopted, handles only human web login and **never** owns platform tokens.
 
 ---
