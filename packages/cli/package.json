@@ -18,6 +18,7 @@
     "@junction/graphql-client": "workspace:*",
     "@junction/openapi-client": "workspace:*",
     "@junction/platform-orchestration": "workspace:*",
+    "@junction/source-runtime": "workspace:*",
     "@junction/web": "workspace:*",
     "citty": "^0.2.0",
     "consola": "^3.0.0",
