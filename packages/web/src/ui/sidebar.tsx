@@ -10,6 +10,7 @@ import {
   Database,
   HardDrive,
   Key,
+  KeyRound,
   LayoutDashboard,
   type LucideIcon,
   Moon,
@@ -78,6 +79,7 @@ const NAV_DATA: NavItem[] = [
   { to: "/platforms", label: "Platforms", icon: Server },
   { to: "/profiles", label: "Profiles", icon: Database },
   { to: "/credentials", label: "Credentials", icon: Key },
+  { to: "/keys", label: "Keys", icon: KeyRound },
 ]
 
 // ─── Nav link ─────────────────────────────────────────────────────────────────
@@ -521,7 +523,7 @@ export function Sidebar({ initialState, systemInfo }: SidebarProps) {
         <NavGroup items={NAV_TOP} collapsed={collapsed} />
         {/* Subtle hairline group separator — no eyebrow label (A6) */}
         <NavGroupSeparator collapsed={collapsed} />
-        {/* Group 2: Platforms + Profiles + Credentials */}
+        {/* Group 2: Platforms + Profiles + Credentials + Keys */}
         <NavGroup items={NAV_DATA} collapsed={collapsed} />
       </nav>
 

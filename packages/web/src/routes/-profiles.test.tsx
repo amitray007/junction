@@ -90,6 +90,15 @@ vi.mock("../server/profile-mutations.functions.js", () => ({
   setRouteFilterFn: (...args: unknown[]) => mockSetRouteFilterFn(...args),
 }))
 
+// countKeysReferencingProfileFn — the delete-profile "N key(s) reference this
+// profile" warning (inc 27 slice C). Defaults to 0 so existing delete tests
+// (written before keys existed) keep passing unchanged.
+const mockCountKeysReferencingProfileFn = vi.fn().mockResolvedValue({ count: 0 })
+
+vi.mock("../server/keys-mutations.functions.js", () => ({
+  countKeysReferencingProfileFn: (...args: unknown[]) => mockCountKeysReferencingProfileFn(...args),
+}))
+
 const { Route } = await import("./profiles.js")
 // biome-ignore lint/suspicious/noExplicitAny: test utility — typing the internal options shape is not worth the boilerplate
 const ProfilesPage = (Route as any).options.component as React.FC
@@ -105,6 +114,7 @@ afterEach(() => {
   mockRemoveRouteFn.mockReset()
   mockToggleRouteFn.mockReset()
   mockSetRouteFilterFn.mockReset()
+  mockCountKeysReferencingProfileFn.mockReset().mockResolvedValue({ count: 0 })
   mockInvalidate.mockReset().mockResolvedValue(undefined)
 })
 
@@ -360,6 +370,42 @@ describe("ProfilesPage", () => {
 
     await waitFor(() => expect(mockDeleteProfileFn).toHaveBeenCalledOnce())
     await waitFor(() => expect(mockInvalidate).toHaveBeenCalled())
+  })
+
+  // ── Delete profile — referencing-key warning (inc 27 slice C) ──────────────
+
+  it("delete profile: shows a warning when N keys reference the profile", async () => {
+    mockUseLoaderData.mockReturnValue(populatedData)
+    mockCountKeysReferencingProfileFn.mockResolvedValue({ count: 2 })
+
+    render(<ProfilesPage />)
+
+    fireEvent.click(screen.getByRole("button", { name: /^delete$/i }))
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
+
+    await waitFor(() =>
+      expect(mockCountKeysReferencingProfileFn).toHaveBeenCalledWith({
+        data: { profileId: "prof-1" },
+      }),
+    )
+    await waitFor(() =>
+      expect(
+        screen.getByText(/2 keys reference this profile and will lose it/i),
+      ).toBeInTheDocument(),
+    )
+  })
+
+  it("delete profile: shows NO warning when zero keys reference the profile", async () => {
+    mockUseLoaderData.mockReturnValue(populatedData)
+    mockCountKeysReferencingProfileFn.mockResolvedValue({ count: 0 })
+
+    render(<ProfilesPage />)
+
+    fireEvent.click(screen.getByRole("button", { name: /^delete$/i }))
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
+
+    await waitFor(() => expect(mockCountKeysReferencingProfileFn).toHaveBeenCalled())
+    expect(screen.queryByText(/reference this profile/i)).not.toBeInTheDocument()
   })
 
   // ── FIX 6: Add Route dialog contains credential select ─────────────────────

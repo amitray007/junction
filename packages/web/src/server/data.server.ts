@@ -8,6 +8,7 @@ import {
   createRepositories,
   createSandbox,
   getMcpHost,
+  getMcpPort,
   getPaths,
   type JunctionPaths,
   loadConfig,
@@ -181,16 +182,26 @@ export type SettingsData = {
   mcpHost: string | undefined
   /** Where the current value came from — drives the source note in the UI. */
   mcpHostSource: "config" | "env" | "none"
+  /** The resolved MCP HTTP port (config > env > 4322 default) — always defined. */
+  mcpPort: number
 }
 
 export async function readSettings(): Promise<SettingsData> {
   const paths = getPaths()
-  // Resolve in parallel: the raw config (to see if mcpHost is explicitly set)
-  // and the fully-resolved host (config ?? env ?? undefined).
-  const [configResult, resolvedResult] = await Promise.all([loadConfig(paths), getMcpHost(paths)])
+  // Resolve in parallel: the raw config (to see if mcpHost is explicitly set),
+  // the fully-resolved host (config ?? env ?? undefined), and the resolved port.
+  const [configResult, resolvedResult, portResult] = await Promise.all([
+    loadConfig(paths),
+    getMcpHost(paths),
+    getMcpPort(paths),
+  ])
 
   const rawConfigHost = configResult.isOk() ? configResult.value.mcpHost : undefined
   const resolved = resolvedResult.isOk() ? resolvedResult.value : undefined
+  // getMcpPort falls back to DEFAULT_MCP_PORT (4322) internally on every branch —
+  // isErr() only fires on a config read failure, which readSettings degrades from
+  // gracefully rather than throwing (mirrors the mcpHost handling above).
+  const mcpPort = portResult.isOk() ? portResult.value : 4322
 
   let mcpHostSource: SettingsData["mcpHostSource"] = "none"
   if (rawConfigHost !== undefined) {
@@ -200,7 +211,7 @@ export async function readSettings(): Promise<SettingsData> {
     mcpHostSource = "env"
   }
 
-  return { mcpHost: resolved, mcpHostSource }
+  return { mcpHost: resolved, mcpHostSource, mcpPort }
 }
 
 export async function readProfiles(): Promise<ProfileMeta[]> {

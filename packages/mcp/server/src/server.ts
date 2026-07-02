@@ -106,11 +106,18 @@ export function safeUpstreamMessage(e: UpstreamError): string {
  * must not share a single Server across profiles — each profile has independent
  * tool lists, capabilities, and transport lifecycle.
  *
- * @param profile - The profile this server is serving (used for metadata).
+ * `profile` is OPTIONAL (increment 27): a multi-profile/global HTTP session
+ * (junction serve, scoped by an API key) has no single Profile to pass — its
+ * tool catalog is the aggregated ScopedProxy over several profiles. Existing
+ * stdio call sites (serveStdio in cli/commands/mcp.ts) keep passing a Profile
+ * unchanged — no behaviour change there.
+ *
+ * @param profile - The profile this server is serving (used for metadata), or
+ *   undefined for a multi-profile/global scope with no single Profile.
  * @param handlers - Injected tool handlers (list + call). The cli wires mcp/client
  *   into these; mcp/server itself never imports mcp/client.
  */
-export function createMcpServer(profile: Profile, handlers: McpServerHandlers): Server {
+export function createMcpServer(profile: Profile | undefined, handlers: McpServerHandlers): Server {
   // profile is available here for future metadata use (endpoint path, audit, etc.)
   void profile
 

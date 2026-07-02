@@ -14,10 +14,10 @@ import { TableSkeleton } from "../ui/skeleton.js"
 
 export const Route = createFileRoute("/")({
   loader: async () => {
-    // Only the mcpHost is rendered now (counts/system moved off the dashboard), so fetch
+    // Only settings are rendered now (counts/system moved off the dashboard), so fetch
     // just the settings — no dead getDashboard count/label queries on every visit.
     const settings = await getSettings()
-    return { mcpHost: settings.mcpHost }
+    return { mcpHost: settings.mcpHost, mcpPort: settings.mcpPort }
   },
   pendingComponent: DashboardPending,
   component: DashboardPage,
@@ -41,7 +41,8 @@ function DashboardPage() {
 
       {/* Connect an Agent (hero block; ONE container = Card). */}
       {/* AgentConfig carries no outer border of its own — the Card is the single container. */}
-      {/* HONESTY: the shared HTTP endpoint isn't live; AgentConfig always carries the note. */}
+      {/* HONESTY: the endpoint is real (inc 27) but liveness is unknown — AgentConfig always
+          carries a "requires junction serve running" note; it never claims the server is up. */}
       <section aria-labelledby="connect-heading">
         <h2
           id="connect-heading"
@@ -56,7 +57,7 @@ function DashboardPage() {
         </h2>
         <Card>
           <CardContent>
-            <AgentConfig mcpHost={data.mcpHost} />
+            <AgentConfig mcpHost={data.mcpHost} mcpPort={data.mcpPort} />
           </CardContent>
         </Card>
       </section>

@@ -25,7 +25,7 @@ import {
   SlidersHorizontal,
   Trash2,
 } from "lucide-react"
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 import type { SortDirection, TableColumn } from "../lib/use-table-view.js"
 import { useTableView } from "../lib/use-table-view.js"
@@ -36,6 +36,7 @@ import type {
   SourceMeta,
 } from "../server/data.functions.js"
 import { getCredentials, getPlatforms, getProfiles } from "../server/data.functions.js"
+import { countKeysReferencingProfileFn } from "../server/keys-mutations.functions.js"
 import {
   addRouteFn,
   createProfileFn,
@@ -221,6 +222,29 @@ interface DeleteProfileDialogProps {
 }
 
 function DeleteProfileDialog({ profile, onOpenChange, onSuccess }: DeleteProfileDialogProps) {
+  // Referencing-key count — fetched fresh whenever a new profile is targeted for
+  // deletion (join rows are ON DELETE CASCADE: deleting the profile silently
+  // shrinks any referencing key's scope — the user should see that coming).
+  const [keyCount, setKeyCount] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (!profile) {
+      setKeyCount(null)
+      return
+    }
+    let cancelled = false
+    countKeysReferencingProfileFn({ data: { profileId: profile.id } })
+      .then((result) => {
+        if (!cancelled) setKeyCount(result.count)
+      })
+      .catch(() => {
+        if (!cancelled) setKeyCount(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [profile])
+
   async function handleConfirm(): Promise<boolean> {
     if (!profile) return false
     try {
@@ -246,6 +270,12 @@ function DeleteProfileDialog({ profile, onOpenChange, onSuccess }: DeleteProfile
         <>
           Delete profile <MonoCode>{profile?.name}</MonoCode>? All routes will be removed and this
           cannot be undone.
+          {keyCount !== null && keyCount > 0 && (
+            <p style={{ color: "var(--status-warning-fg)", marginTop: "8px", marginBottom: 0 }}>
+              {keyCount} {keyCount === 1 ? "key references" : "keys reference"} this profile and
+              will lose it.
+            </p>
+          )}
         </>
       }
       confirmLabel="Delete Profile"

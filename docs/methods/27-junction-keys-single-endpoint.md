@@ -179,8 +179,12 @@ throws.
   Origin guard owns that.)
 - **Auth on EVERY request** (the spec requires the Bearer header on every request anyway).
   Revocation is therefore immediate — no propagation window, no trusting `mcp-session-id`
-  for auth. On revoke, live sessions for that key are also closed (best-effort teardown on
-  top of the per-request check).
+  for auth: a revoked key's very next request (and every request) fails 401, so a session
+  cannot outlive its key's revocation. (Eager proactive teardown of a revoked key's live
+  sessions is NOT built — the per-request re-check is the actual, stronger guarantee; an
+  idle session holds no privilege because it re-authenticates on use. Session count is
+  capped + the map is bounded so a valid-key holder can't exhaust memory by looping
+  `initialize`.)
 - **Session ↔ key binding (precise semantics — two mechanisms, don't conflate):** a session's
   handlers/proxies/scope are **frozen at `initialize` under the minting key** (keys are
   immutable, so the frozen scope can never be stale — only the key's *revoked* bit changes,
