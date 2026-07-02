@@ -208,84 +208,74 @@ const listCommand = defineCommand({
 // revoke
 // ---------------------------------------------------------------------------
 
-const revokeCommand = defineCommand({
-  meta: {
-    name: "revoke",
-    description: "Revoke a junction API key (idempotent). Accepts a bare keyid or a full token.",
-  },
-  args: {
-    keyid: {
-      type: "positional",
-      description: "keyid (jct_<keyid>, or a bare ULID) or a full jct_<keyid>_<secret> token",
-      required: true,
+/**
+ * Build a `keys revoke` / `keys delete` command: both take one keyid positional
+ * (bare / jct_-prefixed / full token), run a repo op, and report the same
+ * ok/error shape. `op` returns the op Result; `describeError` maps a non-
+ * not-found DbError kind to a message (or null → fall through to reportDbError);
+ * `pastTense` is the success verb.
+ */
+function keyIdCommand(opts: {
+  name: string
+  description: string
+  pastTense: string
+  op: (
+    repos: NonNullable<Awaited<ReturnType<typeof openDb>>>,
+    keyId: string,
+  ) => ReturnType<NonNullable<Awaited<ReturnType<typeof openDb>>>["apiKeys"]["revoke"]>
+  describeError?: (error: DbError, keyId: string) => string | null
+}) {
+  return defineCommand({
+    meta: { name: opts.name, description: opts.description },
+    args: {
+      keyid: {
+        type: "positional",
+        description: "keyid (jct_<keyid>, or a bare ULID) or a full jct_<keyid>_<secret> token",
+        required: true,
+      },
+      json: JSON_ARG,
     },
-    json: JSON_ARG,
-  },
-  async run({ args }) {
-    const json = args.json ?? false
-    const repos = await openDb(json)
-    if (!repos) return
+    async run({ args }) {
+      const json = args.json ?? false
+      const repos = await openDb(json)
+      if (!repos) return
 
-    const keyId = resolveKeyId(args.keyid)
-
-    const revokeResult = await repos.apiKeys.revoke(keyId)
-    if (revokeResult.isErr()) {
-      if (revokeResult.error.kind === "not-found") {
-        reportError(json, `key "${keyId}" not found`)
+      const keyId = resolveKeyId(args.keyid)
+      const result = await opts.op(repos, keyId)
+      if (result.isErr()) {
+        if (result.error.kind === "not-found") {
+          reportError(json, `key "${keyId}" not found`)
+          return
+        }
+        const msg = opts.describeError?.(result.error, keyId) ?? null
+        if (msg !== null) reportError(json, msg)
+        else reportDbError(result.error, json)
         return
       }
-      reportDbError(revokeResult.error, json)
-      return
-    }
 
-    if (json) {
-      process.stdout.write(`${JSON.stringify({ ok: true, keyid: `jct_${keyId}` })}\n`)
-    } else {
-      consola.success(`Key jct_${keyId} revoked`)
-    }
-  },
+      if (json) {
+        process.stdout.write(`${JSON.stringify({ ok: true, keyid: `jct_${keyId}` })}\n`)
+      } else {
+        consola.success(`Key jct_${keyId} ${opts.pastTense}`)
+      }
+    },
+  })
+}
+
+const revokeCommand = keyIdCommand({
+  name: "revoke",
+  description: "Revoke a junction API key (idempotent). Accepts a bare keyid or a full token.",
+  pastTense: "revoked",
+  op: (repos, keyId) => repos.apiKeys.revoke(keyId),
 })
 
-const deleteCommand = defineCommand({
-  meta: {
-    name: "delete",
-    description: "Permanently delete a REVOKED junction API key (revoke it first).",
-  },
-  args: {
-    keyid: {
-      type: "positional",
-      description: "keyid (jct_<keyid>, or a bare ULID) or a full jct_<keyid>_<secret> token",
-      required: true,
-    },
-    json: JSON_ARG,
-  },
-  async run({ args }) {
-    const json = args.json ?? false
-    const repos = await openDb(json)
-    if (!repos) return
-
-    const keyId = resolveKeyId(args.keyid)
-
-    const deleteResult = await repos.apiKeys.remove(keyId)
-    if (deleteResult.isErr()) {
-      if (deleteResult.error.kind === "not-found") {
-        reportError(json, `key "${keyId}" not found`)
-        return
-      }
-      if (deleteResult.error.kind === "in-use") {
-        reportError(json, `key "${keyId}" is active — revoke it before deleting`)
-        return
-      }
-      reportDbError(deleteResult.error, json)
-      return
-    }
-
-    if (json) {
-      process.stdout.write(`${JSON.stringify({ ok: true, keyid: `jct_${keyId}` })}\n`)
-    } else {
-      consola.success(`Key jct_${keyId} deleted`)
-    }
-  },
+const deleteCommand = keyIdCommand({
+  name: "delete",
+  description: "Permanently delete a REVOKED junction API key (revoke it first).",
+  pastTense: "deleted",
+  op: (repos, keyId) => repos.apiKeys.remove(keyId),
+  describeError: (error, keyId) =>
+    error.kind === "in-use" ? `key "${keyId}" is active — revoke it before deleting` : null,
 })
 
 /**

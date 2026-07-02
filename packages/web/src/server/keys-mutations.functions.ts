@@ -86,28 +86,29 @@ export const mintKeyFn = createServerFn({ method: "POST" })
   })
 
 // ---------------------------------------------------------------------------
-// Revoke (POST) — idempotent; bare keyid (the web UI only ever sends a keyid).
+// keyId-only POST mutations (revoke / delete). NOTE: the server-only mutate fns
+// MUST be referenced INSIDE .handler() (never passed in from module scope) —
+// createServerFn only strips the handler body from the client bundle, so a
+// top-level reference would drag keys-mutations.server.ts into the client graph
+// (import-protection failure). A shared pure validator is the safe dedup.
 // ---------------------------------------------------------------------------
 
+const keyIdValidator = (raw: unknown) => {
+  const d = raw as Record<string, unknown>
+  return { keyId: requireString(d.keyId, "keyId") }
+}
+
+// Revoke — idempotent; the web UI only ever sends a bare keyid.
 export const revokeKeyFn = createServerFn({ method: "POST" })
-  .validator((raw: unknown) => {
-    const d = raw as Record<string, unknown>
-    return { keyId: requireString(d.keyId, "keyId") }
-  })
+  .validator(keyIdValidator)
   .handler(async ({ data }) => {
     assertLocalHost()
     return mutateRevokeKey(data.keyId)
   })
 
-// ---------------------------------------------------------------------------
-// Delete (POST) — hard-remove a REVOKED key. The core op rejects active keys.
-// ---------------------------------------------------------------------------
-
+// Delete — hard-remove a REVOKED key. The core op rejects active keys.
 export const deleteKeyFn = createServerFn({ method: "POST" })
-  .validator((raw: unknown) => {
-    const d = raw as Record<string, unknown>
-    return { keyId: requireString(d.keyId, "keyId") }
-  })
+  .validator(keyIdValidator)
   .handler(async ({ data }) => {
     assertLocalHost()
     return mutateDeleteKey(data.keyId)
