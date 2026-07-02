@@ -67,10 +67,11 @@ interface NavItem {
   readonly icon: LucideIcon
 }
 
-// Group 1: top — Dashboard + Settings (no "Manage" eyebrow — A6/A7)
+// Group 1: top — Dashboard + Audit + API Keys + Settings (no "Manage" eyebrow — A6/A7)
 const NAV_TOP: NavItem[] = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
   { to: "/audit", label: "Audit", icon: ScrollText },
+  { to: "/keys", label: "API Keys", icon: KeyRound },
   { to: "/settings", label: "Settings", icon: Settings },
 ]
 
@@ -79,7 +80,6 @@ const NAV_DATA: NavItem[] = [
   { to: "/platforms", label: "Platforms", icon: Server },
   { to: "/profiles", label: "Profiles", icon: Database },
   { to: "/credentials", label: "Credentials", icon: Key },
-  { to: "/keys", label: "Keys", icon: KeyRound },
 ]
 
 // ─── Nav link ─────────────────────────────────────────────────────────────────
@@ -519,11 +519,11 @@ export function Sidebar({ initialState, systemInfo }: SidebarProps) {
             : "px-2 py-3 flex flex-col gap-1",
         )}
       >
-        {/* Group 1: Dashboard + Settings */}
+        {/* Group 1: Dashboard + Audit + API Keys + Settings */}
         <NavGroup items={NAV_TOP} collapsed={collapsed} />
         {/* Subtle hairline group separator — no eyebrow label (A6) */}
         <NavGroupSeparator collapsed={collapsed} />
-        {/* Group 2: Platforms + Profiles + Credentials + Keys */}
+        {/* Group 2: Platforms + Profiles + Credentials */}
         <NavGroup items={NAV_DATA} collapsed={collapsed} />
       </nav>
 

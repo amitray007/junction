@@ -14,6 +14,7 @@ import { createServerFn } from "@tanstack/react-start"
 import { assertLocalHost, requireString } from "./fn-guards.server.js"
 import {
   countKeysReferencingProfile,
+  mutateDeleteKey,
   mutateMintKey,
   mutateRevokeKey,
   readApiKeys,
@@ -96,6 +97,20 @@ export const revokeKeyFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     assertLocalHost()
     return mutateRevokeKey(data.keyId)
+  })
+
+// ---------------------------------------------------------------------------
+// Delete (POST) — hard-remove a REVOKED key. The core op rejects active keys.
+// ---------------------------------------------------------------------------
+
+export const deleteKeyFn = createServerFn({ method: "POST" })
+  .validator((raw: unknown) => {
+    const d = raw as Record<string, unknown>
+    return { keyId: requireString(d.keyId, "keyId") }
+  })
+  .handler(async ({ data }) => {
+    assertLocalHost()
+    return mutateDeleteKey(data.keyId)
   })
 
 // ---------------------------------------------------------------------------

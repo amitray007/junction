@@ -193,6 +193,30 @@ describe.skipIf(!builtBinReady)("junction keys (built bin, child process)", () =
     })
   })
 
+  it("delete refuses an ACTIVE key, succeeds once REVOKED", async () => {
+    await withTempHome(async (home) => {
+      const env = { ...process.env, JUNCTION_HOME: home }
+
+      const created = await run(env, ["keys", "create", "--label", "del", "--global", "--json"])
+      const { keyid } = JSON.parse(created.stdout.trim()) as { keyid: string }
+
+      // Active → delete refused (non-zero exit).
+      const activeDel = await run(env, ["keys", "delete", keyid, "--json"])
+      expect(activeDel.code).not.toBe(0)
+
+      // Revoke, then delete succeeds.
+      await run(env, ["keys", "revoke", keyid, "--json"])
+      const del = await run(env, ["keys", "delete", keyid, "--json"])
+      expect(del.code).toBe(0)
+      expect(JSON.parse(del.stdout.trim())).toMatchObject({ ok: true, keyid })
+
+      // Gone from the list entirely.
+      const listed = await run(env, ["keys", "list", "--json"])
+      const rows = JSON.parse(listed.stdout.trim()) as Array<{ keyid: string }>
+      expect(rows.find((r) => r.keyid === keyid)).toBeUndefined()
+    })
+  })
+
   it("list on an empty DB returns an empty array", async () => {
     await withTempHome(async (home) => {
       const env = { ...process.env, JUNCTION_HOME: home }

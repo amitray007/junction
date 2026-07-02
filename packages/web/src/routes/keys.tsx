@@ -9,12 +9,13 @@
 // - The mint dialog shows the full plaintext key EXACTLY ONCE. It is never
 //   re-fetchable — closing the dialog (or reopening it) never shows it again,
 //   and it never appears in the table/loader.
-// - Keys are retained for audit — there is NO Delete action, only Revoke.
-//   Revoke is hidden/disabled on already-revoked rows.
+// - Active keys show Revoke (immediate 401, row retained for audit). A REVOKED
+//   key shows Delete instead — a hard removal, allowed only after revoke so the
+//   active-key lifecycle stays auditable (inc 31).
 // No @junction/core import. Secret plaintext lives only in mint-dialog local state.
 
 import { createFileRoute, useRouter } from "@tanstack/react-router"
-import { Copy, Key as KeyIcon, Plus, ShieldOff } from "lucide-react"
+import { Copy, Plus, ShieldOff, Trash2 } from "lucide-react"
 import { useCallback, useMemo, useState } from "react"
 import { toast } from "sonner"
 import type { TableColumn } from "../lib/use-table-view.js"
@@ -22,7 +23,12 @@ import { useTableView } from "../lib/use-table-view.js"
 import type { ProfileMeta } from "../server/data.functions.js"
 import { getProfiles } from "../server/data.functions.js"
 import type { ApiKeyMeta } from "../server/keys-mutations.functions.js"
-import { getApiKeys, mintKeyFn, revokeKeyFn } from "../server/keys-mutations.functions.js"
+import {
+  deleteKeyFn,
+  getApiKeys,
+  mintKeyFn,
+  revokeKeyFn,
+} from "../server/keys-mutations.functions.js"
 import { MonoCode } from "../ui/code.js"
 import {
   Button,
@@ -73,7 +79,7 @@ const COL_COUNT = 6
 function KeysPending() {
   return (
     <div>
-      <PageHeader title="Keys" />
+      <PageHeader title="API Keys" />
       <TableSkeleton
         rows={4}
         columns={[
@@ -131,13 +137,21 @@ function MintKeyDialog({ open, onOpenChange, profiles, onSuccess }: MintDialogPr
   const [submitting, setSubmitting] = useState(false)
   const [mintedKey, setMintedKey] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  const [profileSearch, setProfileSearch] = useState("")
 
   const noProfiles = profiles.length === 0
+  // Show a filter box once the list is long enough to be awkward to scan.
+  const showProfileSearch = profiles.length > 8
+  const visibleProfiles =
+    profileSearch.trim() === ""
+      ? profiles
+      : profiles.filter((p) => p.name.toLowerCase().includes(profileSearch.trim().toLowerCase()))
 
   function reset() {
     setLabel("")
     setIsGlobal(profiles.length === 0)
     setSelectedProfileIds([])
+    setProfileSearch("")
     setErrors({})
     setSubmitting(false)
     // Deliberately NOT resetting mintedKey here — see handleOpenChange, which
@@ -207,8 +221,6 @@ function MintKeyDialog({ open, onOpenChange, profiles, onSuccess }: MintDialogPr
     }
   }
 
-  const multiProfile = isGlobal || selectedProfileIds.length >= 2
-
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent>
@@ -251,12 +263,6 @@ function MintKeyDialog({ open, onOpenChange, profiles, onSuccess }: MintDialogPr
                   {copied ? "Copied!" : "Copy"}
                 </Button>
               </div>
-              {multiProfile && (
-                <p style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)", margin: 0 }}>
-                  This key spans multiple profiles — tool names are prefixed{" "}
-                  <MonoCode>&lt;profile&gt;__…</MonoCode> to avoid collisions.
-                </p>
-              )}
             </div>
             <DialogFooter>
               <Button type="button" variant="primary" onClick={() => handleOpenChange(false)}>
@@ -267,7 +273,7 @@ function MintKeyDialog({ open, onOpenChange, profiles, onSuccess }: MintDialogPr
         ) : (
           <>
             <DialogHeader>
-              <DialogTitle>Mint API Key</DialogTitle>
+              <DialogTitle>Create API Key</DialogTitle>
               <DialogDescription>
                 Create a new junction API key. The full key is shown once after minting.
               </DialogDescription>
@@ -344,29 +350,76 @@ function MintKeyDialog({ open, onOpenChange, profiles, onSuccess }: MintDialogPr
                           }}
                         >
                           Profiles
+                          {selectedProfileIds.length > 0 && (
+                            <span style={{ color: "var(--gray-700)", fontWeight: 400 }}>
+                              {" "}
+                              · {selectedProfileIds.length} selected
+                            </span>
+                          )}
                         </legend>
-                        {profiles.map((p) => (
-                          <div
-                            key={p.id}
-                            style={{ display: "flex", alignItems: "center", gap: "8px" }}
-                          >
-                            <Checkbox
-                              id={`mint-profile-${p.id}`}
-                              checked={selectedProfileIds.includes(p.id)}
-                              onCheckedChange={() => {
-                                toggleProfile(p.id)
-                                if (errors.scope)
-                                  setErrors((prev) => ({ ...prev, scope: undefined }))
+                        {showProfileSearch && (
+                          <Input
+                            type="text"
+                            value={profileSearch}
+                            onChange={(e) => setProfileSearch(e.target.value)}
+                            placeholder="Filter profiles…"
+                            aria-label="Filter profiles"
+                            style={{ marginBottom: "4px" }}
+                          />
+                        )}
+                        {/* Scrollable so a long profile list never blows out the dialog. */}
+                        <div
+                          style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: "2px",
+                            maxHeight: "216px",
+                            overflowY: "auto",
+                            border: "1px solid var(--alpha-200)",
+                            borderRadius: "var(--radius-6)",
+                            padding: "6px",
+                          }}
+                        >
+                          {visibleProfiles.length === 0 ? (
+                            <p
+                              style={{
+                                fontSize: "var(--text-caption)",
+                                color: "var(--gray-700)",
+                                margin: 0,
+                                padding: "4px 2px",
                               }}
-                            />
-                            <label
-                              htmlFor={`mint-profile-${p.id}`}
-                              style={{ fontSize: "var(--text-body)" }}
                             >
-                              {p.name}
-                            </label>
-                          </div>
-                        ))}
+                              No profiles match “{profileSearch}”.
+                            </p>
+                          ) : (
+                            visibleProfiles.map((p) => (
+                              <label
+                                key={p.id}
+                                htmlFor={`mint-profile-${p.id}`}
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: "8px",
+                                  fontSize: "var(--text-body)",
+                                  padding: "3px 4px",
+                                  borderRadius: "var(--radius-6)",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                <Checkbox
+                                  id={`mint-profile-${p.id}`}
+                                  checked={selectedProfileIds.includes(p.id)}
+                                  onCheckedChange={() => {
+                                    toggleProfile(p.id)
+                                    if (errors.scope)
+                                      setErrors((prev) => ({ ...prev, scope: undefined }))
+                                  }}
+                                />
+                                {p.name}
+                              </label>
+                            ))
+                          )}
+                        </div>
                       </fieldset>
                     )
                   )}
@@ -382,24 +435,12 @@ function MintKeyDialog({ open, onOpenChange, profiles, onSuccess }: MintDialogPr
                       {errors.scope}
                     </p>
                   )}
-                  {multiProfile && (
-                    <p
-                      style={{
-                        fontSize: "var(--text-caption)",
-                        color: "var(--gray-700)",
-                        margin: 0,
-                      }}
-                    >
-                      Tool names will be prefixed <MonoCode>&lt;profile&gt;__…</MonoCode> for this
-                      scope.
-                    </p>
-                  )}
                 </div>
               </div>
               <DialogFormFooter
                 onCancel={() => handleOpenChange(false)}
                 submitting={submitting}
-                submitLabel="Mint Key"
+                submitLabel="Create Key"
                 submittingLabel="Minting…"
               />
             </form>
@@ -461,6 +502,47 @@ export function RevokeKeyDialog({ apiKey, onOpenChange, onSuccess }: RevokeDialo
 }
 
 // ---------------------------------------------------------------------------
+// Delete confirmation dialog (revoked keys only)
+// ---------------------------------------------------------------------------
+
+// Exported for direct unit testing (same Radix-portal limitation as revoke).
+export function DeleteKeyDialog({ apiKey, onOpenChange, onSuccess }: RevokeDialogProps) {
+  async function handleConfirm(): Promise<boolean> {
+    if (!apiKey) return false
+    try {
+      const result = await deleteKeyFn({ data: { keyId: apiKey.id } })
+      if (!result.ok) {
+        toast.error(`Failed to delete key: ${result.error}`)
+        return false
+      }
+      toast.success(`Key "${apiKey.label}" deleted`)
+      onSuccess()
+      return true
+    } catch {
+      toast.error("Failed to delete key")
+      return false
+    }
+  }
+
+  return (
+    <ConfirmDialog
+      open={apiKey !== null}
+      title="Delete API Key"
+      description={
+        <>
+          Permanently delete revoked key <MonoCode>{apiKey?.label}</MonoCode> (
+          <MonoCode>jct_{apiKey?.id}</MonoCode>)? This removes it from the list for good.
+        </>
+      }
+      confirmLabel="Delete Key"
+      confirmingLabel="Deleting…"
+      onConfirm={handleConfirm}
+      onOpenChange={onOpenChange}
+    />
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Keys table
 // ---------------------------------------------------------------------------
 
@@ -470,6 +552,7 @@ interface KeysTableProps {
   readonly apiKeys: ApiKeyMeta[]
   readonly profileNameById: Map<string, string>
   readonly onRevoke: (k: ApiKeyMeta) => void
+  readonly onDelete: (k: ApiKeyMeta) => void
   readonly pageSize?: number
 }
 
@@ -477,6 +560,7 @@ export function KeysTable({
   apiKeys,
   profileNameById,
   onRevoke,
+  onDelete,
   pageSize = PAGE_SIZE,
 }: KeysTableProps) {
   const [scopeFilter, setScopeFilter] = useState(ALL_FILTER)
@@ -597,7 +681,7 @@ export function KeysTable({
                 action={
                   isEmptySearch ? undefined : (
                     <span style={{ fontSize: "var(--text-body)", color: "var(--gray-700)" }}>
-                      Use <strong>Mint Key</strong> above.
+                      Use <strong>Create Key</strong> above.
                     </span>
                   )
                 }
@@ -624,14 +708,26 @@ export function KeysTable({
                     <TableActionsCell
                       menu={
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem
-                            onSelect={() => onRevoke(k)}
-                            disabled={status === "revoked"}
-                            style={{ color: "var(--status-error-fg)" }}
-                          >
-                            <ShieldOff className="h-4 w-4" aria-hidden="true" />
-                            Revoke
-                          </DropdownMenuItem>
+                          {status === "revoked" ? (
+                            // A revoked key can be permanently deleted (it's already
+                            // out of service; keeping it is only for audit until you
+                            // choose to clean it up).
+                            <DropdownMenuItem
+                              onSelect={() => onDelete(k)}
+                              style={{ color: "var(--status-error-fg)" }}
+                            >
+                              <Trash2 className="h-4 w-4" aria-hidden="true" />
+                              Delete
+                            </DropdownMenuItem>
+                          ) : (
+                            <DropdownMenuItem
+                              onSelect={() => onRevoke(k)}
+                              style={{ color: "var(--status-error-fg)" }}
+                            >
+                              <ShieldOff className="h-4 w-4" aria-hidden="true" />
+                              Revoke
+                            </DropdownMenuItem>
+                          )}
                         </DropdownMenuContent>
                       }
                     />
@@ -658,6 +754,7 @@ function KeysPage() {
   const router = useRouter()
   const [mintOpen, setMintOpen] = useState(false)
   const [revokingKey, setRevokingKey] = useState<ApiKeyMeta | null>(null)
+  const [deletingKey, setDeletingKey] = useState<ApiKeyMeta | null>(null)
 
   const profileNameById = useMemo(
     () => new Map<string, string>(profiles.map((p) => [p.id, p.name])),
@@ -671,14 +768,14 @@ function KeysPage() {
   return (
     <div>
       <PageHeader
-        title="Keys"
+        title="API Keys"
         count={apiKeys.length > 0 ? apiKeys.length : undefined}
         actions={
           <>
             <RefreshButton />
             <Button variant="primary" onClick={() => setMintOpen(true)}>
               <Plus className="h-4 w-4" aria-hidden="true" />
-              Mint Key
+              Create Key
             </Button>
           </>
         }
@@ -697,20 +794,16 @@ function KeysPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            <EmptyTableRow
-              colSpan={COL_COUNT}
-              message="No API keys yet."
-              action={
-                <Button variant="secondary" onClick={() => setMintOpen(true)}>
-                  <KeyIcon className="h-4 w-4" aria-hidden="true" />
-                  Mint Key
-                </Button>
-              }
-            />
+            <EmptyTableRow colSpan={COL_COUNT} message="No API keys yet. Use “Create Key” above." />
           </TableBody>
         </Table>
       ) : (
-        <KeysTable apiKeys={apiKeys} profileNameById={profileNameById} onRevoke={setRevokingKey} />
+        <KeysTable
+          apiKeys={apiKeys}
+          profileNameById={profileNameById}
+          onRevoke={setRevokingKey}
+          onDelete={setDeletingKey}
+        />
       )}
 
       <MintKeyDialog
@@ -723,6 +816,13 @@ function KeysPage() {
         apiKey={revokingKey}
         onOpenChange={(open) => {
           if (!open) setRevokingKey(null)
+        }}
+        onSuccess={invalidate}
+      />
+      <DeleteKeyDialog
+        apiKey={deletingKey}
+        onOpenChange={(open) => {
+          if (!open) setDeletingKey(null)
         }}
         onSuccess={invalidate}
       />

@@ -128,6 +128,35 @@ export function createApiKeysRepo(db: Db) {
     },
 
     /**
+     * Hard-delete a key row (and its scope join rows, via ON DELETE CASCADE).
+     * GUARD: only an already-REVOKED key may be deleted — an active key must be
+     * revoked first. This preserves the "keys retained for audit" invariant for
+     * the active-key lifecycle (inc 31 attribution): a key is only ever removed
+     * after it has been explicitly revoked. Unknown keyid → not-found; an active
+     * (non-revoked) key → in-use (caller surfaces "revoke before deleting").
+     */
+    remove(id: string): ResultAsync<void, DbError> {
+      try {
+        const existing = db
+          .select({ id: apiKeys.id, revokedAt: apiKeys.revokedAt })
+          .from(apiKeys)
+          .where(eq(apiKeys.id, id))
+          .get()
+        if (!existing) return errAsync({ kind: "not-found" as const, entity: "api-key", id })
+        if (existing.revokedAt === null) {
+          return errAsync({
+            kind: "in-use" as const,
+            cause: "an active API key must be revoked before it can be deleted",
+          })
+        }
+        db.delete(apiKeys).where(eq(apiKeys.id, id)).run()
+        return okAsync(undefined)
+      } catch (cause) {
+        return errAsync(mapDbError(cause))
+      }
+    },
+
+    /**
      * Best-effort last-used bookkeeping. MUST NEVER fail or delay the auth
      * decision it follows (§2.1) — callers should fire-and-forget this and
      * swallow any Err rather than propagate it into the request path.

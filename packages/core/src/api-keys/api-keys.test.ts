@@ -435,6 +435,55 @@ describe("api-keys", () => {
       if (!result.isOk()) expect(result.error.kind).toBe("not-found")
     })
 
+    it("remove: an ACTIVE key cannot be deleted → in-use (must revoke first)", async () => {
+      await repos.apiKeys.create({
+        id: "key_active_del",
+        label: "active",
+        secretHash: sha256Hex("s-active"),
+        scope: "global",
+        createdAt: Date.now(),
+        profileIds: [],
+      })
+      const result = await repos.apiKeys.remove("key_active_del")
+      expect(result.isOk()).toBe(false)
+      if (!result.isOk()) expect(result.error.kind).toBe("in-use")
+      // The row is still there.
+      const still = await repos.apiKeys.getByKeyId("key_active_del")
+      expect(still.isOk()).toBe(true)
+    })
+
+    it("remove: a REVOKED key is hard-deleted (row + join rows gone)", async () => {
+      const delProfileId = newProfileId()
+      await repos.profiles.create({ id: delProfileId, name: "del-scope", sources: [] })
+      await repos.apiKeys.create({
+        id: "key_revoked_del",
+        label: "revoked",
+        secretHash: sha256Hex("s-revoked"),
+        scope: "profile",
+        createdAt: Date.now(),
+        profileIds: [delProfileId],
+      })
+      await repos.apiKeys.revoke("key_revoked_del")
+
+      const removed = await repos.apiKeys.remove("key_revoked_del")
+      expect(removed.isOk()).toBe(true)
+
+      // Row gone.
+      const gone = await repos.apiKeys.getByKeyId("key_revoked_del")
+      expect(gone.isOk()).toBe(false)
+      if (!gone.isOk()) expect(gone.error.kind).toBe("not-found")
+      // Scope join rows gone (cascade).
+      const scope = await repos.apiKeys.getScopeProfileIds("key_revoked_del")
+      expect(scope.isOk()).toBe(true)
+      if (scope.isOk()) expect(scope.value).toHaveLength(0)
+    })
+
+    it("remove on an unknown keyid → not-found", async () => {
+      const result = await repos.apiKeys.remove("nope")
+      expect(result.isOk()).toBe(false)
+      if (!result.isOk()) expect(result.error.kind).toBe("not-found")
+    })
+
     it("touchLastUsed updates lastUsedAt and never errors on a valid key", async () => {
       await repos.apiKeys.create({
         id: "key_touch",

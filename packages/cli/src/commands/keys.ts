@@ -246,6 +246,48 @@ const revokeCommand = defineCommand({
   },
 })
 
+const deleteCommand = defineCommand({
+  meta: {
+    name: "delete",
+    description: "Permanently delete a REVOKED junction API key (revoke it first).",
+  },
+  args: {
+    keyid: {
+      type: "positional",
+      description: "keyid (jct_<keyid>, or a bare ULID) or a full jct_<keyid>_<secret> token",
+      required: true,
+    },
+    json: JSON_ARG,
+  },
+  async run({ args }) {
+    const json = args.json ?? false
+    const repos = await openDb(json)
+    if (!repos) return
+
+    const keyId = resolveKeyId(args.keyid)
+
+    const deleteResult = await repos.apiKeys.remove(keyId)
+    if (deleteResult.isErr()) {
+      if (deleteResult.error.kind === "not-found") {
+        reportError(json, `key "${keyId}" not found`)
+        return
+      }
+      if (deleteResult.error.kind === "in-use") {
+        reportError(json, `key "${keyId}" is active — revoke it before deleting`)
+        return
+      }
+      reportDbError(deleteResult.error, json)
+      return
+    }
+
+    if (json) {
+      process.stdout.write(`${JSON.stringify({ ok: true, keyid: `jct_${keyId}` })}\n`)
+    } else {
+      consola.success(`Key jct_${keyId} deleted`)
+    }
+  },
+})
+
 /**
  * Resolve a user-supplied keyid argument: accepts a full `jct_<keyid>_<secret>`
  * token (parses via the shared core token parser and discards the secret), a
@@ -271,5 +313,6 @@ export const keysCommand = defineCommand({
     create: createCommand,
     list: listCommand,
     revoke: revokeCommand,
+    delete: deleteCommand,
   },
 })

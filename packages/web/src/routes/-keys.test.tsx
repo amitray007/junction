@@ -71,14 +71,16 @@ vi.mock("../server/data.functions.js", () => ({
 const mockGetApiKeys = vi.fn()
 const mockMintKeyFn = vi.fn()
 const mockRevokeKeyFn = vi.fn()
+const mockDeleteKeyFn = vi.fn()
 
 vi.mock("../server/keys-mutations.functions.js", () => ({
   getApiKeys: (...args: unknown[]) => mockGetApiKeys(...args),
   mintKeyFn: (...args: unknown[]) => mockMintKeyFn(...args),
   revokeKeyFn: (...args: unknown[]) => mockRevokeKeyFn(...args),
+  deleteKeyFn: (...args: unknown[]) => mockDeleteKeyFn(...args),
 }))
 
-const { Route, RevokeKeyDialog } = await import("./keys.js")
+const { Route, RevokeKeyDialog, DeleteKeyDialog } = await import("./keys.js")
 // biome-ignore lint/suspicious/noExplicitAny: test utility — typing the internal options shape is not worth the boilerplate
 const KeysPage = (Route as any).options.component as React.FC
 
@@ -90,6 +92,7 @@ afterEach(() => {
   mockGetApiKeys.mockReset()
   mockMintKeyFn.mockReset()
   mockRevokeKeyFn.mockReset()
+  mockDeleteKeyFn.mockReset()
   mockInvalidate.mockReset().mockResolvedValue(undefined)
 })
 
@@ -97,15 +100,15 @@ describe("KeysPage — landmark + empty state", () => {
   it("renders the page heading as <h1> (route landmark)", () => {
     mockUseLoaderData.mockReturnValue(emptyData)
     const { getByRole } = render(<KeysPage />)
-    expect(getByRole("heading", { level: 1, name: "Keys" })).toBeInTheDocument()
+    expect(getByRole("heading", { level: 1, name: "API Keys" })).toBeInTheDocument()
   })
 
   it("shows empty table with a mint CTA when there are no keys", () => {
     mockUseLoaderData.mockReturnValue(emptyData)
     const { getByText, getAllByRole } = render(<KeysPage />)
-    expect(getByText("No API keys yet.")).toBeInTheDocument()
-    // Two Mint Key affordances: the PageHeader action + the empty-state CTA.
-    expect(getAllByRole("button", { name: /mint key/i }).length).toBeGreaterThanOrEqual(1)
+    expect(getByText(/No API keys yet/)).toBeInTheDocument()
+    // The PageHeader "Create Key" action is always present (empty-state has no button).
+    expect(getAllByRole("button", { name: /create key/i }).length).toBeGreaterThanOrEqual(1)
   })
 })
 
@@ -236,13 +239,39 @@ describe("KeysTable — revoke confirm flow (direct, bypassing the Radix portal)
     expect(within(revokedRow as HTMLElement).getByText("Revoked")).toBeInTheDocument()
   })
 
-  it("does NOT render a Delete action anywhere (keys are retained for audit) — source-level guard", () => {
-    // The row menu is built entirely in routes/keys.tsx's KeysTable; assert no
-    // "Delete" text/label exists anywhere in the rendered page for a populated table.
-    mockUseLoaderData.mockReturnValue(populatedData)
-    const { queryByRole, queryByText } = render(<KeysPage />)
-    expect(queryByRole("menuitem", { name: /delete/i })).not.toBeInTheDocument()
-    expect(queryByText(/^delete$/i)).not.toBeInTheDocument()
+  it("delete: confirm calls deleteKeyFn (revoked-key-only action)", async () => {
+    mockDeleteKeyFn.mockResolvedValue({ ok: true })
+    const onSuccess = vi.fn()
+    const onOpenChange = vi.fn()
+
+    // revokedKey is the fixture that would carry the Delete action.
+    render(
+      <DeleteKeyDialog apiKey={revokedKey} onOpenChange={onOpenChange} onSuccess={onSuccess} />,
+    )
+
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
+    fireEvent.click(screen.getByRole("button", { name: "Delete Key" }))
+
+    await waitFor(() =>
+      expect(mockDeleteKeyFn).toHaveBeenCalledWith({ data: { keyId: revokedKey.id } }),
+    )
+    await waitFor(() => expect(onSuccess).toHaveBeenCalled())
+  })
+
+  it("delete: a failed deleteKeyFn call keeps the dialog open and does not call onSuccess", async () => {
+    mockDeleteKeyFn.mockResolvedValue({ ok: false, error: "Revoke the key before deleting it" })
+    const onSuccess = vi.fn()
+    const onOpenChange = vi.fn()
+
+    render(
+      <DeleteKeyDialog apiKey={revokedKey} onOpenChange={onOpenChange} onSuccess={onSuccess} />,
+    )
+
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
+    fireEvent.click(screen.getByRole("button", { name: "Delete Key" }))
+
+    await waitFor(() => expect(mockDeleteKeyFn).toHaveBeenCalled())
+    expect(onSuccess).not.toHaveBeenCalled()
   })
 })
 
@@ -258,15 +287,15 @@ describe("KeysPage — mint dialog: display-once", () => {
     })
 
     render(<KeysPage />)
-    fireEvent.click(screen.getAllByRole("button", { name: /mint key/i })[0] as HTMLElement)
+    fireEvent.click(screen.getAllByRole("button", { name: /create key/i })[0] as HTMLElement)
     await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
 
     fireEvent.change(screen.getByLabelText("Label"), { target: { value: "new-agent" } })
     // "work" profile checkbox exists by default (populatedData has profiles).
-    fireEvent.click(screen.getByLabelText("work"))
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("checkbox", { name: "work" }))
 
     const dialog = screen.getByRole("dialog")
-    const submitBtn = within(dialog).getByRole("button", { name: /^mint key$/i })
+    const submitBtn = within(dialog).getByRole("button", { name: /^create key$/i })
     fireEvent.click(submitBtn)
 
     await waitFor(() =>
@@ -283,11 +312,13 @@ describe("KeysPage — mint dialog: display-once", () => {
     })
 
     render(<KeysPage />)
-    fireEvent.click(screen.getAllByRole("button", { name: /mint key/i })[0] as HTMLElement)
+    fireEvent.click(screen.getAllByRole("button", { name: /create key/i })[0] as HTMLElement)
     await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
     fireEvent.change(screen.getByLabelText("Label"), { target: { value: "new-agent" } })
-    fireEvent.click(screen.getByLabelText("work"))
-    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: /^mint key$/i }))
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("checkbox", { name: "work" }))
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: /^create key$/i }),
+    )
 
     await waitFor(() => expect(screen.getByTestId("minted-key-plaintext")).toBeInTheDocument())
 
@@ -307,18 +338,20 @@ describe("KeysPage — mint dialog: display-once", () => {
     })
 
     render(<KeysPage />)
-    fireEvent.click(screen.getAllByRole("button", { name: /mint key/i })[0] as HTMLElement)
+    fireEvent.click(screen.getAllByRole("button", { name: /create key/i })[0] as HTMLElement)
     await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
     fireEvent.change(screen.getByLabelText("Label"), { target: { value: "new-agent" } })
-    fireEvent.click(screen.getByLabelText("work"))
-    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: /^mint key$/i }))
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("checkbox", { name: "work" }))
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: /^create key$/i }),
+    )
     await waitFor(() => expect(screen.getByTestId("minted-key-plaintext")).toBeInTheDocument())
 
     fireEvent.click(screen.getByRole("button", { name: /^done$/i }))
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument())
 
     // Reopen the mint dialog — must show the FORM again, not the plaintext.
-    fireEvent.click(screen.getAllByRole("button", { name: /mint key/i })[0] as HTMLElement)
+    fireEvent.click(screen.getAllByRole("button", { name: /create key/i })[0] as HTMLElement)
     await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
     expect(screen.queryByText(PLAINTEXT)).not.toBeInTheDocument()
     expect(screen.getByLabelText("Label")).toBeInTheDocument()
@@ -332,18 +365,22 @@ describe("KeysPage — mint dialog: display-once", () => {
     expect(JSON.stringify(populatedData)).not.toContain("secretHash")
   })
 
-  it("shows the multi-profile tool-prefix note when ≥2 profiles are selected", async () => {
+  it("allows selecting multiple profiles in the scope picker", async () => {
     mockUseLoaderData.mockReturnValue(populatedData)
     render(<KeysPage />)
-    fireEvent.click(screen.getAllByRole("button", { name: /mint key/i })[0] as HTMLElement)
+    fireEvent.click(screen.getAllByRole("button", { name: /create key/i })[0] as HTMLElement)
     await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
 
-    fireEvent.click(screen.getByLabelText("work"))
-    fireEvent.click(screen.getByLabelText("personal"))
+    const dialog = screen.getByRole("dialog")
+    const work = within(dialog).getByRole("checkbox", { name: "work" })
+    const personal = within(dialog).getByRole("checkbox", { name: "personal" })
+    fireEvent.click(work)
+    fireEvent.click(personal)
 
-    await waitFor(() =>
-      expect(screen.getByText(/tool names will be prefixed/i)).toBeInTheDocument(),
-    )
+    await waitFor(() => {
+      expect(work).toHaveAttribute("aria-checked", "true")
+      expect(personal).toHaveAttribute("aria-checked", "true")
+    })
   })
 })
 
@@ -352,7 +389,7 @@ describe("KeysPage — zero-profiles mint dialog (global-only)", () => {
     mockUseLoaderData.mockReturnValue(emptyData)
     render(<KeysPage />)
 
-    fireEvent.click(screen.getAllByRole("button", { name: /mint key/i })[0] as HTMLElement)
+    fireEvent.click(screen.getAllByRole("button", { name: /create key/i })[0] as HTMLElement)
     await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
 
     const globalSwitch = screen.getByRole("switch", { name: /global scope/i })
@@ -369,11 +406,13 @@ describe("KeysPage — zero-profiles mint dialog (global-only)", () => {
     })
 
     render(<KeysPage />)
-    fireEvent.click(screen.getAllByRole("button", { name: /mint key/i })[0] as HTMLElement)
+    fireEvent.click(screen.getAllByRole("button", { name: /create key/i })[0] as HTMLElement)
     await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
 
     fireEvent.change(screen.getByLabelText("Label"), { target: { value: "global-agent" } })
-    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: /^mint key$/i }))
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: /^create key$/i }),
+    )
 
     await waitFor(() =>
       expect(mockMintKeyFn).toHaveBeenCalledWith({
@@ -386,7 +425,7 @@ describe("KeysPage — zero-profiles mint dialog (global-only)", () => {
     mockUseLoaderData.mockReturnValue(noKeysWithProfilesData)
     render(<KeysPage />)
 
-    fireEvent.click(screen.getAllByRole("button", { name: /mint key/i })[0] as HTMLElement)
+    fireEvent.click(screen.getAllByRole("button", { name: /create key/i })[0] as HTMLElement)
     await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument())
 
     // Profiles exist here, so Global starts OFF and the picker is shown.

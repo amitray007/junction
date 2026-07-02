@@ -149,6 +149,23 @@ export async function mutateRevokeKey(
   })
 }
 
+// Hard-delete a REVOKED key. The core op refuses an active key (in-use) so the
+// "revoke before delete" rule is enforced at the boundary, not just the UI.
+export async function mutateDeleteKey(
+  keyId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  return withKeysRepo(async (repos) => {
+    const result = await repos.apiKeys.remove(keyId)
+    if (result.isErr()) {
+      let error = "Database error"
+      if (result.error.kind === "not-found") error = "API key not found"
+      else if (result.error.kind === "in-use") error = "Revoke the key before deleting it"
+      return { ok: false as const, error }
+    }
+    return { ok: true as const }
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Diagnostic: how many keys reference a given profile (delete-profile warning).
 // ---------------------------------------------------------------------------
