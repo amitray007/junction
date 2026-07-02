@@ -18,10 +18,12 @@
 import { createFileRoute, useRouter } from "@tanstack/react-router"
 import {
   ChevronRight,
+  PlayCircle,
   Plus,
   PlusCircle,
   Power,
   PowerOff,
+  Radar,
   SlidersHorizontal,
   Trash2,
 } from "lucide-react"
@@ -37,6 +39,8 @@ import type {
 } from "../server/data.functions.js"
 import { getCredentials, getPlatforms, getProfiles } from "../server/data.functions.js"
 import { countKeysReferencingProfileFn } from "../server/keys-mutations.functions.js"
+import type { ProbeToolEntry } from "../server/probe.functions.js"
+import { callSourceToolFn, probeSourceFn } from "../server/probe.functions.js"
 import {
   addRouteFn,
   createProfileFn,
@@ -45,9 +49,10 @@ import {
   setRouteFilterFn,
   toggleRouteFn,
 } from "../server/profile-mutations.functions.js"
-import { MonoCode } from "../ui/code.js"
+import { MonoChip, MonoCode } from "../ui/code.js"
 import { ComingSoon } from "../ui/coming-soon.js"
 import {
+  Badge,
   Button,
   ConfirmDialog,
   Dialog,
@@ -60,8 +65,10 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   EmptyTableRow,
+  ErrorState,
   Field,
   Input,
+  LoadingState,
   PageHeader,
   RefreshButton,
   Select,
@@ -81,6 +88,7 @@ import {
   TablePagination,
   TableRow,
   TableSkeleton,
+  Textarea,
 } from "../ui/index.js"
 
 export const Route = createFileRoute("/profiles")({
@@ -641,6 +649,279 @@ function EditFilterDialog({ source, profileId, onOpenChange, onSuccess }: EditFi
 }
 
 // ---------------------------------------------------------------------------
+// Probe dialog — lists the tools this route exposes THROUGH the profile
+// (real configured namespace + toolFilter applied, via createProfileProxy).
+// Self-contained: own loading/error/tool-list state (inc 28 slice B).
+// ---------------------------------------------------------------------------
+
+interface ProbeDialogProps {
+  readonly source: SourceMeta | null
+  readonly profileId: string
+  readonly onOpenChange: (open: boolean) => void
+  readonly onCallTool: (toolName: string) => void
+}
+
+function ProbeDialog({ source, profileId, onOpenChange, onCallTool }: ProbeDialogProps) {
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | undefined>()
+  const [tools, setTools] = useState<ProbeToolEntry[] | null>(null)
+
+  const sourceNamespace = source?.namespace
+
+  useEffect(() => {
+    if (!source || !sourceNamespace) return
+    let cancelled = false
+    setLoading(true)
+    setError(undefined)
+    setTools(null)
+    probeSourceFn({ data: { profileId, namespace: sourceNamespace } })
+      .then((result) => {
+        if (cancelled) return
+        if (!result.ok) {
+          setError(result.error)
+        } else {
+          setTools(result.tools)
+        }
+        setLoading(false)
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setError("Failed to probe route")
+          setLoading(false)
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [source, sourceNamespace, profileId])
+
+  function handleOpenChange(next: boolean) {
+    if (!next) {
+      setLoading(false)
+      setError(undefined)
+      setTools(null)
+    }
+    onOpenChange(next)
+  }
+
+  return (
+    <Dialog open={source !== null} onOpenChange={handleOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Probe Tools</DialogTitle>
+          <DialogDescription>
+            Tools exposed by <MonoCode>{source?.namespace}</MonoCode> through this profile — real
+            namespace and tool filter applied, exactly as an agent would see them.
+          </DialogDescription>
+        </DialogHeader>
+        {loading ? (
+          <LoadingState label="Probing route…" />
+        ) : error ? (
+          <ErrorState message={error} />
+        ) : tools && tools.length === 0 ? (
+          <p style={{ fontSize: "var(--text-body)", color: "var(--gray-700)" }}>
+            No tools exposed by this route.
+          </p>
+        ) : tools ? (
+          <ul
+            className="flex flex-col gap-2"
+            style={{ maxHeight: "360px", overflowY: "auto", listStyle: "none", padding: 0 }}
+          >
+            {tools.map((t) => (
+              <li
+                key={t.namespaced}
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "4px",
+                  padding: "8px 0",
+                  borderBottom: "1px solid var(--alpha-400)",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: "var(--space-2)",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px", minWidth: 0 }}>
+                    <MonoChip>{t.namespaced}</MonoChip>
+                    <MonoCode style={{ color: "var(--gray-700)" }}>{t.raw}</MonoCode>
+                  </div>
+                  <Button
+                    variant="secondary"
+                    onClick={() => onCallTool(t.namespaced)}
+                    style={{ flexShrink: 0 }}
+                  >
+                    <PlayCircle className="h-4 w-4" aria-hidden="true" />
+                    Call
+                  </Button>
+                </div>
+                {t.description && (
+                  <p
+                    style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)", margin: 0 }}
+                  >
+                    {t.description}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Call dialog — invoke ONE namespaced tool with a JSON args object, render
+// the real upstream result. Self-contained (inc 28 slice B).
+// ---------------------------------------------------------------------------
+
+interface CallDialogProps {
+  readonly open: boolean
+  readonly source: SourceMeta | null
+  readonly profileId: string
+  readonly initialToolName: string
+  readonly onOpenChange: (open: boolean) => void
+}
+
+function CallDialog({ open, source, profileId, initialToolName, onOpenChange }: CallDialogProps) {
+  const [toolName, setToolName] = useState(initialToolName)
+  const [argsJson, setArgsJson] = useState("{}")
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | undefined>()
+  const [result, setResult] = useState<{ content: unknown; isError: boolean } | null>(null)
+
+  // Re-seed the tool name whenever a Call is opened for a (possibly) new tool.
+  const [seededFor, setSeededFor] = useState<string | undefined>(undefined)
+  const seedKey = `${source?.namespace ?? ""}::${initialToolName}`
+  if (open && seedKey !== seededFor) {
+    setToolName(initialToolName)
+    setSeededFor(seedKey)
+  }
+
+  function reset() {
+    setArgsJson("{}")
+    setSubmitting(false)
+    setError(undefined)
+    setResult(null)
+    setSeededFor(undefined)
+  }
+
+  function handleOpenChange(next: boolean) {
+    if (!next) reset()
+    onOpenChange(next)
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!source || !toolName.trim()) {
+      setError("Tool name is required")
+      return
+    }
+    setSubmitting(true)
+    setError(undefined)
+    setResult(null)
+    try {
+      const response = await callSourceToolFn({
+        data: {
+          profileId,
+          namespace: source.namespace,
+          toolName: toolName.trim(),
+          argsJson,
+        },
+      })
+      if (!response.ok) {
+        toast.error(`Call failed: ${response.error}`)
+        setError(response.error)
+        setSubmitting(false)
+        return
+      }
+      setResult({ content: response.content, isError: response.isError })
+      setSubmitting(false)
+    } catch {
+      toast.error("Failed to call tool")
+      setError("Failed to call tool")
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Call a Tool</DialogTitle>
+          <DialogDescription>
+            Invoke a namespaced tool on <MonoCode>{source?.namespace}</MonoCode> through this
+            profile. Arguments are a JSON object.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} noValidate>
+          <div className="flex flex-col gap-4">
+            <Field id="call-tool-name" label="Tool name">
+              <Input
+                id="call-tool-name"
+                placeholder="e.g. pub_public__getGreeting"
+                value={toolName}
+                onChange={(e) => setToolName(e.target.value)}
+                aria-required="true"
+              />
+            </Field>
+            <Field id="call-args" label="Arguments (JSON)">
+              <Textarea
+                id="call-args"
+                value={argsJson}
+                onChange={(e) => setArgsJson(e.target.value)}
+                spellCheck={false}
+              />
+            </Field>
+            {error && <ErrorState message={error} />}
+            {result && (
+              <div className="flex flex-col gap-2">
+                <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+                  <span style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)" }}>
+                    Result:
+                  </span>
+                  {/* Tool-call outcome — NOT a credential/liveness state, so use the
+                      base Badge with an honest label rather than overloading the
+                      StatusBadge credential taxonomy (inc-28 web review). */}
+                  <Badge variant={result.isError ? "error" : "ok"}>
+                    {result.isError ? "Tool error" : "Success"}
+                  </Badge>
+                </div>
+                <pre
+                  style={{
+                    margin: 0,
+                    maxHeight: "240px",
+                    overflow: "auto",
+                    fontFamily: "var(--font-mono)",
+                    fontSize: "var(--text-mono)",
+                    background: "var(--gray-100)",
+                    borderRadius: "var(--radius-6)",
+                    padding: "var(--space-2)",
+                  }}
+                >
+                  {JSON.stringify(result.content, null, 2)}
+                </pre>
+              </div>
+            )}
+          </div>
+          <DialogFormFooter
+            onCancel={() => handleOpenChange(false)}
+            submitting={submitting}
+            submitLabel="Call tool"
+            submittingLabel="Calling…"
+          />
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Route rows table — the right-panel detail table
 // ---------------------------------------------------------------------------
 
@@ -660,6 +941,8 @@ interface RouteTableProps {
   readonly onToggle: (s: SourceMeta, enabled: boolean) => void
   readonly onRemove: (s: SourceMeta) => void
   readonly onEditFilter: (s: SourceMeta) => void
+  readonly onProbe: (s: SourceMeta) => void
+  readonly onCall: (s: SourceMeta) => void
   readonly onAddRoute: () => void
   readonly onDeleteProfile: (p: ProfileMeta) => void
 }
@@ -669,6 +952,8 @@ function RouteTable({
   onToggle,
   onRemove,
   onEditFilter,
+  onProbe,
+  onCall,
   onAddRoute,
   onDeleteProfile,
 }: RouteTableProps) {
@@ -817,6 +1102,17 @@ function RouteTable({
                         Edit Tool Access
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
+                      {/* Disabled-route guard (UI): belt-and-suspenders with the server-side
+                          "disabled" error — a disabled route can't be usefully probed/called. */}
+                      <DropdownMenuItem onSelect={() => onProbe(s)} disabled={!s.enabled}>
+                        <Radar className="h-4 w-4" aria-hidden="true" />
+                        Probe Tools
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => onCall(s)} disabled={!s.enabled}>
+                        <PlayCircle className="h-4 w-4" aria-hidden="true" />
+                        Call a Tool
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
                       <DropdownMenuItem
                         onSelect={() => onRemove(s)}
                         style={{ color: "var(--status-error-fg)" }}
@@ -856,6 +1152,12 @@ interface ProfileRoutesProps {
   readonly onRemovingRouteChange: (route: SourceMeta | null) => void
   readonly editingFilterRoute: SourceMeta | null
   readonly onEditingFilterRouteChange: (route: SourceMeta | null) => void
+  readonly probingRoute: SourceMeta | null
+  readonly onProbingRouteChange: (route: SourceMeta | null) => void
+  readonly callingRoute: SourceMeta | null
+  readonly onCallingRouteChange: (route: SourceMeta | null) => void
+  readonly callToolName: string
+  readonly onCallToolNameChange: (name: string) => void
   readonly onDeleteProfile: (p: ProfileMeta) => void
   readonly onMutate: () => void
 }
@@ -870,6 +1172,12 @@ function ProfileRoutes({
   onRemovingRouteChange,
   editingFilterRoute,
   onEditingFilterRouteChange,
+  probingRoute,
+  onProbingRouteChange,
+  callingRoute,
+  onCallingRouteChange,
+  callToolName,
+  onCallToolNameChange,
   onDeleteProfile,
   onMutate,
 }: ProfileRoutesProps) {
@@ -897,6 +1205,11 @@ function ProfileRoutes({
         onToggle={handleToggle}
         onRemove={(s) => onRemovingRouteChange(s)}
         onEditFilter={(s) => onEditingFilterRouteChange(s)}
+        onProbe={(s) => onProbingRouteChange(s)}
+        onCall={(s) => {
+          onCallToolNameChange("")
+          onCallingRouteChange(s)
+        }}
         onAddRoute={() => onAddRouteOpenChange(true)}
         onDeleteProfile={onDeleteProfile}
       />
@@ -925,6 +1238,28 @@ function ProfileRoutes({
           if (!open) onEditingFilterRouteChange(null)
         }}
         onSuccess={onMutate}
+      />
+      <ProbeDialog
+        source={probingRoute}
+        profileId={profile.id}
+        onOpenChange={(open) => {
+          if (!open) onProbingRouteChange(null)
+        }}
+        onCallTool={(toolName) => {
+          // Switch from Probe to Call, pre-filled with the clicked tool's namespaced name.
+          onCallToolNameChange(toolName)
+          onCallingRouteChange(probingRoute)
+          onProbingRouteChange(null)
+        }}
+      />
+      <CallDialog
+        open={callingRoute !== null}
+        source={callingRoute}
+        profileId={profile.id}
+        initialToolName={callToolName}
+        onOpenChange={(open) => {
+          if (!open) onCallingRouteChange(null)
+        }}
       />
     </div>
   )
@@ -1070,6 +1405,9 @@ function ProfilesPage() {
   const [addRouteOpen, setAddRouteOpen] = useState(false)
   const [removingRoute, setRemovingRoute] = useState<SourceMeta | null>(null)
   const [editingFilterRoute, setEditingFilterRoute] = useState<SourceMeta | null>(null)
+  const [probingRoute, setProbingRoute] = useState<SourceMeta | null>(null)
+  const [callingRoute, setCallingRoute] = useState<SourceMeta | null>(null)
+  const [callToolName, setCallToolName] = useState("")
 
   // The selected profile, falling back to the first one if selectedId no longer exists
   // (e.g. the selected profile was deleted out of band and the list was refreshed). This
@@ -1238,6 +1576,12 @@ function ProfilesPage() {
                   onRemovingRouteChange={setRemovingRoute}
                   editingFilterRoute={editingFilterRoute}
                   onEditingFilterRouteChange={setEditingFilterRoute}
+                  probingRoute={probingRoute}
+                  onProbingRouteChange={setProbingRoute}
+                  callingRoute={callingRoute}
+                  onCallingRouteChange={setCallingRoute}
+                  callToolName={callToolName}
+                  onCallToolNameChange={setCallToolName}
                   onDeleteProfile={(p) => setDeletingProfile(p)}
                   onMutate={invalidate}
                 />

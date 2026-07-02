@@ -24,6 +24,15 @@ const DENY = [
   "better-sqlite3",
   "napi-rs/keyring",
   "@junction/core",
+  // Server-only libs reached via *.server.ts only (inc 28 probe/call): source-runtime +
+  // the provider libs it lazy-imports + the openapi spec parser. They pull the native/core
+  // chain and must never reach the client bundle. (inc-28 web review — harden the gate for
+  // the new server-only chain, not just @junction/core.)
+  "@junction/source-runtime",
+  "@junction/mcp-client",
+  "@junction/openapi-client",
+  "@junction/graphql-client",
+  "@scalar/openapi-parser",
   "CREATE TABLE",
   "drizzle",
   "secretRef",

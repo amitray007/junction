@@ -11,6 +11,7 @@
 // "Boundary note — why adaptToMcpHandlers stays in cli").
 
 export { buildProvider } from "./build-provider.js"
+export { formatUpstreamError } from "./format-error.js"
 export type { ResolveCredentialError } from "./resolve-credential.js"
 export { resolveCredentialSecret } from "./resolve-credential.js"
 export type { ProviderResolution } from "./resolve-provider.js"

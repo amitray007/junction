@@ -254,9 +254,21 @@ importers:
       '@junction/core':
         specifier: workspace:*
         version: link:../core
+      '@junction/graphql-client':
+        specifier: workspace:*
+        version: link:../graphql-client
+      '@junction/mcp-client':
+        specifier: workspace:*
+        version: link:../mcp/client
+      '@junction/openapi-client':
+        specifier: workspace:*
+        version: link:../openapi-client
       '@junction/platform-orchestration':
         specifier: workspace:*
         version: link:../platform-orchestration
+      '@junction/source-runtime':
+        specifier: workspace:*
+        version: link:../source-runtime
       '@radix-ui/react-checkbox':
         specifier: ^1.3.6
         version: 1.3.6(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)

@@ -17,11 +17,22 @@ import { defineConfig } from "vite"
 // with UNLOADABLE_DEPENDENCY. They are server-only by design (reached via createServerFn).
 // `@junction/platform-orchestration` depends on @junction/core (same native chain) plus
 // the openapi/graphql spec parsers — also server-only (reached only via *.server.ts).
+// `@junction/source-runtime` + the provider libs it lazy-imports (mcp-client / openapi-client /
+// graphql-client) are reached ONLY via probe.server.ts (the inc-28 probe/call surface) — they
+// pull the same native/parser chain, so they are server-only too. They MUST be direct web deps
+// (package.json) AND externalized here: buildProvider does `await import("@junction/openapi-client")`
+// at runtime, which under pnpm's isolated node_modules only resolves if web depends on them
+// directly (a transitive dep of source-runtime is NOT resolvable from web's context) — the bug
+// that made every OpenAPI/GraphQL probe silently return an empty tool list (inc 28 QA).
 const SERVER_ONLY = [
   "better-sqlite3",
   "@napi-rs/keyring",
   "@junction/core",
   "@junction/platform-orchestration",
+  "@junction/source-runtime",
+  "@junction/mcp-client",
+  "@junction/openapi-client",
+  "@junction/graphql-client",
   "@scalar/openapi-parser",
   "graphql",
 ]
