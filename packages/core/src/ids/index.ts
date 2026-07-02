@@ -9,6 +9,8 @@
 import { ulid } from "ulid"
 
 import {
+  type ApiKeyId,
+  ApiKeyIdSchema,
   type CredentialId,
   CredentialIdSchema,
   type PlatformId,
@@ -23,6 +25,17 @@ import {
 export function newPlatformId(): PlatformId {
   // THIS IS THE SINGLE ulid↔uuid SWAP POINT — change format here only.
   return PlatformIdSchema.parse(ulid())
+}
+
+/**
+ * Generate a new opaque ApiKeyId backed by a ULID.
+ * Doubles as the `keyid` segment of a minted `jct_<keyid>_<secret>` token
+ * (increment 27 §2.1) — the ULID's 26-char Crockford-b32 shape is what makes
+ * the token regex parseable.
+ */
+export function newApiKeyId(): ApiKeyId {
+  // THIS IS THE SINGLE ulid↔uuid SWAP POINT — change format here only.
+  return ApiKeyIdSchema.parse(ulid())
 }
 
 /** Generate a new opaque CredentialId backed by a ULID. */

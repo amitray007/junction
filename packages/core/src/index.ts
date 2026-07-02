@@ -7,12 +7,16 @@ export {
   ConfigSchema,
   type ConfigState,
   DEFAULT_CONFIG,
+  DEFAULT_MCP_PORT,
   getMcpHost,
+  getMcpPort,
   isValidMcpHost,
+  isValidMcpPort,
   loadConfig,
   loadConfigState,
   saveConfig,
   setMcpHost,
+  setMcpPort,
 } from "./config/index.js"
 export type { ConfigError, PathsError, UpstreamError } from "./errors/index.js"
 export { getLogger, type Logger, setLogger } from "./logging/index.js"
@@ -41,6 +45,18 @@ export { createSandbox, validatePolicy } from "./sandbox/index.js"
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
+// API keys — junction's own auth keys: mint/verify (increment 27)
+// ---------------------------------------------------------------------------
+export {
+  type MintApiKeyInput,
+  type MintedApiKey,
+  mintApiKey,
+  parseApiKeyToken,
+  type ResolvedKey,
+  sha256Hex,
+  verifyApiKey,
+} from "./api-keys/index.js"
+// ---------------------------------------------------------------------------
 // Credential store — encrypted-at-rest secret management
 // ---------------------------------------------------------------------------
 export {
@@ -54,9 +70,15 @@ export {
 } from "./credentials/index.js"
 // Database + repositories
 export { type Db, getDatabase } from "./db/index.js"
-export type { CredentialError, DbError, SandboxError } from "./errors/index.js"
+export type { ApiKeyError, CredentialError, DbError, SandboxError } from "./errors/index.js"
 // ID generators — ids/ is the sole generator; see ids/index.ts for the swap-point comment
-export { newCredentialId, newPlatformId, newProfileId } from "./ids/index.js"
+export { newApiKeyId, newCredentialId, newPlatformId, newProfileId } from "./ids/index.js"
+export type {
+  ApiKeyRecord,
+  ApiKeyScope,
+  ApiKeysRepo,
+  CreateApiKeyInput,
+} from "./repositories/api-keys.js"
 export { createRepositories, type Repositories } from "./repositories/index.js"
 export type {
   CliArg,
@@ -98,12 +120,19 @@ export {
 export type { Platform } from "./schema/platform.js"
 // Platform
 export { PlatformKind, PlatformSchema } from "./schema/platform.js"
-export type { CredentialId, PlatformId, ProfileId } from "./schema/primitives.js"
+export type {
+  ApiKeyId,
+  ApiKeyLabel,
+  CredentialId,
+  PlatformId,
+  ProfileId,
+} from "./schema/primitives.js"
 // Branded ID schemas + types
 // Convention helpers (load-bearing: renaming breaks agent prompts)
 export {
+  ApiKeyIdSchema,
+  ApiKeyLabelSchema,
   CredentialIdSchema,
-  deriveMcpEndpointPath,
   namespacedTool,
   PlatformIdSchema,
   ProfileIdSchema,
@@ -125,3 +154,5 @@ export { namespaceToolName, splitNamespacedName } from "./sources/naming.js"
 export type { ProviderTool, ToolProvider, ToolResult } from "./sources/provider.js"
 export type { ProfileProxy, ResolveProviderFn } from "./sources/proxy.js"
 export { createProfileProxy } from "./sources/proxy.js"
+export type { ScopedProxy, ScopedProxyEntry } from "./sources/scoped-proxy.js"
+export { createScopedProxy } from "./sources/scoped-proxy.js"

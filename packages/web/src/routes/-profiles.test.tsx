@@ -30,7 +30,6 @@ const populatedData = {
     {
       id: "prof-1",
       name: "default",
-      mcpEndpointPath: "/profiles/default/mcp",
       sources: [
         {
           namespace: "github",
@@ -49,7 +48,6 @@ const populatedData = {
     {
       id: "prof-2",
       name: "readonly",
-      mcpEndpointPath: "/profiles/readonly/mcp",
       sources: [],
     },
   ] satisfies ProfileMeta[],
@@ -195,7 +193,6 @@ describe("ProfilesPage", () => {
         {
           id: "prof-2",
           name: "readonly",
-          mcpEndpointPath: "/profiles/readonly/mcp",
           sources: [],
         },
       ],
@@ -206,10 +203,12 @@ describe("ProfilesPage", () => {
     expect(screen.getByText("No routes in this profile.")).toBeInTheDocument()
   })
 
-  it("does not render mcpEndpointPath anywhere (single-endpoint model)", () => {
+  it("does not render an mcpEndpointPath-shaped path anywhere (single-endpoint model)", () => {
     mockUseLoaderData.mockReturnValue(populatedData)
     render(<ProfilesPage />)
-    // The mcpEndpointPath (/profiles/default/mcp) must NOT appear literally in the UI.
+    // Increment 27 removed the per-profile endpoint path entirely — ProfileMeta
+    // no longer carries the field, so this regression-guards against any UI
+    // code inventing a /profiles/<name>/mcp-shaped string from `name` alone.
     expect(screen.queryByText("/profiles/default/mcp")).not.toBeInTheDocument()
     expect(screen.queryByText("/profiles/readonly/mcp")).not.toBeInTheDocument()
   })

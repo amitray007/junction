@@ -11,11 +11,12 @@ export { McpConnectionSchema } from "./mcp-connection.js"
 export type { Platform } from "./platform.js"
 // Platform
 export { PlatformKind, PlatformSchema } from "./platform.js"
-export type { CredentialId, PlatformId, ProfileId } from "./primitives.js"
+export type { ApiKeyId, ApiKeyLabel, CredentialId, PlatformId, ProfileId } from "./primitives.js"
 // Primitives: branded ID schemas + types + convention schemas + helpers
 export {
+  ApiKeyIdSchema,
+  ApiKeyLabelSchema,
   CredentialIdSchema,
-  deriveMcpEndpointPath,
   namespacedTool,
   PlatformIdSchema,
   ProfileIdSchema,

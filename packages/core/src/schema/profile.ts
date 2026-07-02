@@ -1,48 +1,32 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Profile entity schema — what an agent sees; gets its own MCP endpoint.
+// Profile entity schema — what an agent sees.
 // Design spec §4 entity shape.
+//
+// SINGLE-ENDPOINT MODEL (increment 27): profiles no longer carry their own MCP
+// endpoint path. A single shared `/mcp` endpoint (see mcp/server serve-http.ts)
+// authenticates by junction API key; the key's scope selects which profile(s)
+// the caller gets. See docs/methods/27-junction-keys-single-endpoint.md §1.
 
 import { z } from "zod"
 
-import { deriveMcpEndpointPath, ProfileIdSchema, ProfileNameSchema } from "./primitives.js"
+import { ProfileIdSchema, ProfileNameSchema } from "./primitives.js"
 import { SourceRefSchema } from "./source-ref.js"
 
 // ---------------------------------------------------------------------------
 // ProfileSchema
 // ---------------------------------------------------------------------------
 
-export const ProfileSchema = z
-  .object({
-    /** Opaque stable profile ID */
-    id: ProfileIdSchema,
-    /**
-     * URL-safe profile name, e.g. "work", "personal", "client-acme".
-     * Validated per ^[a-z0-9-]+$ — used in the MCP endpoint path.
-     */
-    name: ProfileNameSchema,
-    /** Activated (Platform, Credential) sources available to this profile */
-    sources: z.array(SourceRefSchema),
-    /**
-     * The per-profile MCP endpoint path. Convention: /profiles/{name}/mcp.
-     * This is the agent-facing routing key, so it MUST equal the path derived
-     * from `name` (enforced below). Storing it as an independent string would
-     * let it drift to a different profile or a malformed path
-     * (e.g. /profiles//mcp, /profiles/a/b/mcp) — the refine closes that hole.
-     */
-    mcpEndpointPath: z.string(),
-  })
-  .superRefine((profile, ctx) => {
-    // If `name` is itself invalid, the field-level error already fired — skip
-    // (and avoid deriveMcpEndpointPath, which throws on an invalid name).
-    if (!ProfileNameSchema.safeParse(profile.name).success) return
-    const expected = deriveMcpEndpointPath(profile.name)
-    if (profile.mcpEndpointPath !== expected) {
-      ctx.addIssue({
-        code: "custom",
-        message: `mcpEndpointPath must be "${expected}" (derived from name "${profile.name}"), got "${profile.mcpEndpointPath}"`,
-        path: ["mcpEndpointPath"],
-      })
-    }
-  })
+export const ProfileSchema = z.object({
+  /** Opaque stable profile ID */
+  id: ProfileIdSchema,
+  /**
+   * URL-safe profile name, e.g. "work", "personal", "client-acme".
+   * Validated per ^[a-z0-9-]+$ (no underscores — load-bearing for the
+   * multi-profile scoped-proxy `__` naming parse, see primitives.ts).
+   */
+  name: ProfileNameSchema,
+  /** Activated (Platform, Credential) sources available to this profile */
+  sources: z.array(SourceRefSchema),
+})
 
 export type Profile = z.infer<typeof ProfileSchema>

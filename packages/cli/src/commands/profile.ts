@@ -5,7 +5,6 @@
 // SECURITY: profile show NEVER includes secret or secretRef — only metadata.
 
 import {
-  deriveMcpEndpointPath,
   newProfileId,
   type Profile,
   ProfileNameSchema,
@@ -56,7 +55,6 @@ const createCommand = defineCommand({
       id: newProfileId(),
       name,
       sources: [],
-      mcpEndpointPath: deriveMcpEndpointPath(name),
     }
 
     const result = await repos.profiles.create(profile)
@@ -67,10 +65,10 @@ const createCommand = defineCommand({
 
     if (json) {
       process.stdout.write(
-        `${JSON.stringify({ ok: true, id: result.value.id, name: result.value.name, mcpEndpointPath: result.value.mcpEndpointPath })}\n`,
+        `${JSON.stringify({ ok: true, id: result.value.id, name: result.value.name })}\n`,
       )
     } else {
-      consola.success(`Profile "${name}" created (endpoint: ${profile.mcpEndpointPath})`)
+      consola.success(`Profile "${name}" created`)
     }
   },
 })
@@ -108,12 +106,9 @@ const listCommand = defineCommand({
     }
 
     const lines = [
-      "  name              sources  endpoint",
-      "  ----------------  -------  --------------------------------",
-      ...profileList.map(
-        (p: Profile) =>
-          `  ${p.name.padEnd(16)}  ${String(p.sources.length).padEnd(7)}  ${p.mcpEndpointPath}`,
-      ),
+      "  name              sources",
+      "  ----------------  -------",
+      ...profileList.map((p: Profile) => `  ${p.name.padEnd(16)}  ${String(p.sources.length)}`),
     ]
     process.stdout.write(`${lines.join("\n")}\n`)
   },
@@ -248,12 +243,12 @@ const showCommand = defineCommand({
 
       if (json) {
         process.stdout.write(
-          `${JSON.stringify({ ok: true, profile: { id: profile.id, name: profile.name, mcpEndpointPath: profile.mcpEndpointPath }, sources })}\n`,
+          `${JSON.stringify({ ok: true, profile: { id: profile.id, name: profile.name }, sources })}\n`,
         )
         return
       }
 
-      process.stdout.write(`Profile: ${profile.name}  (${profile.mcpEndpointPath})\n`)
+      process.stdout.write(`Profile: ${profile.name}\n`)
       if (sources.length === 0) {
         process.stdout.write('  No sources. Use "junction profile add-source" to add one.\n')
         return

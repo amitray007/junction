@@ -7,12 +7,16 @@ import { withTempHome } from "../testing/index.js"
 import {
   type Config,
   DEFAULT_CONFIG,
+  DEFAULT_MCP_PORT,
   getMcpHost,
+  getMcpPort,
   isValidMcpHost,
+  isValidMcpPort,
   loadConfig,
   loadConfigState,
   saveConfig,
   setMcpHost,
+  setMcpPort,
 } from "./index.js"
 
 describe("config", () => {
@@ -409,6 +413,155 @@ describe("getMcpHost + setMcpHost", () => {
       const getResult = await getMcpHost(paths.value)
       expect(getResult.isOk()).toBe(true)
       if (getResult.isOk()) expect(getResult.value).toBeUndefined()
+    })
+  })
+})
+
+describe("isValidMcpPort", () => {
+  it("accepts valid ports", () => {
+    expect(isValidMcpPort(1)).toBe(true)
+    expect(isValidMcpPort(4322)).toBe(true)
+    expect(isValidMcpPort(65535)).toBe(true)
+  })
+
+  it("rejects 0 and negative numbers", () => {
+    expect(isValidMcpPort(0)).toBe(false)
+    expect(isValidMcpPort(-1)).toBe(false)
+  })
+
+  it("rejects ports above 65535", () => {
+    expect(isValidMcpPort(65536)).toBe(false)
+    expect(isValidMcpPort(100_000)).toBe(false)
+  })
+
+  it("rejects non-integers", () => {
+    expect(isValidMcpPort(4322.5)).toBe(false)
+    expect(isValidMcpPort(Number.NaN)).toBe(false)
+  })
+})
+
+describe("getMcpPort + setMcpPort — precedence (config > env > default)", () => {
+  let prevEnv: string | undefined
+  beforeEach(() => {
+    prevEnv = process.env.JUNCTION_MCP_PORT
+    delete process.env.JUNCTION_MCP_PORT
+  })
+  afterEach(() => {
+    if (prevEnv === undefined) {
+      delete process.env.JUNCTION_MCP_PORT
+    } else {
+      process.env.JUNCTION_MCP_PORT = prevEnv
+    }
+  })
+
+  it("no config, no env → DEFAULT_MCP_PORT (4322)", async () => {
+    await withTempHome(async () => {
+      const paths = await ensureHome()
+      if (!paths.isOk()) throw new Error("ensureHome failed")
+      const getResult = await getMcpPort(paths.value)
+      expect(getResult.isOk()).toBe(true)
+      if (getResult.isOk()) expect(getResult.value).toBe(DEFAULT_MCP_PORT)
+      expect(DEFAULT_MCP_PORT).toBe(4322)
+    })
+  })
+
+  it("set→get roundtrip: saved port is returned by getMcpPort", async () => {
+    await withTempHome(async () => {
+      const paths = await ensureHome()
+      if (!paths.isOk()) throw new Error("ensureHome failed")
+      const setResult = await setMcpPort(paths.value, 9000)
+      expect(setResult.isOk()).toBe(true)
+      const getResult = await getMcpPort(paths.value)
+      expect(getResult.isOk()).toBe(true)
+      if (getResult.isOk()) expect(getResult.value).toBe(9000)
+    })
+  })
+
+  it("env fallback: no config → getMcpPort returns JUNCTION_MCP_PORT", async () => {
+    await withTempHome(async () => {
+      process.env.JUNCTION_MCP_PORT = "5555"
+      const paths = await ensureHome()
+      if (!paths.isOk()) throw new Error("ensureHome failed")
+      const getResult = await getMcpPort(paths.value)
+      expect(getResult.isOk()).toBe(true)
+      if (getResult.isOk()) expect(getResult.value).toBe(5555)
+    })
+  })
+
+  it("config-overrides-env: config port wins over JUNCTION_MCP_PORT", async () => {
+    await withTempHome(async () => {
+      process.env.JUNCTION_MCP_PORT = "5555"
+      const paths = await ensureHome()
+      if (!paths.isOk()) throw new Error("ensureHome failed")
+      const setResult = await setMcpPort(paths.value, 6000)
+      expect(setResult.isOk()).toBe(true)
+      const getResult = await getMcpPort(paths.value)
+      expect(getResult.isOk()).toBe(true)
+      if (getResult.isOk()) expect(getResult.value).toBe(6000)
+    })
+  })
+
+  it("an invalid JUNCTION_MCP_PORT env value falls through to the default", async () => {
+    await withTempHome(async () => {
+      process.env.JUNCTION_MCP_PORT = "not-a-number"
+      const paths = await ensureHome()
+      if (!paths.isOk()) throw new Error("ensureHome failed")
+      const getResult = await getMcpPort(paths.value)
+      expect(getResult.isOk()).toBe(true)
+      if (getResult.isOk()) expect(getResult.value).toBe(DEFAULT_MCP_PORT)
+    })
+  })
+
+  it("clearing: set then clear (undefined) → getMcpPort returns default; mcpPort key absent from JSON", async () => {
+    await withTempHome(async () => {
+      const paths = await ensureHome()
+      if (!paths.isOk()) throw new Error("ensureHome failed")
+      const setResult = await setMcpPort(paths.value, 7000)
+      expect(setResult.isOk()).toBe(true)
+      const clearResult = await setMcpPort(paths.value, undefined)
+      expect(clearResult.isOk()).toBe(true)
+      const getResult = await getMcpPort(paths.value)
+      expect(getResult.isOk()).toBe(true)
+      if (getResult.isOk()) expect(getResult.value).toBe(DEFAULT_MCP_PORT)
+      const raw = await readFile(paths.value.configFile, "utf-8")
+      const parsed = JSON.parse(raw) as Record<string, unknown>
+      expect(Object.hasOwn(parsed, "mcpPort")).toBe(false)
+    })
+  })
+
+  it("invalid port rejected: setMcpPort returns err({ kind: 'invalid' })", async () => {
+    await withTempHome(async () => {
+      const paths = await ensureHome()
+      if (!paths.isOk()) throw new Error("ensureHome failed")
+      const result = await setMcpPort(paths.value, 99999)
+      expect(result.isOk()).toBe(false)
+      if (!result.isOk()) expect(result.error.kind).toBe("invalid")
+    })
+  })
+
+  it("backward-compat: old {version:1} config with no mcpPort still loads and getMcpPort falls to default", async () => {
+    await withTempHome(async () => {
+      const paths = await ensureHome()
+      if (!paths.isOk()) throw new Error("ensureHome failed")
+      await writeFile(paths.value.configFile, JSON.stringify({ version: 1 }), "utf-8")
+      const loadResult = await loadConfig(paths.value)
+      expect(loadResult.isOk()).toBe(true)
+      const getResult = await getMcpPort(paths.value)
+      expect(getResult.isOk()).toBe(true)
+      if (getResult.isOk()) expect(getResult.value).toBe(DEFAULT_MCP_PORT)
+    })
+  })
+
+  it("mcpHost and mcpPort coexist independently in the saved config", async () => {
+    await withTempHome(async () => {
+      const paths = await ensureHome()
+      if (!paths.isOk()) throw new Error("ensureHome failed")
+      await setMcpHost(paths.value, "example.com")
+      await setMcpPort(paths.value, 8888)
+      const raw = await readFile(paths.value.configFile, "utf-8")
+      const parsed = JSON.parse(raw) as Record<string, unknown>
+      expect(parsed.mcpHost).toBe("example.com")
+      expect(parsed.mcpPort).toBe(8888)
     })
   })
 })

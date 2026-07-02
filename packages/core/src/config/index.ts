@@ -20,6 +20,9 @@ export const ConfigSchema = z.object({
   // mcpHost is optional — old {version:1} configs still parse (Zod strips unknown
   // keys by default; adding an optional field is backward-compatible; no version bump).
   mcpHost: z.string().optional(),
+  // mcpPort is optional (increment 27) — same backward-compatible pattern as
+  // mcpHost: old configs without it still parse; no version bump required.
+  mcpPort: z.number().int().min(1).max(65535).optional(),
 })
 
 export type Config = z.infer<typeof ConfigSchema>
@@ -231,6 +234,69 @@ export function setMcpHost(
     // so any other future config keys survive — don't reconstruct from version alone.
     const { mcpHost: _omitted, ...rest } = current
     const updated: Config = clearing ? rest : { ...current, mcpHost: trimmed as string }
+    return saveConfig(paths, updated)
+  })
+}
+
+// ---------------------------------------------------------------------------
+// MCP port resolver, validator, and setter (increment 27)
+// ---------------------------------------------------------------------------
+
+/** Default port for `junction serve`'s HTTP MCP endpoint. Web is 4321 — adjacent, memorable. */
+export const DEFAULT_MCP_PORT = 4322
+
+/**
+ * Resolve the MCP port for this junction instance.
+ *
+ * Precedence (first wins; the `--port` CLI flag sits ABOVE this, in the cli layer):
+ *   1. `config.mcpPort` — an explicit value the user saved via `setMcpPort`.
+ *   2. `JUNCTION_MCP_PORT` env var — a deployment-level override without editing config.
+ *   3. `4322` (DEFAULT_MCP_PORT).
+ *
+ * Config overrides env, mirroring `getMcpHost`.
+ */
+export function getMcpPort(paths: JunctionPaths): ResultAsync<number, ConfigError> {
+  return loadConfig(paths).map((c) => {
+    if (c.mcpPort !== undefined) return c.mcpPort
+    const envPort = process.env.JUNCTION_MCP_PORT?.trim()
+    if (envPort !== undefined && envPort !== "" && isValidMcpPort(Number(envPort))) {
+      return Number(envPort)
+    }
+    return DEFAULT_MCP_PORT
+  })
+}
+
+/** Validate an MCP port number: integer in [1, 65535]. */
+export function isValidMcpPort(port: number): boolean {
+  return Number.isInteger(port) && port >= 1 && port <= 65535
+}
+
+/**
+ * Persist `mcpPort` into the config (load → merge → save, locked + atomic).
+ *
+ * - Pass a valid port number (1–65535) to set it.
+ * - Pass `undefined` to clear it (the key is REMOVED from the saved JSON so
+ *   the file stays clean).
+ * - Rejects invalid port numbers with `{ kind: "invalid" }` before any I/O.
+ */
+export function setMcpPort(
+  paths: JunctionPaths,
+  port: number | undefined,
+): ResultAsync<void, ConfigError> {
+  const clearing = port === undefined
+
+  if (!clearing && !isValidMcpPort(port)) {
+    return errAsync<void, ConfigError>({
+      kind: "invalid",
+      issues: [`"${port}" is not a valid port (expected an integer 1-65535)`],
+    })
+  }
+
+  return loadConfig(paths).andThen((current) => {
+    // Build the merged config. When clearing, drop ONLY mcpPort (via destructure)
+    // so any other future config keys survive — don't reconstruct from version alone.
+    const { mcpPort: _omitted, ...rest } = current
+    const updated: Config = clearing ? rest : { ...current, mcpPort: port }
     return saveConfig(paths, updated)
   })
 }

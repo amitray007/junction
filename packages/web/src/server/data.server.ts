@@ -169,7 +169,6 @@ export type SourceMeta = {
 export type ProfileMeta = {
   id: string
   name: string
-  mcpEndpointPath: string
   sources: SourceMeta[]
 }
 
@@ -230,7 +229,6 @@ export async function readProfiles(): Promise<ProfileMeta[]> {
     return profilesResult.value.map((profile) => ({
       id: String(profile.id),
       name: profile.name,
-      mcpEndpointPath: profile.mcpEndpointPath,
       sources: profile.sources.map((sr) => {
         // No credentialId → public/no-auth source
         const credentialAccount =

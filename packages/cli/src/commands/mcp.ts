@@ -31,7 +31,6 @@ import {
   createCredentialStore,
   createProfileProxy,
   createRepositories,
-  deriveMcpEndpointPath,
   err,
   getDatabase,
   getPaths,
@@ -57,7 +56,6 @@ function defaultProfile(): Profile {
     id: ProfileIdSchema.parse("default"),
     name: "default",
     sources: [],
-    mcpEndpointPath: deriveMcpEndpointPath("default"),
   }
 }
 

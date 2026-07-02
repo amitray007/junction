@@ -35,7 +35,6 @@ export type DashboardSource = {
 export type DashboardProfile = {
   id: string
   name: string
-  mcpEndpointPath: string
   /** Wired sources — NO secret or secretRef; only routing metadata. */
   sources: DashboardSource[]
 }
@@ -120,7 +119,6 @@ async function buildSnapshot(paths: JunctionPaths): Promise<DashboardSnapshot> {
     ? profilesResult.value.map((p: Profile) => ({
         id: p.id,
         name: p.name,
-        mcpEndpointPath: p.mcpEndpointPath,
         // Only routing metadata — NEVER secret or secretRef
         sources: p.sources.map((sr: SourceRef) => ({
           namespace: sr.toolNamespace,

@@ -10,10 +10,11 @@ import { CredentialSchema, OAuthMetaSchema } from "./credential.js"
 import { PlatformSchema } from "./platform.js"
 import {
   CredentialIdSchema,
-  deriveMcpEndpointPath,
   namespacedTool,
   PlatformIdSchema,
   ProfileIdSchema,
+  ProfileNameSchema,
+  ToolNamespaceSchema,
 } from "./primitives.js"
 import { ProfileSchema } from "./profile.js"
 import { SourceRefSchema } from "./source-ref.js"
@@ -87,7 +88,6 @@ describe("valid entity parsing", () => {
           enabled: true,
         },
       ],
-      mcpEndpointPath: "/profiles/work/mcp",
     })
 
     expect(result.success).toBe(true)
@@ -197,48 +197,6 @@ describe("invalid entity rejection", () => {
       id: newProfileId(),
       name: "Work!", // capitals + exclamation mark
       sources: [],
-      mcpEndpointPath: "/profiles/Work!/mcp",
-    })
-    expect(result.success).toBe(false)
-  })
-
-  it("rejects a Profile with mcpEndpointPath not starting with /profiles/", () => {
-    const result = ProfileSchema.safeParse({
-      id: newProfileId(),
-      name: "work",
-      sources: [],
-      mcpEndpointPath: "/api/work/mcp",
-    })
-    expect(result.success).toBe(false)
-  })
-
-  it("rejects a Profile with mcpEndpointPath not ending with /mcp", () => {
-    const result = ProfileSchema.safeParse({
-      id: newProfileId(),
-      name: "work",
-      sources: [],
-      mcpEndpointPath: "/profiles/work/tools",
-    })
-    expect(result.success).toBe(false)
-  })
-
-  it("rejects a Profile whose mcpEndpointPath is well-formed but drifts from name", () => {
-    // name "work" but endpoint points at a DIFFERENT profile — the drift case.
-    const result = ProfileSchema.safeParse({
-      id: newProfileId(),
-      name: "work",
-      sources: [],
-      mcpEndpointPath: "/profiles/personal/mcp",
-    })
-    expect(result.success).toBe(false)
-  })
-
-  it("rejects a Profile with a malformed empty-segment mcpEndpointPath", () => {
-    const result = ProfileSchema.safeParse({
-      id: newProfileId(),
-      name: "work",
-      sources: [],
-      mcpEndpointPath: "/profiles//mcp",
     })
     expect(result.success).toBe(false)
   })
@@ -270,17 +228,31 @@ describe("namespacedTool helper", () => {
   })
 })
 
-describe("deriveMcpEndpointPath helper", () => {
-  it("produces '/profiles/<name>/mcp' for a valid name", () => {
-    expect(deriveMcpEndpointPath("work")).toBe("/profiles/work/mcp")
+// ---------------------------------------------------------------------------
+// CHARSET CONTRACTS — load-bearing for the increment-27 multi-profile
+// scoped-proxy naming parse (sources/scoped-proxy.ts). A profile name can
+// never contain `_` and a tool namespace can never contain `__` — that is
+// what makes splitting a `<profileName>__<namespace>__<tool>` name on the
+// FIRST `__` deterministic. These are regression tests, not new behavior —
+// both schemas already reject these charsets; this asserts the contract
+// explicitly so a future loosening trips a test, not a silent naming bug.
+// ---------------------------------------------------------------------------
+
+describe("charset contracts (load-bearing for multi-profile tool-name parsing)", () => {
+  it("ProfileNameSchema rejects an underscore in the profile name", () => {
+    expect(ProfileNameSchema.safeParse("client_acme").success).toBe(false)
   })
 
-  it("throws for an invalid profile name (uppercase)", () => {
-    expect(() => deriveMcpEndpointPath("Work")).toThrow()
+  it("ProfileNameSchema accepts hyphens (the sanctioned separator)", () => {
+    expect(ProfileNameSchema.safeParse("client-acme").success).toBe(true)
   })
 
-  it("throws for an invalid profile name (special chars)", () => {
-    expect(() => deriveMcpEndpointPath("work!")).toThrow()
+  it("ToolNamespaceSchema rejects a double underscore in the namespace", () => {
+    expect(ToolNamespaceSchema.safeParse("github__work").success).toBe(false)
+  })
+
+  it("ToolNamespaceSchema accepts single underscores between segments", () => {
+    expect(ToolNamespaceSchema.safeParse("github_work").success).toBe(true)
   })
 })
 
