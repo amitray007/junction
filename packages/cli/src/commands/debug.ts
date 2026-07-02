@@ -13,7 +13,11 @@
 
 import type { UpstreamError } from "@junction/core"
 import { getPaths, namespaceToolName, ToolNamespaceSchema } from "@junction/core"
-import { buildProvider, resolveCredentialSecret } from "@junction/source-runtime"
+import {
+  buildProvider,
+  formatUpstreamError,
+  resolveCredentialSecret,
+} from "@junction/source-runtime"
 import { defineCommand } from "citty"
 import { consola } from "consola"
 import { JSON_ARG } from "../args.js"
@@ -21,51 +25,11 @@ import { openDb } from "../db.js"
 import { reportCredentialError, reportDbError } from "../format.js"
 
 // ---------------------------------------------------------------------------
-// UpstreamError formatter (exhaustive — compile error on new kind)
+// UpstreamError reporting — formatUpstreamError is shared (@junction/source-runtime).
+// debug is platform-scoped (trusted operator), so it keeps the DISCLOSING default
+// for tool-not-found (shows the tool name — useful for debugging). The web
+// profile-scoped surface overrides it to a generic string (non-disclosure).
 // ---------------------------------------------------------------------------
-
-function formatUpstreamError(e: UpstreamError): string {
-  switch (e.kind) {
-    case "binary-not-found":
-      return `stdio binary not found: "${e.command}" — install it or check the command path`
-    case "connect-failed":
-      return `connect failed: ${String(e.cause)}`
-    case "auth-failed":
-      return e.cause !== undefined
-        ? `authentication failed: ${String(e.cause)}`
-        : "authentication failed (check the credential token)"
-    case "upstream-unavailable":
-      return `upstream unavailable: ${String(e.cause)}`
-    case "tool-not-found":
-      return `tool not found: "${e.name}"`
-    case "call-failed":
-      return `tool call failed: ${String(e.cause)}`
-    case "namespace-too-long":
-      return `namespaced tool name exceeds 64 chars: "${e.name}"`
-    case "invalid-tool-name":
-      return `upstream tool name contains MCP-illegal characters: "${e.name}"`
-    case "timed-out":
-      return `upstream timed out after ${e.ms}ms`
-    case "unsupported-source-kind":
-      return `platform kind "${e.platformKind}" is not yet supported`
-    case "spec-parse-failed":
-      return `openapi spec parse failed: ${String(e.cause)}`
-    case "spec-fetch-failed":
-      return `openapi spec fetch failed: ${String(e.cause)}`
-    case "invalid-args":
-      return `invalid tool arguments: ${e.reason}`
-    case "response-too-large":
-      return `upstream response exceeded ${e.limit} byte limit`
-    case "too-many-tools":
-      return `spec has too many operations (${e.count}); cap is ${e.cap}`
-    default: {
-      // Exhaustiveness guard: compile error if a new UpstreamError kind is added without
-      // a corresponding case here (docs/rules/typescript.md — switch + never).
-      const _: never = e
-      return `unknown upstream error: ${String((_ as UpstreamError).kind)}`
-    }
-  }
-}
 
 function reportUpstreamError(e: UpstreamError, json: boolean): void {
   const msg = formatUpstreamError(e)

@@ -11,7 +11,7 @@
 // Deeper visual/interaction QA (theme toggle, collapse persistence, no-shake nav,
 // reduced-motion) is the `junction-web-verify` skill's job via `agent-browser`.
 
-import { spawn } from "node:child_process"
+import { spawn, spawnSync } from "node:child_process"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
@@ -19,6 +19,38 @@ import { fileURLToPath } from "node:url"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const webDir = join(__dirname, "..", "packages", "web")
+
+// ── Runtime lazy-import resolution guard (inc 28) ──────────────────────────
+// @junction/source-runtime's buildProvider does `await import("@junction/openapi-client")`
+// (etc.) at runtime. Under pnpm's ISOLATED node_modules those resolve from the web
+// package ONLY if web depends on them DIRECTLY — a transitive dep of source-runtime is
+// NOT reachable from web's context. When that broke, EVERY OpenAPI/GraphQL/MCP probe
+// silently returned an empty tool list (no error) — invisible to typecheck, unit tests
+// (which alias these libs to /src), and the HTTP smoke below. This guard runs a real
+// dynamic `import()` in a child process whose cwd is packages/web — the EXACT resolution
+// context serve.mjs uses — so it fails iff the running server's lazy import would fail.
+{
+  const RUNTIME_LAZY_DEPS = [
+    "@junction/source-runtime",
+    "@junction/mcp-client",
+    "@junction/openapi-client",
+    "@junction/graphql-client",
+  ]
+  const probe = RUNTIME_LAZY_DEPS.map((d) => `await import(${JSON.stringify(d)})`).join(";")
+  const res = spawnSync(process.execPath, ["--input-type=module", "-e", probe], {
+    cwd: webDir,
+    encoding: "utf8",
+  })
+  if (res.status !== 0) {
+    console.error(
+      "web:smoke — FAIL: a source-runtime lazy provider import is not resolvable from " +
+        "packages/web (the EXACT failure that silently empties every probe/call tool list).\n" +
+        "Add the missing lib as a DIRECT dep of packages/web/package.json — a transitive " +
+        `dep of source-runtime is not enough under pnpm isolation.\n${res.stderr ?? ""}`,
+    )
+    process.exit(1)
+  }
+}
 const PORT = 4319 + Math.floor((Date.now() % 1000) / 10) // spread across runs; not crypto
 const BASE = `http://127.0.0.1:${PORT}`
 
