@@ -74,7 +74,7 @@ export const Route = createFileRoute("/keys")({
 })
 
 const PAGE_SIZE = 25
-const COL_COUNT = 6
+const COL_COUNT = 5
 
 function KeysPending() {
   return (
@@ -85,7 +85,6 @@ function KeysPending() {
         columns={[
           { flex: true },
           { width: "w-40" },
-          { width: "w-32" },
           { width: "w-24" },
           { width: "w-24" },
           { width: "w-8" },
@@ -103,9 +102,25 @@ function keyStatus(k: ApiKeyMeta): "active" | "revoked" {
   return k.revokedAt !== null ? "revoked" : "active"
 }
 
+// Deterministic, SSR-safe date format. `toLocaleString()` depends on the
+// runtime's locale + timezone, so the server (SSR) and the browser (hydration)
+// can produce DIFFERENT strings for the same timestamp → React swaps the text
+// on hydrate, which shows as a flicker + a format change. Pinning the locale
+// AND timezone (UTC) makes server and client byte-identical → no mismatch, no
+// flicker. Labeled "UTC" so the shown time is unambiguous.
+const DATE_FORMAT = new Intl.DateTimeFormat("en-US", {
+  year: "numeric",
+  month: "short",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+  timeZone: "UTC",
+})
+
 function formatDate(ms: number | null): string {
   if (ms === null) return "Never"
-  return new Date(ms).toLocaleString()
+  return `${DATE_FORMAT.format(new Date(ms))} UTC`
 }
 
 function scopeLabel(k: ApiKeyMeta, profileNameById: Map<string, string>): string {
@@ -655,7 +670,6 @@ export function KeysTable({
               >
                 Name
               </TableHead>
-              <TableHead>Key ID</TableHead>
               <TableHead>Scope</TableHead>
               <TableHead
                 sortDirection={sortDirectionFor("created")}
@@ -692,9 +706,6 @@ export function KeysTable({
                 return (
                   <TableRow key={k.id}>
                     <TableCell>{k.label}</TableCell>
-                    <TableCellMono>
-                      <MonoCode>jct_{k.id}</MonoCode>
-                    </TableCellMono>
                     <TableCell>{scopeLabel(k, profileNameById)}</TableCell>
                     <TableCellMono>{formatDate(k.createdAt)}</TableCellMono>
                     <TableCellMono>{formatDate(k.lastUsedAt)}</TableCellMono>

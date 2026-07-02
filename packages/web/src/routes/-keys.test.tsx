@@ -118,17 +118,12 @@ describe("KeysPage — table columns + scope facet", () => {
     const { getByRole } = render(<KeysPage />)
     const table = getByRole("table")
     expect(table.textContent).toContain("Name")
-    expect(table.textContent).toContain("Key ID")
     expect(table.textContent).toContain("Scope")
     expect(table.textContent).toContain("Created")
     expect(table.textContent).toContain("Last Used")
     expect(table.textContent).toContain("Status")
-  })
-
-  it("renders the key id in jct_<keyid> mono form", () => {
-    mockUseLoaderData.mockReturnValue(populatedData)
-    const { getByText } = render(<KeysPage />)
-    expect(getByText(`jct_${activeKey.id}`)).toBeInTheDocument()
+    // The keyid is NOT a table column (removed — it's an internal handle).
+    expect(table.textContent).not.toContain("Key ID")
   })
 
   it("scope facet filters rows by scope", async () => {
