@@ -205,6 +205,49 @@ export function operationMatchesSelection(
 }
 
 // ---------------------------------------------------------------------------
+// forEachOperation — shared path/method iteration (the one loop shape
+// extractTools, countOperationsByTag, and findOperationByOperationId all
+// need). `fn` returning a non-undefined value stops iteration early and
+// becomes forEachOperation's return value — used by findOperationByOperationId
+// to short-circuit on a match; the tools/tag-count walkers ignore it (return
+// nothing, so the full schema is always scanned).
+// ---------------------------------------------------------------------------
+
+function forEachOperation<T>(
+  schema: Record<string, unknown>,
+  fn: (
+    path: string,
+    method: (typeof HTTP_METHODS)[number],
+    operation: OpenApiOperation,
+    pathItem: OpenApiPathItem,
+  ) => T | undefined,
+): T | undefined {
+  const paths = schema.paths
+  if (paths === null || typeof paths !== "object") return undefined
+  const pathsMap = paths as Record<string, OpenApiPathItem>
+
+  for (const [path, pathItem] of Object.entries(pathsMap)) {
+    if (pathItem === null || typeof pathItem !== "object") continue
+    for (const method of HTTP_METHODS) {
+      const op = pathItem[method]
+      if (op === null || op === undefined || typeof op !== "object") continue
+      const result = fn(path, method, op as OpenApiOperation, pathItem)
+      if (result !== undefined) return result
+    }
+  }
+  return undefined
+}
+
+/**
+ * True if `param` (an OpenAPI parameter object, either operation-level or
+ * inherited from the enclosing path-item) is required.
+ */
+function isRequiredParam(param: unknown): boolean {
+  if (param === null || typeof param !== "object") return false
+  return (param as OpenApiParameter).required === true
+}
+
+// ---------------------------------------------------------------------------
 // extractTools
 // ---------------------------------------------------------------------------
 
@@ -222,60 +265,45 @@ export function extractTools(
   cap = DEFAULT_MAX_TOOLS,
   select?: OpenApiSelect,
 ): Result<ProviderTool[], UpstreamError> {
-  const paths = schema.paths
-  if (paths === null || typeof paths !== "object") {
-    return ok([])
-  }
-
-  const pathsMap = paths as Record<string, OpenApiPathItem>
   const tools: ProviderTool[] = []
   // Track used names to detect collisions
   const usedNames = new Set<string>()
 
-  for (const [path, pathItem] of Object.entries(pathsMap)) {
-    if (pathItem === null || typeof pathItem !== "object") continue
+  forEachOperation(schema, (path, method, operation) => {
+    // Apply selection filter when provided
+    if (select && !operationMatchesSelection(path, operation, select)) return undefined
 
-    for (const method of HTTP_METHODS) {
-      const op = pathItem[method]
-      if (op === null || op === undefined) continue
-      if (typeof op !== "object") continue
-
-      const operation = op as OpenApiOperation
-
-      // Apply selection filter when provided
-      if (select && !operationMatchesSelection(path, operation, select)) continue
-
-      // Derive tool name
-      let name: string
-      if (typeof operation.operationId === "string" && operation.operationId.length > 0) {
-        name = sanitizeOperationId(operation.operationId)
-      } else {
-        name = deriveNameFromMethodPath(method, path)
-      }
-
-      // Deduplicate by appending _2, _3, etc.
-      let finalName = name
-      if (usedNames.has(finalName)) {
-        let suffix = 2
-        while (usedNames.has(`${name}_${suffix}`)) suffix++
-        finalName = `${name}_${suffix}`.slice(0, 64)
-      }
-      usedNames.add(finalName)
-
-      // Description
-      const description =
-        typeof operation.summary === "string"
-          ? operation.summary
-          : typeof operation.description === "string"
-            ? operation.description
-            : undefined
-
-      // Input schema
-      const inputSchema = buildInputSchema(operation)
-
-      tools.push({ name: finalName, description, inputSchema })
+    // Derive tool name
+    let name: string
+    if (typeof operation.operationId === "string" && operation.operationId.length > 0) {
+      name = sanitizeOperationId(operation.operationId)
+    } else {
+      name = deriveNameFromMethodPath(method, path)
     }
-  }
+
+    // Deduplicate by appending _2, _3, etc.
+    let finalName = name
+    if (usedNames.has(finalName)) {
+      let suffix = 2
+      while (usedNames.has(`${name}_${suffix}`)) suffix++
+      finalName = `${name}_${suffix}`.slice(0, 64)
+    }
+    usedNames.add(finalName)
+
+    // Description
+    const description =
+      typeof operation.summary === "string"
+        ? operation.summary
+        : typeof operation.description === "string"
+          ? operation.description
+          : undefined
+
+    // Input schema
+    const inputSchema = buildInputSchema(operation)
+
+    tools.push({ name: finalName, description, inputSchema })
+    return undefined
+  })
 
   if (tools.length > cap) {
     return err<ProviderTool[], UpstreamError>({
@@ -286,6 +314,81 @@ export function extractTools(
   }
 
   return ok(tools)
+}
+
+// ---------------------------------------------------------------------------
+// findOperationByOperationId — locate a raw operation by its exact operationId
+// (increment 28.9 — verifyOperationId validation). Distinct from http.ts's
+// internal findOperation: that one matches by the SANITIZED/derived tool name
+// (the runtime call path); this one matches the RAW operationId string as it
+// appears in the spec (the add/edit-time validation path), and returns enough
+// of the operation shape (method + parameters) to check the GET/no-required-
+// params invariant without re-deriving tool names.
+// ---------------------------------------------------------------------------
+
+export interface FoundRawOperation {
+  method: string
+  operationId: string
+  /**
+   * True if the operation has at least one required parameter — counting
+   * BOTH operation-level `parameters` AND parameters declared on the
+   * enclosing path-item (OpenAPI allows path-item-level parameters, which
+   * every operation under that path-item inherits; a GET /pets/{petId} with
+   * petId declared only at the path-item level still has a required param).
+   */
+  hasRequiredParameter: boolean
+}
+
+/**
+ * Scan every path/method in the schema for an operation whose `operationId`
+ * exactly matches `operationId`. Returns null if no such operation exists.
+ */
+export function findOperationByOperationId(
+  schema: Record<string, unknown>,
+  operationId: string,
+): FoundRawOperation | null {
+  const found = forEachOperation(schema, (_path, method, operation, pathItem) => {
+    if (operation.operationId !== operationId) return undefined
+    const opParams = Array.isArray(operation.parameters) ? operation.parameters : []
+    const pathItemParams = Array.isArray(pathItem.parameters) ? pathItem.parameters : []
+    const hasRequiredParameter =
+      opParams.some(isRequiredParam) || pathItemParams.some(isRequiredParam)
+    return { method, operationId, hasRequiredParameter }
+  })
+  return found ?? null
+}
+
+// ---------------------------------------------------------------------------
+// hasAmbiguousSanitizedName — verifyOperationId add-time collision check
+// (increment 28.9 fix). sanitizeOperationId collapses distinct raw
+// operationIds to the same tool name (e.g. "users.me" and "users_me" both
+// sanitize to "users_me"); extractTools' dedup then suffixes the LATER one
+// _2, _3, etc. If an operator designates a verifyOperationId whose sanitized
+// name collides with another operation's, the runtime verify call
+// (sanitizeOperationId(verifyOperationId)) could bind to the WRONG operation.
+// Reject at add time rather than silently mis-verifying forever.
+// ---------------------------------------------------------------------------
+
+/**
+ * True if some OTHER operation in the schema sanitizes to the same tool name
+ * as `operationId` (i.e. `sanitizeOperationId` collapses two distinct raw
+ * operationIds to one string). Only operations with a distinct raw
+ * operationId are considered — an exact duplicate raw id is a different,
+ * pre-existing spec-quality problem, not this collision.
+ */
+export function hasAmbiguousSanitizedName(
+  schema: Record<string, unknown>,
+  operationId: string,
+): boolean {
+  const target = sanitizeOperationId(operationId)
+  const collision = forEachOperation(schema, (_path, _method, operation) => {
+    const otherId = operation.operationId
+    if (typeof otherId !== "string" || otherId.length === 0) return undefined
+    if (otherId === operationId) return undefined
+    if (sanitizeOperationId(otherId) === target) return true
+    return undefined
+  })
+  return collision ?? false
 }
 
 // ---------------------------------------------------------------------------
@@ -301,35 +404,24 @@ export interface TagCount {
  * Count operations per tag (for refusal message when too many ops).
  */
 export function countOperationsByTag(schema: Record<string, unknown>): TagCount[] {
-  const paths = schema.paths
-  if (paths === null || typeof paths !== "object") return []
-
-  const pathsMap = paths as Record<string, OpenApiPathItem>
   const tagCounts: Record<string, number> = { "(untagged)": 0 }
 
-  for (const [, pathItem] of Object.entries(pathsMap)) {
-    if (pathItem === null || typeof pathItem !== "object") continue
+  forEachOperation(schema, (_path, _method, operation) => {
+    const tags = Array.isArray(operation.tags)
+      ? (operation.tags as unknown[]).filter((t): t is string => typeof t === "string")
+      : []
 
-    for (const method of HTTP_METHODS) {
-      const op = pathItem[method]
-      if (op === null || op === undefined || typeof op !== "object") continue
-
-      const operation = op as OpenApiOperation
-      const tags = Array.isArray(operation.tags)
-        ? (operation.tags as unknown[]).filter((t): t is string => typeof t === "string")
-        : []
-
-      if (tags.length === 0) {
-        const untagged = tagCounts["(untagged)"] ?? 0
-        tagCounts["(untagged)"] = untagged + 1
-      } else {
-        for (const tag of tags) {
-          const prev = tagCounts[tag] ?? 0
-          tagCounts[tag] = prev + 1
-        }
+    if (tags.length === 0) {
+      const untagged = tagCounts["(untagged)"] ?? 0
+      tagCounts["(untagged)"] = untagged + 1
+    } else {
+      for (const tag of tags) {
+        const prev = tagCounts[tag] ?? 0
+        tagCounts[tag] = prev + 1
       }
     }
-  }
+    return undefined
+  })
 
   return Object.entries(tagCounts)
     .filter(([, count]) => count > 0)

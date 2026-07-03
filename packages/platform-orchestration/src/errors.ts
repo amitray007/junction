@@ -23,6 +23,8 @@ export type PlatformOrchestrationError =
   // ---- shared: zod validation failures ----
   | { kind: "invalid-connection"; message: string }
   | { kind: "invalid-platform"; message: string }
+  // ---- openapi verify-on-add (inc 28.9) ----
+  | { kind: "verify-op-invalid"; message: string }
   // ---- graphql ----
   | { kind: "apikey-in-query-unsupported" }
   // ---- cli ----

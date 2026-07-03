@@ -107,6 +107,8 @@ function formatOrchestrationError(
       return `refresh only applies to openapi platforms; "${id}" is kind "${e.platformKind}"`
     case "not-url-spec":
       return `cannot refresh a spec that wasn't added from a URL; "${id}" uses spec.from="${e.specFrom}"`
+    case "verify-op-invalid":
+      return `--verify-op is invalid: ${e.message}`
   }
 }
 
@@ -189,6 +191,11 @@ const addCommand = defineCommand({
       type: "string",
       description:
         "[openapi] Include only operations whose path starts with this prefix (repeatable: --path /pet)",
+    },
+    "verify-op": {
+      type: "string",
+      description:
+        "[openapi] operationId used by verify-on-add/test-connection — must be a GET with no required params",
     },
     // GraphQL flags
     endpoint: {
@@ -303,6 +310,7 @@ async function addOpenApiPlatform(
     auth: buildAuthInput(args),
     maxTools,
     select,
+    verifyOperationId: args["verify-op"] as string | undefined,
   })
   if (result.isErr()) {
     reportError(formatOrchestrationError(result.error, "add"), json)

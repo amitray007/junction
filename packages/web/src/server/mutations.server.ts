@@ -66,6 +66,8 @@ function credentialErrorMessage(kind: string): string {
       return "Credential is in use by a profile source"
     case "query-failed":
       return "Database error"
+    case "kind-incompatible":
+      return "Credential kind not accepted for this platform"
     default:
       return "Operation failed"
   }
@@ -82,6 +84,18 @@ export async function mutateAddCredential(input: {
   secret: string
 }): Promise<{ ok: true; credential: CredentialMutationMeta } | { ok: false; error: string }> {
   return withReposAndStore(async (repos, store) => {
+    // Fetch the platform — addCredential validates the requested kind against
+    // its kind-compat matrix before the secret is touched (mechanical seam
+    // change, slice A of increment 28.9). Kind stays hardcoded to "bearer"
+    // here; slice C wires the derived/explicit kind select.
+    const platformResult = await repos.platforms.get(input.platformId)
+    if (platformResult.isErr()) {
+      input.secret = ""
+      const error =
+        platformResult.error.kind === "not-found" ? "Platform not found" : "Database error"
+      return { ok: false as const, error }
+    }
+
     const result = await addCredential(
       {
         platformId: input.platformId,
@@ -89,6 +103,7 @@ export async function mutateAddCredential(input: {
         kind: "bearer",
         secret: input.secret,
       },
+      platformResult.value,
       store,
       repos.credentials,
     )
@@ -98,7 +113,14 @@ export async function mutateAddCredential(input: {
     input.secret = ""
     if (result.isErr()) {
       const e = result.error
-      return { ok: false as const, error: e.kind === "invalid-input" ? e.reason : e.kind }
+      if (e.kind === "invalid-input") return { ok: false as const, error: e.reason }
+      if (e.kind === "kind-incompatible") {
+        return {
+          ok: false as const,
+          error: `Credential kind "${e.requested}" not accepted for this platform; allowed: ${e.allowed.join(", ")}`,
+        }
+      }
+      return { ok: false as const, error: e.kind }
     }
     return { ok: true as const, credential: toMutationMeta(result.value) }
   })

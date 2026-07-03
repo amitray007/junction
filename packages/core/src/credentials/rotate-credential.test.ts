@@ -83,8 +83,11 @@ describe("rotateCredential", () => {
     account: string,
     secret: string,
   ): Promise<string> {
+    const platformResult = await repos.platforms.get(platformId)
+    if (platformResult.isErr()) throw platformResult.error
     const result = await addCredential(
       { platformId, account, kind: "bearer", secret },
+      platformResult.value,
       store,
       repos.credentials,
     )

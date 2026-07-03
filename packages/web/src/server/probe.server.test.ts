@@ -445,6 +445,7 @@ describe("probe.server", () => {
       if (storeResult.isErr()) throw new Error(JSON.stringify(storeResult.error))
       const credResult = await addCredential(
         { platformId: String(platformId), account: "work", kind: "bearer", secret: SECRET },
+        platformResult.value,
         storeResult.value,
         repos.credentials,
       )

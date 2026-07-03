@@ -63,7 +63,9 @@ export {
   type AddCredentialInput,
   addCredential,
   type CredentialStore,
+  compatibleCredentialKinds,
   createCredentialStore,
+  isKindAccepted,
   type RotateCredentialInput,
   removeCredential,
   rotateCredential,
@@ -95,15 +97,20 @@ export {
   CliPolicySchema,
   CliToolSchema,
 } from "./schema/cli-connection.js"
-export type { Credential, OAuthMeta } from "./schema/credential.js"
+export type { Credential, CredentialVerifyResult, OAuthMeta } from "./schema/credential.js"
 // Credential
-export { CredentialKind, CredentialSchema, OAuthMetaSchema } from "./schema/credential.js"
+export {
+  CredentialKind,
+  CredentialSchema,
+  CredentialVerifyResult as CredentialVerifyResultSchema,
+  OAuthMetaSchema,
+} from "./schema/credential.js"
 export type { GraphQlConnection } from "./schema/graphql-connection.js"
 // GraphQlConnection — generic GraphQL source descriptor
 export { GraphQlConnectionSchema } from "./schema/graphql-connection.js"
-export type { McpConnection } from "./schema/mcp-connection.js"
+export type { McpConnection, McpHttpAuth } from "./schema/mcp-connection.js"
 // McpConnection — generic MCP transport descriptor (http | stdio)
-export { McpConnectionSchema } from "./schema/mcp-connection.js"
+export { McpConnectionSchema, McpHttpAuthSchema } from "./schema/mcp-connection.js"
 export type {
   OpenApiAuth,
   OpenApiConnection,

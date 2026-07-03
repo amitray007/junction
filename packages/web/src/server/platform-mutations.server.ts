@@ -162,6 +162,8 @@ function orchestrationErrorMessage(e: { kind: string; [k: string]: unknown }): s
       return "Only OpenAPI platforms can be refreshed"
     case "not-url-spec":
       return "Only specs added from a URL can be refreshed"
+    case "verify-op-invalid":
+      return `Invalid verify operation: ${e.message}`
     default:
       return "Operation failed"
   }
@@ -540,12 +542,20 @@ function toPlatformDetail(p: Platform): PlatformDetail {
 
   if (p.kind === "mcp" && p.connection) {
     if (p.connection.transport === "http") {
+      const auth = p.connection.auth
+      // auth is a discriminated union (bearer | header, inc 28.9) — bearer
+      // carries `header` (the HTTP header name), header carries `name`
+      // (same meaning: which header the value rides in). Web's bearer-first
+      // subset only ever produces scheme:"bearer" today; "header" platforms
+      // added via CLI still round-trip here for read (detail view).
+      const authHeaderName =
+        auth === undefined ? undefined : auth.scheme === "bearer" ? auth.header : auth.name
       return {
         ...base,
         transport: "http",
         url: p.connection.url,
-        hasAuthHeader: p.connection.auth !== undefined,
-        authHeaderName: p.connection.auth?.header,
+        hasAuthHeader: auth !== undefined,
+        authHeaderName,
       }
     }
     return {

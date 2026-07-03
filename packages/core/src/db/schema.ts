@@ -32,6 +32,12 @@ export const credentials = sqliteTable("credentials", {
   secretRef: text("secret_ref").notNull(),
   // JSON-serialized OAuthMeta (reserved for OAuth increment)
   oauthMeta: text("oauth_meta"),
+  // Verify-on-add / test-connection persistence (inc 28.9, migration 0008).
+  // NULL = never verified. Set by `credential add --verify`, `credential test`,
+  // and the web verify actions. "not-verifiable" outcomes are NEVER persisted
+  // here — that's a property of the platform/source kind, not an event.
+  lastVerifiedAt: integer("last_verified_at"),
+  lastVerifyResult: text("last_verify_result"),
 })
 
 export const profiles = sqliteTable("profiles", {

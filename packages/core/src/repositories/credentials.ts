@@ -9,9 +9,24 @@ import { mapDbError } from "../db/errors.js"
 import type { Db } from "../db/index.js"
 import { credentials } from "../db/schema.js"
 import type { DbError } from "../errors/index.js"
-import type { Credential } from "../schema/credential.js"
+import type { Credential, CredentialVerifyResult } from "../schema/credential.js"
 import { CredentialSchema, OAuthMetaSchema } from "../schema/credential.js"
 import type { PlatformId } from "../schema/primitives.js"
+
+/**
+ * Fetch a credential row by id, or a typed not-found error. Shared by every
+ * method that must read-before-write (setSecretRef, setVerifyState) or that
+ * simply reads one row (get) — the rule-of-three point where this earns
+ * extraction (docs/principles/dry.md).
+ */
+function fetchRowOrNotFound(
+  db: Db,
+  id: string,
+): { ok: true; row: typeof credentials.$inferSelect } | { ok: false; error: DbError } {
+  const row = db.select().from(credentials).where(eq(credentials.id, id)).get()
+  if (!row) return { ok: false, error: { kind: "not-found" as const, entity: "credential", id } }
+  return { ok: true, row }
+}
 
 function rowToCredential(row: typeof credentials.$inferSelect): Credential {
   return CredentialSchema.parse({
@@ -23,6 +38,8 @@ function rowToCredential(row: typeof credentials.$inferSelect): Credential {
     oauthMeta: row.oauthMeta
       ? OAuthMetaSchema.parse(JSON.parse(row.oauthMeta) as unknown)
       : undefined,
+    lastVerifiedAt: row.lastVerifiedAt ?? undefined,
+    lastVerifyResult: row.lastVerifyResult ?? undefined,
   })
 }
 
@@ -49,9 +66,9 @@ export function createCredentialsRepo(db: Db) {
 
     get(id: string): ResultAsync<Credential, DbError> {
       try {
-        const row = db.select().from(credentials).where(eq(credentials.id, id)).get()
-        if (!row) return errAsync({ kind: "not-found" as const, entity: "credential", id })
-        return okAsync(rowToCredential(row))
+        const found = fetchRowOrNotFound(db, id)
+        if (!found.ok) return errAsync(found.error)
+        return okAsync(rowToCredential(found.row))
       } catch (cause) {
         return errAsync(mapDbError(cause))
       }
@@ -87,10 +104,10 @@ export function createCredentialsRepo(db: Db) {
     setSecretRef(id: string, newSecretRef: string): ResultAsync<Credential, DbError> {
       try {
         // Fetch first so we can return the full updated Credential (and surface not-found).
-        const row = db.select().from(credentials).where(eq(credentials.id, id)).get()
-        if (!row) return errAsync({ kind: "not-found" as const, entity: "credential", id })
+        const found = fetchRowOrNotFound(db, id)
+        if (!found.ok) return errAsync(found.error)
         db.update(credentials).set({ secretRef: newSecretRef }).where(eq(credentials.id, id)).run()
-        return okAsync(rowToCredential({ ...row, secretRef: newSecretRef }))
+        return okAsync(rowToCredential({ ...found.row, secretRef: newSecretRef }))
       } catch (cause) {
         return errAsync(mapDbError(cause))
       }
@@ -99,6 +116,30 @@ export function createCredentialsRepo(db: Db) {
     delete(id: string): ResultAsync<void, DbError> {
       try {
         db.delete(credentials).where(eq(credentials.id, id)).run()
+        return okAsync(undefined)
+      } catch (cause) {
+        return errAsync(mapDbError(cause))
+      }
+    },
+
+    /**
+     * Record a verify-on-add / test-connection outcome. Only "ok" | "auth-failed" |
+     * "unreachable" are persisted — "not-verifiable" is a property of the platform/
+     * source kind, not an event, and is never written here (see VerifyOutcome in
+     * @junction/source-runtime).
+     */
+    setVerifyState(
+      id: string,
+      result: CredentialVerifyResult,
+      at: number,
+    ): ResultAsync<void, DbError> {
+      try {
+        const found = fetchRowOrNotFound(db, id)
+        if (!found.ok) return errAsync(found.error)
+        db.update(credentials)
+          .set({ lastVerifiedAt: at, lastVerifyResult: result })
+          .where(eq(credentials.id, id))
+          .run()
         return okAsync(undefined)
       } catch (cause) {
         return errAsync(mapDbError(cause))

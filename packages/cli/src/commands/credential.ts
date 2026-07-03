@@ -132,8 +132,20 @@ const addCommand = defineCommand({
     if (!ctx) return
     const { repos, store } = ctx
 
+    // Fetch the platform — addCredential validates the requested kind against
+    // its kind-compat matrix before the secret is touched (mechanical seam
+    // change, slice A of increment 28.9). Kind stays hardcoded to "bearer"
+    // here (the edge gate above already rejected anything else); slices B/C
+    // remove that gate and let the user pick a derived/explicit kind.
+    const platformResult = await repos.platforms.get(args.platform)
+    if (platformResult.isErr()) {
+      reportDbError(platformResult.error, json)
+      return
+    }
+
     const result = await addCredential(
       { platformId: args.platform, account: args.account, kind: "bearer", secret },
+      platformResult.value,
       store,
       repos.credentials,
     )
@@ -394,7 +406,8 @@ function reportCredentialOpError(
     e.kind === "decrypt-failed" ||
     e.kind === "key-unavailable" ||
     e.kind === "io-failed" ||
-    e.kind === "invalid-input"
+    e.kind === "invalid-input" ||
+    e.kind === "kind-incompatible"
   ) {
     reportCredentialError(e as Parameters<typeof reportCredentialError>[0], json)
   } else {
