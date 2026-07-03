@@ -681,6 +681,56 @@ const reconnectCommand = defineCommand({
         ? extraScopes
         : (existing.oauthMeta?.scopes ?? provider.defaultScopes ?? [])
 
+    // Reconnect REUSES the stored client_id/secret by default — the whole point
+    // of "reconnect" is re-authorizing with the creds you already gave junction,
+    // not re-typing them. Resolve them server-side from the store (never printed,
+    // never re-entered). Pass --client-id AND --client-secret-stdin together ONLY
+    // to swap to a DIFFERENT OAuth app (e.g. the provider-side secret was rotated).
+    //
+    // They are a PAIR: supply both to swap, or neither to reuse. Reject a partial
+    // pair (one without the other) rather than silently routing to reuse and
+    // discarding the typed value — symmetric with the web startReconnect guard.
+    const hasClientId = Boolean(args["client-id"])
+    const hasClientSecretStdin = args["client-secret-stdin"] === true
+    if (hasClientId !== hasClientSecretStdin) {
+      reportError(
+        json,
+        "pass both --client-id and --client-secret-stdin to swap credentials, or neither to reuse the stored ones",
+      )
+      return
+    }
+
+    let resolvedClientCreds: { clientId: string; clientSecret: string } | undefined
+    if (!args["client-id"]) {
+      const clientIdRef = existing.oauthMeta?.clientIdRef
+      const clientSecretRef = existing.oauthMeta?.clientSecretRef
+      if (clientIdRef === undefined || clientSecretRef === undefined) {
+        reportError(
+          json,
+          `credential "${credentialId}" has no stored client credentials — ` +
+            "pass --client-id and --client-secret-stdin to supply them",
+        )
+        return
+      }
+      const idResult = await store.get(clientIdRef)
+      const secretResult = await store.get(clientSecretRef)
+      if (idResult.isErr() || secretResult.isErr()) {
+        reportError(json, "failed to read the stored client credentials")
+        return
+      }
+      const storedId = idResult.value
+      const storedSecret = secretResult.value
+      if (storedId === null || storedSecret === null) {
+        reportError(
+          json,
+          `credential "${credentialId}" has lost its stored client credentials — ` +
+            "pass --client-id and --client-secret-stdin to re-supply them",
+        )
+        return
+      }
+      resolvedClientCreds = { clientId: storedId, clientSecret: storedSecret }
+    }
+
     await runConnectFlow({
       provider,
       scopes,
@@ -691,6 +741,7 @@ const reconnectCommand = defineCommand({
       repos: fullRepos,
       store,
       target: { mode: "update", credentialId },
+      resolvedClientCreds,
     })
   },
 })

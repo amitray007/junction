@@ -49,16 +49,31 @@ export const startConnectFn = createServerFn({ method: "POST" })
 
 // ---------------------------------------------------------------------------
 // startReconnectFn — re-run connect for an EXISTING needsReauth credential
-// (mode:update). BYO client creds are re-entered (see oauth-connect.server.ts).
+// (mode:update). Client creds are OPTIONAL: omitted → reuse the stored
+// client_id/secret; supplied → swap to a different OAuth app (see
+// oauth-connect.server.ts).
 // ---------------------------------------------------------------------------
 
 export const startReconnectFn = createServerFn({ method: "POST" })
   .validator((raw: unknown) => {
     const d = raw as Record<string, unknown>
+    // clientId/clientSecret optional — present ONLY when swapping OAuth apps.
+    // They are a pair: supply BOTH to swap, or NEITHER to reuse the stored ones.
+    // Reject a partial pair at the boundary (validate-at-trust-boundaries) so a
+    // half-supplied swap can never silently fall back to the stored creds.
+    const clientId = typeof d.clientId === "string" && d.clientId !== "" ? d.clientId : undefined
+    const clientSecret =
+      typeof d.clientSecret === "string" && d.clientSecret !== "" ? d.clientSecret : undefined
+    if ((clientId === undefined) !== (clientSecret === undefined)) {
+      throw new Response(
+        "Bad Request: supply both clientId and clientSecret to swap credentials, or neither to reuse",
+        { status: 400 },
+      )
+    }
     return {
       credentialId: requireString(d.credentialId, "credentialId"),
-      clientId: requireString(d.clientId, "clientId"),
-      clientSecret: requireString(d.clientSecret, "clientSecret"),
+      ...(clientId !== undefined ? { clientId } : {}),
+      ...(clientSecret !== undefined ? { clientSecret } : {}),
     }
   })
   .handler(async ({ data }) => {

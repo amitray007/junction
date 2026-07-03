@@ -950,59 +950,82 @@ describe("CredentialsPage — OAuth status badges (Expiring / Auth Failed) + Rec
     expect(reconnectButtons.length).toBeGreaterThan(0)
   })
 
-  it("clicking the inline Reconnect button opens the Reconnect dialog with BYO client fields", async () => {
-    const creds: CredentialMeta[] = [
-      {
-        id: "c1",
-        platformId: "github",
-        account: "alice",
-        kind: "oauth2",
-        oauthState: {
-          providerId: "github",
-          expiresAt: null,
-          needsReauth: true,
-          hasRefreshToken: false,
-        },
+  const reconnectCred: CredentialMeta[] = [
+    {
+      id: "c1",
+      platformId: "github",
+      account: "alice",
+      kind: "oauth2",
+      oauthState: {
+        providerId: "github",
+        expiresAt: null,
+        needsReauth: true,
+        hasRefreshToken: false,
       },
-    ]
-    mockUseLoaderData.mockReturnValue({ credentials: creds, platforms, oauthProviders })
-    const { getAllByRole, getByRole, getByLabelText } = render(<CredentialsPage />)
+    },
+  ]
 
-    const reconnectButtons = getAllByRole("button", { name: /reconnect/i })
-    fireEvent.click(reconnectButtons[0] as HTMLElement)
-
-    await waitFor(() => expect(getByRole("dialog")).toBeInTheDocument())
-    expect(getByLabelText("Client ID")).toBeInTheDocument()
-    expect(getByLabelText("Client Secret")).toBeInTheDocument()
-  })
-
-  it("Reconnect form validates required fields before calling startReconnectFn", async () => {
-    const creds: CredentialMeta[] = [
-      {
-        id: "c1",
-        platformId: "github",
-        account: "alice",
-        kind: "oauth2",
-        oauthState: {
-          providerId: "github",
-          expiresAt: null,
-          needsReauth: true,
-          hasRefreshToken: false,
-        },
-      },
-    ]
-    mockUseLoaderData.mockReturnValue({ credentials: creds, platforms, oauthProviders })
-    const { getAllByRole, getByRole, getByText } = render(<CredentialsPage />)
+  it("clicking Reconnect opens a dialog that REUSES stored creds — no BYO fields until 'Use different'", async () => {
+    mockUseLoaderData.mockReturnValue({
+      credentials: reconnectCred,
+      platforms,
+      oauthProviders,
+    })
+    const { getAllByRole, getByRole, queryByLabelText, getByText } = render(<CredentialsPage />)
 
     fireEvent.click(getAllByRole("button", { name: /reconnect/i })[0] as HTMLElement)
     await waitFor(() => expect(getByRole("dialog")).toBeInTheDocument())
 
-    const dialog = getByRole("dialog")
-    const submitBtn = dialog.querySelector("button[type='submit']") as HTMLButtonElement
-    fireEvent.click(submitBtn)
-    await waitFor(() => {
-      expect(getByText("Client ID is required")).toBeInTheDocument()
+    // By default: no client fields (reuse) — just the "use different" affordance.
+    expect(queryByLabelText("Client ID")).not.toBeInTheDocument()
+    expect(queryByLabelText("Client Secret")).not.toBeInTheDocument()
+    expect(getByText("Use different client credentials")).toBeInTheDocument()
+  })
+
+  it("reconnect WITHOUT different creds calls startReconnectFn with just the credentialId (reuse)", async () => {
+    mockStartReconnectFn.mockResolvedValue({ ok: true, authorizeUrl: "https://example.com/auth" })
+    mockUseLoaderData.mockReturnValue({
+      credentials: reconnectCred,
+      platforms,
+      oauthProviders,
     })
+    const { getAllByRole, getByRole } = render(<CredentialsPage />)
+
+    fireEvent.click(getAllByRole("button", { name: /reconnect/i })[0] as HTMLElement)
+    await waitFor(() => expect(getByRole("dialog")).toBeInTheDocument())
+
+    const submitBtn = getByRole("dialog").querySelector(
+      "button[type='submit']",
+    ) as HTMLButtonElement
+    fireEvent.click(submitBtn)
+
+    await waitFor(() => expect(mockStartReconnectFn).toHaveBeenCalled())
+    // Reuse path: only the credentialId is sent — no client creds.
+    expect(mockStartReconnectFn).toHaveBeenCalledWith({ data: { credentialId: "c1" } })
+  })
+
+  it("'Use different credentials' reveals the fields and validates them before submitting", async () => {
+    mockUseLoaderData.mockReturnValue({
+      credentials: reconnectCred,
+      platforms,
+      oauthProviders,
+    })
+    const { getAllByRole, getByRole, getByText, getByLabelText } = render(<CredentialsPage />)
+
+    fireEvent.click(getAllByRole("button", { name: /reconnect/i })[0] as HTMLElement)
+    await waitFor(() => expect(getByRole("dialog")).toBeInTheDocument())
+
+    fireEvent.click(getByText("Use different client credentials"))
+    // Fields now visible.
+    expect(getByLabelText("Client ID")).toBeInTheDocument()
+    expect(getByLabelText("Client Secret")).toBeInTheDocument()
+
+    // Submitting empty → validation error, no server call.
+    const submitBtn = getByRole("dialog").querySelector(
+      "button[type='submit']",
+    ) as HTMLButtonElement
+    fireEvent.click(submitBtn)
+    await waitFor(() => expect(getByText("Client ID is required")).toBeInTheDocument())
     expect(mockStartReconnectFn).not.toHaveBeenCalled()
   })
 })

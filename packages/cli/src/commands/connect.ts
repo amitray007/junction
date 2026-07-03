@@ -479,27 +479,49 @@ export async function runConnectFlow(opts: {
   repos: Repositories
   store: CredentialStore
   target: ConnectTarget
+  /**
+   * Pre-resolved BYO client creds — supplied by `credential reconnect` when it
+   * reuses the credential's ALREADY-STORED client_id/secret (read server-side
+   * from the store, never re-typed). When present, the --client-id / stdin path
+   * is skipped entirely. When absent (the `junction connect` create path, or a
+   * reconnect that passed --client-id to swap creds), client_id comes from the
+   * flag and client_secret from stdin as usual.
+   */
+  resolvedClientCreds?: { clientId: string; clientSecret: string }
 }): Promise<void> {
   const { provider, scopes, device, clientId, clientSecretStdin, json, repos, store, target } = opts
 
   printRegistrationHint(provider, json)
 
-  if (!clientId || clientId.trim() === "") {
-    reportConnectError(provider, json, "invalid input: --client-id is required")
-    return
-  }
-  if (!clientSecretStdin) {
-    reportConnectError(
-      provider,
-      json,
-      "invalid input: --client-secret-stdin is required (client_secret is never a flag)",
-    )
-    return
-  }
-  const clientSecret = await readStdin()
-  if (!clientSecret) {
-    reportConnectError(provider, json, "invalid input: client_secret (via stdin) must not be empty")
-    return
+  let effectiveClientId: string
+  let clientSecret: string
+  if (opts.resolvedClientCreds !== undefined) {
+    // Reuse the stored client creds (reconnect default) — no re-typing.
+    effectiveClientId = opts.resolvedClientCreds.clientId
+    clientSecret = opts.resolvedClientCreds.clientSecret
+  } else {
+    if (!clientId || clientId.trim() === "") {
+      reportConnectError(provider, json, "invalid input: --client-id is required")
+      return
+    }
+    if (!clientSecretStdin) {
+      reportConnectError(
+        provider,
+        json,
+        "invalid input: --client-secret-stdin is required (client_secret is never a flag)",
+      )
+      return
+    }
+    effectiveClientId = clientId
+    clientSecret = await readStdin()
+    if (!clientSecret) {
+      reportConnectError(
+        provider,
+        json,
+        "invalid input: client_secret (via stdin) must not be empty",
+      )
+      return
+    }
   }
 
   // loopback-fixed providers can't run the browser flow from the CLI alone —
@@ -519,8 +541,8 @@ export async function runConnectFlow(opts: {
   const outcome = device
     ? provider.deviceAuthorizationUrl === undefined
       ? ({ ok: false, error: { kind: "device-not-supported" } } satisfies ConnectOutcome)
-      : await runDeviceFlow({ provider, clientId, clientSecret, scopes, json })
-    : await runBrowserFlow({ provider, clientId, clientSecret, scopes, json })
+      : await runDeviceFlow({ provider, clientId: effectiveClientId, clientSecret, scopes, json })
+    : await runBrowserFlow({ provider, clientId: effectiveClientId, clientSecret, scopes, json })
 
   if (!outcome.ok) {
     reportConnectError(provider, json, formatOAuthConnectError(outcome.error))
@@ -534,7 +556,7 @@ export async function runConnectFlow(opts: {
     tokens: outcome.tokens,
     providerId: provider.id,
     authMode,
-    clientId,
+    clientId: effectiveClientId,
     clientSecret,
     now: Date.now(),
   } as const
