@@ -68,3 +68,7 @@ export type UpstreamError =
   | { kind: "invalid-args"; reason: string }
   | { kind: "response-too-large"; limit: number }
   | { kind: "too-many-tools"; count: number; cap: number }
+  // OAuth (increment 29) — a credential's refresh token is dead (invalid_grant,
+  // revoked, or no refresh material on file) and auto-refresh cannot recover it.
+  // First-class per the method file's scope decision #4: never an opaque 401.
+  | { kind: "needs-reauth"; platformId: string; account: string }

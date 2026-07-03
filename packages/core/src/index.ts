@@ -92,6 +92,15 @@ export {
   type OAuthProvider,
   resolveScopeString,
 } from "./oauth/catalog.js"
+export {
+  DEFAULT_REFRESH_BUFFER_MS,
+  type RefreshError,
+  type RefreshIfExpiredArgs,
+  type RefreshResult,
+  type RefreshTokenFn,
+  refreshIfExpired,
+  shouldRefresh,
+} from "./oauth/refresh.js"
 export type {
   ApiKeyRecord,
   ApiKeyScope,
