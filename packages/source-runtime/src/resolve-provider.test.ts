@@ -31,6 +31,20 @@ import { withTempHome } from "@junction/core/testing"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { makeResolveProvider } from "./resolve-provider.js"
 
+const refreshAccessToken = vi.fn()
+
+vi.mock("arctic", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("arctic")>()
+  return {
+    ...actual,
+    OAuth2Client: vi.fn().mockImplementation(function MockOAuth2Client(this: {
+      refreshAccessToken: typeof refreshAccessToken
+    }) {
+      this.refreshAccessToken = refreshAccessToken
+    }),
+  }
+})
+
 vi.mock("@junction/mcp-client", () => ({
   createMcpProvider: vi.fn(),
 }))
@@ -297,6 +311,101 @@ describe("makeResolveProvider — lost secret (store.get → Ok(null))", () => {
       // buildProvider (via createMcpProvider) was called with `null` as the
       // resolved secret — proves the lost value never got silently substituted.
       expect(vi.mocked(createMcpProvider)).toHaveBeenCalledWith(platform.connection, null)
+    })
+  })
+})
+
+describe("makeResolveProvider — oauth2 wiring (inc29-B): the real arctic-backed refreshFn is called", () => {
+  it("an expired oauth2 credential with valid refs auto-refreshes via oauthRefreshFn before injection", async () => {
+    await withTempHome(async () => {
+      const paths = getPaths()
+      const dbResult = await getDatabase(paths)
+      expect(dbResult.isOk()).toBe(true)
+      if (dbResult.isErr()) return
+      const repos = createRepositories(dbResult.value)
+
+      const platform = PlatformSchema.parse({
+        id: PlatformIdSchema.parse("oauth-platform"),
+        kind: "mcp" as const,
+        displayName: "OAuth MCP",
+        connection: { transport: "http" as const, url: "https://example.com/mcp" },
+      })
+      await repos.platforms.upsert(platform)
+
+      const storeResult = await createCredentialStore(paths)
+      expect(storeResult.isOk()).toBe(true)
+      if (storeResult.isErr()) return
+      const store = storeResult.value
+
+      await store.set("access-ref", "old-access-token")
+      await store.set("refresh-ref", "old-refresh-token")
+      await store.set("client-id-ref", "byo-client-id")
+      await store.set("client-secret-ref", "byo-client-secret")
+
+      const expiredAt = new Date(Date.now() - 1000).toISOString()
+      const createResult = await repos.credentials.create({
+        id: "oauth-cred-1",
+        platformId: "oauth-platform",
+        profileName: "work",
+        kind: "oauth2",
+        secretRef: "access-ref",
+        oauthMeta: {
+          refreshTokenRef: "refresh-ref",
+          clientIdRef: "client-id-ref",
+          clientSecretRef: "client-secret-ref",
+          providerId: "google",
+          authMode: "authorization_code",
+          expiresAt: expiredAt,
+          needsReauth: false,
+        },
+      })
+      expect(createResult.isOk()).toBe(true)
+      if (createResult.isErr()) return
+      const credential = createResult.value
+
+      refreshAccessToken.mockResolvedValueOnce({
+        data: { access_token: "rotated-access-token", expires_in: 3600 },
+        accessToken: () => "rotated-access-token",
+        hasRefreshToken: () => false,
+        accessTokenExpiresInSeconds: () => 3600,
+        hasScopes: () => false,
+      })
+
+      const { createMcpProvider } = await import("@junction/mcp-client")
+      const stubProvider: ToolProvider = {
+        listTools: () => new ResultAsync(Promise.resolve(ok([]))),
+        callTool: () => new ResultAsync(Promise.resolve(ok({ content: [] }))),
+        close: vi.fn().mockResolvedValue(undefined),
+      }
+      vi.mocked(createMcpProvider).mockReturnValue(
+        new ResultAsync(Promise.resolve(ok(stubProvider))),
+      )
+
+      const resolveProvider = makeResolveProvider(repos, store, paths, { logPrefix: "test" })
+      const result = await resolveProvider(
+        sourceRef({
+          platformId: PlatformIdSchema.parse("oauth-platform"),
+          credentialId: credential.id,
+        }),
+      )
+
+      expect(result.isOk()).toBe(true)
+      expect(refreshAccessToken).toHaveBeenCalledTimes(1)
+      // The rotated access token is what gets injected into the provider —
+      // never the old (now-expired) one.
+      expect(vi.mocked(createMcpProvider)).toHaveBeenCalledWith(
+        platform.connection,
+        "rotated-access-token",
+      )
+
+      // The rotation persisted: the credential's secretRef now points at a
+      // fresh ref holding the rotated token.
+      const refetch = await repos.credentials.get(credential.id)
+      expect(refetch.isOk()).toBe(true)
+      if (refetch.isOk()) {
+        const newToken = await store.get(refetch.value.secretRef)
+        expect(newToken.isOk() && newToken.value).toBe("rotated-access-token")
+      }
     })
   })
 })

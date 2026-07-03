@@ -94,12 +94,14 @@ export {
 } from "./oauth/catalog.js"
 export {
   DEFAULT_REFRESH_BUFFER_MS,
+  MAX_EXPIRES_IN_SECONDS,
   type RefreshError,
   type RefreshIfExpiredArgs,
   type RefreshResult,
   type RefreshTokenFn,
   refreshIfExpired,
   shouldRefresh,
+  toExpiresAt,
 } from "./oauth/refresh.js"
 export type {
   ApiKeyRecord,

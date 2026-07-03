@@ -15,10 +15,41 @@ import type { CredentialsRepo } from "../repositories/credentials.js"
 import type { Credential, OAuthMeta } from "../schema/credential.js"
 import {
   DEFAULT_REFRESH_BUFFER_MS,
+  MAX_EXPIRES_IN_SECONDS,
   type RefreshTokenFn,
   refreshIfExpired,
   shouldRefresh,
+  toExpiresAt,
 } from "./refresh.js"
+
+// ---------------------------------------------------------------------------
+// toExpiresAt — the shared expires_in → expiresAt clamp (used by BOTH the
+// refresh path and the connect/persist path; inc 29 slice B extracted it here
+// so the two can't drift). A provider's expires_in is unbounded → these are
+// the dangerous shapes that must NOT reach `new Date().toISOString()`.
+// ---------------------------------------------------------------------------
+
+describe("toExpiresAt", () => {
+  const now = 1_700_000_000_000
+  it("a valid positive expires_in → ISO string in the future", () => {
+    const result = toExpiresAt(now, 3600)
+    expect(result).toBe(new Date(now + 3600 * 1000).toISOString())
+  })
+  it("exactly MAX_EXPIRES_IN_SECONDS → still valid (boundary)", () => {
+    expect(toExpiresAt(now, MAX_EXPIRES_IN_SECONDS)).not.toBeNull()
+  })
+  it.each([
+    ["undefined", undefined],
+    ["zero", 0],
+    ["negative", -3600],
+    ["NaN", Number.NaN],
+    ["Infinity", Number.POSITIVE_INFINITY],
+    ["huge (Date overflow)", 1e308],
+    ["just over the century bound", MAX_EXPIRES_IN_SECONDS + 1],
+  ])("an unusable expires_in (%s) → null (never throws)", (_label, value) => {
+    expect(toExpiresAt(now, value as number | undefined)).toBeNull()
+  })
+})
 
 // ---------------------------------------------------------------------------
 // Test doubles

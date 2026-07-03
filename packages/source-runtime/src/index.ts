@@ -13,6 +13,29 @@
 export type { ResolvedSecret } from "./build-provider.js"
 export { buildProvider, toResolvedSecret } from "./build-provider.js"
 export { formatUpstreamError } from "./format-error.js"
+// OAuth connect flows (increment 29, slice B) — the arctic/fetch-touching
+// composition the CLI (D) and web (C) build `junction connect` / "Connect" on.
+export type {
+  BuildAuthorizeUrlArgs,
+  BuildAuthorizeUrlResult,
+  DeviceAuthorizeArgs,
+  DeviceAuthorizeResult,
+  DevicePollArgs,
+  ExchangeCodeArgs,
+  OAuthConnectError,
+  PersistOAuthTokensArgs,
+  PersistOAuthTokensUpdateArgs,
+} from "./oauth-connect.js"
+export {
+  buildAuthorizeUrl,
+  deviceAuthorize,
+  devicePoll,
+  exchangeCode,
+  persistOAuthTokens,
+} from "./oauth-connect.js"
+// The arctic-backed RefreshTokenFn (increment 29, slice B) — the injected
+// provider refresh HTTP call core's refreshIfExpired orchestrates.
+export { oauthRefreshFn } from "./oauth-refresh-fn.js"
 export { refreshIfExpiredSingleFlight } from "./refresh-singleflight.js"
 export type { ResolveCredentialError } from "./resolve-credential.js"
 export { resolveCredentialSecret } from "./resolve-credential.js"
