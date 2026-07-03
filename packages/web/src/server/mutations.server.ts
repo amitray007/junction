@@ -151,7 +151,11 @@ export async function mutateAddCredential(input: {
     // testCredential (above, keyed off store.get's stored-secretRef lookup)
     // does not apply on this path. No change needed here (verify-honesty
     // review, see STORED_SECRET_MISSING_DETAIL).
-    const verifyResult = (await verifyCredential(platform, secret, getPaths())).unwrapOr({
+    const verifyResult = (
+      await verifyCredential(platform, secret, getPaths(), {
+        oauthProviderId: credential.oauthMeta?.providerId,
+      })
+    ).unwrapOr({
       status: "unreachable" as const,
       detail: "verify failed unexpectedly",
     })
@@ -222,7 +226,10 @@ export type TestCredentialResult =
 async function loadPlatformForCredential(
   repos: ReturnType<typeof createRepositories>,
   credentialId: string,
-): Promise<{ ok: true; platform: Platform; secretRef: string } | { ok: false; error: string }> {
+): Promise<
+  | { ok: true; platform: Platform; secretRef: string; oauthProviderId?: string }
+  | { ok: false; error: string }
+> {
   const credResult = await repos.credentials.get(credentialId)
   if (credResult.isErr()) {
     return { ok: false, error: credentialErrorMessage(credResult.error.kind) }
@@ -237,7 +244,12 @@ async function loadPlatformForCredential(
     }
   }
 
-  return { ok: true, platform: platformResult.value, secretRef: credential.secretRef }
+  return {
+    ok: true,
+    platform: platformResult.value,
+    secretRef: credential.secretRef,
+    oauthProviderId: credential.oauthMeta?.providerId,
+  }
 }
 
 /** Map a VerifyOutcome to the minimal detail/reason string TestCredentialResult carries. */
@@ -263,7 +275,7 @@ export async function testCredential(credentialId: string): Promise<TestCredenti
 
   const loaded = await loadPlatformForCredential(repos, credentialId)
   if (!loaded.ok) return { ok: false, error: loaded.error }
-  const { platform, secretRef } = loaded
+  const { platform, secretRef, oauthProviderId } = loaded
 
   const storeResult = await createCredentialStore(getPaths())
   if (storeResult.isErr()) return { ok: false, error: "Credential store unavailable" }
@@ -275,7 +287,7 @@ export async function testCredential(credentialId: string): Promise<TestCredenti
   const result: VerifyOutcome =
     secret === null
       ? { status: "unreachable", detail: STORED_SECRET_MISSING_DETAIL }
-      : (await verifyCredential(platform, secret, getPaths())).unwrapOr({
+      : (await verifyCredential(platform, secret, getPaths(), { oauthProviderId })).unwrapOr({
           status: "unreachable" as const,
           detail: "verify failed unexpectedly",
         })

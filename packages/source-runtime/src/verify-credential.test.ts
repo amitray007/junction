@@ -604,3 +604,155 @@ describe("verifyCredential — secret/URL discipline (serialize + assert)", () =
     expect(serialized).not.toContain(SENTINEL_SECRET)
   })
 })
+
+// ---------------------------------------------------------------------------
+// OAuth-native token check (Task 2 follow-up): when an oauth2 credential's
+// providerId has a catalog userinfo endpoint, Test Connection verifies the
+// TOKEN against that endpoint instead of the platform's source.
+// ---------------------------------------------------------------------------
+
+describe("verifyCredential — oauth2 identity check", () => {
+  const SENTINEL = "sentinel-oauth-token-do-not-leak-abc123" // gitleaks:allow
+  const realFetch = globalThis.fetch
+  afterEach(() => {
+    globalThis.fetch = realFetch
+  })
+
+  // A GitHub oauth2 credential attached to (say) an MCP platform whose source is
+  // unreachable — the OAuth path must verify the TOKEN, never touch the source.
+  function githubOAuthOpts() {
+    return { oauthProviderId: "github" }
+  }
+
+  it("token check: 200 → ok (never calls buildProvider / the source)", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }))
+    const result = await verifyCredential(mcpPlatform(), "tok", FAKE_PATHS, githubOAuthOpts())
+    expect(result._unsafeUnwrap()).toEqual({ status: "ok" })
+    expect(buildProvider).not.toHaveBeenCalled()
+    // the token went in as a bearer, the source was never touched
+    const call = vi.mocked(globalThis.fetch).mock.calls[0]
+    expect(String(call?.[0])).toContain("api.github.com/user")
+  })
+
+  it("token check: 401 → auth-failed", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response("no", { status: 401 }))
+    const result = await verifyCredential(mcpPlatform(), "tok", FAKE_PATHS, githubOAuthOpts())
+    expect(result._unsafeUnwrap()).toEqual({ status: "auth-failed" })
+  })
+
+  it("token check: 403 → auth-failed", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response("no", { status: 403 }))
+    const result = await verifyCredential(mcpPlatform(), "tok", FAKE_PATHS, githubOAuthOpts())
+    expect(result._unsafeUnwrap()).toEqual({ status: "auth-failed" })
+  })
+
+  it("token check: 500 → unreachable with a leak-safe HTTP-status detail", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response("err", { status: 500 }))
+    const result = await verifyCredential(mcpPlatform(), "tok", FAKE_PATHS, githubOAuthOpts())
+    expect(result._unsafeUnwrap()).toEqual({ status: "unreachable", detail: "HTTP 500" })
+  })
+
+  it("token check: timeout (AbortError) → unreachable, never hangs", async () => {
+    // AbortSignal.timeout fires → fetch rejects with an AbortError; the catch
+    // maps it to unreachable with the leak-safe constructor name.
+    globalThis.fetch = vi.fn().mockRejectedValue(
+      Object.assign(new Error("aborted"), {
+        name: "AbortError",
+        constructor: { name: "DOMException" },
+      }),
+    )
+    const result = await verifyCredential(mcpPlatform(), "tok", FAKE_PATHS, githubOAuthOpts())
+    expect(result._unsafeUnwrap().status).toBe("unreachable")
+  })
+
+  it("token check: network error → unreachable with the error constructor name (never the cause message)", async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockRejectedValue(new TypeError("fetch failed to https://secret-url"))
+    const result = await verifyCredential(mcpPlatform(), "tok", FAKE_PATHS, githubOAuthOpts())
+    const outcome = result._unsafeUnwrap()
+    expect(outcome.status).toBe("unreachable")
+    if (outcome.status === "unreachable") {
+      expect(outcome.detail).toBe("TypeError")
+      expect(outcome.detail).not.toContain("secret-url")
+    }
+  })
+
+  it("slack: 200 + {ok:false} → auth-failed (the token is dead despite HTTP 200)", async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ ok: false, error: "invalid_auth" }), { status: 200 }),
+      )
+    const result = await verifyCredential(mcpPlatform(), "tok", FAKE_PATHS, {
+      oauthProviderId: "slack",
+    })
+    expect(result._unsafeUnwrap()).toEqual({ status: "auth-failed" })
+  })
+
+  it("slack: 200 + {ok:true} → ok", async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true, user: "u" }), { status: 200 }))
+    const result = await verifyCredential(mcpPlatform(), "tok", FAKE_PATHS, {
+      oauthProviderId: "slack",
+    })
+    expect(result._unsafeUnwrap()).toEqual({ status: "ok" })
+  })
+
+  it("slack: 200 + {ok absent} → auth-failed (require ok===true; absent ok is not confirmed-live)", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }))
+    const result = await verifyCredential(mcpPlatform(), "tok", FAKE_PATHS, {
+      oauthProviderId: "slack",
+    })
+    expect(result._unsafeUnwrap()).toEqual({ status: "auth-failed" })
+  })
+
+  it("NO TOKEN LEAK: the sentinel token never appears in any outcome, across every branch", async () => {
+    for (const status of [200, 401, 500]) {
+      globalThis.fetch = vi.fn().mockResolvedValue(new Response("{}", { status }))
+      const r = await verifyCredential(mcpPlatform(), SENTINEL, FAKE_PATHS, githubOAuthOpts())
+      expect(JSON.stringify(r._unsafeUnwrap())).not.toContain(SENTINEL)
+    }
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error(SENTINEL)) // even if the cause carries it
+    const r = await verifyCredential(mcpPlatform(), SENTINEL, FAKE_PATHS, githubOAuthOpts())
+    expect(JSON.stringify(r._unsafeUnwrap())).not.toContain(SENTINEL)
+  })
+
+  it("FALLBACK: no oauthProviderId → source-verify path unchanged (buildProvider IS called)", async () => {
+    // No opts → the oauth2 branch is skipped; an MCP platform hits buildProvider as before.
+    vi.mocked(buildProvider).mockReturnValue(new ResultAsync(Promise.resolve(ok(stubProvider({})))))
+    const fetchSpy = vi.fn()
+    globalThis.fetch = fetchSpy
+    await verifyCredential(mcpPlatform(), "tok", FAKE_PATHS)
+    expect(buildProvider).toHaveBeenCalled()
+    expect(fetchSpy).not.toHaveBeenCalled() // the userinfo fetch never fired
+  })
+
+  it("FALLBACK: providerId with NO userinfoUrl (generic) → source-verify path (buildProvider called)", async () => {
+    vi.mocked(buildProvider).mockReturnValue(new ResultAsync(Promise.resolve(ok(stubProvider({})))))
+    const fetchSpy = vi.fn()
+    globalThis.fetch = fetchSpy
+    await verifyCredential(mcpPlatform(), "tok", FAKE_PATHS, { oauthProviderId: "generic" })
+    expect(buildProvider).toHaveBeenCalled()
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  it("FALLBACK: null secret → source-verify path (no userinfo fetch for a lost/absent token)", async () => {
+    vi.mocked(buildProvider).mockReturnValue(new ResultAsync(Promise.resolve(ok(stubProvider({})))))
+    const fetchSpy = vi.fn()
+    globalThis.fetch = fetchSpy
+    await verifyCredential(mcpPlatform(), null, FAKE_PATHS, githubOAuthOpts())
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  it("PRECEDENCE: the oauth2 token check wins over the cli short-circuit (guard runs before kind-dispatch)", async () => {
+    // A cli platform can't really hold an oauth2 cred, but pin the ordering:
+    // with a userinfo-capable providerId + token, the oauth2 branch fires FIRST,
+    // so we never reach the cli "not-verifiable" short-circuit.
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }))
+    const result = await verifyCredential(cliPlatform(), "tok", FAKE_PATHS, githubOAuthOpts())
+    expect(result._unsafeUnwrap()).toEqual({ status: "ok" })
+    expect(vi.mocked(globalThis.fetch)).toHaveBeenCalled()
+  })
+})

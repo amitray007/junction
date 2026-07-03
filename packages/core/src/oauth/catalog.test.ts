@@ -207,3 +207,34 @@ describe("normalizeTokenResponse", () => {
     expect(() => normalizeTokenResponse(github, {})).toThrow()
   })
 })
+
+describe("userinfoUrl (OAuth-native Test Connection)", () => {
+  it("tuned providers with a stable identity endpoint carry a userinfoUrl", () => {
+    expect(getProvider("google")?.userinfoUrl).toBe("https://www.googleapis.com/oauth2/v3/userinfo")
+    expect(getProvider("github")?.userinfoUrl).toBe("https://api.github.com/user")
+    expect(getProvider("github-app")?.userinfoUrl).toBe("https://api.github.com/user")
+    expect(getProvider("slack")?.userinfoUrl).toBe("https://slack.com/api/auth.test")
+    expect(getProvider("microsoft")?.userinfoUrl).toBe("https://graph.microsoft.com/v1.0/me")
+    expect(getProvider("notion")?.userinfoUrl).toBe("https://api.notion.com/v1/users/me")
+  })
+
+  it("github requires a User-Agent header (GitHub rejects UA-less requests)", () => {
+    expect(getProvider("github")?.userinfoHeaders?.["User-Agent"]).toBeDefined()
+  })
+
+  it("notion requires the Notion-Version header", () => {
+    expect(getProvider("notion")?.userinfoHeaders?.["Notion-Version"]).toBeDefined()
+  })
+
+  it("atlassian + generic have NO userinfoUrl (needs a scope junction can't guarantee / user-supplied)", () => {
+    expect(getProvider("atlassian")?.userinfoUrl).toBeUndefined()
+    expect(getProvider("generic")?.userinfoUrl).toBeUndefined()
+  })
+
+  it("userinfoHeaders never contains an Authorization header (the bearer is added by the verifier)", () => {
+    for (const p of listProviders()) {
+      const keys = Object.keys(p.userinfoHeaders ?? {}).map((k) => k.toLowerCase())
+      expect(keys).not.toContain("authorization")
+    }
+  })
+})

@@ -52,6 +52,16 @@ export interface OAuthProvider {
   /** The "guided BYO client" text — exact redirect URI + scopes to register, plus docs. */
   registrationHint: { redirectUri: string; scopes: string; docsUrl: string }
   supportsRefresh: boolean
+  /**
+   * A stable identity/token-introspection GET — bearer the access token at
+   * this URL to prove the token is live (Test Connection, increment 29.1).
+   * DATA ONLY: the catalog stays pure/HTTP-free; the actual `fetch` call
+   * lives in source-runtime's verifyCredential. Absent for "generic"
+   * (user-supplied provider — no stable endpoint junction can assume).
+   */
+  userinfoUrl?: string
+  /** Non-auth headers the userinfo GET needs beyond `Authorization: Bearer <token>` (e.g. GitHub's User-Agent, Notion's Notion-Version). */
+  userinfoHeaders?: Record<string, string>
 }
 
 // ---------------------------------------------------------------------------
@@ -140,6 +150,10 @@ const PROVIDERS: readonly OAuthProvider[] = [
       scopes: "offline access requires access_type=offline + prompt=consent (handled by junction)",
       docsUrl: "https://developers.google.com/identity/protocols/oauth2",
     },
+    // Google's OpenID Connect userinfo endpoint — a plain bearer GET, no
+    // extra headers. Dogfooded this session: a stored Google token
+    // authenticated against it with a 200.
+    userinfoUrl: "https://www.googleapis.com/oauth2/v3/userinfo",
   },
   {
     // GitHub OAuth App: token never expires, no refresh — the historical
@@ -168,6 +182,15 @@ const PROVIDERS: readonly OAuthProvider[] = [
       scopes: "repo read:user (adjust per platform)",
       docsUrl: "https://docs.github.com/en/apps/oauth-apps",
     },
+    // GitHub's REST API requires a User-Agent on every request (undocumented
+    // reject-if-missing behavior in practice) and recommends the versioned
+    // Accept header. Dogfooded this session: a stored GitHub gho_ token
+    // authenticated against this endpoint with a 200.
+    userinfoUrl: "https://api.github.com/user",
+    userinfoHeaders: {
+      Accept: "application/vnd.github+json",
+      "User-Agent": "junction",
+    },
   },
   {
     // GitHub App (as opposed to OAuth App): tokens rotate/expire and refresh
@@ -191,6 +214,13 @@ const PROVIDERS: readonly OAuthProvider[] = [
       scopes: "permissions are configured on the GitHub App itself, not via scopes",
       docsUrl: "https://docs.github.com/en/apps/creating-github-apps",
     },
+    // Same identity endpoint as the "github" OAuth App entry — a GitHub App
+    // user-to-server token authenticates against /user the same way.
+    userinfoUrl: "https://api.github.com/user",
+    userinfoHeaders: {
+      Accept: "application/vnd.github+json",
+      "User-Agent": "junction",
+    },
   },
   {
     id: "slack",
@@ -213,6 +243,11 @@ const PROVIDERS: readonly OAuthProvider[] = [
       scopes: "channels:read,chat:write (comma-separated; adjust per platform)",
       docsUrl: "https://api.slack.com/authentication/oauth-v2",
     },
+    // auth.test: confirms the token is live and identifies the bot/user +
+    // team. Slack's usual 200-with-{ok:false} pattern applies here too — the
+    // identity-check branch in source-runtime must reject ok:false at 200,
+    // same as parseSlackTokenResponse above.
+    userinfoUrl: "https://slack.com/api/auth.test",
   },
   {
     id: "microsoft",
@@ -236,6 +271,10 @@ const PROVIDERS: readonly OAuthProvider[] = [
       scopes: "offline_access is added automatically by junction",
       docsUrl: "https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow",
     },
+    // Microsoft Graph "me". A plain bearer GET; needs a User.Read-class scope —
+    // if the connected token lacks it this 403s, which the verifier maps to
+    // auth-failed (honest: junction can't confirm the token that way).
+    userinfoUrl: "https://graph.microsoft.com/v1.0/me",
   },
   {
     id: "notion",
@@ -255,6 +294,11 @@ const PROVIDERS: readonly OAuthProvider[] = [
       scopes: "Notion scopes are configured on the integration itself, not via the authorize URL",
       docsUrl: "https://developers.notion.com/docs/authorization",
     },
+    // Notion "get self" — a bearer GET that requires the Notion-Version header
+    // (the API rejects requests without it). Version pinned to a current, stable
+    // release; bump when Notion deprecates it.
+    userinfoUrl: "https://api.notion.com/v1/users/me",
+    userinfoHeaders: { "Notion-Version": "2022-06-28" },
   },
   {
     id: "atlassian",
@@ -277,6 +321,12 @@ const PROVIDERS: readonly OAuthProvider[] = [
       scopes: "read:jira-work offline_access (adjust per product)",
       docsUrl: "https://developer.atlassian.com/cloud/jira/platform/oauth-2-3lo-apps/",
     },
+    // NO userinfoUrl: Atlassian's identity endpoint (`api.atlassian.com/me`)
+    // needs the `read:me` scope AND the "User Identity API" enabled in the dev
+    // console — neither of which junction's connect flow requests/guarantees.
+    // A userinfo check that 403s for a validly-connected token would be a
+    // misleading auth-failed, so we omit it and let Test Connection fall
+    // through to the source-verify / not-verifiable (honest > confidently wrong).
   },
   {
     // The escape hatch: user supplies authorizationUrl/tokenUrl (and scopes)
