@@ -57,6 +57,11 @@ export {
   verifyApiKey,
 } from "./api-keys/index.js"
 // ---------------------------------------------------------------------------
+// Browser — generic "open a URL" util (extracted from cli's `web` command;
+// shared by web, the OAuth connect flow, and the OAuth device-code flow)
+// ---------------------------------------------------------------------------
+export { openInBrowser } from "./browser/open-browser.js"
+// ---------------------------------------------------------------------------
 // Credential store — encrypted-at-rest secret management
 // ---------------------------------------------------------------------------
 export {
@@ -75,6 +80,18 @@ export { type Db, getDatabase } from "./db/index.js"
 export type { ApiKeyError, CredentialError, DbError, SandboxError } from "./errors/index.js"
 // ID generators — ids/ is the sole generator; see ids/index.ts for the swap-point comment
 export { newApiKeyId, newCredentialId, newPlatformId, newProfileId } from "./ids/index.js"
+// ---------------------------------------------------------------------------
+// OAuth provider catalog — pure data + pure functions (inc 29; no HTTP)
+// ---------------------------------------------------------------------------
+export {
+  buildAuthorizationParams,
+  getProvider,
+  listProviders,
+  type NormalizedTokens,
+  normalizeTokenResponse,
+  type OAuthProvider,
+  resolveScopeString,
+} from "./oauth/catalog.js"
 export type {
   ApiKeyRecord,
   ApiKeyScope,

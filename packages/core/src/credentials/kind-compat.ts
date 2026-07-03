@@ -9,7 +9,12 @@
 // (compatibleCredentialKinds' first entry) always picks the HONEST kind though —
 // nothing re-labels existing data, and new adds get the real kind.
 //
-// oauth2 is rejected everywhere this increment (gated until inc 29's multi-ref vault).
+// oauth2 is no longer rejected everywhere (inc 29 — the OAuth vault): the matrix
+// is honest about it (an oauth2-scheme platform's compatibleCredentialKinds
+// includes "oauth2"), so a platform can declare it and the web picker can offer
+// it. It still never flows through the plaintext addCredential path — OAuth
+// tokens are minted via a separate connect/addOAuthCredential entry path (see
+// the Exclude<CredentialKind,"oauth2"> comment in add-credential.ts).
 
 import type { CredentialKind } from "../schema/credential.js"
 import type { OpenApiAuth } from "../schema/openapi-connection.js"
@@ -25,9 +30,8 @@ function kindsForOpenApiAuth(auth: OpenApiAuth): CredentialKind[] {
     case "bearer":
       return ["bearer"]
     case "oauth2":
-      // oauth2 joins the matrix in inc 29; today the platform still only
-      // accepts a bearer-shaped credential as the interim opaque token.
-      return ["bearer"]
+      // oauth2 is the honest kind for an oauth2-scheme platform (inc 29).
+      return ["oauth2"]
     case "apiKey":
       return ["api-key"]
     case "basic":
@@ -115,12 +119,11 @@ export function compatibleCredentialKinds(platform: Platform): CredentialKind[] 
 /**
  * Whether `kind` is an acceptable credential kind for `platform` at add time.
  *
- * = compatibleCredentialKinds(platform) ∪ {"bearer"} (universal legacy back-compat),
- * EXCEPT "oauth2", which is always rejected this increment regardless of the
- * matrix (gated until inc 29).
+ * = compatibleCredentialKinds(platform) ∪ {"bearer"} (universal legacy back-compat).
+ * oauth2 flows through the normal matrix path — accepted iff the platform's
+ * compatibleCredentialKinds includes it (inc 29; see the file header comment).
  */
 export function isKindAccepted(platform: Platform, kind: CredentialKind): boolean {
-  if (kind === "oauth2") return false
   if (kind === "bearer") return true
   return compatibleCredentialKinds(platform).includes(kind)
 }

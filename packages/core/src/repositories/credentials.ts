@@ -9,7 +9,7 @@ import { mapDbError } from "../db/errors.js"
 import type { Db } from "../db/index.js"
 import { credentials } from "../db/schema.js"
 import type { DbError } from "../errors/index.js"
-import type { Credential, CredentialVerifyResult } from "../schema/credential.js"
+import type { Credential, CredentialVerifyResult, OAuthMeta } from "../schema/credential.js"
 import { CredentialSchema, OAuthMetaSchema } from "../schema/credential.js"
 import type { PlatformId } from "../schema/primitives.js"
 
@@ -141,6 +141,80 @@ export function createCredentialsRepo(db: Db) {
           .where(eq(credentials.id, id))
           .run()
         return okAsync(undefined)
+      } catch (cause) {
+        return errAsync(mapDbError(cause))
+      }
+    },
+
+    /**
+     * Atomic write of the OAuth token refs + expiry into `oauth_meta` (inc 29 —
+     * the OAuth vault). Merges the patch onto the EXISTING oauthMeta — it does
+     * NOT clobber unrelated fields.
+     *
+     * CONTRACT: an ABSENT key OR an explicit `undefined` value both retain the
+     * prior value (a no-op for that field) — pass `null` (for the nullable
+     * `expiresAt`) to actually clear it. This is NOT a `"key" in patch`
+     * presence check: a caller building a patch via conditional spread (e.g.
+     * `{ refreshTokenRef: rotated ? mint(newToken) : undefined }` — the exact
+     * shape A2's refresh engine uses when a provider doesn't rotate the
+     * refresh token) would have the key PRESENT with value `undefined`; a
+     * presence check would then write `undefined`, which
+     * `OAuthMetaSchema.parse` + `JSON.stringify` silently DROP — wiping a
+     * live refresh ref and orphaning its secret in the store. Checking
+     * `!== undefined` instead correctly admits `null` and `false` (the two
+     * other meaningful non-omission values: `expiresAt: null` = non-expiring,
+     * `needsReauth: false` = re-auth cleared) while treating `undefined` as
+     * "don't touch this field."
+     *
+     * `secretRef` (the access token) is a COLUMN, not part of oauthMeta — when
+     * present (and not undefined) in the patch it repoints the credential's
+     * secretRef column, mirroring `setSecretRef`. Every other field merges
+     * into the `oauth_meta` JSON blob.
+     */
+    setOAuthTokens(
+      id: string,
+      patch: {
+        secretRef?: string
+        refreshTokenRef?: string
+        expiresAt?: string | null
+        scopes?: string[]
+        needsReauth?: boolean
+        obtainedAt?: string
+        providerId?: string
+        authMode?: OAuthMeta["authMode"]
+        clientIdRef?: string
+        clientSecretRef?: string
+      },
+    ): ResultAsync<Credential, DbError> {
+      try {
+        const found = fetchRowOrNotFound(db, id)
+        if (!found.ok) return errAsync(found.error)
+
+        const existing = found.row.oauthMeta
+          ? OAuthMetaSchema.parse(JSON.parse(found.row.oauthMeta) as unknown)
+          : {}
+
+        const merged: OAuthMeta = { ...existing }
+        if (patch.refreshTokenRef !== undefined) merged.refreshTokenRef = patch.refreshTokenRef
+        if (patch.expiresAt !== undefined) merged.expiresAt = patch.expiresAt
+        if (patch.scopes !== undefined) merged.scopes = patch.scopes
+        if (patch.needsReauth !== undefined) merged.needsReauth = patch.needsReauth
+        if (patch.obtainedAt !== undefined) merged.obtainedAt = patch.obtainedAt
+        if (patch.providerId !== undefined) merged.providerId = patch.providerId
+        if (patch.authMode !== undefined) merged.authMode = patch.authMode
+        if (patch.clientIdRef !== undefined) merged.clientIdRef = patch.clientIdRef
+        if (patch.clientSecretRef !== undefined) merged.clientSecretRef = patch.clientSecretRef
+
+        const validated = OAuthMetaSchema.parse(merged)
+        const secretRef = patch.secretRef !== undefined ? patch.secretRef : found.row.secretRef
+
+        db.update(credentials)
+          .set({ secretRef, oauthMeta: JSON.stringify(validated) })
+          .where(eq(credentials.id, id))
+          .run()
+        return okAsync(
+          rowToCredential({ ...found.row, secretRef, oauthMeta: JSON.stringify(validated) }),
+        )
       } catch (cause) {
         return errAsync(mapDbError(cause))
       }

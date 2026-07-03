@@ -78,6 +78,37 @@ module.exports = {
       },
     },
     {
+      // Increment 29: core-imports-nothing-in-repo (above) only bans IN-REPO
+      // edges — nothing stops core importing arctic/undici/node:http today.
+      // The OAuth catalog + token model + refresh POLICY are pure in core; the
+      // arctic/fetch/HTTP calls live in source-runtime. This rule makes "core
+      // stays HTTP-free" MECHANICAL (mirroring the inc-28
+      // source-runtime-not-mcp-server rule below), since the in-repo rule
+      // can't catch a core→arctic edge. Positive-controlled with a planted
+      // import (see gotchas.md — a depcruise positive control must be a
+      // static VALUE import; import type / lazy import() can silently pass).
+      //
+      // VERIFIED `to.path` match form (empirically, not assumed): depcruise
+      // resolves a node builtin's `module.resolved` WITHOUT the "node:"
+      // protocol prefix — `import "node:http"` resolves to `resolved: "http"`
+      // (the "node:" protocol lands in a separate `protocol` field this path
+      // matcher never sees). So the pattern matches the BARE builtin name
+      // (`^(http|https)$`), not `^node:https?$` — a plausible-looking pattern
+      // that would silently never fire. npm packages (arctic/undici) resolve
+      // to a node_modules path, so a bare-name alternation catches them too.
+      name: "core-not-http",
+      comment:
+        "core must stay HTTP-free (embeddable, testable). The OAuth catalog + token model + refresh " +
+        "POLICY are pure in core; the arctic/fetch/HTTP calls live in source-runtime. Bans core from " +
+        "importing arctic or any node HTTP module — the in-repo rule can't catch a core→arctic edge. " +
+        "(inc 29; positive-controlled with a planted import.)",
+      severity: "error",
+      from: { path: "^packages/core/" },
+      to: {
+        path: "^(arctic|undici|http|https)$",
+      },
+    },
+    {
       // Increment 28: source-runtime is a SOURCE-RUNNING lib (buildProvider /
       // resolveCredentialSecret / makeResolveProvider — build a ToolProvider and
       // resolve secrets). mcp-server is the SERVING composition layer (McpServer +

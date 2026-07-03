@@ -1406,7 +1406,14 @@ describe("repositories", () => {
       expect(storeTouched).toBe(false)
     })
 
-    it("rejects oauth2 for every platform shape with kind-incompatible", async () => {
+    it("rejects oauth2 for every platform shape with kind-incompatible — even an oauth2-scheme platform whose MATRIX accepts oauth2 (inc 29)", async () => {
+      // The kind-compat MATRIX now accepts "oauth2" for an oauth2-scheme
+      // platform (inc 29 un-gate) — but addCredential's plaintext-secret path
+      // has its own dedicated runtime guard that rejects "oauth2"
+      // unconditionally, regardless of the matrix: this path can only ever
+      // hold ONE plaintext secret, and OAuth needs three refs
+      // (access/refresh/client_secret). Proves the guard holds even though
+      // the matrix alone would now say yes.
       const platformId = newPlatformId()
       const platform: Platform = {
         id: platformId,
@@ -1519,6 +1526,202 @@ describe("repositories", () => {
       if (result.isErr()) {
         expect(result.error.kind).toBe("not-found")
       }
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // credentials.setOAuthTokens — atomic oauth_meta write, merge-not-replace (inc 29)
+  // ---------------------------------------------------------------------------
+  describe("credentials.setOAuthTokens", () => {
+    async function createOAuthCredential(): Promise<string> {
+      const platformId = newPlatformId()
+      const platform: Platform = { id: platformId, kind: "mcp" as const, displayName: "P" }
+      await repos.platforms.upsert(platform)
+      const created = await repos.credentials.create({
+        id: newCredentialId(),
+        platformId,
+        profileName: "work",
+        kind: "oauth2",
+        secretRef: "ref-access-initial",
+      })
+      expect(created.isOk()).toBe(true)
+      if (!created.isOk()) throw created.error
+      return String(created.value.id)
+    }
+
+    it("sets tokens on a fresh credential — oauthMeta round-trips all fields", async () => {
+      const id = await createOAuthCredential()
+      const result = await repos.credentials.setOAuthTokens(id, {
+        secretRef: "ref-access-1",
+        refreshTokenRef: "ref-refresh-1",
+        expiresAt: "2026-01-01T00:00:00Z",
+        scopes: ["repo", "read:user"],
+        needsReauth: false,
+        obtainedAt: "2025-12-31T00:00:00Z",
+        providerId: "github",
+        authMode: "authorization_code",
+      })
+      expect(result.isOk()).toBe(true)
+      if (!result.isOk()) return
+      expect(result.value.secretRef).toBe("ref-access-1")
+      expect(result.value.oauthMeta).toEqual({
+        refreshTokenRef: "ref-refresh-1",
+        expiresAt: "2026-01-01T00:00:00Z",
+        scopes: ["repo", "read:user"],
+        needsReauth: false,
+        obtainedAt: "2025-12-31T00:00:00Z",
+        providerId: "github",
+        authMode: "authorization_code",
+      })
+
+      const fetched = await repos.credentials.get(id)
+      expect(fetched.isOk()).toBe(true)
+      if (fetched.isOk()) expect(fetched.value.oauthMeta).toEqual(result.value.oauthMeta)
+    })
+
+    it("merge semantics: setOAuthTokens with only {needsReauth:true} does NOT wipe an existing refreshTokenRef", async () => {
+      const id = await createOAuthCredential()
+      const first = await repos.credentials.setOAuthTokens(id, {
+        secretRef: "ref-access-1",
+        refreshTokenRef: "ref-refresh-1",
+        expiresAt: "2026-01-01T00:00:00Z",
+        scopes: ["repo"],
+        providerId: "github",
+      })
+      expect(first.isOk()).toBe(true)
+
+      // Only patch needsReauth — refreshTokenRef/scopes/providerId are ABSENT
+      // from this patch and must be RETAINED, not nulled/wiped.
+      const second = await repos.credentials.setOAuthTokens(id, { needsReauth: true })
+      expect(second.isOk()).toBe(true)
+      if (!second.isOk()) return
+      expect(second.value.oauthMeta?.needsReauth).toBe(true)
+      expect(second.value.oauthMeta?.refreshTokenRef).toBe("ref-refresh-1")
+      expect(second.value.oauthMeta?.scopes).toEqual(["repo"])
+      expect(second.value.oauthMeta?.providerId).toBe("github")
+      // secretRef (access token column) is untouched by an oauthMeta-only patch.
+      expect(second.value.secretRef).toBe("ref-access-1")
+    })
+
+    it("an explicit `undefined` on a ref/meta key is a no-op (keep-old), NOT a silent wipe — the conditional-spread/rotation-race scenario", async () => {
+      // This is the exact shape A2's refresh engine produces when a provider
+      // (e.g. Google on some refreshes) does NOT rotate the refresh token:
+      // `{ refreshTokenRef: rotated ? mint(newToken) : undefined, ... }`. The
+      // key is PRESENT in the patch with value `undefined` — a `"key" in
+      // patch` presence check would treat that as "write undefined", which
+      // OAuthMetaSchema.parse + JSON.stringify silently DROP, wiping the live
+      // refreshTokenRef and orphaning its secret in the store. The fix checks
+      // `!== undefined` instead of presence, so this must be a true no-op.
+      const id = await createOAuthCredential()
+      const seeded = await repos.credentials.setOAuthTokens(id, {
+        secretRef: "ref-access-1",
+        refreshTokenRef: "ref-refresh-1",
+        scopes: ["repo"],
+        providerId: "github",
+      })
+      expect(seeded.isOk()).toBe(true)
+
+      // Explicitly pass `refreshTokenRef: undefined` (not omitted) to
+      // reproduce the exact conditional-spread shape the refresh engine builds.
+      const patched = await repos.credentials.setOAuthTokens(id, {
+        refreshTokenRef: undefined,
+        needsReauth: true,
+      })
+      expect(patched.isOk()).toBe(true)
+      if (!patched.isOk()) return
+      // The prior refreshTokenRef must be RETAINED, not wiped.
+      expect(patched.value.oauthMeta?.refreshTokenRef).toBe("ref-refresh-1")
+      // The explicitly-set field in the same patch still writes normally.
+      expect(patched.value.oauthMeta?.needsReauth).toBe(true)
+      // Untouched fields survive too.
+      expect(patched.value.oauthMeta?.scopes).toEqual(["repo"])
+      expect(patched.value.oauthMeta?.providerId).toBe("github")
+    })
+
+    it("expiresAt: null is written (non-expiring), distinct from absent", async () => {
+      const id = await createOAuthCredential()
+      const first = await repos.credentials.setOAuthTokens(id, {
+        expiresAt: "2026-01-01T00:00:00Z",
+      })
+      expect(first.isOk()).toBe(true)
+      if (first.isOk()) expect(first.value.oauthMeta?.expiresAt).toBe("2026-01-01T00:00:00Z")
+
+      // Explicit null OVERWRITES the prior value (a meaningful write, not an omission).
+      const second = await repos.credentials.setOAuthTokens(id, { expiresAt: null })
+      expect(second.isOk()).toBe(true)
+      if (second.isOk()) expect(second.value.oauthMeta?.expiresAt).toBeNull()
+
+      // A subsequent patch that OMITS expiresAt entirely must retain null, not
+      // revert to undefined/absent.
+      const third = await repos.credentials.setOAuthTokens(id, { needsReauth: true })
+      expect(third.isOk()).toBe(true)
+      if (third.isOk()) {
+        expect(third.value.oauthMeta?.expiresAt).toBeNull()
+        expect(Object.hasOwn(third.value.oauthMeta ?? {}, "expiresAt")).toBe(true)
+      }
+    })
+
+    it("returns not-found for an unknown credential id", async () => {
+      const result = await repos.credentials.setOAuthTokens("does-not-exist", { needsReauth: true })
+      expect(result.isErr()).toBe(true)
+      if (result.isErr()) expect(result.error.kind).toBe("not-found")
+    })
+
+    it("secretRef patch repoints the column AND leaves oauthMeta intact", async () => {
+      const id = await createOAuthCredential()
+      const first = await repos.credentials.setOAuthTokens(id, {
+        secretRef: "ref-access-1",
+        refreshTokenRef: "ref-refresh-1",
+        providerId: "google",
+      })
+      expect(first.isOk()).toBe(true)
+
+      const second = await repos.credentials.setOAuthTokens(id, { secretRef: "ref-access-2" })
+      expect(second.isOk()).toBe(true)
+      if (!second.isOk()) return
+      expect(second.value.secretRef).toBe("ref-access-2")
+      expect(second.value.oauthMeta?.refreshTokenRef).toBe("ref-refresh-1")
+      expect(second.value.oauthMeta?.providerId).toBe("google")
+    })
+
+    it("a raw token value can never reach oauth_meta — OAuthMetaSchema.parse strips it at the persistence chokepoint", async () => {
+      // Mirrors schema.test.ts's OAuthMetaSchema negative test (RAW_REFRESH_TOKEN_DO_NOT_STORE)
+      // but proves the guard holds at the REPO layer, not just at the schema
+      // in isolation: a patch carrying stray raw-token-shaped keys (not part
+      // of the setOAuthTokens patch type — cast through `as never` the way a
+      // caller who bypassed the type system would) must not survive the
+      // parse into either the returned Credential or the persisted DB row.
+      const id = await createOAuthCredential()
+      const patch = {
+        refreshTokenRef: "ref-refresh-1",
+        providerId: "github",
+        // Stray raw-value keys a misbehaving caller might smuggle in —
+        // NOT part of the patch type, bypassed via `as never`.
+        refreshToken: "RAW_REFRESH_TOKEN_DO_NOT_STORE",
+        accessToken: "RAW_ACCESS_TOKEN_DO_NOT_STORE",
+      } as never
+      const result = await repos.credentials.setOAuthTokens(id, patch)
+      expect(result.isOk()).toBe(true)
+      if (!result.isOk()) return
+
+      // The returned Credential's oauthMeta must not carry the raw values...
+      const serializedReturn = JSON.stringify(result.value.oauthMeta)
+      expect(serializedReturn).not.toContain("RAW_REFRESH_TOKEN_DO_NOT_STORE")
+      expect(serializedReturn).not.toContain("RAW_ACCESS_TOKEN_DO_NOT_STORE")
+      // ...and the legit refs still made it through.
+      expect(result.value.oauthMeta?.refreshTokenRef).toBe("ref-refresh-1")
+      expect(result.value.oauthMeta?.providerId).toBe("github")
+
+      // Read the raw persisted row back — the on-disk oauth_meta JSON must
+      // not carry the raw values either.
+      const rows = db.all<{ oauth_meta: string }>(
+        sql`SELECT oauth_meta FROM credentials WHERE id = ${id}`,
+      )
+      expect(rows.length).toBe(1)
+      const rawOauthMeta = rows[0]?.oauth_meta ?? ""
+      expect(rawOauthMeta).not.toContain("RAW_REFRESH_TOKEN_DO_NOT_STORE")
+      expect(rawOauthMeta).not.toContain("RAW_ACCESS_TOKEN_DO_NOT_STORE")
+      expect(rawOauthMeta).toContain("ref-refresh-1")
     })
   })
 
