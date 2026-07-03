@@ -12,16 +12,21 @@ import { execFile } from "node:child_process"
 import { existsSync } from "node:fs"
 import { readFile } from "node:fs/promises"
 import path, { join } from "node:path"
+import { PassThrough } from "node:stream"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
 import {
   addCredential,
+  type Credential,
+  CredentialSchema,
   createCredentialStore,
   createRepositories,
   getDatabase,
   getPaths,
+  ok,
   PlatformIdSchema,
   PlatformSchema,
+  ResultAsync,
 } from "@junction/core"
 import { withTempHome } from "@junction/core/testing"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
@@ -40,6 +45,27 @@ vi.mock("@clack/prompts", () => ({
   password: vi.fn(async () => mockPasswordValue),
   isCancel: vi.fn(() => false),
 }))
+
+// ---------------------------------------------------------------------------
+// Mock @junction/source-runtime's connect-engine fns (consumed by `credential
+// reconnect`, D2, via connect.ts's shared runConnectFlow) — no real
+// HTTP/browser; this file drives the CLI edge only. The device flow (not
+// the browser flow) is used throughout since it needs no HTTP listener.
+// verifyCredential/other exports pass through unmocked (importOriginal).
+// ---------------------------------------------------------------------------
+
+const persistOAuthTokensMock = vi.fn()
+const deviceAuthorizeMock = vi.fn()
+const devicePollMock = vi.fn()
+vi.mock("@junction/source-runtime", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@junction/source-runtime")>()
+  return {
+    ...actual,
+    persistOAuthTokens: (...args: unknown[]) => persistOAuthTokensMock(...args),
+    deviceAuthorize: (...args: unknown[]) => deviceAuthorizeMock(...args),
+    devicePoll: (...args: unknown[]) => devicePollMock(...args),
+  }
+})
 
 const execFileAsync = promisify(execFile)
 const distIndex = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../dist/index.js")
@@ -89,8 +115,32 @@ async function captureStdout(fn: () => Promise<void>): Promise<string> {
 }
 
 /** Minimal citty run context — matches what citty passes to run(). */
-function ctx<T extends Record<string, unknown>>(args: T) {
-  return { args, cmd: {} as never, rawArgs: [] as string[] }
+function ctx<T extends Record<string, unknown>>(args: T, rawArgs: string[] = []) {
+  return { args, cmd: {} as never, rawArgs }
+}
+
+// ---------------------------------------------------------------------------
+// stdin faking for --client-secret-stdin (D2's reconnect suite) — a fresh
+// PassThrough per test, swapped in for the real process.stdin singleton.
+// See connect.test.ts's identical helper for why: the real process.stdin can
+// only be ended (EOF) ONCE per process, and a bare emit("data"/"end") races
+// against listener attachment — both were observed to hang.
+// ---------------------------------------------------------------------------
+
+const realStdin = process.stdin
+
+function fakeStdin(): PassThrough {
+  const fake = new PassThrough()
+  Object.defineProperty(process, "stdin", { value: fake, configurable: true })
+  return fake
+}
+
+function feedStdin(value: string): void {
+  ;(process.stdin as unknown as PassThrough).end(value)
+}
+
+function restoreStdin(): void {
+  Object.defineProperty(process, "stdin", { value: realStdin, configurable: true })
 }
 
 /** Access a subcommand's run function from credentialCommand. */
@@ -589,6 +639,415 @@ describe("credential list — verified column (unit)", () => {
       )
       expect(out).toContain("verified")
       expect(out).toContain("-")
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Increment 29 slice D — helpers shared by the oauth2 suites below.
+// ---------------------------------------------------------------------------
+
+/** Upsert an oauth2-scheme openapi platform into the temp-home DB. */
+async function setupOAuthPlatform(platformId: string) {
+  const dbResult = await getDatabase(getPaths())
+  if (dbResult.isErr()) throw new Error(`DB error: ${dbResult.error.kind}`)
+  const repos = createRepositories(dbResult.value)
+  const platform = PlatformSchema.parse({
+    id: PlatformIdSchema.parse(platformId),
+    kind: "openapi" as const,
+    displayName: "OAuth Platform",
+    openapi: {
+      spec: { from: "url" as const, url: "https://example.com/openapi.json" },
+      auth: { scheme: "oauth2" as const },
+    },
+  })
+  await repos.platforms.upsert(platform)
+  return repos
+}
+
+/**
+ * Seed a raw oauth2 Credential row directly via repos.credentials.create —
+ * addCredential REJECTS oauth2 by design (see add-credential.ts), so oauth2
+ * fixtures must be seeded through the repo layer, exactly as
+ * persistOAuthTokens does in production.
+ */
+async function seedOAuthCredential(
+  platformId: string,
+  overrides: Partial<Credential> = {},
+): Promise<Credential> {
+  const repos = await setupOAuthPlatform(platformId)
+  const credential = CredentialSchema.parse({
+    id: `${platformId}-cred-1`,
+    platformId,
+    profileName: "work",
+    kind: "oauth2" as const,
+    secretRef: "ref-access-1",
+    oauthMeta: {
+      providerId: platformId,
+      refreshTokenRef: "ref-refresh-1",
+      clientIdRef: "ref-clientid-1",
+      clientSecretRef: "ref-clientsecret-1",
+      authMode: "authorization_code" as const,
+      needsReauth: false,
+      ...overrides.oauthMeta,
+    },
+    ...overrides,
+  })
+  const createResult = await repos.credentials.create(credential)
+  if (createResult.isErr())
+    throw new Error(`seed oauth2 credential failed: ${createResult.error.kind}`)
+  return createResult.value
+}
+
+// ---------------------------------------------------------------------------
+// D3 — `credential list` derives oauthState from oauthMeta.
+// ---------------------------------------------------------------------------
+
+describe("credential list — oauth2 state derivation (D3, unit)", () => {
+  let prevExitCode: number | undefined
+
+  beforeEach(() => {
+    prevExitCode = process.exitCode
+    process.exitCode = 0
+  })
+
+  afterEach(() => {
+    process.exitCode = prevExitCode
+  })
+
+  it("a connected oauth2 credential (no needsReauth, no near expiry) → oauthState: connected", async () => {
+    await withTempHome(async () => {
+      await seedOAuthCredential("oauth-connected-plat", {
+        oauthMeta: {
+          providerId: "oauth-connected-plat",
+          needsReauth: false,
+          expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        } as Credential["oauthMeta"],
+      })
+
+      const list = getCredentialSubCmd("list")
+      const out = await captureStdout(() =>
+        list.run?.(ctx({ platform: "oauth-connected-plat", json: true })),
+      )
+      const parsed = JSON.parse(out.trim()) as Array<{
+        oauthState: string | null
+        providerId: string | null
+        expiresAt: string | null
+      }>
+      expect(parsed).toHaveLength(1)
+      expect(parsed[0]?.oauthState).toBe("connected")
+      expect(parsed[0]?.providerId).toBe("oauth-connected-plat")
+    })
+  })
+
+  it("needsReauth:true → oauthState: needs-reconnect (takes precedence over expiry)", async () => {
+    await withTempHome(async () => {
+      await seedOAuthCredential("oauth-needsreauth-plat", {
+        oauthMeta: {
+          providerId: "oauth-needsreauth-plat",
+          needsReauth: true,
+        } as Credential["oauthMeta"],
+      })
+
+      const list = getCredentialSubCmd("list")
+      const out = await captureStdout(() =>
+        list.run?.(ctx({ platform: "oauth-needsreauth-plat", json: true })),
+      )
+      const parsed = JSON.parse(out.trim()) as Array<{ oauthState: string | null }>
+      expect(parsed[0]?.oauthState).toBe("needs-reconnect")
+    })
+  })
+
+  it("expiresAt within the 1-day window (and needsReauth:false) → oauthState: expiring", async () => {
+    await withTempHome(async () => {
+      await seedOAuthCredential("oauth-expiring-plat", {
+        oauthMeta: {
+          providerId: "oauth-expiring-plat",
+          needsReauth: false,
+          expiresAt: new Date(Date.now() + 60 * 1000).toISOString(), // 1 minute out
+        } as Credential["oauthMeta"],
+      })
+
+      const list = getCredentialSubCmd("list")
+      const out = await captureStdout(() =>
+        list.run?.(ctx({ platform: "oauth-expiring-plat", json: true })),
+      )
+      const parsed = JSON.parse(out.trim()) as Array<{ oauthState: string | null }>
+      expect(parsed[0]?.oauthState).toBe("expiring")
+    })
+  })
+
+  it("a non-oauth2 credential → oauthState: null, and the human table renders '-'", async () => {
+    await withTempHome(async () => {
+      const repos = await setupApiKeyPlatform("oauth-list-nonoauth-plat")
+      const storeResult = await createCredentialStore(getPaths())
+      if (storeResult.isErr()) throw new Error("store setup failed")
+      const addResult = await addCredential(
+        { platformId: "oauth-list-nonoauth-plat", account: "work", kind: "api-key", secret: "v" },
+        (await repos.platforms.get("oauth-list-nonoauth-plat"))._unsafeUnwrap(),
+        storeResult.value,
+        repos.credentials,
+      )
+      if (addResult.isErr()) throw new Error("seed failed")
+
+      const list = getCredentialSubCmd("list")
+      const jsonOut = await captureStdout(() =>
+        list.run?.(ctx({ platform: "oauth-list-nonoauth-plat", json: true })),
+      )
+      const parsed = JSON.parse(jsonOut.trim()) as Array<{ oauthState: string | null }>
+      expect(parsed[0]?.oauthState).toBeNull()
+
+      const humanOut = await captureStdout(() =>
+        list.run?.(ctx({ platform: "oauth-list-nonoauth-plat", json: false })),
+      )
+      expect(humanOut).toContain("oauth")
+    })
+  })
+
+  it("never includes secretRef/refreshTokenRef/clientSecretRef values in --json output", async () => {
+    await withTempHome(async () => {
+      await seedOAuthCredential("oauth-leakcheck-plat")
+
+      const list = getCredentialSubCmd("list")
+      const out = await captureStdout(() =>
+        list.run?.(ctx({ platform: "oauth-leakcheck-plat", json: true })),
+      )
+      expect(out).not.toContain("ref-access-1")
+      expect(out).not.toContain("ref-refresh-1")
+      expect(out).not.toContain("ref-clientid-1")
+      expect(out).not.toContain("ref-clientsecret-1")
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// D4 — `credential rotate` refuses oauth2 credentials.
+// ---------------------------------------------------------------------------
+
+describe("credential rotate — rejects oauth2 (D4, unit)", () => {
+  let prevExitCode: number | undefined
+
+  beforeEach(() => {
+    prevExitCode = process.exitCode
+    process.exitCode = 0
+    mockPasswordValue = "should-never-be-used"
+  })
+
+  afterEach(() => {
+    process.exitCode = prevExitCode
+  })
+
+  it("rotate --id <oauth2-cred> → clean error naming connect/reconnect, exit 1, --json shaped", async () => {
+    await withTempHome(async () => {
+      const cred = await seedOAuthCredential("oauth-rotate-reject-plat")
+
+      const rotate = getCredentialSubCmd("rotate")
+      const out = await captureStdout(() =>
+        rotate.run?.(ctx({ id: cred.id, "secret-stdin": true, json: true })),
+      )
+      const parsed = JSON.parse(out.trim()) as { ok: boolean; error?: string }
+      expect(parsed.ok).toBe(false)
+      expect(parsed.error).toContain("junction connect")
+      expect(parsed.error).toContain("credential reconnect")
+      expect(process.exitCode).toBe(1)
+    })
+  })
+
+  it("never reads the new-secret prompt/stdin before rejecting (the doomed rotate never touches stdin)", async () => {
+    await withTempHome(async () => {
+      const cred = await seedOAuthCredential("oauth-rotate-reject-stdin-plat")
+
+      // secret-stdin: true with NOTHING fed — if the command tried to read
+      // stdin before the oauth2 guard, this would hang; a fast return proves
+      // the guard runs first (mirrors the empty-id check's discipline).
+      const rotate = getCredentialSubCmd("rotate")
+      const out = await captureStdout(() =>
+        rotate.run?.(ctx({ id: cred.id, "secret-stdin": true, json: true })),
+      )
+      const parsed = JSON.parse(out.trim()) as { ok: boolean }
+      expect(parsed.ok).toBe(false)
+    })
+  })
+
+  it("the oauth2 credential's secretRef is unchanged after a rejected rotate (never silently corrupted)", async () => {
+    await withTempHome(async () => {
+      const cred = await seedOAuthCredential("oauth-rotate-reject-verify-plat")
+
+      const rotate = getCredentialSubCmd("rotate")
+      await rotate.run?.(ctx({ id: cred.id, "secret-stdin": true, json: true }))
+
+      const dbResult = await getDatabase(getPaths())
+      if (dbResult.isErr()) throw new Error("db reopen failed")
+      const repos = createRepositories(dbResult.value)
+      const reread = await repos.credentials.get(cred.id)
+      if (reread.isErr()) throw new Error("credential reread failed")
+      expect(reread.value.secretRef).toBe(cred.secretRef)
+      expect(reread.value.oauthMeta?.refreshTokenRef).toBe(cred.oauthMeta?.refreshTokenRef)
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// D2 — `credential reconnect` re-runs connect for an existing oauth2
+// credential (mode:"update"), clearing needsReauth. The device flow is used
+// throughout (headless) — no real browser/HTTP listener needed; the connect
+// engine itself (buildAuthorizeUrl/exchangeCode/deviceAuthorize/devicePoll)
+// lives in @junction/source-runtime and is exercised directly by
+// connect.test.ts — here only persistOAuthTokens(mode:"update") is mocked,
+// so this suite proves the reconnect COMMAND's wiring (id → provider →
+// mode:update → needsReauth cleared), not the connect engine itself.
+// ---------------------------------------------------------------------------
+
+describe("credential reconnect (D2, unit)", () => {
+  let prevExitCode: number | undefined
+
+  beforeEach(() => {
+    prevExitCode = process.exitCode
+    process.exitCode = 0
+    persistOAuthTokensMock.mockReset()
+    deviceAuthorizeMock.mockReset()
+    devicePollMock.mockReset()
+  })
+
+  afterEach(() => {
+    process.exitCode = prevExitCode
+    restoreStdin()
+  })
+
+  it("unknown credential id → clean error, exit 1", async () => {
+    await withTempHome(async () => {
+      const reconnect = getCredentialSubCmd("reconnect")
+      const out = await captureStdout(() =>
+        reconnect.run?.(
+          ctx({
+            id: "does-not-exist",
+            device: true,
+            "client-id": "cid",
+            "client-secret-stdin": false,
+            json: true,
+          }),
+        ),
+      )
+      const parsed = JSON.parse(out.trim()) as { ok: boolean; error?: string }
+      expect(parsed.ok).toBe(false)
+      expect(process.exitCode).toBe(1)
+    })
+  })
+
+  it("a non-oauth2 credential id → clean error naming the actual kind", async () => {
+    await withTempHome(async () => {
+      const repos = await setupApiKeyPlatform("reconnect-nonoauth-plat")
+      const storeResult = await createCredentialStore(getPaths())
+      if (storeResult.isErr()) throw new Error("store setup failed")
+      const addResult = await addCredential(
+        { platformId: "reconnect-nonoauth-plat", account: "work", kind: "api-key", secret: "v" },
+        (await repos.platforms.get("reconnect-nonoauth-plat"))._unsafeUnwrap(),
+        storeResult.value,
+        repos.credentials,
+      )
+      if (addResult.isErr()) throw new Error("seed failed")
+
+      const reconnect = getCredentialSubCmd("reconnect")
+      const out = await captureStdout(() =>
+        reconnect.run?.(
+          ctx({
+            id: addResult.value.id,
+            device: true,
+            "client-id": "cid",
+            "client-secret-stdin": false,
+            json: true,
+          }),
+        ),
+      )
+      const parsed = JSON.parse(out.trim()) as { ok: boolean; error?: string }
+      expect(parsed.ok).toBe(false)
+      expect(parsed.error).toContain("api-key")
+    })
+  })
+
+  it("reconnect on a device-incapable provider (notion) fails BEFORE persistOAuthTokens — proves it reads the credential's own oauthMeta.providerId, not a hardcoded one", async () => {
+    await withTempHome(async () => {
+      const notionCred = await seedOAuthCredential("notion", {
+        oauthMeta: { providerId: "notion", needsReauth: true } as Credential["oauthMeta"],
+      })
+
+      fakeStdin()
+      feedStdin("some-client-secret")
+
+      const reconnect = getCredentialSubCmd("reconnect")
+      const out = await captureStdout(() =>
+        reconnect.run?.(
+          ctx({
+            id: notionCred.id,
+            device: true,
+            "client-id": "cid",
+            "client-secret-stdin": true,
+            json: true,
+          }),
+        ),
+      )
+      const parsed = JSON.parse(out.trim()) as { ok: boolean; error?: string }
+      expect(parsed.ok).toBe(false)
+      expect(parsed.error).toContain("device flow not supported")
+      expect(persistOAuthTokensMock).not.toHaveBeenCalled()
+    })
+  })
+
+  it("mode:update path — device flow success persists via persistOAuthTokens(mode:update, credentialId), clearing needsReauth", async () => {
+    await withTempHome(async () => {
+      // google is device-capable (deviceAuthorizationUrl set in the catalog) —
+      // see connect.test.ts's device-flow test for the identical engine shape.
+      const cred = await seedOAuthCredential("google", {
+        oauthMeta: { providerId: "google", needsReauth: true } as Credential["oauthMeta"],
+      })
+
+      deviceAuthorizeMock.mockResolvedValue(
+        ok({
+          deviceCode: "devcode",
+          userCode: "RECN-0001",
+          verificationUri: "https://www.google.com/device",
+          intervalSeconds: 0,
+          expiresInSeconds: 600,
+        }),
+      )
+      devicePollMock.mockResolvedValueOnce({
+        isOk: () => true,
+        isErr: () => false,
+        value: { accessToken: "new-access", refreshToken: "new-refresh", expiresInSeconds: 3600 },
+      })
+      persistOAuthTokensMock.mockReturnValue(
+        new ResultAsync(
+          Promise.resolve(ok({ ...cred, oauthMeta: { ...cred.oauthMeta, needsReauth: false } })),
+        ),
+      )
+
+      fakeStdin()
+      feedStdin("new-client-secret")
+
+      const reconnect = getCredentialSubCmd("reconnect")
+      const out = await captureStdout(() =>
+        reconnect.run?.(
+          ctx({
+            id: cred.id,
+            device: true,
+            "client-id": "new-cid",
+            "client-secret-stdin": true,
+            json: true,
+          }),
+        ),
+      )
+
+      expect(persistOAuthTokensMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          mode: "update",
+          credentialId: cred.id,
+          providerId: "google",
+          authMode: "device_code",
+        }),
+      )
+      const parsed = JSON.parse(out.trim()) as { ok: boolean; credential?: { id: string } }
+      expect(parsed.ok).toBe(true)
+      expect(parsed.credential?.id).toBe(cred.id)
     })
   })
 })

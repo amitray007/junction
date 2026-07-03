@@ -89,7 +89,34 @@ export const DEFAULT_REFRESH_BUFFER_MS = 60_000
  * can never overflow the JS Date range (~±8.64e15 ms). A value above this is
  * treated as "no usable expiry" rather than allowed to overflow `.toISOString()`.
  */
-const MAX_EXPIRES_IN_SECONDS = 100 * 365 * 24 * 60 * 60
+export const MAX_EXPIRES_IN_SECONDS = 100 * 365 * 24 * 60 * 60
+
+/**
+ * Convert a provider's `expires_in` (seconds-from-now) into a stored `expiresAt`
+ * ISO string, or `null` when the value can't be trusted. A provider (or a
+ * malicious/misconfigured token endpoint) can return ANY number for `expires_in`
+ * — `normalizeTokenResponse` only type-guards it, never bounds it — so the four
+ * dangerous shapes are rejected here at the single conversion point both the
+ * refresh path and the connect/persist path go through:
+ *
+ * - NEGATIVE → `expiresAt` in the past → `shouldRefresh` true on every resolve →
+ *   a perpetual refresh storm on an otherwise-valid, just-obtained token.
+ * - ZERO → same (already expired).
+ * - non-finite (`NaN`/`Infinity`) or HUGE (> a century) → `now + s*1000` overflows
+ *   the JS Date range → `.toISOString()` throws `RangeError` — which, inside a
+ *   `new ResultAsync(work())` body, escapes as an unhandled rejection (not an Err)
+ *   AND skips any post-write cleanup, orphaning just-written secret refs.
+ *
+ * Any of those → `null` ("no usable expiry" — treated as non-expiring, the safe
+ * default). Callers that want keep-prior-on-unusable compose `?? priorExpiresAt`.
+ */
+export function toExpiresAt(now: number, expiresInSeconds: number | undefined): string | null {
+  const s = expiresInSeconds
+  if (typeof s !== "number" || !Number.isFinite(s) || s <= 0 || s > MAX_EXPIRES_IN_SECONDS) {
+    return null
+  }
+  return new Date(now + s * 1000).toISOString()
+}
 
 /**
  * Pure decision: should this credential's access token be refreshed right now?
@@ -336,18 +363,12 @@ function callRefreshAndPersist(
       }
     }
 
-    // Validate expiresInSeconds before trusting it: a NEGATIVE value would
-    // put expiresAt in the past → shouldRefresh true on every subsequent
-    // resolve → a perpetual refresh storm on an actually-valid token; a HUGE
-    // value overflows the Date range → `.toISOString()` throws a RangeError
-    // (which would reject work() below and orphan the just-written refs).
-    // A non-finite / non-positive / out-of-range value falls back to the
-    // prior expiry, exactly like the absent case.
-    const s = tokens.expiresInSeconds
-    const expiresAt =
-      typeof s === "number" && Number.isFinite(s) && s > 0 && s <= MAX_EXPIRES_IN_SECONDS
-        ? new Date(now + s * 1000).toISOString()
-        : (meta?.expiresAt ?? undefined)
+    // Validate expiresInSeconds before trusting it (shared with the connect/
+    // persist path — see toExpiresAt): negative → refresh storm; non-finite/
+    // huge → RangeError that would reject work() and orphan the just-written
+    // refs. An unusable value falls back to the PRIOR expiry, exactly like the
+    // absent case (connect has no prior, so it keeps null).
+    const expiresAt = toExpiresAt(now, tokens.expiresInSeconds) ?? meta?.expiresAt ?? undefined
 
     const setTokensResult = await repos.credentials.setOAuthTokens(credential.id, {
       secretRef: newAccessRef,

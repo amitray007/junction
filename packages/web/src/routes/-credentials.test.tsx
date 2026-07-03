@@ -6,7 +6,7 @@
 
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import type { CredentialMeta, PlatformMeta } from "../server/data.functions.js"
+import type { CredentialMeta, OAuthProviderMeta, PlatformMeta } from "../server/data.functions.js"
 
 // ---- Fixtures ---------------------------------------------------------------
 
@@ -43,24 +43,35 @@ const manyCredentials: CredentialMeta[] = Array.from({ length: 7 }, (_, i) => ({
   kind: "bearer",
 }))
 
+const emptyOAuthProviders: OAuthProviderMeta[] = []
+
 // ---- Mocks ------------------------------------------------------------------
 
-const mockUseLoaderData = vi
-  .fn()
-  .mockReturnValue({ credentials: emptyCredentials, platforms: emptyPlatforms })
+const mockUseLoaderData = vi.fn().mockReturnValue({
+  credentials: emptyCredentials,
+  platforms: emptyPlatforms,
+  oauthProviders: emptyOAuthProviders,
+})
+// No test drives a real ?connect= outcome through the mocked Route — useSearch
+// always returns an empty object (no post-callback toast fires in these tests;
+// the toast effect + navigate-away is exercised in oauth-connect flows instead).
+const mockUseSearch = vi.fn().mockReturnValue({})
 const mockInvalidate = vi.fn().mockResolvedValue(undefined)
+const mockNavigate = vi.fn().mockResolvedValue(undefined)
 
 vi.mock("@tanstack/react-router", () => ({
   createFileRoute: (_path: string) => (options: { component: React.FC }) => ({
     useLoaderData: mockUseLoaderData,
+    useSearch: mockUseSearch,
     options,
   }),
-  useRouter: () => ({ invalidate: mockInvalidate }),
+  useRouter: () => ({ invalidate: mockInvalidate, navigate: mockNavigate }),
 }))
 
 vi.mock("../server/data.functions.js", () => ({
   getCredentials: vi.fn(),
   getPlatforms: vi.fn(),
+  getOAuthProviders: vi.fn(),
 }))
 
 // Mock the mutation server-fns — they call getRequest() which isn't available in happy-dom.
@@ -76,6 +87,15 @@ vi.mock("../server/mutations.functions.js", () => ({
   testCredentialFn: (...args: unknown[]) => mockTestCredentialFn(...args),
 }))
 
+// Mock the OAuth connect server-fns — same getRequest()-in-happy-dom reason.
+const mockStartConnectFn = vi.fn()
+const mockStartReconnectFn = vi.fn()
+
+vi.mock("../server/oauth-connect.functions.js", () => ({
+  startConnectFn: (...args: unknown[]) => mockStartConnectFn(...args),
+  startReconnectFn: (...args: unknown[]) => mockStartReconnectFn(...args),
+}))
+
 const { Route, FlatCredentialsTable } = await import("./credentials.js")
 // biome-ignore lint/suspicious/noExplicitAny: test utility — typing the internal options shape is not worth the boilerplate
 const CredentialsPage = (Route as any).options.component as React.FC
@@ -84,12 +104,20 @@ const CredentialsPage = (Route as any).options.component as React.FC
 
 afterEach(() => {
   cleanup()
-  mockUseLoaderData.mockReset()
+  mockUseLoaderData.mockReset().mockReturnValue({
+    credentials: emptyCredentials,
+    platforms: emptyPlatforms,
+    oauthProviders: emptyOAuthProviders,
+  })
+  mockUseSearch.mockReset().mockReturnValue({})
   mockAddCredentialFn.mockReset()
   mockRotateCredentialFn.mockReset()
   mockRemoveCredentialFn.mockReset()
   mockTestCredentialFn.mockReset()
+  mockStartConnectFn.mockReset()
+  mockStartReconnectFn.mockReset()
   mockInvalidate.mockReset().mockResolvedValue(undefined)
+  mockNavigate.mockReset().mockResolvedValue(undefined)
 })
 
 describe("CredentialsPage", () => {
@@ -351,6 +379,7 @@ describe("CredentialsPage", () => {
     const onRotate = vi.fn()
     const onDelete = vi.fn()
     const onTestConnection = vi.fn()
+    const onReconnect = vi.fn()
     const { getByRole, queryByText, getByText } = render(
       <FlatCredentialsTable
         credentials={manyCredentials}
@@ -358,6 +387,7 @@ describe("CredentialsPage", () => {
         onRotate={onRotate}
         onDelete={onDelete}
         onTestConnection={onTestConnection}
+        onReconnect={onReconnect}
         pageSize={2}
       />,
     )
@@ -708,11 +738,263 @@ describe("CredentialsPage", () => {
         onRotate={vi.fn()}
         onDelete={vi.fn()}
         onTestConnection={onTestConnection}
+        onReconnect={vi.fn()}
       />,
     )
 
     await onTestConnection(creds[0] as CredentialMeta)
     expect(mockTestCredentialFn).toHaveBeenCalledWith({ data: { credentialId: "c1" } })
     expect(mockInvalidate).toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Connect (OAuth) dialog — inc 29, slice C
+// ---------------------------------------------------------------------------
+
+const oauthProviders: OAuthProviderMeta[] = [
+  {
+    id: "github",
+    displayName: "GitHub",
+    supportsDeviceCode: false,
+    redirectMode: "loopback-fixed",
+    defaultScopes: [],
+    registrationHint: {
+      redirectUri: "http://127.0.0.1:4321/oauth/callback",
+      scopes: "repo read:user",
+      docsUrl: "https://docs.github.com/en/apps/oauth-apps",
+    },
+  },
+]
+
+describe("CredentialsPage — Connect (OAuth) dialog", () => {
+  it("renders a 'Connect (OAuth)' button sibling to Add Credential", () => {
+    mockUseLoaderData.mockReturnValue({
+      credentials: emptyCredentials,
+      platforms,
+      oauthProviders,
+    })
+    const { getByRole } = render(<CredentialsPage />)
+    expect(getByRole("button", { name: /connect \(oauth\)/i })).toBeInTheDocument()
+    expect(getByRole("button", { name: /add credential/i })).toBeInTheDocument()
+  })
+
+  it("opens the Connect dialog with a provider picker, platform picker, account field, and BYO client fields", async () => {
+    mockUseLoaderData.mockReturnValue({
+      credentials: emptyCredentials,
+      platforms,
+      oauthProviders,
+    })
+    const { getByRole, getByLabelText } = render(<CredentialsPage />)
+    fireEvent.click(getByRole("button", { name: /connect \(oauth\)/i }))
+
+    await waitFor(() => expect(getByRole("dialog")).toBeInTheDocument())
+    expect(getByRole("combobox", { name: /provider/i })).toBeInTheDocument()
+    expect(getByRole("combobox", { name: /platform/i })).toBeInTheDocument()
+    expect(getByLabelText("Account")).toBeInTheDocument()
+    expect(getByLabelText("Client ID")).toBeInTheDocument()
+    expect(getByLabelText("Client Secret")).toBeInTheDocument()
+  })
+
+  it("the Client Secret field is type=password (never plaintext in DOM)", async () => {
+    mockUseLoaderData.mockReturnValue({
+      credentials: emptyCredentials,
+      platforms,
+      oauthProviders,
+    })
+    const { getByRole, getByLabelText } = render(<CredentialsPage />)
+    fireEvent.click(getByRole("button", { name: /connect \(oauth\)/i }))
+    await waitFor(() => expect(getByRole("dialog")).toBeInTheDocument())
+
+    fireEvent.change(getByLabelText("Client Secret"), { target: { value: "shh-its-a-secret" } })
+    const secretInput = getByLabelText("Client Secret") as HTMLInputElement
+    expect(secretInput.type).toBe("password")
+  })
+
+  it("Connect form validates required fields before calling startConnectFn", async () => {
+    mockUseLoaderData.mockReturnValue({
+      credentials: emptyCredentials,
+      platforms,
+      oauthProviders,
+    })
+    const { getByRole, getByText } = render(<CredentialsPage />)
+    fireEvent.click(getByRole("button", { name: /connect \(oauth\)/i }))
+    await waitFor(() => expect(getByRole("dialog")).toBeInTheDocument())
+
+    const dialog = getByRole("dialog")
+    const submitBtn = dialog.querySelector("button[type='submit']") as HTMLButtonElement
+    expect(submitBtn).not.toBeNull()
+    fireEvent.click(submitBtn)
+    await waitFor(() => {
+      expect(getByText("Provider is required")).toBeInTheDocument()
+    })
+    expect(mockStartConnectFn).not.toHaveBeenCalled()
+  })
+
+  it("does not render the Connect dialog's guided-registration panel until a provider is selected", async () => {
+    mockUseLoaderData.mockReturnValue({
+      credentials: emptyCredentials,
+      platforms,
+      oauthProviders,
+    })
+    const { getByRole, queryByText } = render(<CredentialsPage />)
+    fireEvent.click(getByRole("button", { name: /connect \(oauth\)/i }))
+    await waitFor(() => expect(getByRole("dialog")).toBeInTheDocument())
+
+    // happy-dom can't drive the Radix Select portal open (same limitation as the
+    // facet filters above) — this asserts the honest default (no panel without a
+    // selection); the open→select→panel-appears path is covered by the
+    // junction-web-verify browser pass.
+    expect(queryByText(/redirect uri/i)).not.toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Expiring / Reconnect (needsReauth) — inc 29 wires
+// ---------------------------------------------------------------------------
+
+describe("CredentialsPage — OAuth status badges (Expiring / Auth Failed) + Reconnect", () => {
+  it("an oauth2 credential with no oauthState renders the ordinary Configured/Connected mapping", () => {
+    const creds: CredentialMeta[] = [
+      { id: "c1", platformId: "github", account: "alice", kind: "oauth2" },
+    ]
+    mockUseLoaderData.mockReturnValue({ credentials: creds, platforms, oauthProviders })
+    const { getByText } = render(<CredentialsPage />)
+    expect(getByText("Connected")).toBeInTheDocument()
+  })
+
+  it("an oauth2 credential expiring within the window shows the Expiring badge", () => {
+    const soon = new Date(Date.now() + 60 * 60 * 1000).toISOString() // 1h from now
+    const creds: CredentialMeta[] = [
+      {
+        id: "c1",
+        platformId: "github",
+        account: "alice",
+        kind: "oauth2",
+        oauthState: { providerId: "github", expiresAt: soon, needsReauth: false },
+      },
+    ]
+    mockUseLoaderData.mockReturnValue({ credentials: creds, platforms, oauthProviders })
+    const { getByText } = render(<CredentialsPage />)
+    expect(getByText("Expiring")).toBeInTheDocument()
+  })
+
+  it("an oauth2 credential expiring far in the future is NOT flagged Expiring", () => {
+    const farFuture = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() // 30d
+    const creds: CredentialMeta[] = [
+      {
+        id: "c1",
+        platformId: "github",
+        account: "alice",
+        kind: "oauth2",
+        oauthState: { providerId: "github", expiresAt: farFuture, needsReauth: false },
+      },
+    ]
+    mockUseLoaderData.mockReturnValue({ credentials: creds, platforms, oauthProviders })
+    const { getByText, queryByText } = render(<CredentialsPage />)
+    expect(getByText("Connected")).toBeInTheDocument()
+    expect(queryByText("Expiring")).not.toBeInTheDocument()
+  })
+
+  it("needsReauth renders the Auth Failed badge AND a prominent inline Reconnect button", () => {
+    const creds: CredentialMeta[] = [
+      {
+        id: "c1",
+        platformId: "github",
+        account: "alice",
+        kind: "oauth2",
+        oauthState: { providerId: "github", expiresAt: null, needsReauth: true },
+      },
+    ]
+    mockUseLoaderData.mockReturnValue({ credentials: creds, platforms, oauthProviders })
+    const { getByText, getAllByRole } = render(<CredentialsPage />)
+    expect(getByText("Auth Failed")).toBeInTheDocument()
+    const reconnectButtons = getAllByRole("button", { name: /reconnect/i })
+    expect(reconnectButtons.length).toBeGreaterThan(0)
+  })
+
+  it("clicking the inline Reconnect button opens the Reconnect dialog with BYO client fields", async () => {
+    const creds: CredentialMeta[] = [
+      {
+        id: "c1",
+        platformId: "github",
+        account: "alice",
+        kind: "oauth2",
+        oauthState: { providerId: "github", expiresAt: null, needsReauth: true },
+      },
+    ]
+    mockUseLoaderData.mockReturnValue({ credentials: creds, platforms, oauthProviders })
+    const { getAllByRole, getByRole, getByLabelText } = render(<CredentialsPage />)
+
+    const reconnectButtons = getAllByRole("button", { name: /reconnect/i })
+    fireEvent.click(reconnectButtons[0] as HTMLElement)
+
+    await waitFor(() => expect(getByRole("dialog")).toBeInTheDocument())
+    expect(getByLabelText("Client ID")).toBeInTheDocument()
+    expect(getByLabelText("Client Secret")).toBeInTheDocument()
+  })
+
+  it("Reconnect form validates required fields before calling startReconnectFn", async () => {
+    const creds: CredentialMeta[] = [
+      {
+        id: "c1",
+        platformId: "github",
+        account: "alice",
+        kind: "oauth2",
+        oauthState: { providerId: "github", expiresAt: null, needsReauth: true },
+      },
+    ]
+    mockUseLoaderData.mockReturnValue({ credentials: creds, platforms, oauthProviders })
+    const { getAllByRole, getByRole, getByText } = render(<CredentialsPage />)
+
+    fireEvent.click(getAllByRole("button", { name: /reconnect/i })[0] as HTMLElement)
+    await waitFor(() => expect(getByRole("dialog")).toBeInTheDocument())
+
+    const dialog = getByRole("dialog")
+    const submitBtn = dialog.querySelector("button[type='submit']") as HTMLButtonElement
+    fireEvent.click(submitBtn)
+    await waitFor(() => {
+      expect(getByText("Client ID is required")).toBeInTheDocument()
+    })
+    expect(mockStartReconnectFn).not.toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ?connect= post-callback toast (inc 29) — asserts the observable side effect
+// (the search param is cleared via router.navigate) since sonner's Toaster
+// isn't mounted in this isolated component test (see test file header).
+// ---------------------------------------------------------------------------
+
+describe("CredentialsPage — ?connect= outcome handling", () => {
+  it("connect=ok clears the search param via router.navigate", async () => {
+    mockUseLoaderData.mockReturnValue({ credentials: emptyCredentials, platforms, oauthProviders })
+    mockUseSearch.mockReturnValue({ connect: "ok" })
+    render(<CredentialsPage />)
+
+    await waitFor(() => {
+      expect(mockNavigate).toHaveBeenCalledWith({
+        to: "/credentials",
+        search: {},
+        replace: true,
+      })
+    })
+  })
+
+  it("connect=error also clears the search param via router.navigate", async () => {
+    mockUseLoaderData.mockReturnValue({ credentials: emptyCredentials, platforms, oauthProviders })
+    mockUseSearch.mockReturnValue({ connect: "error" })
+    render(<CredentialsPage />)
+
+    await waitFor(() => {
+      expect(mockNavigate).toHaveBeenCalled()
+    })
+  })
+
+  it("no ?connect= param does nothing (no navigate call)", () => {
+    mockUseLoaderData.mockReturnValue({ credentials: emptyCredentials, platforms, oauthProviders })
+    mockUseSearch.mockReturnValue({})
+    render(<CredentialsPage />)
+    expect(mockNavigate).not.toHaveBeenCalled()
   })
 })

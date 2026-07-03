@@ -23,6 +23,7 @@ import {
   type UpstreamError,
 } from "@junction/core"
 import { buildProvider, type ResolvedSecret } from "./build-provider.js"
+import { oauthRefreshFn } from "./oauth-refresh-fn.js"
 import { refreshIfExpiredSingleFlight } from "./refresh-singleflight.js"
 
 // ---------------------------------------------------------------------------
@@ -125,20 +126,14 @@ export function makeResolveProvider(
         if (store !== null && credential.kind === "oauth2") {
           // OAuth credential: refresh-ahead (inc 29 slice A2) before ever
           // reading the store directly — refreshIfExpired owns the "current
-          // token" read (unchanged when no refresh is due) and single-flights
-          // across concurrent resolves that share this credentialId (the
-          // listTools fan-out race, F2).
+          // token" read (unchanged when no refresh is due), the JIT
+          // resolution of the refresh token / BYO client id+secret from the
+          // store, and single-flights across concurrent resolves that share
+          // this credentialId (the listTools fan-out race, F2).
           //
-          // TODO(inc29-B): replace this placeholder with the arctic-backed
-          // refresh fn. Until B lands, an actually-expired oauth2 credential
-          // will surface as auth-failed (refresh-failed below) — a
-          // non-expired one resolves fine (shouldRefresh false → no refreshFn
-          // call at all).
-          const refreshFn: RefreshTokenFn = async () => ({
-            ok: false,
-            reason: "unknown",
-            detail: "refresh not yet wired (inc29-B)",
-          })
+          // oauthRefreshFn (inc29-B) is the arctic-backed HTTP call —
+          // core never makes it directly, keeping core HTTP-free.
+          const refreshFn: RefreshTokenFn = oauthRefreshFn
 
           const refreshResult = await refreshIfExpiredSingleFlight(credential.id, () =>
             refreshIfExpired({ credential, store, repos, refreshFn, now: Date.now() }),

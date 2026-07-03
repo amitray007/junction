@@ -7,19 +7,20 @@
 // No @junction/core import. Secret is input-only; never rendered or returned.
 
 import { createFileRoute, useRouter } from "@tanstack/react-router"
-import { Plus, RefreshCw, TestTube, Trash2 } from "lucide-react"
-import { useCallback, useMemo, useState } from "react"
+import { Copy, Plug, Plus, RefreshCw, TestTube, Trash2 } from "lucide-react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 import type { TableColumn } from "../lib/use-table-view.js"
 import { useTableView } from "../lib/use-table-view.js"
-import type { CredentialMeta, PlatformMeta } from "../server/data.functions.js"
-import { getCredentials, getPlatforms } from "../server/data.functions.js"
+import type { CredentialMeta, OAuthProviderMeta, PlatformMeta } from "../server/data.functions.js"
+import { getCredentials, getOAuthProviders, getPlatforms } from "../server/data.functions.js"
 import {
   addCredentialFn,
   removeCredentialFn,
   rotateCredentialFn,
   testCredentialFn,
 } from "../server/mutations.functions.js"
+import { startConnectFn, startReconnectFn } from "../server/oauth-connect.functions.js"
 import { MonoCode } from "../ui/code.js"
 import {
   Button,
@@ -61,10 +62,26 @@ import {
   Textarea,
 } from "../ui/index.js"
 
+// Manual search validation (no zod — not a web dependency; mirrors
+// oauth.callback.tsx's plain typeof checks). Drives the post-callback toast.
+interface CredentialsSearch {
+  connect?: "ok" | "error" | "error-state"
+}
+
+function validateCredentialsSearch(search: Record<string, unknown>): CredentialsSearch {
+  const c = search.connect
+  return { connect: c === "ok" || c === "error" || c === "error-state" ? c : undefined }
+}
+
 export const Route = createFileRoute("/credentials")({
+  validateSearch: validateCredentialsSearch,
   loader: async () => {
-    const [credentials, platforms] = await Promise.all([getCredentials(), getPlatforms()])
-    return { credentials, platforms }
+    const [credentials, platforms, oauthProviders] = await Promise.all([
+      getCredentials(),
+      getPlatforms(),
+      getOAuthProviders(),
+    ])
+    return { credentials, platforms, oauthProviders }
   },
   pendingComponent: CredentialsPending,
   component: CredentialsPage,
@@ -84,6 +101,30 @@ function verifyResultToStatus(
   if (result === "ok") return "connected"
   if (result === "auth-failed") return "auth-failed"
   return "configured"
+}
+
+// ---------------------------------------------------------------------------
+// OAuth status mapping (inc 29 — activates the reserved Expiring/Reconnect
+// wires). needsReauth wins over everything (it's the "must act now" state);
+// then a near expiry (within EXPIRING_WINDOW_MS) shows Expiring; otherwise an
+// oauth2 credential with tokens on file reads Connected — never inferred from
+// a live probe (oauth2 has no verify-on-add path), just presence of tokens
+// and an honest expiry window.
+// ---------------------------------------------------------------------------
+
+const EXPIRING_WINDOW_MS = 24 * 60 * 60 * 1000 // ~a day
+
+function oauthStatus(
+  oauthState: CredentialMeta["oauthState"],
+  now: number,
+): "connected" | "expiring" | "auth-failed" {
+  if (oauthState === undefined) return "connected"
+  if (oauthState.needsReauth) return "auth-failed"
+  if (oauthState.expiresAt !== null) {
+    const expiresAtMs = Date.parse(oauthState.expiresAt)
+    if (!Number.isNaN(expiresAtMs) && expiresAtMs - now <= EXPIRING_WINDOW_MS) return "expiring"
+  }
+  return "connected"
 }
 
 // Pinned-UTC timestamp formatter (inc-27 SSR-hydration rule — see keys.tsx).
@@ -533,6 +574,371 @@ function DeleteCredentialDialog({ credential, onOpenChange, onSuccess }: DeleteD
 }
 
 // ---------------------------------------------------------------------------
+// Connect (OAuth) dialog — the web "Connect" flow (inc 29, slice C). Picks a
+// catalog provider, takes BYO client_id/client_secret (secret is input-only,
+// NEVER rendered back), scopes, and an account name, shows the guided
+// registration panel (exact redirectUri + scopes + docsUrl to register with
+// the provider), then POSTs startConnectFn and navigates the BROWSER to the
+// returned authorizeUrl. state/codeVerifier/clientSecret never reach this
+// component — startConnectFn returns {authorizeUrl} only.
+// ---------------------------------------------------------------------------
+
+interface ConnectDialogProps {
+  readonly open: boolean
+  readonly onOpenChange: (open: boolean) => void
+  readonly platforms: PlatformMeta[]
+  readonly oauthProviders: OAuthProviderMeta[]
+}
+
+/** Copy-able row inside the guided-registration panel. */
+function RegistrationField({ label, value }: { readonly label: string; readonly value: string }) {
+  const [copied, setCopied] = useState(false)
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(value)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      // clipboard unavailable (non-secure context) — silently ignore
+    }
+  }
+  return (
+    <div className="flex flex-col gap-1">
+      <span style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)" }}>{label}</span>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "8px",
+          padding: "8px 10px",
+          borderRadius: "var(--radius-6)",
+          border: "1px solid var(--alpha-200)",
+          backgroundColor: "var(--bg-200)",
+        }}
+      >
+        <span
+          style={{
+            fontFamily: "var(--font-mono)",
+            fontSize: "var(--text-mono)",
+            color: "var(--gray-1000)",
+            flex: 1,
+            wordBreak: "break-all",
+            userSelect: "text",
+          }}
+        >
+          {value}
+        </span>
+        <Button type="button" variant="secondary" onClick={() => void handleCopy()}>
+          <Copy className="h-4 w-4" aria-hidden="true" />
+          {copied ? "Copied!" : "Copy"}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function ConnectOAuthDialog({ open, onOpenChange, platforms, oauthProviders }: ConnectDialogProps) {
+  const [providerId, setProviderId] = useState("")
+  const [platformId, setPlatformId] = useState("")
+  const [account, setAccount] = useState("")
+  const [clientId, setClientId] = useState("")
+  const [clientSecret, setClientSecret] = useState("")
+  const [scopes, setScopes] = useState("")
+  const [errors, setErrors] = useState<{
+    providerId?: string
+    platformId?: string
+    account?: string
+    clientId?: string
+    clientSecret?: string
+  }>({})
+  const [submitting, setSubmitting] = useState(false)
+
+  const providerMap = useMemo(() => new Map(oauthProviders.map((p) => [p.id, p])), [oauthProviders])
+  const selectedProvider = providerId ? providerMap.get(providerId) : undefined
+
+  function selectProvider(id: string) {
+    setProviderId(id)
+    const provider = providerMap.get(id)
+    setScopes(provider?.defaultScopes.join(" ") ?? "")
+  }
+
+  function reset() {
+    setProviderId("")
+    setPlatformId("")
+    setAccount("")
+    setClientId("")
+    setClientSecret("")
+    setScopes("")
+    setErrors({})
+    setSubmitting(false)
+  }
+
+  function handleOpenChange(next: boolean) {
+    if (!next) reset()
+    onOpenChange(next)
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    const newErrors: typeof errors = {}
+    if (!providerId) newErrors.providerId = "Provider is required"
+    if (!platformId) newErrors.platformId = "Platform is required"
+    if (!account.trim()) newErrors.account = "Account is required"
+    if (!clientId.trim()) newErrors.clientId = "Client ID is required"
+    if (!clientSecret) newErrors.clientSecret = "Client secret is required"
+    if (Object.keys(newErrors).length > 0) {
+      setErrors(newErrors)
+      return
+    }
+    setSubmitting(true)
+    try {
+      const result = await startConnectFn({
+        data: {
+          providerId,
+          clientId: clientId.trim(),
+          clientSecret,
+          scopes: scopes.split(/\s+/).filter((s) => s.length > 0),
+          account: account.trim(),
+          platformId,
+        },
+      })
+      if (!result.ok) {
+        toast.error(`Failed to start connect: ${result.error}`)
+        setSubmitting(false)
+        return
+      }
+      // Navigate the BROWSER to the authorize URL — this is a top-level nav,
+      // not a client-side router transition (the provider's consent page is
+      // off-origin). window.location is the correct primitive here.
+      window.location.href = result.authorizeUrl
+    } catch {
+      toast.error("Failed to start connect")
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Connect (OAuth)</DialogTitle>
+          <DialogDescription>
+            Register your own OAuth app with the provider, paste its client credentials here, then
+            connect. junction never sees or stores your provider account password.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} noValidate>
+          <div className="flex flex-col gap-4">
+            <Field id="connect-provider" label="Provider" error={errors.providerId}>
+              <Select value={providerId} onValueChange={selectProvider}>
+                <SelectTrigger id="connect-provider" aria-required="true">
+                  <SelectValue placeholder="Select an OAuth provider" />
+                </SelectTrigger>
+                <SelectContent>
+                  {oauthProviders.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.displayName}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field id="connect-platform" label="Platform" error={errors.platformId}>
+              <Select value={platformId} onValueChange={setPlatformId}>
+                <SelectTrigger id="connect-platform" aria-required="true">
+                  <SelectValue placeholder="Select a platform" />
+                </SelectTrigger>
+                <SelectContent>
+                  {platforms.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.displayName}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field id="connect-account" label="Account" error={errors.account}>
+              <Input
+                id="connect-account"
+                placeholder="e.g. work, personal"
+                value={account}
+                onChange={(e) => setAccount(e.target.value)}
+                hasError={!!errors.account}
+                aria-required="true"
+              />
+            </Field>
+
+            {selectedProvider && (
+              <div className="flex flex-col gap-2">
+                <span style={{ fontSize: "var(--text-body)", color: "var(--gray-1000)" }}>
+                  Register an OAuth app with {selectedProvider.displayName} using:
+                </span>
+                <RegistrationField
+                  label="Redirect URI"
+                  value={selectedProvider.registrationHint.redirectUri}
+                />
+                <RegistrationField
+                  label="Scopes"
+                  value={selectedProvider.registrationHint.scopes}
+                />
+                {selectedProvider.registrationHint.docsUrl && (
+                  <a
+                    href={selectedProvider.registrationHint.docsUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ fontSize: "var(--text-caption)", color: "var(--blue-text)" }}
+                  >
+                    {selectedProvider.displayName} OAuth docs
+                  </a>
+                )}
+              </div>
+            )}
+
+            <Field id="connect-client-id" label="Client ID" error={errors.clientId}>
+              <Input
+                id="connect-client-id"
+                autoComplete="off"
+                value={clientId}
+                onChange={(e) => setClientId(e.target.value)}
+                hasError={!!errors.clientId}
+                aria-required="true"
+              />
+            </Field>
+            <SecretField
+              id="connect-client-secret"
+              label="Client Secret"
+              value={clientSecret}
+              onChange={setClientSecret}
+              error={errors.clientSecret}
+              placeholder="Paste the client secret here"
+            />
+            <Field
+              id="connect-scopes"
+              label="Scopes"
+              description="Space-separated. Pre-filled with the provider's default scopes."
+            >
+              <Input
+                id="connect-scopes"
+                value={scopes}
+                onChange={(e) => setScopes(e.target.value)}
+              />
+            </Field>
+          </div>
+          <DialogFormFooter
+            onCancel={() => handleOpenChange(false)}
+            submitting={submitting}
+            submitLabel="Connect"
+            submittingLabel="Redirecting…"
+          />
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Reconnect dialog — needsReauth one-click fix (inc 29). Re-enters BYO client
+// creds (not read back from the old refs) and re-runs the SAME connect flow
+// in mode:update, repointing the existing credential's refs on success.
+// ---------------------------------------------------------------------------
+
+interface ReconnectDialogProps {
+  readonly credential: CredentialMeta | null
+  readonly onOpenChange: (open: boolean) => void
+}
+
+function ReconnectOAuthDialog({ credential, onOpenChange }: ReconnectDialogProps) {
+  const [clientId, setClientId] = useState("")
+  const [clientSecret, setClientSecret] = useState("")
+  const [errors, setErrors] = useState<{ clientId?: string; clientSecret?: string }>({})
+  const [submitting, setSubmitting] = useState(false)
+
+  function reset() {
+    setClientId("")
+    setClientSecret("")
+    setErrors({})
+    setSubmitting(false)
+  }
+
+  function handleOpenChange(next: boolean) {
+    if (!next) reset()
+    onOpenChange(next)
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    const newErrors: typeof errors = {}
+    if (!clientId.trim()) newErrors.clientId = "Client ID is required"
+    if (!clientSecret) newErrors.clientSecret = "Client secret is required"
+    if (Object.keys(newErrors).length > 0) {
+      setErrors(newErrors)
+      return
+    }
+    if (!credential) return
+    setSubmitting(true)
+    try {
+      const result = await startReconnectFn({
+        data: { credentialId: credential.id, clientId: clientId.trim(), clientSecret },
+      })
+      if (!result.ok) {
+        toast.error(`Failed to reconnect: ${result.error}`)
+        setSubmitting(false)
+        return
+      }
+      window.location.href = result.authorizeUrl
+    } catch {
+      toast.error("Failed to reconnect")
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <Dialog open={credential !== null} onOpenChange={handleOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Reconnect</DialogTitle>
+          <DialogDescription>
+            Re-authorize <MonoCode>{credential?.account}</MonoCode> on{" "}
+            <MonoCode>{credential?.platformId}</MonoCode>. Paste the same OAuth app's client
+            credentials to continue.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} noValidate>
+          <div className="flex flex-col gap-4">
+            <Field id="reconnect-client-id" label="Client ID" error={errors.clientId}>
+              <Input
+                id="reconnect-client-id"
+                autoComplete="off"
+                value={clientId}
+                onChange={(e) => setClientId(e.target.value)}
+                hasError={!!errors.clientId}
+                aria-required="true"
+              />
+            </Field>
+            <SecretField
+              id="reconnect-client-secret"
+              label="Client Secret"
+              value={clientSecret}
+              onChange={setClientSecret}
+              error={errors.clientSecret}
+              placeholder="Paste the client secret here"
+            />
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="secondary" onClick={() => handleOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" disabled={submitting}>
+              {submitting ? "Redirecting…" : "Reconnect"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Flat credentials table (F12 — Variant C)
 //
 // Sort behavior: when sorting by Account (a non-platform column), group dividers
@@ -547,6 +953,8 @@ interface FlatTableProps {
   readonly onRotate: (c: CredentialMeta) => void
   readonly onDelete: (c: CredentialMeta) => void
   readonly onTestConnection: (c: CredentialMeta) => void
+  /** needsReauth oauth2 credentials show a prominent Reconnect action (inc 29). */
+  readonly onReconnect: (c: CredentialMeta) => void
   /** Credential id currently mid-test, or null — disables its row's Test Connection item. */
   readonly testingId?: string | null
   /** Page size; defaults to PAGE_SIZE. A test seam so pagination slicing is exercisable. */
@@ -565,9 +973,17 @@ export function FlatCredentialsTable({
   onRotate,
   onDelete,
   onTestConnection,
+  onReconnect,
   testingId = null,
   pageSize = PAGE_SIZE,
 }: FlatTableProps) {
+  // A single "now" per render pass, not a fresh Date.now() per row: the
+  // oauthStatus Expiring↔Connected boundary is a wall-clock threshold, so a
+  // per-row inline Date.now() could cross it mid-render (rows disagreeing) or
+  // differ between the SSR render and client hydration → a hydration mismatch
+  // (the same class the file's CHECKED_AT_FORMAT rule guards against). Computed
+  // once at mount and reused for every oauthStatus() call.
+  const now = useMemo(() => Date.now(), [])
   // Build a lookup from platformId → PlatformMeta for display names and kinds.
   const platformMap = useMemo(
     () => new Map<string, PlatformMeta>(platforms.map((p) => [p.id, p])),
@@ -794,7 +1210,13 @@ export function FlatCredentialsTable({
                 const platform = platformMap.get(c.platformId)
                 const platformName = platform?.displayName ?? c.platformId
                 const verifiable = platform?.verifiable ?? false
-                const status = verifyResultToStatus(c.lastVerifyResult)
+                const isOAuth = c.kind === "oauth2"
+                // oauth2 status is derived from oauthState (Expiring/Reconnect wires, inc 29);
+                // every other kind keeps the existing persisted-verify mapping (28.9).
+                const status = isOAuth
+                  ? oauthStatus(c.oauthState, now)
+                  : verifyResultToStatus(c.lastVerifyResult)
+                const needsReauth = isOAuth && c.oauthState?.needsReauth === true
                 const unreachable = c.lastVerifyResult === "unreachable"
                 return (
                   <TableRow key={c.id}>
@@ -823,6 +1245,23 @@ export function FlatCredentialsTable({
                             {formatCheckedAt(c.lastVerifiedAt)}
                           </span>
                         )}
+                        {/* Prominent inline Reconnect — the one-click fix for the OAuth
+                            lockout state, deliberately NOT buried in the ⋯ menu. */}
+                        {needsReauth && (
+                          <Button
+                            type="button"
+                            variant="primary"
+                            onClick={() => onReconnect(c)}
+                            style={{
+                              height: "24px",
+                              padding: "0 8px",
+                              fontSize: "var(--text-caption)",
+                            }}
+                          >
+                            <Plug className="h-3 w-3" aria-hidden="true" />
+                            Reconnect
+                          </Button>
+                        )}
                       </div>
                     </TableCell>
                     <TableActionsCell
@@ -836,10 +1275,17 @@ export function FlatCredentialsTable({
                             <TestTube className="h-4 w-4" aria-hidden="true" />
                             {testingId === c.id ? "Testing…" : "Test Connection"}
                           </DropdownMenuItem>
-                          <DropdownMenuItem onSelect={() => onRotate(c)}>
-                            <RefreshCw className="h-4 w-4" aria-hidden="true" />
-                            Rotate Secret
-                          </DropdownMenuItem>
+                          {isOAuth ? (
+                            <DropdownMenuItem onSelect={() => onReconnect(c)}>
+                              <Plug className="h-4 w-4" aria-hidden="true" />
+                              Reconnect
+                            </DropdownMenuItem>
+                          ) : (
+                            <DropdownMenuItem onSelect={() => onRotate(c)}>
+                              <RefreshCw className="h-4 w-4" aria-hidden="true" />
+                              Rotate Secret
+                            </DropdownMenuItem>
+                          )}
                           <DropdownMenuItem
                             onSelect={() => onDelete(c)}
                             style={{ color: "var(--status-error-fg)" }}
@@ -868,13 +1314,42 @@ export function FlatCredentialsTable({
 // Main page
 // ---------------------------------------------------------------------------
 
+// Toast copy for the post-callback ?connect= outcome (inc 29). Kept as a plain
+// map (not a component) — this is a one-shot side effect on mount/search
+// change, not rendered UI.
+const CONNECT_OUTCOME_MESSAGE: Record<NonNullable<CredentialsSearch["connect"]>, string> = {
+  ok: "Connected",
+  error: "Connect failed — the provider rejected the exchange",
+  "error-state": "Connect failed — the request expired or was already used",
+}
+
 function CredentialsPage() {
-  const { credentials, platforms } = Route.useLoaderData()
+  // oauthProviders defaults to [] — older test fixtures / a loader race that
+  // resolves before the catalog read both degrade to an empty picker rather
+  // than throwing (the Connect dialog just shows no providers to choose).
+  const { credentials, platforms, oauthProviders = [] } = Route.useLoaderData()
+  const { connect }: CredentialsSearch = Route.useSearch()
   const router = useRouter()
   const [addOpen, setAddOpen] = useState(false)
+  const [connectOpen, setConnectOpen] = useState(false)
   const [rotatingCred, setRotatingCred] = useState<CredentialMeta | null>(null)
   const [deletingCred, setDeletingCred] = useState<CredentialMeta | null>(null)
+  const [reconnectingCred, setReconnectingCred] = useState<CredentialMeta | null>(null)
   const [testingId, setTestingId] = useState<string | null>(null)
+
+  // Post-/oauth/callback toast — the redirect lands here with ?connect=ok|
+  // error|error-state (never a token/secret in the query). Clear the search
+  // param after showing the toast so a page refresh doesn't re-toast.
+  useEffect(() => {
+    if (connect === "ok") {
+      toast.success(CONNECT_OUTCOME_MESSAGE.ok)
+    } else if (connect === "error" || connect === "error-state") {
+      toast.error(CONNECT_OUTCOME_MESSAGE[connect])
+    } else {
+      return
+    }
+    void router.navigate({ to: "/credentials", search: {}, replace: true })
+  }, [connect, router])
 
   async function invalidate() {
     await router.invalidate()
@@ -913,6 +1388,10 @@ function CredentialsPage() {
         actions={
           <>
             <RefreshButton />
+            <Button variant="secondary" onClick={() => setConnectOpen(true)}>
+              <Plug className="h-4 w-4" aria-hidden="true" />
+              Connect (OAuth)
+            </Button>
             <Button variant="primary" onClick={() => setAddOpen(true)}>
               <Plus className="h-4 w-4" aria-hidden="true" />
               Add Credential
@@ -927,7 +1406,21 @@ function CredentialsPage() {
         onRotate={setRotatingCred}
         onDelete={setDeletingCred}
         onTestConnection={(c) => void handleTestConnection(c)}
+        onReconnect={setReconnectingCred}
         testingId={testingId}
+      />
+
+      <ConnectOAuthDialog
+        open={connectOpen}
+        onOpenChange={setConnectOpen}
+        platforms={platforms}
+        oauthProviders={oauthProviders}
+      />
+      <ReconnectOAuthDialog
+        credential={reconnectingCred}
+        onOpenChange={(open) => {
+          if (!open) setReconnectingCred(null)
+        }}
       />
 
       <AddCredentialDialog

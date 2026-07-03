@@ -29,3 +29,32 @@ export function collectRepeatableFlag(rawArgs: string[], flag: string): string[]
   }
   return values
 }
+
+/**
+ * Read a secret/token from stdin (trimmed). The headless/agent way to supply a
+ * secret WITHOUT it ever appearing in argv — used by `credential add|rotate`
+ * (--token-stdin/--secret-stdin) and `connect|reconnect` (--client-secret-stdin).
+ * `resume()` in case stdin was paused.
+ */
+export function readStdin(): Promise<string> {
+  return new Promise<string>((resolve) => {
+    let data = ""
+    let settled = false
+    const done = () => {
+      if (settled) return
+      settled = true
+      resolve(data.trim())
+    }
+    process.stdin.setEncoding("utf8")
+    process.stdin.on("data", (chunk: string) => {
+      data += chunk
+    })
+    process.stdin.on("end", done)
+    // A stream error (e.g. EPIPE / a closed pipe) must not crash the process
+    // with an unhandled 'error' event — resolve with whatever was read (a
+    // partial/empty read then hits the caller's "secret must not be empty"
+    // guard, which reports a clean error) rather than throw.
+    process.stdin.on("error", done)
+    process.stdin.resume()
+  })
+}
