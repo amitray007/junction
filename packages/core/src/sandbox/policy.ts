@@ -2,15 +2,31 @@
 // Shared policy helpers -- imported by backends without creating a circular dep.
 
 import { realpath } from "node:fs/promises"
-import os from "node:os"
 import path from "node:path"
 import { getPaths } from "../paths/index.js"
 
-/** Absolute paths that are always in the deny-read list (defense-in-depth). */
+/**
+ * Absolute paths that are always in the deny-read list (defense-in-depth) AND the
+ * secret set that `grantedPathExposesSecrets` protects.
+ *
+ * These are the SPECIFIC secret files (credential store + master key), NOT the whole
+ * junction home. Two reasons this must stay file-specific (inc-28.9 review):
+ *  1. The old third entry was `os.homedir() + "/.junction"` — a hardcoded default-home
+ *     path that is WRONG (dead) under a JUNCTION_HOME override, so it protected nothing
+ *     there. The two file entries below are resolved via getPaths()→resolveHome() and so
+ *     honor the override correctly in every mode.
+ *  2. Denying the whole home would ALSO break the inc-28.9 file-credential mechanism: the
+ *     sandboxed child legitimately reads its per-call materialized secret at
+ *     `<home>/run/cred-XXXX` (granted as a readPath). Seatbelt is last-match-wins with
+ *     denyLines emitted AFTER allow lines, so a broad `(deny file-read* (subpath <home>))`
+ *     would shadow that allow and the child couldn't read its own credential.
+ * Whole-home / ancestor grants are still rejected: `grantedPathExposesSecrets` flags a
+ * grant that CONTAINS either secret file, and a whole-home grant contains both — so the
+ * containment protection is unchanged while the runtime-dir grant stays readable.
+ */
 export function getAlwaysDeniedPaths(): string[] {
   const paths = getPaths()
-  const home = os.homedir()
-  return [paths.credentialsFile, paths.masterKeyFile, path.join(home, ".junction")]
+  return [paths.credentialsFile, paths.masterKeyFile]
 }
 
 /**

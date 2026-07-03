@@ -93,6 +93,29 @@ describe("verifyCredential — cli", () => {
   })
 })
 
+describe("verifyCredential — custom (GAP-3b, inc 28.95)", () => {
+  it("always not-verifiable — reachable via PlatformKind's 'custom' member, never calls buildProvider", async () => {
+    // PlatformKind = "mcp" | "openapi" | "graphql" | "cli" | "custom" (schema/platform.ts).
+    // "custom" is a real, reachable member of the union (unlike a hypothetical
+    // future kind, which the `const _: never` exhaustiveness guard would catch
+    // at compile time) — so this branch is genuinely exercisable, not vacuous.
+    const platform: Platform = {
+      id: "plat-custom",
+      kind: "custom",
+      displayName: "Custom Source",
+    }
+    const result = await verifyCredential(platform, "secret", FAKE_PATHS)
+    expect(result.isOk()).toBe(true)
+    if (result.isOk()) {
+      expect(result.value).toEqual({
+        status: "not-verifiable",
+        reason: `platform kind "custom" is not verifiable`,
+      })
+    }
+    expect(buildProvider).not.toHaveBeenCalled()
+  })
+})
+
 describe("verifyCredential — openapi", () => {
   it("not-verifiable when verifyOperationId is unset", async () => {
     const result = await verifyCredential(openapiPlatform(), "secret", FAKE_PATHS)
@@ -206,6 +229,33 @@ describe("verifyCredential — openapi", () => {
     expect(result.isOk()).toBe(true)
     if (result.isOk()) {
       expect(JSON.stringify(result.value)).not.toContain(SECRET_BODY_MARKER)
+    }
+  })
+
+  it("unreachable — 'unexpected response shape' when the ToolResult text has no parseable leading status line (GAP-3a, inc 28.95)", async () => {
+    // parseLeadingStatus requires a leading /^(\d{3})\s/ match; text that doesn't
+    // start with a 3-digit status code (e.g. a shape openapi-client never
+    // actually emits, but the code defends against) hits this specific detail.
+    vi.mocked(buildProvider).mockReturnValue(
+      new ResultAsync(
+        Promise.resolve(
+          ok(
+            stubProvider({
+              callTool: () =>
+                new ResultAsync(
+                  Promise.resolve(
+                    ok({ content: [{ type: "text", text: "not a status line at all" }] }),
+                  ),
+                ),
+            }),
+          ),
+        ),
+      ),
+    )
+    const result = await verifyCredential(openapiPlatform("getMe"), "secret", FAKE_PATHS)
+    expect(result.isOk()).toBe(true)
+    if (result.isOk()) {
+      expect(result.value).toEqual({ status: "unreachable", detail: "unexpected response shape" })
     }
   })
 
