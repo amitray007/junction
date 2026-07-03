@@ -592,6 +592,59 @@ describe("policy-invalid", () => {
     }
   })
 
+  it("getAlwaysDeniedPaths() is the SPECIFIC secret files (override-aware), NOT the whole home (inc-28.9 review)", async () => {
+    // The secret set is the credential-store + master-key FILES, resolved via
+    // getPaths()→resolveHome() so they honor JUNCTION_HOME. It must NOT include
+    // the whole junction home: (a) the old third entry `os.homedir()+".junction"`
+    // was a wrong/dead path under an override; (b) blanket-denying the home would
+    // shadow the inc-28.9 file-credential grant at `<home>/run/cred-*` (Seatbelt
+    // last-match-wins: the home deny-line is emitted after the runtime-dir allow).
+    // Whole-home grants are still rejected via grantedPathExposesSecrets — a
+    // whole-home grant CONTAINS both secret files (asserted separately below).
+    const fakeJunctionHome = await mkdtemp(path.join(os.tmpdir(), "jx-fake-junction-override-"))
+    const prevJunctionHome = process.env.JUNCTION_HOME
+    process.env.JUNCTION_HOME = fakeJunctionHome
+
+    try {
+      const { getAlwaysDeniedPaths } = await import("./policy.js")
+      const { getPaths } = await import("../paths/index.js")
+      const denied = getAlwaysDeniedPaths()
+      const paths = getPaths()
+
+      // Exactly the two secret files, both under the OVERRIDE home (override-aware).
+      expect(denied).toEqual([paths.credentialsFile, paths.masterKeyFile])
+      expect(denied.every((p) => p.startsWith(fakeJunctionHome))).toBe(true)
+      // Must NOT blanket-deny the home itself (would shadow the runtime-dir cred grant)...
+      expect(denied).not.toContain(fakeJunctionHome)
+      // ...nor the hardcoded os.homedir()+".junction" (the pre-fix wrong path under override).
+      const hardcodedHome = path.join(os.homedir(), ".junction")
+      if (hardcodedHome !== fakeJunctionHome) expect(denied).not.toContain(hardcodedHome)
+    } finally {
+      if (prevJunctionHome === undefined) delete process.env.JUNCTION_HOME
+      else process.env.JUNCTION_HOME = prevJunctionHome
+      await cleanup(fakeJunctionHome)
+    }
+  })
+
+  it("grantedPathExposesSecrets still rejects a whole-home grant via the secret FILES (containment, override-aware)", async () => {
+    // Reverting the whole-home deny entry loses nothing: a grant of the override
+    // home still CONTAINS credentialsFile + masterKeyFile → flagged exposed.
+    const fakeJunctionHome = await mkdtemp(path.join(os.tmpdir(), "jx-fake-junction-expose-"))
+    const prevJunctionHome = process.env.JUNCTION_HOME
+    process.env.JUNCTION_HOME = fakeJunctionHome
+    try {
+      const { grantedPathExposesSecrets } = await import("./policy.js")
+      // Seed the real secret file so realpath resolution is exercised.
+      await writeFile(path.join(fakeJunctionHome, "credentials.enc.json"), "{}", { mode: 0o600 })
+      const res = await grantedPathExposesSecrets([fakeJunctionHome])
+      expect(res.exposed).toBe(true)
+    } finally {
+      if (prevJunctionHome === undefined) delete process.env.JUNCTION_HOME
+      else process.env.JUNCTION_HOME = prevJunctionHome
+      await cleanup(fakeJunctionHome)
+    }
+  })
+
   it("rejects cwd outside all read/write paths", async () => {
     const sb = await createSandbox()
     expect(sb.isOk()).toBe(true)

@@ -164,6 +164,62 @@ describe("resolveCredentialSecret", () => {
       }
     })
   })
+
+  it("lost secret (credential row present, store.get → Ok(null)) → Ok({secret:null, kind, account}) — documented-intentional, not a fake auth (GAP-3, inc 28.95)", async () => {
+    // Locks resolve-provider.ts's documented behaviour (see its comment: "A null
+    // VALUE from the store (lost/cleared secret) is treated the same as 'no
+    // credential' — never a fake auth attempt"). A future change that silently
+    // turned a lost secret into an empty-string or throw would flip this test.
+    await withTempHome(async () => {
+      const paths = getPaths()
+      const dbResult = await getDatabase(paths)
+      expect(dbResult.isOk()).toBe(true)
+      if (dbResult.isErr()) return
+      const repos = createRepositories(dbResult.value)
+
+      const platform = PlatformSchema.parse({
+        id: PlatformIdSchema.parse("test-platform-lost"),
+        kind: "mcp" as const,
+        displayName: "Test Platform Lost",
+        connection: { transport: "http" as const, url: "https://example.com/mcp" },
+      })
+      await repos.platforms.upsert(platform)
+
+      const storeResult = await createCredentialStore(paths)
+      expect(storeResult.isOk()).toBe(true)
+      if (storeResult.isErr()) return
+      const store = storeResult.value
+
+      const addResult = await addCredential(
+        {
+          platformId: "test-platform-lost",
+          account: "work",
+          kind: "bearer",
+          secret: "will-be-lost",
+        },
+        platform,
+        store,
+        repos.credentials,
+      )
+      expect(addResult.isOk()).toBe(true)
+      if (addResult.isErr()) return
+      const credential = addResult.value
+
+      // Simulate a lost/cleared secret: delete it from the store directly,
+      // WITHOUT removing the credential row — store.get(secretRef) now
+      // returns Ok(null) while the credential still exists in the DB.
+      const deleteResult = await store.delete(credential.secretRef)
+      expect(deleteResult.isOk()).toBe(true)
+
+      const result = await resolveCredentialSecret(repos, paths, credential.id)
+      expect(result.isOk()).toBe(true)
+      if (result.isOk()) {
+        expect(result.value.secret).toBeNull()
+        expect(result.value.kind).toBe("bearer")
+        expect(result.value.account).toBe("work")
+      }
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------
