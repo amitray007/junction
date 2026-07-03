@@ -6,7 +6,10 @@
   "references": [
     { "path": "../core" },
     { "path": "../mcp/client" },
+    { "path": "../mcp/server" },
     { "path": "../openapi-client" },
-    { "path": "../graphql-client" }
+    { "path": "../graphql-client" },
+    { "path": "../platform-orchestration" },
+    { "path": "../source-runtime" }
   ]
 }
