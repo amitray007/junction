@@ -1,0 +1,13 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/core/tsconfig.typecheck.json" },
+    { "path": "packages/mcp/server/tsconfig.typecheck.json" },
+    { "path": "packages/mcp/client/tsconfig.typecheck.json" },
+    { "path": "packages/openapi-client/tsconfig.typecheck.json" },
+    { "path": "packages/graphql-client/tsconfig.typecheck.json" },
+    { "path": "packages/platform-orchestration/tsconfig.typecheck.json" },
+    { "path": "packages/source-runtime/tsconfig.typecheck.json" },
+    { "path": "packages/cli/tsconfig.typecheck.json" }
+  ]
+}
