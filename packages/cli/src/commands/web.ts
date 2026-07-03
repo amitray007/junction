@@ -15,6 +15,7 @@
 import { spawn } from "node:child_process"
 import { access } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
+import { openInBrowser } from "@junction/core"
 import { defineCommand } from "citty"
 
 export const webCommand = defineCommand({
@@ -84,20 +85,3 @@ export const webCommand = defineCommand({
     })
   },
 })
-
-/** Open a URL in the system default browser. No new dependency. */
-function openInBrowser(url: string): void {
-  let cmd: string
-  let cmdArgs: string[]
-  if (process.platform === "darwin") {
-    cmd = "open"
-    cmdArgs = [url]
-  } else if (process.platform === "win32") {
-    cmd = "cmd"
-    cmdArgs = ["/c", "start", url]
-  } else {
-    cmd = "xdg-open"
-    cmdArgs = [url]
-  }
-  spawn(cmd, cmdArgs, { detached: true, stdio: "ignore" }).unref()
-}

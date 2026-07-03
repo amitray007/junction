@@ -24,9 +24,16 @@ export interface AddCredentialInput {
    */
   account: string
   /**
-   * Authentication kind. oauth2 is excluded — it stays gated until inc 29's
-   * multi-ref vault; every other kind is validated against the platform's
-   * kind-compat matrix (see kind-compat.ts) before the secret is touched.
+   * Authentication kind. oauth2 is excluded from this path DELIBERATELY, even
+   * though the kind-compat MATRIX accepts it as of inc 29 (a platform can
+   * declare oauth2 and the web picker can show it): there is no single
+   * plaintext "secret" for OAuth — access token, refresh token, and BYO
+   * client_secret are three separate refs (OAuthMetaSchema), not one string
+   * this call's shape can carry. OAuth credentials are minted via a separate
+   * connect/addOAuthCredential entry path (source-runtime/cli, inc 29 slice
+   * B+), never through this plaintext-secret path. Every other kind is
+   * validated against the platform's kind-compat matrix (see kind-compat.ts)
+   * before the secret is touched.
    */
   kind: Exclude<CredentialKind, "oauth2">
   /**
@@ -66,10 +73,25 @@ export function addCredential(
     })
   }
 
+  // Runtime belt-and-suspenders: input.kind's TYPE excludes "oauth2" (see the
+  // Exclude<CredentialKind,"oauth2"> comment above), but a caller can bypass
+  // the type system (e.g. `as never`). isKindAccepted no longer special-cases
+  // oauth2 — the matrix is honest about it (inc 29) — so an oauth2-scheme
+  // platform's matrix WOULD accept "oauth2" if this guard didn't exist here.
+  // This path stores exactly one plaintext secret at one ref; OAuth needs
+  // three (access/refresh/client_secret), so oauth2 must never reach the
+  // store write below regardless of what the matrix says.
+  if ((input.kind as CredentialKind) === "oauth2") {
+    return errAsync({
+      kind: "kind-incompatible" as const,
+      requested: "oauth2",
+      allowed: Array.from(new Set([...compatibleCredentialKinds(platform), "bearer"])),
+    })
+  }
+
   // Kind-compat validation BEFORE the secret is touched — security-relevant
   // validation lives here (not duplicated at the cli/web edges). "bearer" is
-  // always accepted (legacy back-compat); "oauth2" is always rejected
-  // (gated until inc 29) — both handled inside isKindAccepted.
+  // always accepted (legacy back-compat), handled inside isKindAccepted.
   if (!isKindAccepted(platform, input.kind)) {
     return errAsync({
       kind: "kind-incompatible" as const,

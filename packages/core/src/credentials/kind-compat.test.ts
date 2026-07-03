@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // kind-compat.test.ts — every platform shape → expected preferred list + accepted set.
-// oauth2 rejected everywhere; bearer accepted everywhere (legacy back-compat).
+// oauth2 joins the matrix honestly for oauth2-scheme platforms (inc 29); bearer
+// accepted everywhere (legacy back-compat).
 
 import { describe, expect, it } from "vitest"
 import type { CredentialKind } from "../schema/credential.js"
@@ -29,12 +30,12 @@ describe("compatibleCredentialKinds", () => {
     expect(compatibleCredentialKinds(p)).toEqual(["bearer"])
   })
 
-  it("openapi oauth2 → [bearer] (oauth2 kind itself joins in inc 29)", () => {
+  it("openapi oauth2 → [oauth2] (the honest kind, inc 29)", () => {
     const p = platform({
       kind: "openapi",
       openapi: { spec: { from: "url", url: "https://x" }, auth: { scheme: "oauth2" } },
     })
-    expect(compatibleCredentialKinds(p)).toEqual(["bearer"])
+    expect(compatibleCredentialKinds(p)).toEqual(["oauth2"])
   })
 
   it("openapi apiKey → [api-key]", () => {
@@ -179,48 +180,38 @@ describe("compatibleCredentialKinds", () => {
 })
 
 describe("isKindAccepted", () => {
-  it("oauth2 is rejected for every platform shape", () => {
-    const shapes: Platform[] = [
-      platform({
-        kind: "openapi",
-        openapi: {
-          spec: { from: "url", url: "https://x" },
-          auth: { scheme: "apiKey", in: "header", name: "X" },
-        },
-      }),
-      platform({
-        kind: "graphql",
-        graphql: {
-          endpoint: "https://x/graphql",
-          auth: { scheme: "bearer", header: "Authorization" },
-        },
-      }),
-      platform({
-        kind: "mcp",
-        connection: {
-          transport: "http",
-          url: "https://x",
-          auth: { scheme: "bearer", header: "Authorization" },
-        },
-      }),
-      platform({ kind: "mcp", connection: { transport: "stdio", command: "npx", args: [] } }),
-      platform({
-        kind: "cli",
-        cli: {
-          tools: [
-            {
-              name: "run",
-              argv: [{ kind: "literal", value: "/bin/true" }],
-              policy: { cwd: "/tmp", readPaths: [], writePaths: [], allowNet: [], timeoutMs: 1000 },
-            },
-          ],
-        },
-      }),
-      platform({ kind: "custom" }),
-    ]
-    for (const p of shapes) {
-      expect(isKindAccepted(p, "oauth2")).toBe(false)
+  it("an oauth2-scheme openapi/graphql platform → compatibleCredentialKinds includes oauth2, isKindAccepted is true", () => {
+    const openapi = platform({
+      kind: "openapi",
+      openapi: { spec: { from: "url", url: "https://x" }, auth: { scheme: "oauth2" } },
+    })
+    const graphql = platform({
+      kind: "graphql",
+      graphql: { endpoint: "https://x/graphql", auth: { scheme: "oauth2" } },
+    })
+    for (const p of [openapi, graphql]) {
+      expect(compatibleCredentialKinds(p)).toContain("oauth2")
+      expect(isKindAccepted(p, "oauth2")).toBe(true)
     }
+  })
+
+  it("a bearer/apiKey platform → isKindAccepted(platform, oauth2) is false (oauth2 not in its matrix)", () => {
+    const bearerPlatform = platform({
+      kind: "openapi",
+      openapi: {
+        spec: { from: "url", url: "https://x" },
+        auth: { scheme: "bearer", header: "Authorization" },
+      },
+    })
+    const apiKeyPlatform = platform({
+      kind: "openapi",
+      openapi: {
+        spec: { from: "url", url: "https://x" },
+        auth: { scheme: "apiKey", in: "header", name: "X" },
+      },
+    })
+    expect(isKindAccepted(bearerPlatform, "oauth2")).toBe(false)
+    expect(isKindAccepted(apiKeyPlatform, "oauth2")).toBe(false)
   })
 
   it("bearer is accepted for every platform shape (legacy back-compat)", () => {

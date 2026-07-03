@@ -19,22 +19,37 @@ export type CredentialKind = z.infer<typeof CredentialKind>
 // ---------------------------------------------------------------------------
 
 /**
- * Minimal reserved slot for OAuth metadata.
- * Present day one so the OAuth increment needs no migration (design spec §4a).
- * The OAuth refresh-loop increment will extend this schema.
+ * OAuth metadata for a credential (increment 29 — the OAuth vault).
+ * Present day one so the OAuth increment needs no migration (design spec §4a);
+ * extended here with the fields the connect/refresh flows populate.
  *
  * INVARIANT: every field here is metadata or a REFERENCE — never a token value.
- * When the OAuth increment adds a refresh-token field, it MUST be a handle
- * (e.g. `refreshTokenRef: string` resolving through the CredentialStore /
- * token table), NOT the raw refresh token. Same secrets-as-references rule as
- * `Credential.secretRef` (docs/rules/security.md). Adding optional fields here
- * is additive/non-breaking (z.object strips unknowns).
+ * `refreshTokenRef` / `clientIdRef` / `clientSecretRef` are handles resolving
+ * through the CredentialStore, exactly like `Credential.secretRef` — NEVER the
+ * raw refresh token or a raw client_secret. The access token stays in the
+ * credential's existing `secretRef`. Same secrets-as-references rule as
+ * `Credential.secretRef` (docs/rules/security.md). All fields are optional so
+ * old rows still parse — additive, no migration (z.object strips unknowns).
  */
 export const OAuthMetaSchema = z.object({
   /** Granted OAuth scopes */
   scopes: z.array(z.string()).optional(),
   /** Token expiry as ISO 8601 string, or null if unknown/non-expiring */
   expiresAt: z.string().nullable().optional(),
+  // --- inc 29 additive ---
+  /** Second minted ULID ref → the refresh token in the CredentialStore. NEVER the raw token. */
+  refreshTokenRef: z.string().min(1).optional(),
+  /** Catalog provider key, e.g. "google" | "github" | "slack" | "generic" */
+  providerId: z.string().min(1).optional(),
+  /** How this credential was obtained / is refreshed */
+  authMode: z.enum(["authorization_code", "device_code", "client_credentials"]).optional(),
+  /** BYO client credentials, stored as refs (the client_secret is a secret). */
+  clientIdRef: z.string().min(1).optional(),
+  clientSecretRef: z.string().min(1).optional(),
+  /** First-class re-auth state (surfaced as Reconnect everywhere). */
+  needsReauth: z.boolean().optional(),
+  /** ISO 8601 timestamp the tokens were obtained. */
+  obtainedAt: z.string().optional(),
 })
 
 export type OAuthMeta = z.infer<typeof OAuthMetaSchema>

@@ -331,4 +331,51 @@ describe("security: no plaintext secret survives Credential parse", () => {
     expect(Object.hasOwn(result.data, "refreshToken")).toBe(false)
     expect(JSON.stringify(result.data)).not.toContain("RAW_REFRESH_TOKEN_DO_NOT_STORE")
   })
+
+  // ---------------------------------------------------------------------------
+  // OAuthMetaSchema — inc 29 additive fields (vault refs, provider, reauth state)
+  // ---------------------------------------------------------------------------
+
+  it("OAuthMetaSchema: old-shape {scopes, expiresAt} blob still parses (back-compat)", () => {
+    const result = OAuthMetaSchema.safeParse({
+      scopes: ["repo"],
+      expiresAt: "2026-01-01T00:00:00Z",
+    })
+    expect(result.success).toBe(true)
+    if (!result.success) return
+    expect(result.data).toEqual({ scopes: ["repo"], expiresAt: "2026-01-01T00:00:00Z" })
+  })
+
+  it("OAuthMetaSchema: a full new-shape blob round-trips", () => {
+    const full = {
+      scopes: ["repo", "read:user"],
+      expiresAt: "2026-01-01T00:00:00Z",
+      refreshTokenRef: "ref_refresh_01",
+      providerId: "github",
+      authMode: "authorization_code" as const,
+      clientIdRef: "ref_client_id_01",
+      clientSecretRef: "ref_client_secret_01",
+      needsReauth: false,
+      obtainedAt: "2025-12-31T00:00:00Z",
+    }
+    const result = OAuthMetaSchema.safeParse(full)
+    expect(result.success).toBe(true)
+    if (!result.success) return
+    expect(result.data).toEqual(full)
+  })
+
+  it("OAuthMetaSchema: unknown keys are stripped", () => {
+    const result = OAuthMetaSchema.safeParse({
+      providerId: "google",
+      someFutureField: "unexpected",
+    })
+    expect(result.success).toBe(true)
+    if (!result.success) return
+    expect(Object.hasOwn(result.data, "someFutureField")).toBe(false)
+  })
+
+  it("OAuthMetaSchema: rejects a non-string / empty refreshTokenRef", () => {
+    expect(OAuthMetaSchema.safeParse({ refreshTokenRef: 123 }).success).toBe(false)
+    expect(OAuthMetaSchema.safeParse({ refreshTokenRef: "" }).success).toBe(false)
+  })
 })
