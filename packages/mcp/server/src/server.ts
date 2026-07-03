@@ -92,6 +92,8 @@ export function safeUpstreamMessage(e: UpstreamError): string {
       return `upstream response exceeded size limit (${e.limit} bytes)`
     case "too-many-tools":
       return `spec has too many operations (${e.count}); cap is ${e.cap}`
+    case "needs-reauth":
+      return "upstream source: connection expired — reconnect this account"
   }
 }
 

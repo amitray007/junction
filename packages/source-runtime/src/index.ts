@@ -13,6 +13,7 @@
 export type { ResolvedSecret } from "./build-provider.js"
 export { buildProvider, toResolvedSecret } from "./build-provider.js"
 export { formatUpstreamError } from "./format-error.js"
+export { refreshIfExpiredSingleFlight } from "./refresh-singleflight.js"
 export type { ResolveCredentialError } from "./resolve-credential.js"
 export { resolveCredentialSecret } from "./resolve-credential.js"
 export type { ProviderResolution } from "./resolve-provider.js"

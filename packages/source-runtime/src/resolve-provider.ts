@@ -12,15 +12,18 @@ import {
   err,
   type JunctionPaths,
   ok,
+  type RefreshTokenFn,
   type Repositories,
   type Result,
   ResultAsync,
+  refreshIfExpired,
   type SourceRef,
   type ToolFilter,
   type ToolProvider,
   type UpstreamError,
 } from "@junction/core"
 import { buildProvider, type ResolvedSecret } from "./build-provider.js"
+import { refreshIfExpiredSingleFlight } from "./refresh-singleflight.js"
 
 // ---------------------------------------------------------------------------
 // ProviderResolution
@@ -119,11 +122,64 @@ export function makeResolveProvider(
         }
         const credential = credResult.value
 
-        // Resolve the plaintext secret from the store.
-        // If store is null (store unavailable), secret is null (no auth).
-        // A null VALUE from the store (lost/cleared secret) is treated the
-        // same as "no credential" — never a fake auth attempt.
-        if (store !== null) {
+        if (store !== null && credential.kind === "oauth2") {
+          // OAuth credential: refresh-ahead (inc 29 slice A2) before ever
+          // reading the store directly — refreshIfExpired owns the "current
+          // token" read (unchanged when no refresh is due) and single-flights
+          // across concurrent resolves that share this credentialId (the
+          // listTools fan-out race, F2).
+          //
+          // TODO(inc29-B): replace this placeholder with the arctic-backed
+          // refresh fn. Until B lands, an actually-expired oauth2 credential
+          // will surface as auth-failed (refresh-failed below) — a
+          // non-expired one resolves fine (shouldRefresh false → no refreshFn
+          // call at all).
+          const refreshFn: RefreshTokenFn = async () => ({
+            ok: false,
+            reason: "unknown",
+            detail: "refresh not yet wired (inc29-B)",
+          })
+
+          const refreshResult = await refreshIfExpiredSingleFlight(credential.id, () =>
+            refreshIfExpired({ credential, store, repos, refreshFn, now: Date.now() }),
+          )
+          if (refreshResult.isErr()) {
+            if (refreshResult.error.kind === "needs-reauth") {
+              log(
+                `${logPrefix}: source "${sourceRef.toolNamespace}": credential "${sourceRef.credentialId}" needs reconnect — skipping`,
+              )
+              return err({
+                kind: "needs-reauth" as const,
+                platformId: refreshResult.error.platformId,
+                account: refreshResult.error.account,
+              } satisfies UpstreamError)
+            }
+            // refresh-failed | not-oauth (defensive) — a transient refresh
+            // failure surfaces as auth-failed, which is honest: the call
+            // cannot proceed with a trustworthy token right now.
+            // inc29: on-401 reactive refresh is a fast-follow (F1) — this is
+            // the refresh-ahead path only.
+            log(
+              `${logPrefix}: source "${sourceRef.toolNamespace}": credential refresh failed — skipping`,
+            )
+            return err({
+              kind: "auth-failed" as const,
+              cause: refreshResult.error,
+            } satisfies UpstreamError)
+          }
+          // A null accessToken means the store has no value for the
+          // secretRef (a lost/cleared secret) — mirror the non-oauth2
+          // else-branch below exactly: treat it as "no credential" (secret
+          // = null), NEVER as a fake empty-string bearer token.
+          secret =
+            refreshResult.value.accessToken === null
+              ? null
+              : { kind: credential.kind, value: refreshResult.value.accessToken }
+        } else if (store !== null) {
+          // Resolve the plaintext secret from the store.
+          // If store is null (store unavailable), secret is null (no auth).
+          // A null VALUE from the store (lost/cleared secret) is treated the
+          // same as "no credential" — never a fake auth attempt.
           const secretResult = await store.get(credential.secretRef)
           if (secretResult.isErr()) {
             log(

@@ -62,6 +62,8 @@ export function formatUpstreamError(
       return `upstream response exceeded ${e.limit} byte limit`
     case "too-many-tools":
       return `spec has too many operations (${e.count}); cap is ${e.cap}`
+    case "needs-reauth":
+      return `connection expired — reconnect this account (run: junction connect ${e.platformId} --account ${e.account})`
     default: {
       // Exhaustiveness guard: compile error if a new UpstreamError kind is added
       // without a corresponding case here (docs/rules/typescript.md — switch + never).
