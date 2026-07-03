@@ -13,7 +13,7 @@
 // `JSON.stringify(err)`. Map failures via `.code` / `.constructor.name` only.
 
 import { getProvider, type RefreshResult, type RefreshTokenFn } from "@junction/core"
-import { OAuth2Client, OAuth2RequestError } from "arctic"
+import { ArcticFetchError, OAuth2Client, OAuth2RequestError } from "arctic"
 
 /**
  * Resolve a provider's token endpoint to a plain string, or `undefined` if it
@@ -104,11 +104,13 @@ function mapRefreshFailure(cause: unknown): RefreshResult {
     }
     return { ok: false, reason: "unknown", detail: cause.code }
   }
-  // ArcticFetchError (network) and anything else (UnexpectedResponseError,
-  // UnexpectedErrorResponseBodyError, or a raw fetch throw) are transient —
-  // identify by constructor name only, never the error message/cause.
-  if (cause instanceof Error && cause.constructor.name === "ArcticFetchError") {
-    return { ok: false, reason: "transient", detail: cause.constructor.name }
+  // ArcticFetchError (a network/fetch-level failure) is transient → keep the
+  // old tokens and retry. Use `instanceof` (the documented, robust check) not a
+  // constructor.name string-match, which a minifier/bundler or a cross-realm
+  // error could break — misclassifying a genuine network blip as "unknown".
+  // (`detail` stays the class name — a leak-safe diagnostic label, never the cause.)
+  if (cause instanceof ArcticFetchError) {
+    return { ok: false, reason: "transient", detail: "ArcticFetchError" }
   }
   return {
     ok: false,
