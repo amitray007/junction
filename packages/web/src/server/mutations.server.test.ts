@@ -253,4 +253,32 @@ describe("testCredential", () => {
     expect(serialized).not.toContain("ref-1") // secretRef
     expect(serialized).not.toContain("secretRef")
   })
+
+  // ---------------------------------------------------------------------------
+  // Verify-honesty fix: a stored credential (reached via credentialId →
+  // secretRef) whose secret resolves to Ok(null) is a LOST secret (cleared
+  // keychain entry / deleted key file) — NOT a public/no-auth source. It must
+  // never be handed to verifyCredential (which would treat null as "no
+  // credential to send" and could verify "ok" anonymously against a lax
+  // upstream). It must always come back "unreachable" with a message telling
+  // the operator to rotate.
+  // ---------------------------------------------------------------------------
+  it('store.get resolving Ok(null) → status "unreachable" with a stored-secret-missing detail, verifyCredential NEVER called, persisted as "unreachable" (never "ok")', async () => {
+    credentialsGetMock.mockReturnValue(okAsync(fakeCredentialRow))
+    getMock.mockReturnValue(okAsync(fakePlatform))
+    storeGetMock.mockReturnValue(okAsync(null))
+    setVerifyStateMock.mockReturnValue(okAsync(undefined))
+
+    const result = await testCredential("cred-1")
+
+    expect(result).toEqual({
+      ok: true,
+      status: "unreachable",
+      detail: "stored secret missing — rotate this credential",
+    })
+    // NO anonymous verify happened.
+    expect(verifyCredentialMock).not.toHaveBeenCalled()
+    // Persisted as "unreachable", never "ok"/"auth-failed".
+    expect(setVerifyStateMock).toHaveBeenCalledWith("cred-1", "unreachable", expect.any(Number))
+  })
 })

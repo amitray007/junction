@@ -146,6 +146,11 @@ export async function mutateAddCredential(input: {
     // verifyCredential's contract is ALWAYS Ok(VerifyOutcome) (error type is
     // `never`) — unwrapOr's fallback is unreachable but keeps this call-site
     // total without an unsafe cast.
+    // `secret` here is `input.secret`, sourced from the request body — it is
+    // a string by the input type, never null, so the lost-secret handling in
+    // testCredential (above, keyed off store.get's stored-secretRef lookup)
+    // does not apply on this path. No change needed here (verify-honesty
+    // review, see STORED_SECRET_MISSING_DETAIL).
     const verifyResult = (await verifyCredential(platform, secret, getPaths())).unwrapOr({
       status: "unreachable" as const,
       detail: "verify failed unexpectedly",
@@ -242,6 +247,15 @@ function outcomeDetail(outcome: VerifyOutcome): string | undefined {
   return undefined
 }
 
+// A STORED credential (reached via credentialId → secretRef) whose secret
+// resolves to null is a LOST secret, not a public/no-auth source — never let
+// this fall into verifyCredential, which treats null as "no credential to
+// send" and could verify "ok" anonymously against a lax upstream. Same
+// wording as the CLI's STORED_SECRET_MISSING_DETAIL
+// (packages/cli/src/commands/credential.ts) — duplicated short literal per
+// the method file (rule-of-three not yet hit at 2 sites).
+const STORED_SECRET_MISSING_DETAIL = "stored secret missing — rotate this credential"
+
 export async function testCredential(credentialId: string): Promise<TestCredentialResult> {
   const db = await getDb()
   if (db === null) return { ok: false, error: "Database unavailable" }
@@ -258,16 +272,24 @@ export async function testCredential(credentialId: string): Promise<TestCredenti
   if (secretResult.isErr()) return { ok: false, error: "Failed to read the stored secret" }
   const secret = secretResult.value
 
-  const result = (await verifyCredential(platform, secret, getPaths())).unwrapOr({
-    status: "unreachable" as const,
-    detail: "verify failed unexpectedly",
-  })
+  const result: VerifyOutcome =
+    secret === null
+      ? { status: "unreachable", detail: STORED_SECRET_MISSING_DETAIL }
+      : (await verifyCredential(platform, secret, getPaths())).unwrapOr({
+          status: "unreachable" as const,
+          detail: "verify failed unexpectedly",
+        })
 
   if (
     result.status === "ok" ||
     result.status === "auth-failed" ||
     result.status === "unreachable"
   ) {
+    // Best-effort persistence: testCredential has no stderr/warning channel to
+    // surface a setVerifyState failure to the caller distinctly from the
+    // verify outcome itself (unlike the CLI, which prints to stderr and sets
+    // --json's `persisted:false`). The verify still ran and its outcome is
+    // still returned; only the DB write is silently best-effort here.
     await repos.credentials.setVerifyState(credentialId, result.status, Date.now())
   }
   // "not-verifiable" is never persisted — a property of the platform, not an event.

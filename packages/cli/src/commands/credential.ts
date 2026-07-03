@@ -33,6 +33,20 @@ import {
 } from "../format.js"
 
 // ---------------------------------------------------------------------------
+// Lost-secret handling — shared between CLI `credential test` and web's
+// testCredential (packages/web/src/server/mutations.server.ts). A STORED
+// credential (one reached via a credential id, which always carries a
+// secretRef) whose secret resolves to null means the secret itself vanished
+// (cleared keychain entry / deleted key file) — NOT a public/no-auth source.
+// verifyCredential treats a null secret as "no credential to send" (correct
+// for genuinely public sources passed null deliberately), so it must never
+// see this case: an anonymous-accepting upstream would then verify as "ok"
+// with no credential sent at all. Always unreachable, never ok/auth-failed.
+// ---------------------------------------------------------------------------
+
+export const STORED_SECRET_MISSING_DETAIL = "stored secret missing — rotate this credential"
+
+// ---------------------------------------------------------------------------
 // Shared DB + store setup (used by both add and remove, which both need the store)
 // ---------------------------------------------------------------------------
 
@@ -183,7 +197,11 @@ const addCommand = defineCommand({
 
     // --verify is opt-in and NEVER unwinds the stored credential — a failed or
     // unreachable verify still leaves the credential stored; exit code stays 0.
+    // NOTE: `secret` here came from stdin/prompt (acquireSecret), never from the
+    // store — it can never be null, so the lost-secret handling in `credential
+    // test` (below) does not apply on this path.
     let verifyOutcome: VerifyOutcome | undefined
+    let persisted = true
     if (args.verify) {
       const paths = getPaths()
       const outcomeResult = await verifyCredential(platform, secret, paths)
@@ -194,17 +212,23 @@ const addCommand = defineCommand({
         // Persist ok|auth-failed|unreachable only — never not-verifiable (it's
         // a property of the platform/source kind, not a persisted event).
         if (verifyOutcome.status !== "not-verifiable") {
-          await repos.credentials.setVerifyState(
+          const setResult = await repos.credentials.setVerifyState(
             credential.id,
             verifyOutcome.status as CredentialVerifyResult,
             Date.now(),
           )
+          if (setResult.isErr()) {
+            persisted = false
+            if (!json) {
+              consola.warn(`warning: could not persist the verify result: ${setResult.error.kind}`)
+            }
+          }
         }
       }
     }
 
     // Output ONLY metadata — NEVER the secret, NEVER the secretRef
-    writeCredentialMeta(credential, json, "added", verifyOutcome)
+    writeCredentialMeta(credential, json, "added", verifyOutcome, persisted)
   },
 })
 
@@ -337,25 +361,47 @@ const testCommand = defineCommand({
     }
     const secret = secretResult.value
 
-    const outcomeResult = await verifyCredential(platform, secret, getPaths())
-    if (outcomeResult.isErr()) {
-      // verifyCredential's contract is ALWAYS Ok; defensive fallback only.
-      reportDbError({ kind: "query-failed", cause: outcomeResult.error }, json)
-      return
+    // A stored credential (reached via id → secretRef) whose secret resolves
+    // to null is a LOST secret, not a public source — never let this fall
+    // into verifyCredential, which would treat null as "no credential to
+    // send" and could verify "ok" anonymously against a lax upstream.
+    let outcome: VerifyOutcome
+    if (secret === null) {
+      outcome = { status: "unreachable", detail: STORED_SECRET_MISSING_DETAIL }
+    } else {
+      const outcomeResult = await verifyCredential(platform, secret, getPaths())
+      if (outcomeResult.isErr()) {
+        // verifyCredential's contract is ALWAYS Ok; defensive fallback only.
+        reportDbError({ kind: "query-failed", cause: outcomeResult.error }, json)
+        return
+      }
+      outcome = outcomeResult.value
     }
-    const outcome = outcomeResult.value
 
     // Persist ok|auth-failed|unreachable only — never not-verifiable.
+    let persisted = true
     if (outcome.status !== "not-verifiable") {
-      await repos.credentials.setVerifyState(
+      const setResult = await repos.credentials.setVerifyState(
         credential.id,
         outcome.status as CredentialVerifyResult,
         Date.now(),
       )
+      if (setResult.isErr()) {
+        persisted = false
+        if (!json) {
+          consola.warn(`warning: could not persist the verify result: ${setResult.error.kind}`)
+        }
+      }
     }
 
     if (json) {
-      process.stdout.write(`${JSON.stringify({ ok: true, verify: verifyOutcomeJson(outcome) })}\n`)
+      process.stdout.write(
+        `${JSON.stringify({
+          ok: true,
+          verify: verifyOutcomeJson(outcome),
+          ...(persisted ? {} : { persisted: false }),
+        })}\n`,
+      )
     } else {
       consola.info(formatVerifyOutcome(outcome))
     }
@@ -558,12 +604,16 @@ function reportCredentialOpError(
  * Write credential metadata to output (JSON line or consola.success).
  * NEVER includes secret or secretRef. `verifyOutcome` is included only when
  * --verify was used (add) or always for `credential test` (verifyOutcomeJson).
+ * `persisted` defaults to true; pass false when setVerifyState errored so the
+ * caller's warning is reflected in --json as well (default-true keeps every
+ * other call site, e.g. rotate, unaffected).
  */
 function writeCredentialMeta(
   cred: { id: unknown; platformId: unknown; profileName: string; kind: string },
   json: boolean,
   successVerb: string,
   verifyOutcome?: VerifyOutcome,
+  persisted = true,
 ): void {
   const meta = {
     id: cred.id,
@@ -577,6 +627,7 @@ function writeCredentialMeta(
         ok: true,
         credential: meta,
         ...(verifyOutcome !== undefined ? { verify: verifyOutcomeJson(verifyOutcome) } : {}),
+        ...(persisted ? {} : { persisted: false }),
       })}\n`,
     )
   } else {
