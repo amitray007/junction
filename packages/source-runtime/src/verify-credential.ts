@@ -2,6 +2,12 @@
 // verifyCredential — honest, per-source-kind verify-on-add / test-connection.
 //
 // THE HONESTY MATRIX (do NOT blur these — see method file 28.9):
+//   oauth2 (token)   : when the credential's providerId (opts.oauthProviderId) has a
+//                       catalog userinfoUrl, verify the TOKEN against that endpoint —
+//                       "is my OAuth connection good?" is about the token, not the
+//                       platform's source. Takes precedence over the kind-dispatch
+//                       below; falls through when not applicable (no providerId /
+//                       no userinfo endpoint / no token).
 //   mcp (http+stdio) : buildProvider + listTools — REAL authenticated round-trip.
 //   graphql          : buildProvider + graphql_query {__typename} — REAL, side-effect-free.
 //   openapi          : ONLY if platform.openapi.verifyOperationId is set — calls that op
@@ -18,8 +24,8 @@
 // The OpenAPI path parses only the leading "NNN " status line and discards the body
 // immediately — never persisted, never returned to any caller.
 
-import type { JunctionPaths, Platform, ToolProvider } from "@junction/core"
-import { ResultAsync } from "@junction/core"
+import type { JunctionPaths, OAuthProvider, Platform, ToolProvider } from "@junction/core"
+import { getProvider, ResultAsync } from "@junction/core"
 import { sanitizeOperationId } from "@junction/openapi-client"
 import { buildProvider } from "./build-provider.js"
 
@@ -32,6 +38,10 @@ export type VerifyOutcome =
   | { status: "auth-failed" }
   | { status: "unreachable"; detail: string }
   | { status: "not-verifiable"; reason: string }
+
+/** Max wait for the OAuth userinfo check — a hanging endpoint must not stall
+ * Test Connection. On timeout the fetch aborts → unreachable. */
+const USERINFO_TIMEOUT_MS = 10_000
 
 // ---------------------------------------------------------------------------
 // Auth heuristic — mirrors mcp/client connect.ts's isAuthError, applied to
@@ -65,6 +75,81 @@ function firstText(content: unknown): string {
   const first = content[0] as { type?: unknown; text?: unknown } | undefined
   if (first === undefined || first.type !== "text" || typeof first.text !== "string") return ""
   return first.text
+}
+
+/**
+ * OAuth-native token check: GET the provider's userinfo endpoint with the token
+ * as a bearer. 2xx → the token is live (ok); 401/403 → auth-failed; anything
+ * else / a network error → unreachable.
+ *
+ * SECRET DISCIPLINE: the token flows ONLY into the Authorization header; the
+ * outcome's `detail` carries only an HTTP status or an error constructor name —
+ * NEVER the token, NEVER the response body (a userinfo body identifies the user
+ * and may echo request data; it is read solely to check Slack's `{ok:false}`
+ * flag and then discarded).
+ */
+async function verifyOAuthToken(provider: OAuthProvider, token: string): Promise<VerifyOutcome> {
+  const url = provider.userinfoUrl
+  if (url === undefined) return { status: "not-verifiable", reason: "no userinfo endpoint" }
+
+  let response: Response
+  try {
+    response = await fetch(url, {
+      method: "GET",
+      headers: {
+        // Spread the catalog's non-auth headers FIRST, then set Accept +
+        // Authorization LAST — so the bearer can never be overridden by a
+        // catalog entry that (accidentally) carried an Authorization/Accept
+        // key. Structural guarantee, not just the catalog.test.ts data guard.
+        ...provider.userinfoHeaders,
+        Accept: "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      // Bound the wait: a slow/hanging userinfo endpoint must not stall Test
+      // Connection (mutateAddCredential / testCredential) indefinitely. On
+      // timeout, fetch rejects with an AbortError → caught below → unreachable.
+      signal: AbortSignal.timeout(USERINFO_TIMEOUT_MS),
+    })
+  } catch (cause) {
+    // Network-level failure / timeout — never surface the cause message (could
+    // echo the URL/request); the constructor name is a leak-safe label.
+    return {
+      status: "unreachable",
+      detail: cause instanceof Error ? cause.constructor.name : "fetch-failed",
+    }
+  }
+
+  // Release the socket promptly on the paths that don't read the body — the
+  // token check only needs the status, so cancel the unread stream rather than
+  // leave it dangling until GC.
+  if (response.status === 401 || response.status === 403) {
+    await response.body?.cancel()
+    return { status: "auth-failed" }
+  }
+  if (response.status < 200 || response.status >= 300) {
+    await response.body?.cancel()
+    return { status: "unreachable", detail: `HTTP ${response.status}` }
+  }
+
+  // Slack always returns HTTP 200; a live token is signaled by `{ok:true}` in
+  // the body (auth.test is a bare identity endpoint that ALWAYS includes `ok`,
+  // so require ok===true rather than merely !==false — an absent `ok` means the
+  // token isn't confirmed live and must NOT read as "ok"). Mirrors the catalog's
+  // parseSlackTokenResponse strictness. Every other provider's 2xx already means live.
+  if (provider.id === "slack") {
+    let body: { ok?: unknown }
+    try {
+      body = (await response.json()) as { ok?: unknown }
+    } catch {
+      return { status: "unreachable", detail: "unexpected response shape" }
+    }
+    if (body.ok !== true) return { status: "auth-failed" }
+  } else {
+    // Non-Slack 2xx: we only needed the status — release the unread body.
+    await response.body?.cancel()
+  }
+
+  return { status: "ok" }
 }
 
 /**
@@ -127,15 +212,37 @@ export function verifyCredential(
   platform: Platform,
   secret: string | null,
   paths: JunctionPaths,
+  opts?: VerifyOptions,
 ): ResultAsync<VerifyOutcome, never> {
-  return ResultAsync.fromSafePromise(verifyCredentialAsync(platform, secret, paths))
+  return ResultAsync.fromSafePromise(verifyCredentialAsync(platform, secret, paths, opts))
+}
+
+/** Extra context for verification. `oauthProviderId` (from a credential's
+ * oauthMeta) enables the OAuth-native token check — verifying the TOKEN against
+ * the provider's userinfo endpoint rather than the platform's source. */
+export interface VerifyOptions {
+  oauthProviderId?: string
 }
 
 async function verifyCredentialAsync(
   platform: Platform,
   secret: string | null,
   paths: JunctionPaths,
+  opts?: VerifyOptions,
 ): Promise<VerifyOutcome> {
+  // OAuth-native token check FIRST: for an oauth2 credential whose provider has
+  // a userinfo endpoint, "is my connection good?" means "is the TOKEN live?" —
+  // a different question than "is the platform's source reachable?". Verify the
+  // token directly; only fall through to the source-verify below when this
+  // isn't applicable (no providerId / no userinfo endpoint / no token).
+  const providerId = opts?.oauthProviderId
+  if (providerId !== undefined && secret !== null && secret !== "") {
+    const provider = getProvider(providerId)
+    if (provider?.userinfoUrl !== undefined) {
+      return verifyOAuthToken(provider, secret)
+    }
+  }
+
   if (platform.kind === "cli") {
     return { status: "not-verifiable", reason: "running a command has side effects" }
   }

@@ -207,7 +207,9 @@ const addCommand = defineCommand({
     let persisted = true
     if (args.verify) {
       const paths = getPaths()
-      const outcomeResult = await verifyCredential(platform, secret, paths)
+      const outcomeResult = await verifyCredential(platform, secret, paths, {
+        oauthProviderId: credential.oauthMeta?.providerId,
+      })
       // verifyCredential's contract is ALWAYS Ok — but stay defensive rather
       // than assume, since a future change could add an Err path.
       if (outcomeResult.isOk()) {
@@ -425,7 +427,9 @@ const testCommand = defineCommand({
     if (secret === null) {
       outcome = { status: "unreachable", detail: STORED_SECRET_MISSING_DETAIL }
     } else {
-      const outcomeResult = await verifyCredential(platform, secret, getPaths())
+      const outcomeResult = await verifyCredential(platform, secret, getPaths(), {
+        oauthProviderId: credential.oauthMeta?.providerId,
+      })
       if (outcomeResult.isErr()) {
         // verifyCredential's contract is ALWAYS Ok; defensive fallback only.
         reportDbError({ kind: "query-failed", cause: outcomeResult.error }, json)
