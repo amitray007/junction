@@ -102,6 +102,13 @@ export type AddPlatformInput =
       specUrl: string
       baseUrl?: string
       auth?: SimpleAuthInput
+      /**
+       * Operator-designated verify operationId (increment 28.9) — must resolve
+       * to a GET with no required parameters in the parsed spec; validated by
+       * addOpenApiPlatform/refreshOpenApiPlatform before persisting. Absent ⇒
+       * the platform stays honestly "not-verifiable" for verify-on-add/test.
+       */
+      verifyOperationId?: string
     }
   | {
       kind: "graphql"
@@ -322,6 +329,7 @@ function addByKind(
         specUrl: input.specUrl,
         baseUrl: input.baseUrl,
         auth: toAuthInput(input.auth),
+        verifyOperationId: input.verifyOperationId,
       }).map(({ platform }) => ({ platform }))
     case "graphql":
       return addGraphQlPlatform({
@@ -492,6 +500,8 @@ export interface PlatformDetail {
   baseUrl?: string
   authScheme?: "none" | "bearer" | "apiKey"
   authHeaderOrName?: string
+  /** Operator-designated verify operationId (28.9) — pre-fills the edit form's field. */
+  verifyOperationId?: string
   // graphql
   endpoint?: string
   // cli
@@ -578,6 +588,7 @@ function toPlatformDetail(p: Platform): PlatformDetail {
       authScheme: auth === undefined ? "none" : auth.scheme === "apiKey" ? "apiKey" : "bearer",
       authHeaderOrName:
         auth?.scheme === "apiKey" ? auth.name : auth?.scheme === "bearer" ? auth.header : undefined,
+      verifyOperationId: p.openapi.verifyOperationId,
     }
   }
 

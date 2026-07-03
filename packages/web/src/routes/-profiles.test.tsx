@@ -19,7 +19,15 @@ const emptyData = {
   credentials: emptyCredentials,
 }
 
-const platforms: PlatformMeta[] = [{ id: "github", kind: "openapi", displayName: "GitHub" }]
+const platforms: PlatformMeta[] = [
+  {
+    id: "github",
+    kind: "openapi",
+    displayName: "GitHub",
+    compatibleKinds: ["bearer"],
+    verifiable: false,
+  },
+]
 
 const credentials: CredentialMeta[] = [
   { id: "cred-1", platformId: "github", account: "alice", kind: "bearer" },

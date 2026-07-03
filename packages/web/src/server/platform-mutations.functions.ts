@@ -187,6 +187,7 @@ function validatePlatformInput(raw: unknown): AddPlatformInput {
         specUrl: requireString(d.specUrl, "specUrl"),
         baseUrl: optionalString(d.baseUrl),
         auth: validateAuth(d.auth),
+        verifyOperationId: optionalString(d.verifyOperationId),
       }
     case "graphql":
       return {

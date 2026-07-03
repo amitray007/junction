@@ -8,6 +8,8 @@ import {
   addCredential,
   type Credential,
   type CredentialStore,
+  type CredentialVerifyResult,
+  compatibleCredentialKinds,
   createCredentialStore,
   createRepositories,
   getDatabase,
@@ -16,6 +18,8 @@ import {
   removeCredential,
   rotateCredential,
 } from "@junction/core"
+import type { VerifyOutcome } from "@junction/source-runtime"
+import { verifyCredential } from "@junction/source-runtime"
 import { defineCommand } from "citty"
 import { consola } from "consola"
 import { JSON_ARG } from "../args.js"
@@ -59,7 +63,8 @@ async function openDbAndStore(json: boolean): Promise<DbAndStore | null> {
 const addCommand = defineCommand({
   meta: {
     name: "add",
-    description: "Add a bearer credential for a platform.",
+    description:
+      "Add a credential for a platform (kind is derived from the platform's auth unless --kind is given).",
   },
   args: {
     platform: {
@@ -74,26 +79,24 @@ const addCommand = defineCommand({
     },
     kind: {
       type: "string",
-      description: "Credential kind (default: bearer)",
-      default: "bearer",
+      description:
+        "Credential kind (api-key, bearer, env, file). Default: derived from the platform's auth.",
     },
     "token-stdin": {
       type: "boolean",
       description: "Read the token from stdin (headless/agent mode)",
       default: false,
     },
+    verify: {
+      type: "boolean",
+      description:
+        "After storing, verify the credential against the real upstream and print the outcome (opt-in; never blocks storing)",
+      default: false,
+    },
     json: JSON_ARG,
   },
   async run({ args }) {
     const json = args.json ?? false
-
-    if (args.kind !== "bearer") {
-      const msg = `unsupported credential kind "${args.kind}": only "bearer" is supported in this release`
-      if (json) process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
-      else consola.error(msg)
-      process.exitCode = 1
-      return
-    }
 
     // Validate platform and account BEFORE reading the token — bad input must
     // not cause a secret to be captured from stdin (nice-to-have 2 + FIX 2).
@@ -112,10 +115,40 @@ const addCommand = defineCommand({
       return
     }
 
+    const ctx = await openDbAndStore(json)
+    if (!ctx) return
+    const { repos, store } = ctx
+
+    // Fetch the platform BEFORE reading the secret — addCredential validates the
+    // requested (or derived) kind against its kind-compat matrix, and the derived
+    // default itself comes from this same platform row.
+    const platformResult = await repos.platforms.get(args.platform)
+    if (platformResult.isErr()) {
+      reportDbError(platformResult.error, json)
+      return
+    }
+    const platform = platformResult.value
+
+    // Derive the kind when --kind is omitted: the matrix's first (preferred) entry.
+    // An empty matrix means the platform declares no auth — credentials make no
+    // sense for it, and there's nothing honest to derive.
+    let kind = args.kind
+    if (kind === undefined) {
+      const derived = compatibleCredentialKinds(platform)[0]
+      if (derived === undefined) {
+        const msg = `platform "${args.platform}" declares no auth; credentials not accepted`
+        if (json) process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
+        else consola.error(msg)
+        process.exitCode = 1
+        return
+      }
+      kind = derived
+    }
+
     // Acquire the token — either from stdin (headless) or interactive masked prompt
     const secret = await acquireSecret({
       fromStdin: args["token-stdin"],
-      promptMessage: `Bearer token for ${args.platform} (${args.account}):`,
+      promptMessage: `Secret (${kind}) for ${args.platform} (${args.account}):`,
       json,
     })
     if (secret === null) return
@@ -128,24 +161,14 @@ const addCommand = defineCommand({
       return
     }
 
-    const ctx = await openDbAndStore(json)
-    if (!ctx) return
-    const { repos, store } = ctx
-
-    // Fetch the platform — addCredential validates the requested kind against
-    // its kind-compat matrix before the secret is touched (mechanical seam
-    // change, slice A of increment 28.9). Kind stays hardcoded to "bearer"
-    // here (the edge gate above already rejected anything else); slices B/C
-    // remove that gate and let the user pick a derived/explicit kind.
-    const platformResult = await repos.platforms.get(args.platform)
-    if (platformResult.isErr()) {
-      reportDbError(platformResult.error, json)
-      return
-    }
-
     const result = await addCredential(
-      { platformId: args.platform, account: args.account, kind: "bearer", secret },
-      platformResult.value,
+      {
+        platformId: args.platform,
+        account: args.account,
+        kind: kind as Exclude<Parameters<typeof addCredential>[0]["kind"], "oauth2">,
+        secret,
+      },
+      platform,
       store,
       repos.credentials,
     )
@@ -156,8 +179,32 @@ const addCommand = defineCommand({
       return
     }
 
+    const credential = result.value
+
+    // --verify is opt-in and NEVER unwinds the stored credential — a failed or
+    // unreachable verify still leaves the credential stored; exit code stays 0.
+    let verifyOutcome: VerifyOutcome | undefined
+    if (args.verify) {
+      const paths = getPaths()
+      const outcomeResult = await verifyCredential(platform, secret, paths)
+      // verifyCredential's contract is ALWAYS Ok — but stay defensive rather
+      // than assume, since a future change could add an Err path.
+      if (outcomeResult.isOk()) {
+        verifyOutcome = outcomeResult.value
+        // Persist ok|auth-failed|unreachable only — never not-verifiable (it's
+        // a property of the platform/source kind, not a persisted event).
+        if (verifyOutcome.status !== "not-verifiable") {
+          await repos.credentials.setVerifyState(
+            credential.id,
+            verifyOutcome.status as CredentialVerifyResult,
+            Date.now(),
+          )
+        }
+      }
+    }
+
     // Output ONLY metadata — NEVER the secret, NEVER the secretRef
-    writeCredentialMeta(result.value, json, "added")
+    writeCredentialMeta(credential, json, "added", verifyOutcome)
   },
 })
 
@@ -194,13 +241,18 @@ const listCommand = defineCommand({
       return
     }
 
-    // Map to metadata-only objects — NEVER include secret or secretRef
+    // Map to metadata-only objects — NEVER include secret or secretRef.
+    // lastVerifyResult/lastVerifiedAt are absent (never verified) or a
+    // persisted event from `credential add --verify` / `credential test`.
     const creds = credResult.value as Credential[]
     const metaList = creds.map((c) => ({
       id: c.id,
       platformId: c.platformId,
       account: c.profileName,
       kind: c.kind,
+      lastVerifyResult: c.lastVerifyResult ?? null,
+      lastVerifiedAt:
+        c.lastVerifiedAt !== undefined ? new Date(c.lastVerifiedAt).toISOString() : null,
     }))
 
     if (json) {
@@ -216,11 +268,97 @@ const listCommand = defineCommand({
     }
 
     const lines = [
-      "  id                              account           kind",
-      "  ------------------------------  ----------------  -------",
-      ...metaList.map((c) => `  ${String(c.id).padEnd(30)}  ${c.account.padEnd(16)}  ${c.kind}`),
+      "  id                              account           kind     verified",
+      "  ------------------------------  ----------------  -------  -----------------------",
+      ...metaList.map((c) => {
+        const verified =
+          c.lastVerifyResult !== null && c.lastVerifiedAt !== null
+            ? `${c.lastVerifyResult} (${c.lastVerifiedAt})`
+            : "-"
+        return `  ${String(c.id).padEnd(30)}  ${c.account.padEnd(16)}  ${c.kind.padEnd(7)}  ${verified}`
+      }),
     ]
     process.stdout.write(`${lines.join("\n")}\n`)
+  },
+})
+
+// ---------------------------------------------------------------------------
+// credential test — verify an existing credential against its real upstream
+// (test-connection). Never prints the secret; persists the outcome the same
+// way `credential add --verify` does (ok|auth-failed|unreachable only).
+// ---------------------------------------------------------------------------
+
+const testCommand = defineCommand({
+  meta: {
+    name: "test",
+    description:
+      "Verify a stored credential against its platform's real upstream (test-connection).",
+  },
+  args: {
+    id: {
+      type: "string",
+      description: "Credential ID",
+      required: true,
+    },
+    json: JSON_ARG,
+  },
+  async run({ args }) {
+    const json = args.json ?? false
+
+    const repos = await openDb(json)
+    if (!repos) return
+
+    const credResult = await repos.credentials.get(args.id)
+    if (credResult.isErr()) {
+      reportDbError(credResult.error, json)
+      return
+    }
+    const credential = credResult.value
+
+    const platformResult = await repos.platforms.get(String(credential.platformId))
+    if (platformResult.isErr()) {
+      reportDbError(platformResult.error, json)
+      return
+    }
+    const platform = platformResult.value
+
+    const storeResult = await createCredentialStore(getPaths())
+    if (storeResult.isErr()) {
+      reportCredentialError(storeResult.error, json)
+      return
+    }
+    const store = storeResult.value
+
+    // THE SECRET IS NEVER PRINTED — it flows only into verifyCredential.
+    const secretResult = await store.get(credential.secretRef)
+    if (secretResult.isErr()) {
+      reportCredentialError(secretResult.error, json)
+      return
+    }
+    const secret = secretResult.value
+
+    const outcomeResult = await verifyCredential(platform, secret, getPaths())
+    if (outcomeResult.isErr()) {
+      // verifyCredential's contract is ALWAYS Ok; defensive fallback only.
+      reportDbError({ kind: "query-failed", cause: outcomeResult.error }, json)
+      return
+    }
+    const outcome = outcomeResult.value
+
+    // Persist ok|auth-failed|unreachable only — never not-verifiable.
+    if (outcome.status !== "not-verifiable") {
+      await repos.credentials.setVerifyState(
+        credential.id,
+        outcome.status as CredentialVerifyResult,
+        Date.now(),
+      )
+    }
+
+    if (json) {
+      process.stdout.write(`${JSON.stringify({ ok: true, verify: verifyOutcomeJson(outcome) })}\n`)
+    } else {
+      consola.info(formatVerifyOutcome(outcome))
+    }
   },
 })
 
@@ -347,6 +485,7 @@ export const credentialCommand = defineCommand({
   subCommands: {
     add: addCommand,
     list: listCommand,
+    test: testCommand,
     remove: removeCommand,
     rotate: rotateCommand,
   },
@@ -417,12 +556,14 @@ function reportCredentialOpError(
 
 /**
  * Write credential metadata to output (JSON line or consola.success).
- * NEVER includes secret or secretRef.
+ * NEVER includes secret or secretRef. `verifyOutcome` is included only when
+ * --verify was used (add) or always for `credential test` (verifyOutcomeJson).
  */
 function writeCredentialMeta(
   cred: { id: unknown; platformId: unknown; profileName: string; kind: string },
   json: boolean,
   successVerb: string,
+  verifyOutcome?: VerifyOutcome,
 ): void {
   const meta = {
     id: cred.id,
@@ -431,11 +572,65 @@ function writeCredentialMeta(
     kind: cred.kind,
   }
   if (json) {
-    process.stdout.write(`${JSON.stringify({ ok: true, credential: meta })}\n`)
+    process.stdout.write(
+      `${JSON.stringify({
+        ok: true,
+        credential: meta,
+        ...(verifyOutcome !== undefined ? { verify: verifyOutcomeJson(verifyOutcome) } : {}),
+      })}\n`,
+    )
   } else {
     consola.success(
       `Credential ${successVerb} — account: ${cred.profileName}, platform: ${String(cred.platformId)}, id: ${String(cred.id)}`,
     )
+    if (verifyOutcome !== undefined) {
+      consola.info(formatVerifyOutcome(verifyOutcome))
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Verify outcome formatting — exhaustive, no default (docs/rules/typescript.md).
+// Human lines + a stable --json shape. NEVER includes any secret or URL — the
+// outcome itself carries none (see @junction/source-runtime's verifyCredential).
+// ---------------------------------------------------------------------------
+
+/** Human-readable line for a VerifyOutcome. Exhaustive switch — no default. */
+function formatVerifyOutcome(outcome: VerifyOutcome): string {
+  switch (outcome.status) {
+    case "ok":
+      return "verify: ok — credential works"
+    case "auth-failed":
+      return "verify: auth failed — the source rejected this credential"
+    case "unreachable":
+      return `verify: unreachable — ${outcome.detail}`
+    case "not-verifiable":
+      return `verify: not verifiable — ${outcome.reason}`
+    default: {
+      const _: never = outcome
+      return _
+    }
+  }
+}
+
+/** JSON-shaped representation of a VerifyOutcome for --json output. */
+function verifyOutcomeJson(outcome: VerifyOutcome): {
+  status: VerifyOutcome["status"]
+  detail?: string
+  reason?: string
+} {
+  switch (outcome.status) {
+    case "ok":
+    case "auth-failed":
+      return { status: outcome.status }
+    case "unreachable":
+      return { status: outcome.status, detail: outcome.detail }
+    case "not-verifiable":
+      return { status: outcome.status, reason: outcome.reason }
+    default: {
+      const _: never = outcome
+      return _
+    }
   }
 }
 

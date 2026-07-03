@@ -219,6 +219,14 @@ const addCommand = defineCommand({
     const json = args.json ?? false
     const kind = args.kind ?? "mcp"
 
+    // --verify-op only makes sense for openapi (it names an operationId in that
+    // platform's spec) — reject it early for every other kind with a clean error,
+    // rather than silently ignoring it.
+    if (args["verify-op"] !== undefined && kind !== "openapi") {
+      reportError(`--verify-op is only supported for --kind openapi (got "${kind}")`, json)
+      return
+    }
+
     if (kind === "openapi") {
       await addOpenApiPlatform(args, rawArgs, json)
       return

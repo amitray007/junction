@@ -4,6 +4,7 @@
 // SECURITY: credentials output is metadata-only — no secret, no secretRef.
 
 import {
+  compatibleCredentialKinds,
   createCredentialStore,
   createRepositories,
   createSandbox,
@@ -13,6 +14,7 @@ import {
   type JunctionPaths,
   loadConfig,
   loadConfigState,
+  type Platform,
   type Repositories,
 } from "@junction/core"
 import { getDb } from "./shared.server.js"
@@ -115,10 +117,41 @@ export type PlatformMeta = {
   kind: string
   displayName: string
   baseUrl?: string
+  /**
+   * The CredentialKind(s) this platform accepts, derivation-ordered (first =
+   * default), per core's compatibleCredentialKinds matrix (increment 28.9).
+   * Empty array = no credential accepted (public/no-auth source).
+   */
+  compatibleKinds: string[]
+  /**
+   * Whether verify-on-add / test-connection can run a REAL check for this
+   * platform (mcp/graphql → true; openapi → only when verifyOperationId is
+   * set; cli → always false — running a command has side effects). See
+   * source-runtime's verifyCredential "honesty matrix".
+   */
+  verifiable: boolean
+}
+
+/** Whether verify-on-add/test-connection can run a real check for `p` (28.9 honesty matrix). */
+function isVerifiable(p: Platform): boolean {
+  switch (p.kind) {
+    case "mcp":
+    case "graphql":
+      return true
+    case "openapi":
+      return p.openapi?.verifyOperationId !== undefined
+    case "cli":
+    case "custom":
+      return false
+    default: {
+      const _: never = p.kind
+      return _
+    }
+  }
 }
 
 export async function readPlatforms(): Promise<PlatformMeta[]> {
-  return withRepos([], async (repos) => {
+  return withRepos<PlatformMeta[]>([], async (repos) => {
     const result = await repos.platforms.list()
     if (result.isErr()) return []
     return result.value.map((p) => ({
@@ -126,6 +159,8 @@ export async function readPlatforms(): Promise<PlatformMeta[]> {
       kind: p.kind,
       displayName: p.displayName,
       ...(p.baseUrl !== undefined ? { baseUrl: p.baseUrl } : {}),
+      compatibleKinds: compatibleCredentialKinds(p),
+      verifiable: isVerifiable(p),
     }))
   })
 }
@@ -139,6 +174,14 @@ export type CredentialMeta = {
   platformId: string
   account: string
   kind: string
+  /** Ms-epoch of the last verify-on-add/test-connection attempt. Absent = never verified. */
+  lastVerifiedAt?: number
+  /**
+   * Outcome of the last verify attempt. Absent = never verified. "not-verifiable"
+   * is NEVER a value here — it's a property of the platform, not a persisted
+   * event (see core's CredentialVerifyResult / source-runtime's verifyCredential).
+   */
+  lastVerifyResult?: "ok" | "auth-failed" | "unreachable"
 }
 
 export async function readCredentials(): Promise<CredentialMeta[]> {
@@ -151,6 +194,8 @@ export async function readCredentials(): Promise<CredentialMeta[]> {
       platformId: String(c.platformId),
       account: c.profileName,
       kind: c.kind,
+      ...(c.lastVerifiedAt !== undefined ? { lastVerifiedAt: c.lastVerifiedAt } : {}),
+      ...(c.lastVerifyResult !== undefined ? { lastVerifyResult: c.lastVerifyResult } : {}),
     }))
   })
 }

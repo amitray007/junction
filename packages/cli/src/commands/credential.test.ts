@@ -14,8 +14,32 @@ import { readFile } from "node:fs/promises"
 import path, { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
+import {
+  addCredential,
+  createCredentialStore,
+  createRepositories,
+  getDatabase,
+  getPaths,
+  PlatformIdSchema,
+  PlatformSchema,
+} from "@junction/core"
 import { withTempHome } from "@junction/core/testing"
-import { describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { credentialCommand } from "./credential.js"
+
+// ---------------------------------------------------------------------------
+// Mock @clack/prompts so the interactive (non---token-stdin) secret-entry path
+// can be driven in-process without a real TTY/pipe. acquireSecret dynamically
+// imports "@clack/prompts" and calls password({ message }) — mocked here to
+// resolve a fixed value so unit tests can exercise kind derivation/rejection
+// without spawning a child process.
+// ---------------------------------------------------------------------------
+
+let mockPasswordValue = "mock-secret-value"
+vi.mock("@clack/prompts", () => ({
+  password: vi.fn(async () => mockPasswordValue),
+  isCancel: vi.fn(() => false),
+}))
 
 const execFileAsync = promisify(execFile)
 const distIndex = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../dist/index.js")
@@ -40,6 +64,284 @@ async function runCmd(
     })
   })
 }
+
+// ---------------------------------------------------------------------------
+// Unit suite — direct command invocation (no build needed), runs under
+// `pnpm verify`. Covers kind derivation, kind-incompatible rejection,
+// `credential test` unknown-id, and the "verified" column's "-" default.
+// ---------------------------------------------------------------------------
+
+/** Capture everything written to process.stdout during fn(). */
+async function captureStdout(fn: () => Promise<void>): Promise<string> {
+  const chunks: string[] = []
+  const orig = process.stdout.write.bind(process.stdout)
+  const intercept: NodeJS.WriteStream["write"] = (chunk: string | Uint8Array) => {
+    chunks.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString())
+    return true
+  }
+  process.stdout.write = intercept
+  try {
+    await fn()
+  } finally {
+    process.stdout.write = orig
+  }
+  return chunks.join("")
+}
+
+/** Minimal citty run context — matches what citty passes to run(). */
+function ctx<T extends Record<string, unknown>>(args: T) {
+  return { args, cmd: {} as never, rawArgs: [] as string[] }
+}
+
+/** Access a subcommand's run function from credentialCommand. */
+function getCredentialSubCmd(name: string) {
+  const subs = (
+    credentialCommand as unknown as {
+      subCommands: Record<string, { run?: (c: unknown) => Promise<void> }>
+    }
+  ).subCommands
+  const cmd = subs[name]
+  if (!cmd) throw new Error(`subcommand "${name}" not found`)
+  return cmd
+}
+
+/** Upsert an apiKey-scheme openapi platform into the temp-home DB. */
+async function setupApiKeyPlatform(platformId: string) {
+  const dbResult = await getDatabase(getPaths())
+  if (dbResult.isErr()) throw new Error(`DB error: ${dbResult.error.kind}`)
+  const repos = createRepositories(dbResult.value)
+  const platform = PlatformSchema.parse({
+    id: PlatformIdSchema.parse(platformId),
+    kind: "openapi" as const,
+    displayName: "ApiKey Platform",
+    openapi: {
+      spec: { from: "url" as const, url: "https://example.com/openapi.json" },
+      auth: { scheme: "apiKey" as const, in: "header" as const, name: "X-Api-Key" },
+    },
+  })
+  await repos.platforms.upsert(platform)
+  return repos
+}
+
+/** Upsert a no-auth openapi platform (empty kind-compat matrix) into the temp-home DB. */
+async function setupNoAuthPlatform(platformId: string) {
+  const dbResult = await getDatabase(getPaths())
+  if (dbResult.isErr()) throw new Error(`DB error: ${dbResult.error.kind}`)
+  const repos = createRepositories(dbResult.value)
+  const platform = PlatformSchema.parse({
+    id: PlatformIdSchema.parse(platformId),
+    kind: "openapi" as const,
+    displayName: "No Auth Platform",
+    openapi: { spec: { from: "url" as const, url: "https://example.com/openapi.json" } },
+  })
+  await repos.platforms.upsert(platform)
+  return repos
+}
+
+describe("credential add — kind derivation + kind-compat (unit)", () => {
+  let prevStore: string | undefined
+  let prevExitCode: number | undefined
+
+  beforeEach(() => {
+    prevStore = process.env.JUNCTION_STORE
+    prevExitCode = process.exitCode
+    process.env.JUNCTION_STORE = "file"
+    process.exitCode = 0
+  })
+
+  afterEach(() => {
+    if (prevStore === undefined) delete process.env.JUNCTION_STORE
+    else process.env.JUNCTION_STORE = prevStore
+    process.exitCode = prevExitCode
+  })
+
+  it("derives kind api-key for an apiKey-scheme platform when --kind is omitted", async () => {
+    await withTempHome(async () => {
+      await setupApiKeyPlatform("apikey-plat")
+      mockPasswordValue = "some-api-key-value"
+
+      const add = getCredentialSubCmd("add")
+      const out = await captureStdout(() =>
+        add.run?.(
+          ctx({
+            platform: "apikey-plat",
+            account: "work",
+            "token-stdin": false,
+            verify: false,
+            json: true,
+            kind: undefined,
+          }),
+        ),
+      )
+
+      const parsed = JSON.parse(out.trim()) as {
+        ok: boolean
+        credential?: { kind?: string }
+      }
+      expect(parsed.ok).toBe(true)
+      expect(parsed.credential?.kind).toBe("api-key")
+      expect(process.exitCode).toBe(0)
+    })
+  })
+
+  it("explicit --kind outside the matrix → kind-incompatible error naming the allowed set", async () => {
+    await withTempHome(async () => {
+      await setupApiKeyPlatform("apikey-bad-kind-plat")
+      mockPasswordValue = "some-value"
+
+      const add = getCredentialSubCmd("add")
+      const out = await captureStdout(() =>
+        add.run?.(
+          ctx({
+            platform: "apikey-bad-kind-plat",
+            account: "work",
+            kind: "env",
+            "token-stdin": false,
+            verify: false,
+            json: true,
+          }),
+        ),
+      )
+
+      const parsed = JSON.parse(out.trim()) as { ok: boolean; error?: string }
+      expect(parsed.ok).toBe(false)
+      expect(parsed.error).toContain("env")
+      expect(parsed.error).toContain("api-key")
+      expect(process.exitCode).toBe(1)
+    })
+  })
+
+  it("no --kind and an empty compat matrix (no-auth platform) → clean error before stdin is read", async () => {
+    await withTempHome(async () => {
+      await setupNoAuthPlatform("no-auth-plat")
+
+      const add = getCredentialSubCmd("add")
+      // No stdin is fed here — the no-auth check happens before acquireSecret,
+      // so the command must exit without ever waiting on stdin.
+      const out = await captureStdout(() =>
+        add.run?.(
+          ctx({
+            platform: "no-auth-plat",
+            account: "work",
+            "token-stdin": true,
+            verify: false,
+            json: true,
+            kind: undefined,
+          }),
+        ),
+      )
+
+      const parsed = JSON.parse(out.trim()) as { ok: boolean; error?: string }
+      expect(parsed.ok).toBe(false)
+      expect(parsed.error).toContain("no auth")
+      expect(process.exitCode).toBe(1)
+    })
+  })
+})
+
+describe("credential test — unknown id (unit)", () => {
+  let prevStore: string | undefined
+  let prevExitCode: number | undefined
+
+  beforeEach(() => {
+    prevStore = process.env.JUNCTION_STORE
+    prevExitCode = process.exitCode
+    process.env.JUNCTION_STORE = "file"
+    process.exitCode = 0
+  })
+
+  afterEach(() => {
+    if (prevStore === undefined) delete process.env.JUNCTION_STORE
+    else process.env.JUNCTION_STORE = prevStore
+    process.exitCode = prevExitCode
+  })
+
+  it("credential test --id <unknown> → not-found error, exit 1, no secret leak", async () => {
+    await withTempHome(async () => {
+      const testCmd = getCredentialSubCmd("test")
+      const out = await captureStdout(() =>
+        testCmd.run?.(ctx({ id: "cred_does_not_exist", json: true })),
+      )
+
+      const parsed = JSON.parse(out.trim()) as { ok: boolean; error?: string }
+      expect(parsed.ok).toBe(false)
+      expect(parsed.error).toContain("not found")
+      expect(process.exitCode).toBe(1)
+    })
+  })
+})
+
+describe("credential list — verified column (unit)", () => {
+  let prevStore: string | undefined
+  let prevExitCode: number | undefined
+
+  beforeEach(() => {
+    prevStore = process.env.JUNCTION_STORE
+    prevExitCode = process.exitCode
+    process.env.JUNCTION_STORE = "file"
+    process.exitCode = 0
+  })
+
+  afterEach(() => {
+    if (prevStore === undefined) delete process.env.JUNCTION_STORE
+    else process.env.JUNCTION_STORE = prevStore
+    process.exitCode = prevExitCode
+  })
+
+  it("a never-verified credential renders lastVerifyResult/lastVerifiedAt as null in --json", async () => {
+    await withTempHome(async () => {
+      const repos = await setupApiKeyPlatform("list-verify-plat")
+      const storeResult = await createCredentialStore(getPaths())
+      if (storeResult.isErr()) throw new Error("store setup failed")
+      const addResult = await addCredential(
+        { platformId: "list-verify-plat", account: "work", kind: "api-key", secret: "seed-value" },
+        (await repos.platforms.get("list-verify-plat"))._unsafeUnwrap(),
+        storeResult.value,
+        repos.credentials,
+      )
+      if (addResult.isErr()) throw new Error("seed credential add failed")
+
+      const list = getCredentialSubCmd("list")
+      const out = await captureStdout(() =>
+        list.run?.(ctx({ platform: "list-verify-plat", json: true })),
+      )
+      const parsed = JSON.parse(out.trim()) as Array<{
+        lastVerifyResult: string | null
+        lastVerifiedAt: string | null
+      }>
+      expect(parsed).toHaveLength(1)
+      expect(parsed[0]?.lastVerifyResult).toBeNull()
+      expect(parsed[0]?.lastVerifiedAt).toBeNull()
+    })
+  })
+
+  it("a never-verified credential renders '-' in the human table output", async () => {
+    await withTempHome(async () => {
+      const repos = await setupApiKeyPlatform("list-verify-human-plat")
+      const storeResult = await createCredentialStore(getPaths())
+      if (storeResult.isErr()) throw new Error("store setup failed")
+      const addResult = await addCredential(
+        {
+          platformId: "list-verify-human-plat",
+          account: "work",
+          kind: "api-key",
+          secret: "seed-value",
+        },
+        (await repos.platforms.get("list-verify-human-plat"))._unsafeUnwrap(),
+        storeResult.value,
+        repos.credentials,
+      )
+      if (addResult.isErr()) throw new Error("seed credential add failed")
+
+      const list = getCredentialSubCmd("list")
+      const out = await captureStdout(() =>
+        list.run?.(ctx({ platform: "list-verify-human-plat", json: false })),
+      )
+      expect(out).toContain("verified")
+      expect(out).toContain("-")
+    })
+  })
+})
 
 describe.skipIf(!builtBinReady)("credential commands (built bin, child process)", () => {
   // ---------------------------------------------------------------------------
