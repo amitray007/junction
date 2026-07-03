@@ -15,9 +15,10 @@
   },
   "dependencies": {
     "@junction/core": "workspace:*",
+    "@junction/graphql-client": "workspace:*",
     "@junction/mcp-client": "workspace:*",
     "@junction/openapi-client": "workspace:*",
-    "@junction/graphql-client": "workspace:*"
+    "arctic": "^3.7.0"
   },
   "devDependencies": {
     "@types/node": "^26.0.1"
