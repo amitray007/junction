@@ -31,7 +31,10 @@ import { withTempHome } from "@junction/core/testing"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { makeResolveProvider } from "./resolve-provider.js"
 
-const refreshAccessToken = vi.fn()
+// vi.hoisted so the mock fn exists BEFORE the hoisted vi.mock factory runs —
+// vi.mock is lifted to the top of the module, above a plain `const`, so a bare
+// closure over it risks a temporal-dead-zone ReferenceError (CodeRabbit review).
+const { refreshAccessToken } = vi.hoisted(() => ({ refreshAccessToken: vi.fn() }))
 
 vi.mock("arctic", async (importOriginal) => {
   const actual = await importOriginal<typeof import("arctic")>()
