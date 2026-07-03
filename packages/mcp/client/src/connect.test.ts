@@ -292,6 +292,96 @@ describe("transport construction — http", () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// (c2) connectSource — REAL header-injection exercised end-to-end (inc 28.9).
+// The SDK's StreamableHTTPClientTransport uses the global `fetch` when no
+// `opts.fetch` is given (verified against the vendored SDK source) — stubbing
+// it here lets us capture the ACTUAL outgoing request headers connectSource
+// produces, without a real network call or MCP server. The stub responds with
+// a network error immediately after capturing headers, so connectSource
+// resolves quickly with a connect-failed/timed-out Err — only the header
+// capture is under test.
+// ---------------------------------------------------------------------------
+
+describe("connectSource — real header injection (http transport)", () => {
+  it("scheme:'bearer' sends 'Bearer <token>' in the configured header (regression)", async () => {
+    let capturedHeaders: Headers | undefined
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      capturedHeaders = new Headers(init?.headers)
+      throw new Error("network disabled in test")
+    }) as unknown as typeof fetch
+
+    try {
+      const { connectSource } = await import("./connect.js")
+      const result = await connectSource(
+        {
+          transport: "http",
+          url: "https://example.com/mcp",
+          auth: { scheme: "bearer", header: "Authorization" },
+        },
+        "tok123",
+      )
+      expect(result.isErr()).toBe(true)
+      expect(capturedHeaders?.get("Authorization")).toBe("Bearer tok123")
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it("scheme:'header' (NEW) sends the RAW secret with no 'Bearer ' prefix", async () => {
+    let capturedHeaders: Headers | undefined
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      capturedHeaders = new Headers(init?.headers)
+      throw new Error("network disabled in test")
+    }) as unknown as typeof fetch
+
+    try {
+      const { connectSource } = await import("./connect.js")
+      const result = await connectSource(
+        {
+          transport: "http",
+          url: "https://example.com/mcp",
+          auth: { scheme: "header", name: "X-Api-Key" },
+        },
+        "raw-secret-456",
+      )
+      expect(result.isErr()).toBe(true)
+      expect(capturedHeaders?.get("X-Api-Key")).toBe("raw-secret-456")
+      // No "Bearer " prefix anywhere in the captured header value.
+      expect(capturedHeaders?.get("X-Api-Key")).not.toMatch(/^Bearer /)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it("scheme:'bearer' with secret null sends no auth header (regression)", async () => {
+    let capturedHeaders: Headers | undefined
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      capturedHeaders = new Headers(init?.headers)
+      throw new Error("network disabled in test")
+    }) as unknown as typeof fetch
+
+    try {
+      const { connectSource } = await import("./connect.js")
+      const result = await connectSource(
+        {
+          transport: "http",
+          url: "https://example.com/mcp",
+          auth: { scheme: "bearer", header: "Authorization" },
+        },
+        null,
+      )
+      expect(result.isErr()).toBe(true)
+      expect(capturedHeaders?.has("Authorization")).toBe(false)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+})
+
 describe("transport construction — stdio env-merge", () => {
   it("spreads getDefaultEnvironment() so PATH is present in the child env", () => {
     const tokenEnvVar = "UPSTREAM_TOKEN"

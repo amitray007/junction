@@ -273,7 +273,10 @@ describe("platform-mutations.server", () => {
         // The regression guard opposite to the old displayName-only behaviour:
         // the url and auth header actually changed.
         expect(stored.value.connection.url).toBe("https://new.example.com/mcp")
-        expect(stored.value.connection.auth?.header).toBe("X-Updated")
+        expect(stored.value.connection.auth?.scheme).toBe("bearer")
+        if (stored.value.connection.auth?.scheme === "bearer") {
+          expect(stored.value.connection.auth.header).toBe("X-Updated")
+        }
       }
     })
 

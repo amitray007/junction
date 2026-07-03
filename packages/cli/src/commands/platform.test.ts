@@ -296,6 +296,55 @@ describe("platform commands (unit)", () => {
 })
 
 // ---------------------------------------------------------------------------
+// platform add --verify-op — only valid for --kind openapi (inc 28.9 slice B)
+// ---------------------------------------------------------------------------
+
+describe("platform add --verify-op rejected for non-openapi kind (unit)", () => {
+  let home: string
+  let prevHome: string | undefined
+  let prevExitCode: number | undefined
+
+  beforeEach(async () => {
+    prevHome = process.env.JUNCTION_HOME
+    prevExitCode = process.exitCode
+    home = await mkdtemp(join(tmpdir(), "junction-verify-op-test-"))
+    process.env.JUNCTION_HOME = home
+    process.exitCode = 0
+  })
+
+  afterEach(async () => {
+    if (prevHome === undefined) delete process.env.JUNCTION_HOME
+    else process.env.JUNCTION_HOME = prevHome
+    process.exitCode = prevExitCode
+    await rm(home, { recursive: true, force: true })
+  })
+
+  it("--verify-op with --kind mcp (default) exits 1 with a clean error", async () => {
+    const add = getPlatformSubCmd("add")
+
+    const out = await captureStdout(() =>
+      add.run?.(
+        ctx({
+          id: "verify-op-mcp",
+          kind: "mcp",
+          "display-name": "Verify Op MCP",
+          transport: "http",
+          url: "https://api.example.com/mcp/",
+          "verify-op": "getUser",
+          json: true,
+        }),
+      ),
+    )
+
+    const parsed = JSON.parse(out.trim()) as { ok: boolean; error?: string }
+    expect(parsed.ok).toBe(false)
+    expect(parsed.error).toContain("--verify-op")
+    expect(parsed.error).toContain("openapi")
+    expect(process.exitCode).toBe(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // platform add — OpenAPI base-URL resolution (unit, direct command invocation)
 // ---------------------------------------------------------------------------
 

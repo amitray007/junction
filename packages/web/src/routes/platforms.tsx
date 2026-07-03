@@ -224,6 +224,8 @@ interface PlatformFormState {
   endpoint: string
   authScheme: SimpleAuthScheme
   authName: string
+  /** Operator-designated verify operationId (28.9) — openapi only, optional. */
+  verifyOperationId: string
   cli: CliConnectionFormState
 }
 
@@ -244,6 +246,7 @@ function emptyFormState(): PlatformFormState {
     endpoint: "",
     authScheme: "none",
     authName: "",
+    verifyOperationId: "",
     cli: emptyConnection(),
   }
 }
@@ -277,6 +280,7 @@ function formStateFromDetail(detail: PlatformDetail): PlatformFormState {
       baseUrl: detail.baseUrl ?? "",
       authScheme,
       authName: authScheme === "apiKey" ? (detail.authHeaderOrName ?? "") : "",
+      verifyOperationId: detail.verifyOperationId ?? "",
     }
   }
   if (detail.kind === "graphql") {
@@ -420,6 +424,9 @@ function PlatformDialog({ mode, platform, open, onOpenChange, onSuccess }: Platf
                 specUrl: state.specUrl.trim(),
                 ...(state.baseUrl.trim() ? { baseUrl: state.baseUrl.trim() } : {}),
                 ...(auth ? { auth } : {}),
+                ...(state.verifyOperationId.trim()
+                  ? { verifyOperationId: state.verifyOperationId.trim() }
+                  : {}),
               }
             : state.kind === "graphql"
               ? {
@@ -651,6 +658,23 @@ function PlatformDialog({ mode, platform, open, onOpenChange, onSuccess }: Platf
                     placeholder="https://api.example.com"
                     value={state.baseUrl}
                     onChange={(e) => set("baseUrl", e.target.value)}
+                  />
+                </Field>
+                <Field
+                  id="platform-verify-op"
+                  label="Verify Operation ID"
+                  error={errors.verifyOperationId}
+                  description="A safe GET operation (no required params) used to test the connection. Leave blank if none is safe to call — the platform stays honestly 'not auto-verifiable'."
+                >
+                  <Input
+                    id="platform-verify-op"
+                    placeholder="e.g. getUser"
+                    value={state.verifyOperationId}
+                    onChange={(e) => {
+                      set("verifyOperationId", e.target.value)
+                      clearError("verifyOperationId")
+                    }}
+                    hasError={!!errors.verifyOperationId}
                   />
                 </Field>
               </>

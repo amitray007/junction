@@ -147,6 +147,7 @@ describe("resolveCredentialSecret", () => {
           kind: "bearer",
           secret: "test-secret-value",
         },
+        platform,
         store,
         repos.credentials,
       )

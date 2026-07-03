@@ -12,6 +12,7 @@ import { resolveMasterKey } from "./master-key.js"
 import type { CredentialStore } from "./store.js"
 
 export { type AddCredentialInput, addCredential } from "./add-credential.js"
+export { compatibleCredentialKinds, isKindAccepted } from "./kind-compat.js"
 export { removeCredential } from "./remove-credential.js"
 export { type RotateCredentialInput, rotateCredential } from "./rotate-credential.js"
 export type { CredentialStore }

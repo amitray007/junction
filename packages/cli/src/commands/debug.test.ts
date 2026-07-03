@@ -397,7 +397,7 @@ describe("debug call — OpenAPI", () => {
 
   it("SECURITY: sentinel secret does not appear in stdout output", async () => {
     await withTempHome(async (home) => {
-      const { repos, paths } = await setupOpenApiPlatform(home, "sec-api")
+      const { repos, paths, platform } = await setupOpenApiPlatform(home, "sec-api")
 
       // Add a credential with the sentinel secret.
       const storeResult = await createCredentialStore(paths)
@@ -405,6 +405,7 @@ describe("debug call — OpenAPI", () => {
       if (storeResult.isErr()) return
       const addResult = await addCredential(
         { platformId: "sec-api", account: "test", kind: "bearer", secret: SENTINEL_SECRET },
+        platform,
         storeResult.value,
         repos.credentials,
       )

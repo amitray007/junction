@@ -45,6 +45,10 @@ const INTEGRATION_FILES = [
   "packages/cli/src/commands/serve.test.ts",
   "packages/cli/src/commands/keys.test.ts",
   "packages/core/src/sandbox/sandbox.test.ts",
+  // inc 28.9: the cli provider suite gained REAL-Seatbelt-spawning file-kind tests —
+  // under full-parallel load the spawned children starve and a real run flakes
+  // (exit != 0 → isError true). Same class as the other child-process suites.
+  "packages/core/src/sources/cli/provider.test.ts",
 ]
 
 export default defineConfig({

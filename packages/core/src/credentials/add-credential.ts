@@ -8,9 +8,11 @@ import { ulid } from "ulid"
 import type { CredentialError, DbError } from "../errors/index.js"
 import { newCredentialId } from "../ids/index.js"
 import type { CredentialsRepo } from "../repositories/credentials.js"
-import type { Credential } from "../schema/credential.js"
+import type { Credential, CredentialKind } from "../schema/credential.js"
 import { CredentialSchema } from "../schema/credential.js"
+import type { Platform } from "../schema/platform.js"
 import { PlatformIdSchema } from "../schema/primitives.js"
+import { compatibleCredentialKinds, isKindAccepted } from "./kind-compat.js"
 import type { CredentialStore } from "./store.js"
 
 export interface AddCredentialInput {
@@ -21,8 +23,12 @@ export interface AddCredentialInput {
    * Stored as profileName in the Credential row.
    */
   account: string
-  /** Authentication kind — "bearer" for PAT/API-token flow */
-  kind: "bearer"
+  /**
+   * Authentication kind. oauth2 is excluded — it stays gated until inc 29's
+   * multi-ref vault; every other kind is validated against the platform's
+   * kind-compat matrix (see kind-compat.ts) before the secret is touched.
+   */
+  kind: Exclude<CredentialKind, "oauth2">
   /**
    * Plaintext secret. Consumed ONLY by CredentialStore.set(); never returned,
    * never included in any error cause, never written to the DB.
@@ -47,6 +53,7 @@ export interface AddCredentialInput {
  */
 export function addCredential(
   input: AddCredentialInput,
+  platform: Platform,
   store: CredentialStore,
   credentialsRepo: CredentialsRepo,
 ): ResultAsync<Credential, CredentialError | DbError> {
@@ -57,6 +64,33 @@ export function addCredential(
       kind: "invalid-input" as const,
       reason: `invalid platformId: ${platformParse.error.issues.map((i) => i.message).join(", ")}`,
     })
+  }
+
+  // Kind-compat validation BEFORE the secret is touched — security-relevant
+  // validation lives here (not duplicated at the cli/web edges). "bearer" is
+  // always accepted (legacy back-compat); "oauth2" is always rejected
+  // (gated until inc 29) — both handled inside isKindAccepted.
+  if (!isKindAccepted(platform, input.kind)) {
+    return errAsync({
+      kind: "kind-incompatible" as const,
+      requested: input.kind,
+      allowed: Array.from(new Set([...compatibleCredentialKinds(platform), "bearer"])),
+    })
+  }
+
+  // 32 KiB cap on kind "file" content, BEFORE any store write — fits macOS
+  // Keychain AND Linux keyutils' ~32 KiB item ceiling (see method file 28.9).
+  // Reuses "invalid-input" (least invasive — avoids widening the exhaustive
+  // CredentialError formatters for a single new variant).
+  if (input.kind === "file") {
+    const byteLength = Buffer.byteLength(input.secret, "utf8")
+    const FILE_SECRET_MAX_BYTES = 32 * 1024
+    if (byteLength > FILE_SECRET_MAX_BYTES) {
+      return errAsync({
+        kind: "invalid-input" as const,
+        reason: `file credential exceeds 32 KiB (got ${byteLength} bytes)`,
+      })
+    }
   }
 
   // Validate the full credential shape (defensive; CLI pre-validates, but we

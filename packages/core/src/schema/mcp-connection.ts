@@ -34,24 +34,42 @@ const INTERPRETER_ENV_DENYLIST = new Set([
  *
  * Bearer credentials are injected at call-time (increment B) — not stored here.
  */
+/**
+ * HTTP MCP auth descriptor — discriminated on `scheme` (additive, inc 28.9).
+ *
+ *   - bearer: emits "Bearer <token>" in `header` (default "Authorization") —
+ *     unchanged from before this increment; existing persisted rows re-parse
+ *     cleanly (they carry scheme:"bearer" + a materialized header).
+ *   - header (NEW): emits the RAW secret in header `name`, no "Bearer " prefix
+ *     — for a server expecting e.g. "X-Api-Key: <raw>".
+ */
+export const McpHttpAuthSchema = z.discriminatedUnion("scheme", [
+  z.object({
+    scheme: z.literal("bearer"),
+    /** HTTP header name that carries the bearer token. Default: "Authorization". */
+    header: z.string().min(1).default("Authorization"),
+  }),
+  z.object({
+    scheme: z.literal("header"),
+    /** HTTP header name that carries the RAW secret value (no prefix). */
+    name: z.string().min(1),
+  }),
+])
+
+export type McpHttpAuth = z.infer<typeof McpHttpAuthSchema>
+
 export const McpConnectionSchema = z.discriminatedUnion("transport", [
   /**
    * HTTP transport — point junction at any remote MCP URL.
    *
-   * auth.header: the HTTP header the bearer token rides in (default "Authorization").
-   * This is generic — "Authorization: Bearer <token>" is the common case, but
-   * some MCP servers use a custom header (e.g. "X-Api-Token").
+   * auth: bearer (Authorization: Bearer <token>, or a custom header still
+   * carrying the "Bearer " prefix) or header (raw secret, no prefix) — see
+   * McpHttpAuthSchema.
    */
   z.object({
     transport: z.literal("http"),
     url: z.string().url(),
-    auth: z
-      .object({
-        scheme: z.literal("bearer"),
-        /** HTTP header name that carries the bearer token. Default: "Authorization". */
-        header: z.string().min(1).default("Authorization"),
-      })
-      .optional(),
+    auth: McpHttpAuthSchema.optional(),
   }),
   /**
    * Stdio transport — launch an MCP server binary as a child process.

@@ -105,9 +105,15 @@ export function connectSource(
         // ── HTTP transport ─────────────────────────────────────────────────
         // SECRET injected ONLY into the header map. No other reference kept.
         const headers: Record<string, string> = {}
-        if (connection.auth?.scheme === "bearer" && secret !== null) {
-          const headerName = connection.auth.header ?? "Authorization"
-          headers[headerName] = `Bearer ${secret}`
+        if (connection.auth !== undefined && secret !== null) {
+          if (connection.auth.scheme === "bearer") {
+            const headerName = connection.auth.header ?? "Authorization"
+            headers[headerName] = `Bearer ${secret}`
+          } else {
+            // "header" scheme (NEW, inc 28.9): emit the RAW secret, no prefix —
+            // for servers expecting e.g. "X-Api-Key: <raw>".
+            headers[connection.auth.name] = secret
+          }
         }
         // new URL() can throw on an invalid url — caught below as connect-failed.
         transport = new StreamableHTTPClientTransport(new URL(connection.url), {

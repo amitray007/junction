@@ -7,7 +7,7 @@
 // No @junction/core import. Secret is input-only; never rendered or returned.
 
 import { createFileRoute, useRouter } from "@tanstack/react-router"
-import { Plus, RefreshCw, Trash2 } from "lucide-react"
+import { Plus, RefreshCw, TestTube, Trash2 } from "lucide-react"
 import { useCallback, useMemo, useState } from "react"
 import { toast } from "sonner"
 import type { TableColumn } from "../lib/use-table-view.js"
@@ -18,10 +18,12 @@ import {
   addCredentialFn,
   removeCredentialFn,
   rotateCredentialFn,
+  testCredentialFn,
 } from "../server/mutations.functions.js"
 import { MonoCode } from "../ui/code.js"
 import {
   Button,
+  Checkbox,
   ConfirmDialog,
   Dialog,
   DialogContent,
@@ -56,6 +58,7 @@ import {
   TablePagination,
   TableRow,
   TableSkeleton,
+  Textarea,
 } from "../ui/index.js"
 
 export const Route = createFileRoute("/credentials")({
@@ -67,10 +70,38 @@ export const Route = createFileRoute("/credentials")({
   component: CredentialsPage,
 })
 
-// All stored credential kinds mean the credential was added successfully.
-// Show "Configured" — neutral, no liveness claim — until inc 28 adds live probing.
-function kindToStatus(_kind: string): "configured" {
+// ---------------------------------------------------------------------------
+// Verify-result badge mapping (28.9 — makes the reserved status taxonomy real).
+// "connected" renders ONLY from a persisted "ok" verify — never inferred. An
+// "unreachable" result or a never-verified credential both stay "Configured"
+// (honest — a network hiccup is not a verdict, and absence-of-check is not a
+// green light either); auth-failed maps to the reserved Auth Failed badge.
+// ---------------------------------------------------------------------------
+
+function verifyResultToStatus(
+  result: CredentialMeta["lastVerifyResult"],
+): "connected" | "auth-failed" | "configured" {
+  if (result === "ok") return "connected"
+  if (result === "auth-failed") return "auth-failed"
   return "configured"
+}
+
+// Pinned-UTC timestamp formatter (inc-27 SSR-hydration rule — see keys.tsx).
+// NEVER render relative time ("2h ago"): server and client clocks/renders can
+// disagree, producing a hydration mismatch. Module-scope so the Intl instance
+// is built once, not per render.
+const CHECKED_AT_FORMAT = new Intl.DateTimeFormat("en-US", {
+  year: "numeric",
+  month: "short",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+  timeZone: "UTC",
+})
+
+function formatCheckedAt(ms: number): string {
+  return `checked ${CHECKED_AT_FORMAT.format(new Date(ms))} UTC`
 }
 
 // Page size for the paginated table (F12). 25 rows is comfortable for the seed (10)
@@ -110,21 +141,48 @@ interface SecretFieldProps {
   readonly onChange: (v: string) => void
   readonly error?: string
   readonly placeholder?: string
+  /**
+   * kind "file" stores multiline content (e.g. a service-account JSON or
+   * kubeconfig) — a single-line password input can't hold that comfortably.
+   * Swaps to a Textarea (still never rendered/echoed elsewhere — input only).
+   */
+  readonly multiline?: boolean
 }
 
-function SecretField({ id, label, value, onChange, error, placeholder }: SecretFieldProps) {
+function SecretField({
+  id,
+  label,
+  value,
+  onChange,
+  error,
+  placeholder,
+  multiline,
+}: SecretFieldProps) {
   return (
     <Field id={id} label={label} error={error}>
-      <Input
-        id={id}
-        type="password"
-        autoComplete="new-password"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        hasError={!!error}
-        aria-required="true"
-        placeholder={placeholder}
-      />
+      {multiline ? (
+        <Textarea
+          id={id}
+          autoComplete="off"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          hasError={!!error}
+          aria-required="true"
+          placeholder={placeholder}
+          rows={6}
+        />
+      ) : (
+        <Input
+          id={id}
+          type="password"
+          autoComplete="new-password"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          hasError={!!error}
+          aria-required="true"
+          placeholder={placeholder}
+        />
+      )}
     </Field>
   )
 }
@@ -136,23 +194,48 @@ function SecretField({ id, label, value, onChange, error, placeholder }: SecretF
 interface AddDialogProps {
   readonly open: boolean
   readonly onOpenChange: (open: boolean) => void
-  readonly platforms: Array<{ id: string; displayName: string }>
+  readonly platforms: PlatformMeta[]
   readonly onSuccess: () => void
+}
+
+/** Human labels for the kind Select — matches core's CredentialKind values (oauth2 excluded, gated to inc 29). */
+const KIND_LABELS: Record<string, string> = {
+  bearer: "Bearer token",
+  "api-key": "API key",
+  env: "Environment variable",
+  file: "File",
 }
 
 function AddCredentialDialog({ open, onOpenChange, platforms, onSuccess }: AddDialogProps) {
   const [platformId, setPlatformId] = useState("")
   const [account, setAccount] = useState("")
+  const [kind, setKind] = useState("")
   const [secret, setSecret] = useState("")
+  const [verify, setVerify] = useState(true)
   const [errors, setErrors] = useState<{ platformId?: string; account?: string; secret?: string }>(
     {},
   )
   const [submitting, setSubmitting] = useState(false)
 
+  const platformMap = useMemo(() => new Map(platforms.map((p) => [p.id, p])), [platforms])
+  const selectedPlatform = platformId ? platformMap.get(platformId) : undefined
+  const compatibleKinds = selectedPlatform?.compatibleKinds ?? []
+  const verifiable = selectedPlatform?.verifiable ?? false
+
+  function selectPlatform(id: string) {
+    setPlatformId(id)
+    // Default kind = the matrix's first (preferred) entry for the newly selected platform.
+    const platform = platformMap.get(id)
+    setKind(platform?.compatibleKinds[0] ?? "")
+    setVerify(platform?.verifiable ?? false)
+  }
+
   function reset() {
     setPlatformId("")
     setAccount("")
+    setKind("")
     setSecret("")
+    setVerify(true)
     setErrors({})
     setSubmitting(false)
   }
@@ -160,6 +243,17 @@ function AddCredentialDialog({ open, onOpenChange, platforms, onSuccess }: AddDi
   function handleOpenChange(next: boolean) {
     if (!next) reset()
     onOpenChange(next)
+  }
+
+  function toastVerifyOutcome(outcome: { status: string; detail?: string; reason?: string }) {
+    if (outcome.status === "ok") {
+      toast.success("Connected")
+    } else if (outcome.status === "auth-failed") {
+      toast.error("Auth failed — check the token")
+    } else if (outcome.status === "unreachable") {
+      toast.warning("Couldn't reach the source")
+    }
+    // "not-verifiable" is silent — the checkbox is hidden for non-verifiable platforms.
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -175,7 +269,13 @@ function AddCredentialDialog({ open, onOpenChange, platforms, onSuccess }: AddDi
     setSubmitting(true)
     try {
       const result = await addCredentialFn({
-        data: { platformId, account: account.trim(), kind: "bearer", secret },
+        data: {
+          platformId,
+          account: account.trim(),
+          kind: (kind || "bearer") as "bearer" | "api-key" | "env" | "file",
+          secret,
+          verify: verifiable && verify,
+        },
       })
       if (!result.ok) {
         toast.error(`Failed to add credential: ${result.error}`)
@@ -183,6 +283,7 @@ function AddCredentialDialog({ open, onOpenChange, platforms, onSuccess }: AddDi
         return
       }
       toast.success("Credential added")
+      if (result.verify) toastVerifyOutcome(result.verify)
       onOpenChange(false)
       reset()
       onSuccess()
@@ -198,13 +299,13 @@ function AddCredentialDialog({ open, onOpenChange, platforms, onSuccess }: AddDi
         <DialogHeader>
           <DialogTitle>Add Credential</DialogTitle>
           <DialogDescription>
-            Add a bearer credential for a platform. The secret is never stored in plaintext.
+            Add a credential for a platform. The secret is never stored in plaintext.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} noValidate>
           <div className="flex flex-col gap-4">
             <Field id="add-platform" label="Platform" error={errors.platformId}>
-              <Select value={platformId} onValueChange={setPlatformId}>
+              <Select value={platformId} onValueChange={selectPlatform}>
                 <SelectTrigger id="add-platform" aria-required="true">
                   <SelectValue placeholder="Select a platform" />
                 </SelectTrigger>
@@ -227,21 +328,62 @@ function AddCredentialDialog({ open, onOpenChange, platforms, onSuccess }: AddDi
                 aria-required="true"
               />
             </Field>
-            <Field
-              id="add-kind"
-              label="Kind"
-              description="Only bearer credentials are supported in this release."
-            >
-              <Input id="add-kind" value="bearer" disabled aria-disabled="true" />
-            </Field>
+            {compatibleKinds.length > 0 ? (
+              <Field id="add-kind" label="Kind">
+                <Select value={kind} onValueChange={setKind}>
+                  <SelectTrigger id="add-kind">
+                    <SelectValue placeholder="Select a kind" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {compatibleKinds.map((k) => (
+                      <SelectItem key={k} value={k}>
+                        {KIND_LABELS[k] ?? k}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+            ) : (
+              <Field
+                id="add-kind"
+                label="Kind"
+                description={
+                  platformId
+                    ? "This platform does not accept a credential kind."
+                    : "Select a platform to see its supported kinds."
+                }
+              >
+                <Input id="add-kind" value="—" disabled aria-disabled="true" />
+              </Field>
+            )}
             <SecretField
               id="add-secret"
               label="Secret"
               value={secret}
               onChange={setSecret}
               error={errors.secret}
-              placeholder="Paste your secret here"
+              placeholder={
+                kind === "file"
+                  ? "Paste the file content here (e.g. a service-account JSON)"
+                  : "Paste your secret here"
+              }
+              multiline={kind === "file"}
             />
+            {verifiable && (
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="add-verify"
+                  checked={verify}
+                  onCheckedChange={(checked) => setVerify(checked === true)}
+                />
+                <label
+                  htmlFor="add-verify"
+                  style={{ fontSize: "var(--text-body)", color: "var(--gray-1000)" }}
+                >
+                  Test connection after adding
+                </label>
+              </div>
+            )}
           </div>
           <DialogFormFooter
             onCancel={() => handleOpenChange(false)}
@@ -404,6 +546,9 @@ interface FlatTableProps {
   readonly platforms: PlatformMeta[]
   readonly onRotate: (c: CredentialMeta) => void
   readonly onDelete: (c: CredentialMeta) => void
+  readonly onTestConnection: (c: CredentialMeta) => void
+  /** Credential id currently mid-test, or null — disables its row's Test Connection item. */
+  readonly testingId?: string | null
   /** Page size; defaults to PAGE_SIZE. A test seam so pagination slicing is exercisable. */
   readonly pageSize?: number
 }
@@ -419,6 +564,8 @@ export function FlatCredentialsTable({
   platforms,
   onRotate,
   onDelete,
+  onTestConnection,
+  testingId = null,
   pageSize = PAGE_SIZE,
 }: FlatTableProps) {
   // Build a lookup from platformId → PlatformMeta for display names and kinds.
@@ -644,7 +791,11 @@ export function FlatCredentialsTable({
                 }
                 const c = item.credential
                 // Show full ULID — feedback: ID was over-truncating despite available width.
-                const platformName = platformMap.get(c.platformId)?.displayName ?? c.platformId
+                const platform = platformMap.get(c.platformId)
+                const platformName = platform?.displayName ?? c.platformId
+                const verifiable = platform?.verifiable ?? false
+                const status = verifyResultToStatus(c.lastVerifyResult)
+                const unreachable = c.lastVerifyResult === "unreachable"
                 return (
                   <TableRow key={c.id}>
                     <TableCellMono
@@ -657,16 +808,34 @@ export function FlatCredentialsTable({
                       <MonoCode>{platformName}</MonoCode>
                     </TableCellMono>
                     <TableCell>{c.account}</TableCell>
-                    <TableCellMono>
-                      {/* Kind shows TRUE stored kind — "bearer" only (honesty guard, F12). */}
-                      {c.kind}
-                    </TableCellMono>
+                    <TableCellMono>{c.kind}</TableCellMono>
                     <TableCell>
-                      <StatusBadge status={kindToStatus(c.kind)} />
+                      <div className="flex flex-col gap-1">
+                        <span
+                          title={unreachable ? "last check couldn't reach the source" : undefined}
+                        >
+                          <StatusBadge status={status} />
+                        </span>
+                        {c.lastVerifiedAt !== undefined && (
+                          <span
+                            style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)" }}
+                          >
+                            {formatCheckedAt(c.lastVerifiedAt)}
+                          </span>
+                        )}
+                      </div>
                     </TableCell>
                     <TableActionsCell
                       menu={
                         <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            onSelect={() => onTestConnection(c)}
+                            disabled={!verifiable || testingId === c.id}
+                            title={verifiable ? undefined : "not auto-verifiable for this source"}
+                          >
+                            <TestTube className="h-4 w-4" aria-hidden="true" />
+                            {testingId === c.id ? "Testing…" : "Test Connection"}
+                          </DropdownMenuItem>
                           <DropdownMenuItem onSelect={() => onRotate(c)}>
                             <RefreshCw className="h-4 w-4" aria-hidden="true" />
                             Rotate Secret
@@ -705,9 +874,35 @@ function CredentialsPage() {
   const [addOpen, setAddOpen] = useState(false)
   const [rotatingCred, setRotatingCred] = useState<CredentialMeta | null>(null)
   const [deletingCred, setDeletingCred] = useState<CredentialMeta | null>(null)
+  const [testingId, setTestingId] = useState<string | null>(null)
 
   async function invalidate() {
     await router.invalidate()
+  }
+
+  async function handleTestConnection(c: CredentialMeta) {
+    setTestingId(c.id)
+    try {
+      const result = await testCredentialFn({ data: { credentialId: c.id } })
+      if (!result.ok) {
+        toast.error(`Failed to test connection: ${result.error}`)
+        return
+      }
+      if (result.status === "ok") {
+        toast.success("Connected")
+      } else if (result.status === "auth-failed") {
+        toast.error("Auth failed — check the token")
+      } else if (result.status === "unreachable") {
+        toast.warning("Couldn't reach the source")
+      } else {
+        toast.message(result.detail ?? "Not auto-verifiable for this source")
+      }
+      await invalidate()
+    } catch {
+      toast.error("Failed to test connection")
+    } finally {
+      setTestingId(null)
+    }
   }
 
   return (
@@ -731,6 +926,8 @@ function CredentialsPage() {
         platforms={platforms}
         onRotate={setRotatingCred}
         onDelete={setDeletingCred}
+        onTestConnection={(c) => void handleTestConnection(c)}
+        testingId={testingId}
       />
 
       <AddCredentialDialog

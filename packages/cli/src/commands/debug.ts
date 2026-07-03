@@ -17,6 +17,7 @@ import {
   buildProvider,
   formatUpstreamError,
   resolveCredentialSecret,
+  toResolvedSecret,
 } from "@junction/source-runtime"
 import { defineCommand } from "citty"
 import { consola } from "consola"
@@ -97,14 +98,14 @@ async function runProbe(args: ProbeArgs): Promise<void> {
     else reportCredentialError(secretResult.error.error, json)
     return
   }
-  const { secret, account } = secretResult.value
+  const { secret, kind, account } = secretResult.value
 
   // ── Derive namespace ────────────────────────────────────────────────────
   const toolNamespace = deriveProbeNamespace(String(platform.id), account)
 
   // ── Build provider + list tools ─────────────────────────────────────────
   // secret flows only into buildProvider → transport/injectAuth. NEVER logged.
-  const providerResult = await buildProvider(platform, secret, paths)
+  const providerResult = await buildProvider(platform, toResolvedSecret(secret, kind), paths)
   if (providerResult.isErr()) {
     reportUpstreamError(providerResult.error, json)
     return
@@ -269,11 +270,11 @@ const callCommand = defineCommand({
       else reportCredentialError(secretResult.error.error, json)
       return
     }
-    const { secret } = secretResult.value
+    const { secret, kind } = secretResult.value
 
     // ── Build provider + call tool ──────────────────────────────────────────
     // secret flows only into buildProvider → transport/injectAuth. NEVER logged.
-    const providerResult = await buildProvider(platform, secret, paths)
+    const providerResult = await buildProvider(platform, toResolvedSecret(secret, kind), paths)
     if (providerResult.isErr()) {
       reportUpstreamError(providerResult.error, json)
       return

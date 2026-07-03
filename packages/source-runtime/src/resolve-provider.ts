@@ -20,7 +20,7 @@ import {
   type ToolProvider,
   type UpstreamError,
 } from "@junction/core"
-import { buildProvider } from "./build-provider.js"
+import { buildProvider, type ResolvedSecret } from "./build-provider.js"
 
 // ---------------------------------------------------------------------------
 // ProviderResolution
@@ -88,7 +88,7 @@ export function makeResolveProvider(
       }
 
       // ── Resolve credential (skip entirely when no credentialId — public source) ──────
-      let secret: string | null = null
+      let secret: ResolvedSecret | null = null
       if (sourceRef.credentialId === undefined) {
         // No credential attached — public/no-auth source. secret stays null.
         // Warn on the log if the platform declares auth (informative, not blocking).
@@ -121,6 +121,8 @@ export function makeResolveProvider(
 
         // Resolve the plaintext secret from the store.
         // If store is null (store unavailable), secret is null (no auth).
+        // A null VALUE from the store (lost/cleared secret) is treated the
+        // same as "no credential" — never a fake auth attempt.
         if (store !== null) {
           const secretResult = await store.get(credential.secretRef)
           if (secretResult.isErr()) {
@@ -132,7 +134,10 @@ export function makeResolveProvider(
               cause: secretResult.error,
             } satisfies UpstreamError)
           }
-          secret = secretResult.value
+          secret =
+            secretResult.value === null
+              ? null
+              : { kind: credential.kind, value: secretResult.value }
         }
       }
 

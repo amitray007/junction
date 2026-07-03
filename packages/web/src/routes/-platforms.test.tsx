@@ -22,8 +22,22 @@ import type { PlatformMeta } from "../server/data.functions.js"
 const emptyLoaderData = { platforms: [] as PlatformMeta[], connectionCounts: {} }
 
 const platforms: PlatformMeta[] = [
-  { id: "github", kind: "builtin", displayName: "GitHub", baseUrl: "https://api.github.com" },
-  { id: "linear", kind: "builtin", displayName: "Linear", baseUrl: undefined },
+  {
+    id: "github",
+    kind: "builtin",
+    displayName: "GitHub",
+    baseUrl: "https://api.github.com",
+    compatibleKinds: ["bearer"],
+    verifiable: false,
+  },
+  {
+    id: "linear",
+    kind: "builtin",
+    displayName: "Linear",
+    baseUrl: undefined,
+    compatibleKinds: ["bearer"],
+    verifiable: false,
+  },
 ]
 
 const populatedLoaderData = {

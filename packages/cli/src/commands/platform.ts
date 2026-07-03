@@ -107,6 +107,8 @@ function formatOrchestrationError(
       return `refresh only applies to openapi platforms; "${id}" is kind "${e.platformKind}"`
     case "not-url-spec":
       return `cannot refresh a spec that wasn't added from a URL; "${id}" uses spec.from="${e.specFrom}"`
+    case "verify-op-invalid":
+      return `--verify-op is invalid: ${e.message}`
   }
 }
 
@@ -190,6 +192,11 @@ const addCommand = defineCommand({
       description:
         "[openapi] Include only operations whose path starts with this prefix (repeatable: --path /pet)",
     },
+    "verify-op": {
+      type: "string",
+      description:
+        "[openapi] operationId used by verify-on-add/test-connection — must be a GET with no required params",
+    },
     // GraphQL flags
     endpoint: {
       type: "string",
@@ -211,6 +218,14 @@ const addCommand = defineCommand({
   async run({ args, rawArgs }) {
     const json = args.json ?? false
     const kind = args.kind ?? "mcp"
+
+    // --verify-op only makes sense for openapi (it names an operationId in that
+    // platform's spec) — reject it early for every other kind with a clean error,
+    // rather than silently ignoring it.
+    if (args["verify-op"] !== undefined && kind !== "openapi") {
+      reportError(`--verify-op is only supported for --kind openapi (got "${kind}")`, json)
+      return
+    }
 
     if (kind === "openapi") {
       await addOpenApiPlatform(args, rawArgs, json)
@@ -303,6 +318,7 @@ async function addOpenApiPlatform(
     auth: buildAuthInput(args),
     maxTools,
     select,
+    verifyOperationId: args["verify-op"] as string | undefined,
   })
   if (result.isErr()) {
     reportError(formatOrchestrationError(result.error, "add"), json)

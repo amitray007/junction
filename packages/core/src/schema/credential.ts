@@ -43,6 +43,15 @@ export type OAuthMeta = z.infer<typeof OAuthMetaSchema>
 // CredentialSchema
 // ---------------------------------------------------------------------------
 
+/**
+ * Persisted verify-on-add / test-connection outcome (migration 0008).
+ * "not-verifiable" is deliberately NOT a member here — that outcome is a
+ * property of the platform/source kind, not a persisted event; it's never
+ * written to lastVerifyResult (see source-runtime's verifyCredential).
+ */
+export const CredentialVerifyResult = z.enum(["ok", "auth-failed", "unreachable"])
+export type CredentialVerifyResult = z.infer<typeof CredentialVerifyResult>
+
 export const CredentialSchema = z.object({
   /** Opaque stable credential ID */
   id: CredentialIdSchema,
@@ -63,6 +72,13 @@ export const CredentialSchema = z.object({
   secretRef: z.string().min(1),
   /** Reserved OAuth metadata slot — optional, minimal for now */
   oauthMeta: OAuthMetaSchema.optional(),
+  /**
+   * Ms-epoch timestamp of the last verify-on-add / test-connection attempt.
+   * Absent = never verified. Set together with lastVerifyResult.
+   */
+  lastVerifiedAt: z.number().optional(),
+  /** Outcome of the last verify attempt. Absent = never verified. */
+  lastVerifyResult: CredentialVerifyResult.optional(),
 })
 
 export type Credential = z.infer<typeof CredentialSchema>

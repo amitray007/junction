@@ -82,6 +82,51 @@ describe("McpConnectionSchema", () => {
       })
       expect(result.success).toBe(false)
     })
+
+    // ── "header" auth scheme (NEW, inc 28.9) — raw secret, no "Bearer " prefix ──
+    describe("header auth scheme", () => {
+      it("parses an http connection with scheme:'header' + name", () => {
+        const result = McpConnectionSchema.safeParse({
+          transport: "http",
+          url: "https://api.example.com/mcp/",
+          auth: { scheme: "header", name: "X-Api-Key" },
+        })
+        expect(result.success).toBe(true)
+        if (result.success && result.data.transport === "http") {
+          expect(result.data.auth?.scheme).toBe("header")
+          if (result.data.auth?.scheme === "header") {
+            expect(result.data.auth.name).toBe("X-Api-Key")
+          }
+        }
+      })
+
+      it("rejects scheme:'header' with an empty name", () => {
+        const result = McpConnectionSchema.safeParse({
+          transport: "http",
+          url: "https://api.example.com/mcp/",
+          auth: { scheme: "header", name: "" },
+        })
+        expect(result.success).toBe(false)
+      })
+
+      it("rejects scheme:'header' with no name at all", () => {
+        const result = McpConnectionSchema.safeParse({
+          transport: "http",
+          url: "https://api.example.com/mcp/",
+          auth: { scheme: "header" },
+        })
+        expect(result.success).toBe(false)
+      })
+
+      it("rejects an unknown auth scheme (discriminated union is strict)", () => {
+        const result = McpConnectionSchema.safeParse({
+          transport: "http",
+          url: "https://api.example.com/mcp/",
+          auth: { scheme: "basic", username: "u" },
+        })
+        expect(result.success).toBe(false)
+      })
+    })
   })
 
   describe("stdio transport", () => {

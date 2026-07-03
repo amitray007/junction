@@ -231,3 +231,19 @@ export const CliConnectionSchema = z
   )
 
 export type CliConnection = z.infer<typeof CliConnectionSchema>
+
+// ---------------------------------------------------------------------------
+// CliSecret — the resolved credential handed to createCliProvider
+// ---------------------------------------------------------------------------
+
+/**
+ * The resolved credential secret for a CLI source, tagged by CredentialKind so
+ * createCliProvider knows whether to inject the value directly (env) or
+ * materialize it to a 0600 temp file and inject the PATH (file).
+ *
+ * This is the ONLY seam that widens for the file-kind mechanics (increment
+ * 28.9 slice D): the mcp/openapi/graphql branches of buildProvider are
+ * untouched — they keep consuming a plain `string | null`. Only the cli
+ * branch constructs/consumes `CliSecret`.
+ */
+export type CliSecret = { kind: "env" | "file"; value: string }

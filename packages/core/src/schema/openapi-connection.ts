@@ -107,6 +107,14 @@ export const OpenApiConnectionSchema = z.object({
    * Selection is persisted and re-applied at runtime so serve/debug expose exactly this slice.
    */
   select: OpenApiSelectSchema.optional(),
+  /**
+   * Operator-designated operationId used by verify-on-add / test-connection
+   * (increment 28.9). Validated at add/edit time by @junction/platform-orchestration
+   * — must resolve to a GET operation with no required parameters in the spec.
+   * Absent ⇒ this platform is honestly "not-verifiable" (no auto-picking a GET;
+   * junction never silently fires a request the operator didn't choose).
+   */
+  verifyOperationId: z.string().min(1).optional(),
 })
 
 export type OpenApiConnection = z.infer<typeof OpenApiConnectionSchema>

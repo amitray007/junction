@@ -16,6 +16,7 @@ import type { Db } from "../db/index.js"
 import { getDatabase } from "../db/index.js"
 import { newCredentialId, newPlatformId, newProfileId } from "../ids/index.js"
 import { getPaths } from "../paths/index.js"
+import type { Platform } from "../schema/platform.js"
 import type { Repositories } from "./index.js"
 import { createRepositories } from "./index.js"
 
@@ -1232,13 +1233,15 @@ describe("repositories", () => {
 
     it("stores the secret in the CredentialStore and only a secretRef in the DB", async () => {
       const platformId = newPlatformId()
-      await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
+      const platform: Platform = { id: platformId, kind: "mcp" as const, displayName: "P" }
+      await repos.platforms.upsert(platform)
 
       const store = buildMockStore()
       const SENTINEL = "SENTINEL_TOKEN_abc123"
 
       const result = await addCredential(
         { platformId: String(platformId), account: "work", kind: "bearer", secret: SENTINEL },
+        platform,
         store,
         repos.credentials,
       )
@@ -1268,13 +1271,15 @@ describe("repositories", () => {
 
     it("CRITICAL: whole-DB scan finds no plaintext token in any table", async () => {
       const platformId = newPlatformId()
-      await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
+      const platform: Platform = { id: platformId, kind: "mcp" as const, displayName: "P" }
+      await repos.platforms.upsert(platform)
 
       const store = buildMockStore()
       const TOKEN = "TOP_SECRET_TOKEN_xyz789"
 
       await addCredential(
         { platformId: String(platformId), account: "personal", kind: "bearer", secret: TOKEN },
+        platform,
         store,
         repos.credentials,
       )
@@ -1292,11 +1297,13 @@ describe("repositories", () => {
 
     it("credential list never exposes the secretRef — only metadata", async () => {
       const platformId = newPlatformId()
-      await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
+      const platform: Platform = { id: platformId, kind: "mcp" as const, displayName: "P" }
+      await repos.platforms.upsert(platform)
 
       const store = buildMockStore()
       const result = await addCredential(
         { platformId: String(platformId), account: "work", kind: "bearer", secret: "s3cr3t" },
+        platform,
         store,
         repos.credentials,
       )
@@ -1315,7 +1322,8 @@ describe("repositories", () => {
 
     it("best-effort store.delete on DB-create failure (orphan cleanup)", async () => {
       const platformId = newPlatformId()
-      await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
+      const platform: Platform = { id: platformId, kind: "mcp" as const, displayName: "P" }
+      await repos.platforms.upsert(platform)
 
       // Simpler: build a store that succeeds on set but fails on the DB insert
       const failingDbRepo = {
@@ -1341,12 +1349,176 @@ describe("repositories", () => {
 
       const result = await addCredential(
         { platformId: String(platformId), account: "work2", kind: "bearer", secret: "orphan" },
+        platform,
         trackingStore,
         failingDbRepo,
       )
       expect(result.isErr()).toBe(true)
       // Best-effort cleanup must have been called
       expect(deleteCount).toBe(1)
+    })
+
+    // -------------------------------------------------------------------------
+    // Kind-compat validation (increment 28.9) — validated BEFORE the secret
+    // ever reaches the store.
+    // -------------------------------------------------------------------------
+
+    it("rejects an explicit kind outside the platform's matrix with kind-incompatible, without touching the store", async () => {
+      const platformId = newPlatformId()
+      // openapi + apiKey → matrix is [api-key] (∪ legacy bearer). "env" is neither.
+      const platform: Platform = {
+        id: platformId,
+        kind: "openapi" as const,
+        displayName: "P",
+        openapi: {
+          spec: { from: "url", url: "https://example.com/openapi.json" },
+          auth: { scheme: "apiKey", in: "header", name: "X-Api-Key" },
+        },
+      }
+      await repos.platforms.upsert(platform)
+
+      const store = buildMockStore()
+      let storeTouched = false
+      const observingStore: CredentialStore = {
+        backend: "encrypted-file" as const,
+        set: (ref, secret) => {
+          storeTouched = true
+          return store.set(ref, secret)
+        },
+        get: (ref) => store.get(ref),
+        delete: (ref) => store.delete(ref),
+      }
+
+      const result = await addCredential(
+        { platformId: String(platformId), account: "work", kind: "env", secret: "x" },
+        platform,
+        observingStore,
+        repos.credentials,
+      )
+      expect(result.isErr()).toBe(true)
+      if (result.isErr()) {
+        expect(result.error.kind).toBe("kind-incompatible")
+        if (result.error.kind === "kind-incompatible") {
+          expect(result.error.requested).toBe("env")
+          expect(result.error.allowed).toEqual(expect.arrayContaining(["api-key", "bearer"]))
+        }
+      }
+      expect(storeTouched).toBe(false)
+    })
+
+    it("rejects oauth2 for every platform shape with kind-incompatible", async () => {
+      const platformId = newPlatformId()
+      const platform: Platform = {
+        id: platformId,
+        kind: "openapi" as const,
+        displayName: "P",
+        openapi: {
+          spec: { from: "url", url: "https://example.com/openapi.json" },
+          auth: { scheme: "oauth2" },
+        },
+      }
+      await repos.platforms.upsert(platform)
+
+      const store = buildMockStore()
+      const result = await addCredential(
+        // Cast: AddCredentialInput.kind excludes "oauth2" at the type level —
+        // this proves the runtime gate holds even if a caller bypasses the type.
+        { platformId: String(platformId), account: "work", kind: "oauth2" as never, secret: "x" },
+        platform,
+        store,
+        repos.credentials,
+      )
+      expect(result.isErr()).toBe(true)
+      if (result.isErr()) {
+        expect(result.error.kind).toBe("kind-incompatible")
+      }
+    })
+
+    it("accepts the derived default kind for an openapi apiKey platform", async () => {
+      const platformId = newPlatformId()
+      const platform: Platform = {
+        id: platformId,
+        kind: "openapi" as const,
+        displayName: "P",
+        openapi: {
+          spec: { from: "url", url: "https://example.com/openapi.json" },
+          auth: { scheme: "apiKey", in: "header", name: "X-Api-Key" },
+        },
+      }
+      await repos.platforms.upsert(platform)
+
+      const store = buildMockStore()
+      const result = await addCredential(
+        { platformId: String(platformId), account: "work", kind: "api-key", secret: "x" },
+        platform,
+        store,
+        repos.credentials,
+      )
+      expect(result.isOk()).toBe(true)
+      if (result.isOk()) {
+        expect(result.value.kind).toBe("api-key")
+      }
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // credentials.setVerifyState — persisted verify-on-add outcome (inc 28.9)
+  // ---------------------------------------------------------------------------
+  describe("credentials.setVerifyState", () => {
+    it("persists ok/auth-failed/unreachable and is readable back via get()", async () => {
+      const platformId = newPlatformId()
+      const platform: Platform = { id: platformId, kind: "mcp" as const, displayName: "P" }
+      await repos.platforms.upsert(platform)
+
+      const created = await repos.credentials.create({
+        id: newCredentialId(),
+        platformId,
+        profileName: "work",
+        kind: "bearer",
+        secretRef: "ref-verify-1",
+      })
+      expect(created.isOk()).toBe(true)
+      if (!created.isOk()) return
+
+      // Never verified yet.
+      expect(created.value.lastVerifiedAt).toBeUndefined()
+      expect(created.value.lastVerifyResult).toBeUndefined()
+
+      const at = 1700000000123
+      const setResult = await repos.credentials.setVerifyState(
+        String(created.value.id),
+        "auth-failed",
+        at,
+      )
+      expect(setResult.isOk()).toBe(true)
+
+      const fetched = await repos.credentials.get(String(created.value.id))
+      expect(fetched.isOk()).toBe(true)
+      if (fetched.isOk()) {
+        expect(fetched.value.lastVerifyResult).toBe("auth-failed")
+        expect(fetched.value.lastVerifiedAt).toBe(at)
+      }
+
+      // A subsequent verify overwrites the previous state (e.g. fixed the token).
+      const okResult = await repos.credentials.setVerifyState(
+        String(created.value.id),
+        "ok",
+        at + 1000,
+      )
+      expect(okResult.isOk()).toBe(true)
+      const refetched = await repos.credentials.get(String(created.value.id))
+      if (refetched.isOk()) {
+        expect(refetched.value.lastVerifyResult).toBe("ok")
+        expect(refetched.value.lastVerifiedAt).toBe(at + 1000)
+      }
+    })
+
+    it("returns not-found for an unknown credential id", async () => {
+      const result = await repos.credentials.setVerifyState("does-not-exist", "ok", Date.now())
+      expect(result.isErr()).toBe(true)
+      if (result.isErr()) {
+        expect(result.error.kind).toBe("not-found")
+      }
     })
   })
 
@@ -2058,5 +2230,115 @@ describe("migration 0007 — cross-version data preservation + new tables", () =
     } finally {
       rawDb.close()
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Migration 0008 — credential verify-state columns (inc 28.9)
+//
+// Mirrors the 0007 staged-migration pattern: apply 0000→0007 on a raw
+// better-sqlite3 DB, seed a credential the OLD way (no verify columns), THEN
+// apply 0008, and assert the row survived + the new nullable columns exist
+// (default NULL — "never verified").
+// ---------------------------------------------------------------------------
+describe("migration 0008 — credential verify-state columns", () => {
+  const migrationsDir = fileURLToPath(new URL("../db/migrations/", import.meta.url))
+
+  /** Apply one migration .sql file statement-by-statement (split on drizzle's breakpoint). */
+  async function applyMigration(rawDb: Database.Database, tag: string): Promise<void> {
+    const sqlText = await readFile(join(migrationsDir, `${tag}.sql`), "utf8")
+    for (const stmt of sqlText.split("--> statement-breakpoint")) {
+      const trimmed = stmt.trim()
+      if (trimmed.length > 0) rawDb.exec(trimmed)
+    }
+  }
+
+  it("preserves pre-existing credential rows through the 0008 column add; new columns are nullable and default NULL", async () => {
+    const rawDb = new Database(":memory:")
+    try {
+      rawDb.pragma("foreign_keys = ON")
+
+      // ── Build the PRE-0008 schema exactly as a real post-0007 DB would look ──
+      for (const tag of [
+        "0000_odd_amazoness",
+        "0001_illegal_kingpin",
+        "0002_natural_lady_bullseye",
+        "0003_add_openapi_column",
+        "0004_neat_spirit",
+        "0005_confused_swordsman",
+        "0006_violet_kinsey_walden",
+        "0007_burly_elektra",
+      ]) {
+        await applyMigration(rawDb, tag)
+      }
+
+      // Seed a platform + credential the OLD way (no verify columns exist yet).
+      rawDb.exec(`
+        INSERT INTO platforms (id, kind, display_name) VALUES ('plat_m8', 'mcp', 'M8 Platform');
+        INSERT INTO credentials (id, platform_id, profile_name, kind, secret_ref)
+          VALUES ('cred_m8', 'plat_m8', 'work', 'bearer', 'ref_m8');
+      `)
+
+      // ── The migration under test ──
+      await applyMigration(rawDb, "0008_sticky_marvel_boy")
+
+      // 1. The pre-existing credential row survived.
+      const credRow = rawDb
+        .prepare(
+          "SELECT id, platform_id, profile_name, kind, secret_ref, last_verified_at, last_verify_result FROM credentials WHERE id = ?",
+        )
+        .get("cred_m8") as
+        | {
+            id: string
+            platform_id: string
+            profile_name: string
+            kind: string
+            secret_ref: string
+            last_verified_at: number | null
+            last_verify_result: string | null
+          }
+        | undefined
+      expect(credRow).toBeDefined()
+      expect(credRow?.profile_name).toBe("work")
+      expect(credRow?.secret_ref).toBe("ref_m8")
+
+      // 2. New columns exist, are nullable, and default to NULL for the
+      // pre-existing row ("never verified").
+      expect(credRow?.last_verified_at).toBeNull()
+      expect(credRow?.last_verify_result).toBeNull()
+
+      const credCols = rawDb
+        .prepare("SELECT name, [notnull] FROM pragma_table_info('credentials')")
+        .all() as Array<{ name: string; notnull: number }>
+      const lastVerifiedAtCol = credCols.find((c) => c.name === "last_verified_at")
+      const lastVerifyResultCol = credCols.find((c) => c.name === "last_verify_result")
+      expect(lastVerifiedAtCol).toBeDefined()
+      expect(lastVerifyResultCol).toBeDefined()
+      expect(lastVerifiedAtCol?.notnull).toBe(0)
+      expect(lastVerifyResultCol?.notnull).toBe(0)
+
+      // 3. A fresh write to the new columns round-trips post-migration.
+      rawDb.exec(
+        "UPDATE credentials SET last_verified_at = 1700000000000, last_verify_result = 'ok' WHERE id = 'cred_m8'",
+      )
+      const updated = rawDb
+        .prepare("SELECT last_verified_at, last_verify_result FROM credentials WHERE id = ?")
+        .get("cred_m8") as { last_verified_at: number; last_verify_result: string }
+      expect(updated.last_verified_at).toBe(1700000000000)
+      expect(updated.last_verify_result).toBe("ok")
+    } finally {
+      rawDb.close()
+    }
+  })
+
+  it("journal gate: the 0008 entry's `when` exceeds the current max (not necessarily strictly sorted overall)", async () => {
+    const journalText = await readFile(join(migrationsDir, "meta/_journal.json"), "utf8")
+    const journal = JSON.parse(journalText) as { entries: Array<{ tag: string; when: number }> }
+    const entry0008 = journal.entries.find((e) => e.tag.startsWith("0008_"))
+    expect(entry0008).toBeDefined()
+    const maxOfPriorEntries = Math.max(
+      ...journal.entries.filter((e) => e.tag !== entry0008?.tag).map((e) => e.when),
+    )
+    expect(entry0008?.when).toBeGreaterThan(maxOfPriorEntries)
   })
 })

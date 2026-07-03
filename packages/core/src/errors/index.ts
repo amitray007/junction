@@ -23,6 +23,7 @@ export type CredentialError =
   | { kind: "key-unavailable"; cause: unknown }
   | { kind: "io-failed"; cause: unknown }
   | { kind: "invalid-input"; reason: string }
+  | { kind: "kind-incompatible"; requested: string; allowed: string[] }
 
 /**
  * Errors from minting/verifying/revoking junction API keys (increment 27).

@@ -96,6 +96,20 @@ const testServer = createServer((req, res) => {
     return
   }
 
+  // POST /graphql-403 — simulates a forbidden (also auth-failed)
+  if (path === "/graphql-403" && req.method === "POST") {
+    res.writeHead(403, { "Content-Type": "application/json" })
+    res.end(JSON.stringify({ error: "Forbidden" }))
+    return
+  }
+
+  // POST /graphql-500 — non-auth server error, must stay call-failed
+  if (path === "/graphql-500" && req.method === "POST") {
+    res.writeHead(500, { "Content-Type": "application/json" })
+    res.end(JSON.stringify({ error: "Internal Server Error" }))
+    return
+  }
+
   // POST /graphql-large — returns a body larger than 1 MB
   if (path === "/graphql-large" && req.method === "POST") {
     res.writeHead(200, { "Content-Type": "application/json" })
@@ -277,14 +291,82 @@ describe("isError rule", () => {
     expect(result.value.isError).toBeFalsy()
   })
 
-  it("non-200 → typed call-failed error (not a successful ToolResult)", async () => {
-    const conn = makeConn({ endpoint: `http://127.0.0.1:${serverPort}/graphql-401` })
+  it("non-200 (500) → typed call-failed error (not a successful ToolResult)", async () => {
+    const conn = makeConn({ endpoint: `http://127.0.0.1:${serverPort}/graphql-500` })
     const result = await callGraphQl(conn, null, "{ viewer { login } }", undefined, undefined)
     expect(result.isErr()).toBe(true)
     if (!result.isErr()) return
     expect(result.error.kind).toBe("call-failed")
     // The error must NOT contain the secret or endpoint URL
     expect(JSON.stringify(result.error)).not.toContain(SENTINEL_SECRET)
+  })
+
+  it("401 → typed auth-failed error (inc 28.9 — verify-on-add honesty)", async () => {
+    const conn = makeConn({ endpoint: `http://127.0.0.1:${serverPort}/graphql-401` })
+    const result = await callGraphQl(conn, null, "{ viewer { login } }", undefined, undefined)
+    expect(result.isErr()).toBe(true)
+    if (!result.isErr()) return
+    expect(result.error.kind).toBe("auth-failed")
+    expect(JSON.stringify(result.error)).not.toContain(SENTINEL_SECRET)
+  })
+
+  it("403 → typed auth-failed error", async () => {
+    const conn = makeConn({ endpoint: `http://127.0.0.1:${serverPort}/graphql-403` })
+    const result = await callGraphQl(conn, null, "{ viewer { login } }", undefined, undefined)
+    expect(result.isErr()).toBe(true)
+    if (!result.isErr()) return
+    expect(result.error.kind).toBe("auth-failed")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 401/403 mapping — no-body fallback path (res.body absent).
+// A real HTTP response from Node's fetch always has a body reader, so this
+// branch is exercised by stubbing global fetch directly rather than via the
+// local test server.
+// ---------------------------------------------------------------------------
+
+describe("non-200 auth mapping — res.body-absent fallback path", () => {
+  it("401 with no body reader → auth-failed (not call-failed)", async () => {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = (async () => new Response(null, { status: 401 })) as unknown as typeof fetch
+    try {
+      const conn = makeConn()
+      const result = await callGraphQl(conn, null, "{ __typename }", undefined, undefined)
+      expect(result.isErr()).toBe(true)
+      if (!result.isErr()) return
+      expect(result.error.kind).toBe("auth-failed")
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it("403 with no body reader → auth-failed", async () => {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = (async () => new Response(null, { status: 403 })) as unknown as typeof fetch
+    try {
+      const conn = makeConn()
+      const result = await callGraphQl(conn, null, "{ __typename }", undefined, undefined)
+      expect(result.isErr()).toBe(true)
+      if (!result.isErr()) return
+      expect(result.error.kind).toBe("auth-failed")
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it("500 with no body reader stays call-failed", async () => {
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = (async () => new Response(null, { status: 500 })) as unknown as typeof fetch
+    try {
+      const conn = makeConn()
+      const result = await callGraphQl(conn, null, "{ __typename }", undefined, undefined)
+      expect(result.isErr()).toBe(true)
+      if (!result.isErr()) return
+      expect(result.error.kind).toBe("call-failed")
+    } finally {
+      globalThis.fetch = originalFetch
+    }
   })
 })
 

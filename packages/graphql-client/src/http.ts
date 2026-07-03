@@ -14,6 +14,21 @@ import type { GraphQlConnection, OpenApiAuth, ToolResult, UpstreamError } from "
 import { err, ok, ResultAsync } from "neverthrow"
 
 // ---------------------------------------------------------------------------
+// mapNon200ToError — shared by the res.body-absent fallback and the streamed
+// path (both call this on the SAME res.ok check, just at different points in
+// the read). 401/403 → auth-failed (verify-on-add honesty, mirrors mcp/client
+// connect.ts's isAuthError); everything else → call-failed. Scrubbed: only
+// the status code, never the endpoint or token.
+// ---------------------------------------------------------------------------
+
+function mapNon200ToError(status: number): UpstreamError {
+  if (status === 401 || status === 403) {
+    return { kind: "auth-failed", cause: `HTTP ${status}` }
+  }
+  return { kind: "call-failed", cause: `HTTP ${status}` }
+}
+
+// ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
@@ -176,10 +191,7 @@ async function callGraphQlAsync(
       // Fallback: res.body absent (rare)
       const text = await res.text()
       if (!res.ok) {
-        return err<ToolResult, UpstreamError>({
-          kind: "call-failed",
-          cause: `HTTP ${res.status}`,
-        })
+        return err<ToolResult, UpstreamError>(mapNon200ToError(res.status))
       }
       return ok<ToolResult, UpstreamError>({
         content: [{ type: "text", text }],
@@ -212,12 +224,9 @@ async function callGraphQlAsync(
 
     const bodyText = Buffer.concat(chunks).toString("utf8")
 
-    // Non-200: surface as typed error (scrubbed — no endpoint/token)
+    // Non-200: surface as typed error (scrubbed — no endpoint/token).
     if (!res.ok) {
-      return err<ToolResult, UpstreamError>({
-        kind: "call-failed",
-        cause: `HTTP ${res.status}`,
-      })
+      return err<ToolResult, UpstreamError>(mapNon200ToError(res.status))
     }
 
     // GraphQL 200 — parse to apply the data/errors isError rule.
