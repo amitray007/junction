@@ -105,11 +105,13 @@ function verifyResultToStatus(
 
 // ---------------------------------------------------------------------------
 // OAuth status mapping (inc 29 — activates the reserved Expiring/Reconnect
-// wires). needsReauth wins over everything (it's the "must act now" state);
-// then a near expiry (within EXPIRING_WINDOW_MS) shows Expiring; otherwise an
-// oauth2 credential with tokens on file reads Connected — never inferred from
-// a live probe (oauth2 has no verify-on-add path), just presence of tokens
-// and an honest expiry window.
+// wires). needsReauth wins (the only "must act now" state → auth-failed/Reconnect).
+// Otherwise, a REFRESHABLE credential (has a refresh token) stays Connected even
+// near expiry — junction auto-refreshes it, so the expiry is a detail it manages,
+// not the user's problem; surfacing "Expiring" would be a false alarm (a healthy
+// Google cred, whose access token is always ≤1h, would read Expiring forever).
+// "Expiring" is reserved for the ONLY actionable case: no refresh token + near
+// expiry → junction can't self-heal → the user WILL need to reconnect.
 // ---------------------------------------------------------------------------
 
 const EXPIRING_WINDOW_MS = 24 * 60 * 60 * 1000 // ~a day
@@ -120,7 +122,9 @@ function oauthStatus(
 ): "connected" | "expiring" | "auth-failed" {
   if (oauthState === undefined) return "connected"
   if (oauthState.needsReauth) return "auth-failed"
-  if (oauthState.expiresAt !== null) {
+  // Auto-refreshable → Connected, never Expiring. Only warn when there's no
+  // refresh path AND expiry is near (the credential can't self-heal).
+  if (!oauthState.hasRefreshToken && oauthState.expiresAt !== null) {
     const expiresAtMs = Date.parse(oauthState.expiresAt)
     if (!Number.isNaN(expiresAtMs) && expiresAtMs - now <= EXPIRING_WINDOW_MS) return "expiring"
   }

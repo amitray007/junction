@@ -242,10 +242,15 @@ const addCommand = defineCommand({
  * `oauthMeta`, never from a live provider call. `null` for non-oauth2
  * credentials (the column is meaningless for them).
  *
- * Precedence: needsReauth wins over Expiring (a credential that needs a full
- * reconnect isn't merely "about to expire") — Connected is the default once
- * neither applies. "Expiring" uses a 1-day lookahead window, matching the
- * web dashboard's reserved Expiring badge (method file 29, "Surfaces → Web").
+ * Precedence: needsReauth wins (a credential that needs a full reconnect is the
+ * only "must act now" state) → needs-reconnect. Otherwise, if junction can
+ * auto-refresh this credential (it has a refresh token), it stays Connected
+ * even near expiry — the expiry is a detail junction manages, not the user's
+ * problem, so surfacing "Expiring" would be a false alarm (a healthy Google
+ * cred, whose access token is always ≤1h, would otherwise read Expiring
+ * forever). "Expiring" is reserved for the ONLY case where near-expiry is
+ * genuinely actionable: no refresh token → junction can't self-heal → the user
+ * WILL have to reconnect when it dies. (1-day lookahead; matches the web badge.)
  */
 export type OAuthListState = "connected" | "needs-reconnect" | "expiring"
 
@@ -258,7 +263,10 @@ export function deriveOAuthState(
   if (cred.kind !== "oauth2") return null
   const meta = cred.oauthMeta
   if (meta?.needsReauth === true) return "needs-reconnect"
-  if (meta?.expiresAt) {
+  // A refreshable credential is kept alive automatically → Connected, never
+  // Expiring. Only warn when there's no refresh path AND expiry is near.
+  const hasRefreshToken = meta?.refreshTokenRef !== undefined
+  if (!hasRefreshToken && meta?.expiresAt) {
     const expiresAtMs = Date.parse(meta.expiresAt)
     if (!Number.isNaN(expiresAtMs) && expiresAtMs - now <= EXPIRING_WINDOW_MS) return "expiring"
   }

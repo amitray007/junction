@@ -758,13 +758,14 @@ describe("credential list — oauth2 state derivation (D3, unit)", () => {
     })
   })
 
-  it("expiresAt within the 1-day window (and needsReauth:false) → oauthState: expiring", async () => {
+  it("near expiry + NO refresh token → oauthState: expiring (can't self-heal → actionable)", async () => {
     await withTempHome(async () => {
       await seedOAuthCredential("oauth-expiring-plat", {
         oauthMeta: {
           providerId: "oauth-expiring-plat",
           needsReauth: false,
           expiresAt: new Date(Date.now() + 60 * 1000).toISOString(), // 1 minute out
+          // NO refreshTokenRef → junction can't refresh → Expiring is honest.
         } as Credential["oauthMeta"],
       })
 
@@ -774,6 +775,26 @@ describe("credential list — oauth2 state derivation (D3, unit)", () => {
       )
       const parsed = JSON.parse(out.trim()) as Array<{ oauthState: string | null }>
       expect(parsed[0]?.oauthState).toBe("expiring")
+    })
+  })
+
+  it("near expiry + HAS a refresh token → oauthState: connected (auto-refreshed, never Expiring)", async () => {
+    await withTempHome(async () => {
+      await seedOAuthCredential("oauth-refreshable-plat", {
+        oauthMeta: {
+          providerId: "oauth-refreshable-plat",
+          needsReauth: false,
+          expiresAt: new Date(Date.now() + 60 * 1000).toISOString(), // 1 minute out — but refreshable
+          refreshTokenRef: "ref-refresh-live", // junction will refresh it → Connected
+        } as Credential["oauthMeta"],
+      })
+
+      const list = getCredentialSubCmd("list")
+      const out = await captureStdout(() =>
+        list.run?.(ctx({ platform: "oauth-refreshable-plat", json: true })),
+      )
+      const parsed = JSON.parse(out.trim()) as Array<{ oauthState: string | null }>
+      expect(parsed[0]?.oauthState).toBe("connected")
     })
   })
 
