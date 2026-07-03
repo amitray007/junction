@@ -977,6 +977,13 @@ export function FlatCredentialsTable({
   testingId = null,
   pageSize = PAGE_SIZE,
 }: FlatTableProps) {
+  // A single "now" per render pass, not a fresh Date.now() per row: the
+  // oauthStatus Expiring↔Connected boundary is a wall-clock threshold, so a
+  // per-row inline Date.now() could cross it mid-render (rows disagreeing) or
+  // differ between the SSR render and client hydration → a hydration mismatch
+  // (the same class the file's CHECKED_AT_FORMAT rule guards against). Computed
+  // once at mount and reused for every oauthStatus() call.
+  const now = useMemo(() => Date.now(), [])
   // Build a lookup from platformId → PlatformMeta for display names and kinds.
   const platformMap = useMemo(
     () => new Map<string, PlatformMeta>(platforms.map((p) => [p.id, p])),
@@ -1207,7 +1214,7 @@ export function FlatCredentialsTable({
                 // oauth2 status is derived from oauthState (Expiring/Reconnect wires, inc 29);
                 // every other kind keeps the existing persisted-verify mapping (28.9).
                 const status = isOAuth
-                  ? oauthStatus(c.oauthState, Date.now())
+                  ? oauthStatus(c.oauthState, now)
                   : verifyResultToStatus(c.lastVerifyResult)
                 const needsReauth = isOAuth && c.oauthState?.needsReauth === true
                 const unreachable = c.lastVerifyResult === "unreachable"

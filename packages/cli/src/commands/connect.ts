@@ -341,32 +341,49 @@ async function runBrowserFlow(args: {
     // built authorize URL). Waiting for "listening" is required before
     // reading server.address().
     server.on("listening", () => {
-      const address = server.address()
-      const port = typeof address === "object" && address !== null ? address.port : 0
-      const redirectUri = `http://127.0.0.1:${port}/`
-      const { url, state, codeVerifier } = buildAuthorizeUrl({
-        provider,
-        clientId,
-        redirectUri,
-        scopes,
-      })
-      // Stashed in the closure the callback handler reads (`pending.state` /
-      // `pending.codeVerifier` above) — the CSRF guard this flow owns.
-      pending = { state, codeVerifier, redirectUri }
+      // buildAuthorizeUrl (a fn-shaped authorizationUrl) and openInBrowser (no
+      // browser available / a spawn failure) can BOTH throw synchronously. This
+      // runs in an event-handler callback, so an uncaught throw would escape the
+      // Promise → the flow never resolves and hangs until the deadline (or
+      // forever if it throws before the timer is armed). Catch → finish() a
+      // clean typed error immediately.
+      try {
+        const address = server.address()
+        const port = typeof address === "object" && address !== null ? address.port : 0
+        const redirectUri = `http://127.0.0.1:${port}/`
+        const { url, state, codeVerifier } = buildAuthorizeUrl({
+          provider,
+          clientId,
+          redirectUri,
+          scopes,
+        })
+        // Stashed in the closure the callback handler reads (`pending.state` /
+        // `pending.codeVerifier` above) — the CSRF guard this flow owns.
+        pending = { state, codeVerifier, redirectUri }
 
-      // Deadline: if the user never completes consent (closes the tab, denies
-      // without a redirect, drops network), no request ever hits the listener,
-      // so without this the promise would never resolve and the :0 listener
-      // would leak. On expiry, finish() closes the server + resolves transient.
-      deadlineTimer = setTimeout(() => {
+        // Deadline: if the user never completes consent (closes the tab, denies
+        // without a redirect, drops network), no request ever hits the listener,
+        // so without this the promise would never resolve and the :0 listener
+        // would leak. On expiry, finish() closes the server + resolves transient.
+        deadlineTimer = setTimeout(() => {
+          finish({
+            ok: false,
+            error: { kind: "exchange-failed", reason: "transient", detail: "timeout" },
+          })
+        }, BROWSER_FLOW_TIMEOUT_MS)
+
+        if (!json) consola.info("Opening your browser to complete authorization...")
+        openInBrowser(url)
+      } catch (cause) {
         finish({
           ok: false,
-          error: { kind: "exchange-failed", reason: "transient", detail: "timeout" },
+          error: {
+            kind: "exchange-failed",
+            reason: "unknown",
+            detail: cause instanceof Error ? cause.constructor.name : "browser-launch-failed",
+          },
         })
-      }, BROWSER_FLOW_TIMEOUT_MS)
-
-      if (!json) consola.info("Opening your browser to complete authorization...")
-      openInBrowser(url)
+      }
     })
 
     // A bind/listen failure must not hang the flow — resolve transient + close.

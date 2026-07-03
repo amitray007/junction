@@ -11,7 +11,10 @@ import { ArcticFetchError, OAuth2RequestError } from "arctic"
 import { describe, expect, it, vi } from "vitest"
 import { oauthRefreshFn } from "./oauth-refresh-fn.js"
 
-const refreshAccessToken = vi.fn()
+// vi.hoisted so the mock fn exists BEFORE the hoisted vi.mock factory runs —
+// vi.mock is lifted above a plain `const`, so a bare closure over it risks a
+// temporal-dead-zone ReferenceError (matches resolve-provider.test.ts).
+const { refreshAccessToken } = vi.hoisted(() => ({ refreshAccessToken: vi.fn() }))
 
 vi.mock("arctic", async (importOriginal) => {
   const actual = await importOriginal<typeof import("arctic")>()

@@ -474,6 +474,46 @@ describe("junction connect (unit)", () => {
     })
   })
 
+  it("openInBrowser throwing (no browser available) → clean typed error, not a hang", async () => {
+    await withTempHome(async () => {
+      await setupOAuthPlatform("google") // loopback-ephemeral — browser flow is offered
+      fakeStdin()
+      feedStdin("sentinel-client-secret-value")
+
+      buildAuthorizeUrlMock.mockReturnValue({
+        url: "https://accounts.google.com/o/oauth2/v2/auth?mock=1",
+        state: "expected-state",
+        codeVerifier: "verifier-abc",
+      })
+      // Simulate a headless box / no browser: openInBrowser throws SYNCHRONOUSLY
+      // inside the listener handler. Without the try/catch in that handler the
+      // Promise would never resolve → the CLI hangs until the 5-min deadline.
+      openInBrowserMock.mockImplementation(() => {
+        throw new Error("no browser available")
+      })
+
+      const { stdout } = await captureAllOutput(() =>
+        connectCommand.run?.(
+          ctx({
+            platform: "google",
+            account: "work",
+            device: false,
+            "client-id": "cid",
+            "client-secret-stdin": true,
+            json: true,
+          }),
+        ),
+      )
+
+      const parsed = JSON.parse(stdout.trim()) as { ok: boolean; error?: string }
+      expect(parsed.ok).toBe(false)
+      // A typed exchange-failed error, resolved promptly (no hang), no secret.
+      expect(parsed.error).toContain("token exchange failed")
+      expect(exchangeCodeMock).not.toHaveBeenCalled()
+      expect(stdout).not.toContain("sentinel-client-secret-value")
+    })
+  })
+
   it("--json emits registration hint fields, no secret anywhere in stdout/stderr (sentinel sweep)", async () => {
     await withTempHome(async () => {
       await setupOAuthPlatform("google") // device-capable (see the flow test above)
