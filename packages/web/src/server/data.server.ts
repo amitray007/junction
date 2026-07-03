@@ -12,6 +12,7 @@ import {
   getMcpPort,
   getPaths,
   type JunctionPaths,
+  listProviders,
   loadConfig,
   loadConfigState,
   type Platform,
@@ -182,6 +183,13 @@ export type CredentialMeta = {
    * event (see core's CredentialVerifyResult / source-runtime's verifyCredential).
    */
   lastVerifyResult?: "ok" | "auth-failed" | "unreachable"
+  /**
+   * OAuth-only metadata (increment 29) — the catalog provider key, token
+   * expiry (ISO string), and the first-class needsReauth state. Absent for
+   * non-oauth2 credentials. NEVER includes a token/ref value — see
+   * core's OAuthMetaSchema (docs/rules/security.md's refs-not-values rule).
+   */
+  oauthState?: { providerId: string; expiresAt: string | null; needsReauth: boolean }
 }
 
 export async function readCredentials(): Promise<CredentialMeta[]> {
@@ -196,8 +204,46 @@ export async function readCredentials(): Promise<CredentialMeta[]> {
       kind: c.kind,
       ...(c.lastVerifiedAt !== undefined ? { lastVerifiedAt: c.lastVerifiedAt } : {}),
       ...(c.lastVerifyResult !== undefined ? { lastVerifyResult: c.lastVerifyResult } : {}),
+      ...(c.kind === "oauth2" && c.oauthMeta?.providerId !== undefined
+        ? {
+            oauthState: {
+              providerId: c.oauthMeta.providerId,
+              expiresAt: c.oauthMeta.expiresAt ?? null,
+              needsReauth: c.oauthMeta.needsReauth ?? false,
+            },
+          }
+        : {}),
     }))
   })
+}
+
+// ---------------------------------------------------------------------------
+// OAuth provider catalog — for the web Connect dialog's provider picker +
+// guided-registration panel. The catalog itself is pure data (no secrets;
+// registrationHint is intentionally public — it's the text junction shows the
+// user to register their OWN BYO client), so this is a plain synchronous read,
+// unlike the DB-backed reads above.
+// ---------------------------------------------------------------------------
+
+export type OAuthProviderMeta = {
+  id: string
+  displayName: string
+  /** Presence in the catalog = device-code flow is offered; web only uses browser auth-code. */
+  supportsDeviceCode: boolean
+  redirectMode: "loopback-fixed" | "loopback-ephemeral"
+  defaultScopes: string[]
+  registrationHint: { redirectUri: string; scopes: string; docsUrl: string }
+}
+
+export function readOAuthProviders(): OAuthProviderMeta[] {
+  return listProviders().map((p) => ({
+    id: p.id,
+    displayName: p.displayName,
+    supportsDeviceCode: p.deviceAuthorizationUrl !== undefined,
+    redirectMode: p.redirectMode,
+    defaultScopes: p.defaultScopes ?? [],
+    registrationHint: p.registrationHint,
+  }))
 }
 
 // ---------------------------------------------------------------------------

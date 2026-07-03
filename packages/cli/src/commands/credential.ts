@@ -8,14 +8,10 @@ import { readFile } from "node:fs/promises"
 import {
   addCredential,
   type Credential,
-  type CredentialStore,
   type CredentialVerifyResult,
   compatibleCredentialKinds,
   createCredentialStore,
-  createRepositories,
-  getDatabase,
   getPaths,
-  type Repositories,
   removeCredential,
   rotateCredential,
 } from "@junction/core"
@@ -23,15 +19,17 @@ import type { VerifyOutcome } from "@junction/source-runtime"
 import { verifyCredential } from "@junction/source-runtime"
 import { defineCommand } from "citty"
 import { consola } from "consola"
-import { JSON_ARG } from "../args.js"
-import { openDb } from "../db.js"
+import { collectRepeatableFlag, JSON_ARG, readStdin } from "../args.js"
+import { openDb, openDbAndStore } from "../db.js"
 import {
   formatCredentialError,
   reportCredentialError,
   reportDbError,
+  reportError,
   reportIdRemoved,
   reportInUseError,
 } from "../format.js"
+import { CONNECT_SHARED_ARGS, resolveProviderOrError, runConnectFlow } from "./connect.js"
 
 // ---------------------------------------------------------------------------
 // Lost-secret handling — shared between CLI `credential test` and web's
@@ -50,30 +48,6 @@ export const STORED_SECRET_MISSING_DETAIL = "stored secret missing — rotate th
 // ---------------------------------------------------------------------------
 // Shared DB + store setup (used by both add and remove, which both need the store)
 // ---------------------------------------------------------------------------
-
-type DbAndStore = { repos: Repositories; store: CredentialStore }
-
-/**
- * Open the DB and the credential store in parallel.
- * On any failure: writes the error in the appropriate format and returns null.
- * The caller MUST `return` immediately when null is returned.
- */
-async function openDbAndStore(json: boolean): Promise<DbAndStore | null> {
-  const paths = getPaths()
-  const [dbResult, storeResult] = await Promise.all([
-    getDatabase(paths),
-    createCredentialStore(paths),
-  ])
-  if (dbResult.isErr()) {
-    reportDbError(dbResult.error, json)
-    return null
-  }
-  if (storeResult.isErr()) {
-    reportCredentialError(storeResult.error, json)
-    return null
-  }
-  return { repos: createRepositories(dbResult.value), store: storeResult.value }
-}
 
 const addCommand = defineCommand({
   meta: {
@@ -122,23 +96,17 @@ const addCommand = defineCommand({
     // not cause a secret to be captured from stdin (nice-to-have 2 + FIX 2).
     if (!args.platform || args.platform.trim() === "") {
       const msg = "invalid input: --platform must not be empty"
-      if (json) process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
-      else consola.error(msg)
-      process.exitCode = 1
+      reportError(json, msg)
       return
     }
     if (!args.account || args.account.trim() === "") {
       const msg = "invalid input: --account must not be empty"
-      if (json) process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
-      else consola.error(msg)
-      process.exitCode = 1
+      reportError(json, msg)
       return
     }
     if (args["secret-file"] && args["token-stdin"]) {
       const msg = "invalid input: --secret-file and --token-stdin are mutually exclusive"
-      if (json) process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
-      else consola.error(msg)
-      process.exitCode = 1
+      reportError(json, msg)
       return
     }
 
@@ -164,9 +132,7 @@ const addCommand = defineCommand({
       const derived = compatibleCredentialKinds(platform)[0]
       if (derived === undefined) {
         const msg = `platform "${args.platform}" declares no auth; credentials not accepted`
-        if (json) process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
-        else consola.error(msg)
-        process.exitCode = 1
+        reportError(json, msg)
         return
       }
       kind = derived
@@ -182,9 +148,7 @@ const addCommand = defineCommand({
     // error rather than let it surface as a confusing upstream failure later.
     if (args["secret-file"] && kind !== "file") {
       const msg = `invalid input: --secret-file is only valid for file-kind credentials (kind is "${kind}"); use --token-stdin for bearer/api-key`
-      if (json) process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
-      else consola.error(msg)
-      process.exitCode = 1
+      reportError(json, msg)
       return
     }
 
@@ -195,9 +159,7 @@ const addCommand = defineCommand({
       const fileResult = await readSecretFile(args["secret-file"])
       if (fileResult === null) {
         const msg = `could not read --secret-file "${args["secret-file"]}"`
-        if (json) process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
-        else consola.error(msg)
-        process.exitCode = 1
+        reportError(json, msg)
         return
       }
       secret = fileResult
@@ -212,9 +174,7 @@ const addCommand = defineCommand({
 
     if (!secret) {
       const msg = "token must not be empty"
-      if (json) process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
-      else consola.error(msg)
-      process.exitCode = 1
+      reportError(json, msg)
       return
     }
 
@@ -275,6 +235,34 @@ const addCommand = defineCommand({
   },
 })
 
+/**
+ * OAuth connection state for `credential list` (D3) — derived purely from
+ * `oauthMeta`, never from a live provider call. `null` for non-oauth2
+ * credentials (the column is meaningless for them).
+ *
+ * Precedence: needsReauth wins over Expiring (a credential that needs a full
+ * reconnect isn't merely "about to expire") — Connected is the default once
+ * neither applies. "Expiring" uses a 1-day lookahead window, matching the
+ * web dashboard's reserved Expiring badge (method file 29, "Surfaces → Web").
+ */
+export type OAuthListState = "connected" | "needs-reconnect" | "expiring"
+
+const EXPIRING_WINDOW_MS = 24 * 60 * 60 * 1000
+
+export function deriveOAuthState(
+  cred: Pick<Credential, "kind" | "oauthMeta">,
+  now: number,
+): OAuthListState | null {
+  if (cred.kind !== "oauth2") return null
+  const meta = cred.oauthMeta
+  if (meta?.needsReauth === true) return "needs-reconnect"
+  if (meta?.expiresAt) {
+    const expiresAtMs = Date.parse(meta.expiresAt)
+    if (!Number.isNaN(expiresAtMs) && expiresAtMs - now <= EXPIRING_WINDOW_MS) return "expiring"
+  }
+  return "connected"
+}
+
 const listCommand = defineCommand({
   meta: {
     name: "list",
@@ -311,6 +299,9 @@ const listCommand = defineCommand({
     // Map to metadata-only objects — NEVER include secret or secretRef.
     // lastVerifyResult/lastVerifiedAt are absent (never verified) or a
     // persisted event from `credential add --verify` / `credential test`.
+    // oauthState/expiresAt/providerId are derived from oauthMeta — metadata
+    // only, never the refs' values (D3).
+    const now = Date.now()
     const creds = credResult.value as Credential[]
     const metaList = creds.map((c) => ({
       id: c.id,
@@ -320,6 +311,9 @@ const listCommand = defineCommand({
       lastVerifyResult: c.lastVerifyResult ?? null,
       lastVerifiedAt:
         c.lastVerifiedAt !== undefined ? new Date(c.lastVerifiedAt).toISOString() : null,
+      oauthState: deriveOAuthState(c, now),
+      expiresAt: c.oauthMeta?.expiresAt ?? null,
+      providerId: c.oauthMeta?.providerId ?? null,
     }))
 
     if (json) {
@@ -335,19 +329,38 @@ const listCommand = defineCommand({
     }
 
     const lines = [
-      "  id                              account           kind     verified",
-      "  ------------------------------  ----------------  -------  -----------------------",
+      "  id                              account           kind     verified                 oauth",
+      "  ------------------------------  ----------------  -------  -----------------------  ---------------",
       ...metaList.map((c) => {
         const verified =
           c.lastVerifyResult !== null && c.lastVerifiedAt !== null
             ? `${c.lastVerifyResult} (${c.lastVerifiedAt})`
             : "-"
-        return `  ${String(c.id).padEnd(30)}  ${c.account.padEnd(16)}  ${c.kind.padEnd(7)}  ${verified}`
+        const oauth = formatOAuthState(c.oauthState)
+        return `  ${String(c.id).padEnd(30)}  ${c.account.padEnd(16)}  ${c.kind.padEnd(7)}  ${verified.padEnd(23)}  ${oauth}`
       }),
     ]
     process.stdout.write(`${lines.join("\n")}\n`)
   },
 })
+
+/** Human label for an OAuthListState — "-" for non-oauth2 credentials. */
+function formatOAuthState(state: OAuthListState | null): string {
+  switch (state) {
+    case "connected":
+      return "Connected"
+    case "needs-reconnect":
+      return "Needs reconnect"
+    case "expiring":
+      return "Expiring"
+    case null:
+      return "-"
+    default: {
+      const _: never = state
+      return _
+    }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // credential test — verify an existing credential against its real upstream
@@ -523,9 +536,28 @@ const rotateCommand = defineCommand({
     // to be captured from stdin (mirrors addCommand's discipline).
     if (!args.id || args.id.trim() === "") {
       const msg = "invalid input: --id must not be empty"
-      if (json) process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
-      else consola.error(msg)
-      process.exitCode = 1
+      reportError(json, msg)
+      return
+    }
+
+    // D4: rotate repoints ONE secretRef — wrong for an oauth2 credential's
+    // three refs (access/refresh/client_secret). Check the kind BEFORE
+    // reading the new secret from stdin, same discipline as the empty-id
+    // check above: a doomed rotate must never consume stdin first.
+    const preCheck = await openDb(json)
+    if (!preCheck) return
+    const existingResult = await preCheck.credentials.get(args.id)
+    if (existingResult.isErr()) {
+      reportDbError(existingResult.error, json)
+      return
+    }
+    if (existingResult.value.kind === "oauth2") {
+      reportError(
+        json,
+        `credential "${args.id}" is an OAuth credential — use "junction connect" or ` +
+          `"junction credential reconnect" instead of rotate (rotate only replaces a single secret, ` +
+          "not the access/refresh/client_secret triple an OAuth credential holds)",
+      )
       return
     }
 
@@ -539,9 +571,7 @@ const rotateCommand = defineCommand({
 
     if (!secret) {
       const msg = "new secret must not be empty"
-      if (json) process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
-      else consola.error(msg)
-      process.exitCode = 1
+      reportError(json, msg)
       return
     }
 
@@ -566,6 +596,93 @@ const rotateCommand = defineCommand({
   },
 })
 
+// ---------------------------------------------------------------------------
+// credential reconnect — re-run the connect flow for an existing oauth2
+// credential (D2). Re-mints all three refs (access/refresh/client_secret)
+// via persistOAuthTokens(mode:"update") and clears needsReauth. client_secret
+// must always be re-entered (via stdin) since the store is write-only — the
+// existing clientSecretRef can't be read back out to reuse it.
+// ---------------------------------------------------------------------------
+
+const reconnectCommand = defineCommand({
+  meta: {
+    name: "reconnect",
+    description: "Re-run the OAuth connect flow for an existing credential (clears needsReauth).",
+  },
+  args: {
+    id: {
+      type: "positional",
+      description: "Credential ID to reconnect",
+      required: true,
+    },
+    ...CONNECT_SHARED_ARGS,
+    scopes: {
+      type: "string",
+      description: "Additional scope (repeatable: --scopes a --scopes b)",
+    },
+  },
+  async run({ args, rawArgs }) {
+    const json = args.json ?? false
+    const credentialId = args.id as string
+
+    if (!credentialId || credentialId.trim() === "") {
+      reportError(json, "invalid input: id must not be empty")
+      return
+    }
+
+    const repos = await openDb(json)
+    if (!repos) return
+
+    const existingResult = await repos.credentials.get(credentialId)
+    if (existingResult.isErr()) {
+      reportDbError(existingResult.error, json)
+      return
+    }
+    const existing = existingResult.value
+
+    if (existing.kind !== "oauth2") {
+      reportError(
+        json,
+        `credential "${credentialId}" is not an OAuth credential (kind: ${existing.kind})`,
+      )
+      return
+    }
+    const providerId = existing.oauthMeta?.providerId
+    if (!providerId) {
+      reportError(
+        json,
+        `credential "${credentialId}" has no recorded OAuth provider — cannot reconnect`,
+      )
+      return
+    }
+
+    const provider = resolveProviderOrError(providerId, json)
+    if (provider === null) return
+
+    const ctx = await openDbAndStore(json)
+    if (!ctx) return
+    const { repos: fullRepos, store } = ctx
+
+    const extraScopes = collectRepeatableFlag(rawArgs, "--scopes")
+    const scopes =
+      extraScopes.length > 0
+        ? extraScopes
+        : (existing.oauthMeta?.scopes ?? provider.defaultScopes ?? [])
+
+    await runConnectFlow({
+      provider,
+      scopes,
+      device: args.device ?? false,
+      clientId: args["client-id"],
+      clientSecretStdin: args["client-secret-stdin"] ?? false,
+      json,
+      repos: fullRepos,
+      store,
+      target: { mode: "update", credentialId },
+    })
+  },
+})
+
 export const credentialCommand = defineCommand({
   meta: {
     name: "credential",
@@ -577,28 +694,13 @@ export const credentialCommand = defineCommand({
     test: testCommand,
     remove: removeCommand,
     rotate: rotateCommand,
+    reconnect: reconnectCommand,
   },
 })
 
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
-
-/** Read a single token from stdin (strips surrounding whitespace). */
-async function readTokenFromStdin(): Promise<string> {
-  return new Promise<string>((resolve) => {
-    let data = ""
-    process.stdin.setEncoding("utf8")
-    process.stdin.on("data", (chunk: string) => {
-      data += chunk
-    })
-    process.stdin.on("end", () => {
-      resolve(data.trim())
-    })
-    // Resume in case stdin is paused (e.g. if it was already consumed)
-    process.stdin.resume()
-  })
-}
 
 /**
  * Read a secret-file's CONTENT for `--secret-file` (kind "file"). The path
@@ -625,7 +727,7 @@ async function acquireSecret(opts: {
   json: boolean
 }): Promise<string | null> {
   if (opts.fromStdin) {
-    return readTokenFromStdin()
+    return readStdin()
   }
   const { password, isCancel } = await import("@clack/prompts")
   const result = await password({ message: opts.promptMessage })

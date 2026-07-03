@@ -77,7 +77,19 @@ try {
 }
 
 const HOST = process.env.HOST ?? "127.0.0.1"
-const PORT = Number(process.env.PORT ?? "4321")
+// Keep in sync with core's DEFAULT_WEB_PORT / OAUTH_CALLBACK_URI. OAuth connect
+// (inc 29) pre-registers `http://127.0.0.1:4321/oauth/callback` as the redirect
+// URI, so running on a different port silently breaks every OAuth connect whose
+// redirect was registered against 4321 — warn loudly rather than fail obscurely.
+const DEFAULT_WEB_PORT = 4321
+const PORT = Number(process.env.PORT ?? String(DEFAULT_WEB_PORT))
+if (PORT !== DEFAULT_WEB_PORT) {
+  process.stderr.write(
+    `junction web: WARNING — running on port ${PORT}, not the default ${DEFAULT_WEB_PORT}. ` +
+      `OAuth connect registers redirects against :${DEFAULT_WEB_PORT}, so the OAuth "Connect" flow ` +
+      `will fail on this port unless you re-register your OAuth apps with this port's callback URI.\n`,
+  )
+}
 const MAX_BODY_BYTES = 1_048_576 // 1 MB — reject oversized bodies before buffering OOMs us
 
 /** Loopback-only Host check at the HTTP layer — reject DNS-rebinding early + cheaply. */

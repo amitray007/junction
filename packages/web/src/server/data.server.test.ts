@@ -15,7 +15,13 @@ import {
   newProfileId,
 } from "@junction/core"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { readCredentials, readDashboard, readPlatforms, readProfiles } from "./data.server.js"
+import {
+  readCredentials,
+  readDashboard,
+  readOAuthProviders,
+  readPlatforms,
+  readProfiles,
+} from "./data.server.js"
 
 describe("data.server", () => {
   let tmpHome: string
@@ -130,6 +136,97 @@ describe("data.server", () => {
     expect("secretRef" in cred).toBe(false)
     // The fake ref value must not appear anywhere in the serialized output
     expect(JSON.stringify(cred)).not.toContain("FAKE_SECRET_REF_NEVER_EXPOSE")
+  })
+
+  // ---------------------------------------------------------------------------
+  // readCredentials — oauthState (inc 29): metadata only, refs/tokens never leak
+  // ---------------------------------------------------------------------------
+
+  it("readCredentials: oauth2 credential exposes oauthState metadata, never a ref value", async () => {
+    const dbResult = await getDatabase(getPaths())
+    if (dbResult.isErr()) throw new Error(String(dbResult.error))
+    const repos = createRepositories(dbResult.value)
+
+    const platformId = newPlatformId()
+    await repos.platforms.create({ id: platformId, kind: "mcp", displayName: "OAuth Platform" })
+
+    const credId = newCredentialId()
+    const createResult = await repos.credentials.create({
+      id: credId,
+      platformId,
+      profileName: "work",
+      kind: "oauth2",
+      secretRef: "FAKE_ACCESS_REF_NEVER_EXPOSE",
+      oauthMeta: {
+        providerId: "github",
+        refreshTokenRef: "FAKE_REFRESH_REF_NEVER_EXPOSE",
+        clientIdRef: "FAKE_CLIENT_ID_REF",
+        clientSecretRef: "FAKE_CLIENT_SECRET_REF_NEVER_EXPOSE",
+        expiresAt: "2026-01-01T00:00:00.000Z",
+        needsReauth: false,
+        scopes: ["repo"],
+      },
+    })
+    if (createResult.isErr()) throw new Error(String(createResult.error))
+
+    const creds = await readCredentials()
+    const [cred] = creds
+    if (!cred) throw new Error("no credential in result")
+
+    expect(cred.oauthState).toEqual({
+      providerId: "github",
+      expiresAt: "2026-01-01T00:00:00.000Z",
+      needsReauth: false,
+    })
+
+    // SECURITY: no ref VALUES anywhere in the serialized credential — only the
+    // fields explicitly whitelisted onto oauthState (providerId/expiresAt/needsReauth).
+    const serialized = JSON.stringify(cred)
+    expect(serialized).not.toContain("FAKE_ACCESS_REF_NEVER_EXPOSE")
+    expect(serialized).not.toContain("FAKE_REFRESH_REF_NEVER_EXPOSE")
+    expect(serialized).not.toContain("FAKE_CLIENT_ID_REF")
+    expect(serialized).not.toContain("FAKE_CLIENT_SECRET_REF_NEVER_EXPOSE")
+    expect("refreshTokenRef" in (cred.oauthState ?? {})).toBe(false)
+    expect("clientIdRef" in (cred.oauthState ?? {})).toBe(false)
+    expect("clientSecretRef" in (cred.oauthState ?? {})).toBe(false)
+  })
+
+  it("readCredentials: a non-oauth2 credential has no oauthState field at all", async () => {
+    const dbResult = await getDatabase(getPaths())
+    if (dbResult.isErr()) throw new Error(String(dbResult.error))
+    const repos = createRepositories(dbResult.value)
+
+    const platformId = newPlatformId()
+    await repos.platforms.create({ id: platformId, kind: "mcp", displayName: "P" })
+    await repos.credentials.create({
+      id: newCredentialId(),
+      platformId,
+      profileName: "work",
+      kind: "bearer",
+      secretRef: "REF",
+    })
+
+    const [cred] = await readCredentials()
+    if (!cred) throw new Error("no credential in result")
+    expect("oauthState" in cred).toBe(false)
+  })
+
+  // ---------------------------------------------------------------------------
+  // readOAuthProviders — the catalog picker/guided-registration data source
+  // ---------------------------------------------------------------------------
+
+  it("readOAuthProviders: exposes the catalog, no HTTP/DB involved", () => {
+    const providers = readOAuthProviders()
+    expect(providers.length).toBeGreaterThan(0)
+    const github = providers.find((p) => p.id === "github")
+    expect(github).toBeDefined()
+    expect(github?.displayName).toBe("GitHub")
+    expect(github?.registrationHint.redirectUri).toBe("http://127.0.0.1:4321/oauth/callback")
+    expect(github?.supportsDeviceCode).toBe(false)
+
+    const google = providers.find((p) => p.id === "google")
+    expect(google?.supportsDeviceCode).toBe(true)
+    expect(google?.redirectMode).toBe("loopback-ephemeral")
   })
 
   // ---------------------------------------------------------------------------

@@ -246,6 +246,25 @@ export function setMcpHost(
 export const DEFAULT_MCP_PORT = 4322
 
 /**
+ * Default port for the `junction web` dashboard server.
+ *
+ * LOAD-BEARING for OAuth connect (inc 29): the OAuth redirect URI is
+ * PRE-REGISTERED by the user in their own OAuth app (the "BYO client" model),
+ * so it MUST be a fixed, known value — the catalog's `registrationHint`
+ * (the exact URI the user registers) and the web connect flow's actual
+ * `redirect_uri` both derive from this port and MUST agree. Running the web
+ * server on a different port would break every OAuth connect whose redirect was
+ * registered against 4321, so the web server warns when `PORT` diverges from
+ * this (see serve.mjs). Do not fork this value.
+ */
+export const DEFAULT_WEB_PORT = 4321
+
+/** The fixed loopback OAuth callback URI (inc 29). Single source of truth for
+ * the catalog's registrationHint text AND the web connect flow's redirect_uri —
+ * they must be byte-identical or the pre-registered redirect won't match. */
+export const OAUTH_CALLBACK_URI = `http://127.0.0.1:${DEFAULT_WEB_PORT}/oauth/callback`
+
+/**
  * Resolve the MCP port for this junction instance.
  *
  * Precedence (first wins; the `--port` CLI flag sits ABOVE this, in the cli layer):

@@ -10,6 +10,7 @@ import { getRequest } from "@tanstack/react-start/server"
 import {
   readCredentials,
   readDashboard,
+  readOAuthProviders,
   readPlatforms,
   readProfiles,
   readSettings,
@@ -22,6 +23,7 @@ import { assertLocalHost } from "./fn-guards.server.js"
 export type {
   CredentialMeta,
   DashboardData,
+  OAuthProviderMeta,
   PlatformMeta,
   ProfileMeta,
   SettingsData,
@@ -46,6 +48,13 @@ export const getPlatforms = createServerFn({ method: "GET" }).handler(async () =
 export const getCredentials = createServerFn({ method: "GET" }).handler(async () => {
   assertLocalHost()
   return readCredentials()
+})
+
+// The catalog is pure data (no I/O) — readOAuthProviders is synchronous, but
+// the server-fn wrapper stays async for consistency with the rest of this file.
+export const getOAuthProviders = createServerFn({ method: "GET" }).handler(async () => {
+  assertLocalHost()
+  return readOAuthProviders()
 })
 
 export const getProfiles = createServerFn({ method: "GET" }).handler(async () => {

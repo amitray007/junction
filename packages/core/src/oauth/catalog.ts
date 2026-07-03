@@ -5,6 +5,11 @@
 // not branching code — everything here is pure (no HTTP, no I/O); the
 // arctic/fetch calls that use this catalog live in source-runtime.
 
+// The fixed loopback callback URI the user pre-registers in their OAuth app —
+// single source of truth shared with the web connect flow's redirect_uri (they
+// must be byte-identical or the registered redirect won't match). See config.
+import { OAUTH_CALLBACK_URI } from "../config/index.js"
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -159,7 +164,7 @@ const PROVIDERS: readonly OAuthProvider[] = [
     redirectMode: "loopback-fixed",
     supportsRefresh: false,
     registrationHint: {
-      redirectUri: "http://127.0.0.1:4321/oauth/callback",
+      redirectUri: OAUTH_CALLBACK_URI,
       scopes: "repo read:user (adjust per platform)",
       docsUrl: "https://docs.github.com/en/apps/oauth-apps",
     },
@@ -182,7 +187,7 @@ const PROVIDERS: readonly OAuthProvider[] = [
     redirectMode: "loopback-fixed",
     supportsRefresh: true,
     registrationHint: {
-      redirectUri: "http://127.0.0.1:4321/oauth/callback",
+      redirectUri: OAUTH_CALLBACK_URI,
       scopes: "permissions are configured on the GitHub App itself, not via scopes",
       docsUrl: "https://docs.github.com/en/apps/creating-github-apps",
     },
@@ -204,7 +209,7 @@ const PROVIDERS: readonly OAuthProvider[] = [
     // token on file simply no-ops (needsReauth is not forced).
     supportsRefresh: true,
     registrationHint: {
-      redirectUri: "http://127.0.0.1:4321/oauth/callback",
+      redirectUri: OAUTH_CALLBACK_URI,
       scopes: "channels:read,chat:write (comma-separated; adjust per platform)",
       docsUrl: "https://api.slack.com/authentication/oauth-v2",
     },
@@ -227,7 +232,7 @@ const PROVIDERS: readonly OAuthProvider[] = [
     // rather than an authorizationParams entry.
     defaultScopes: ["offline_access"],
     registrationHint: {
-      redirectUri: "http://127.0.0.1:4321/oauth/callback",
+      redirectUri: OAUTH_CALLBACK_URI,
       scopes: "offline_access is added automatically by junction",
       docsUrl: "https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow",
     },
@@ -246,7 +251,7 @@ const PROVIDERS: readonly OAuthProvider[] = [
     redirectMode: "loopback-fixed",
     supportsRefresh: false,
     registrationHint: {
-      redirectUri: "http://127.0.0.1:4321/oauth/callback",
+      redirectUri: OAUTH_CALLBACK_URI,
       scopes: "Notion scopes are configured on the integration itself, not via the authorize URL",
       docsUrl: "https://developers.notion.com/docs/authorization",
     },
@@ -268,7 +273,7 @@ const PROVIDERS: readonly OAuthProvider[] = [
     // hit) is a per-connection concern resolved at connect time, not an
     // endpoint the catalog carries.
     registrationHint: {
-      redirectUri: "http://127.0.0.1:4321/oauth/callback",
+      redirectUri: OAUTH_CALLBACK_URI,
       scopes: "read:jira-work offline_access (adjust per product)",
       docsUrl: "https://developer.atlassian.com/cloud/jira/platform/oauth-2-3lo-apps/",
     },
@@ -290,7 +295,7 @@ const PROVIDERS: readonly OAuthProvider[] = [
     redirectMode: "loopback-fixed",
     supportsRefresh: true,
     registrationHint: {
-      redirectUri: "http://127.0.0.1:4321/oauth/callback",
+      redirectUri: OAUTH_CALLBACK_URI,
       scopes: "user-supplied — see the platform's own OAuth documentation",
       docsUrl: "",
     },
