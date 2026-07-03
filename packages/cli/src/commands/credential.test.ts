@@ -842,6 +842,88 @@ describe("credential list — oauth2 state derivation (D3, unit)", () => {
 })
 
 // ---------------------------------------------------------------------------
+// Task 5 — `credential rename` edits the account label in place.
+// ---------------------------------------------------------------------------
+
+describe("credential rename (Task 5, unit)", () => {
+  let prevExitCode: number | undefined
+  beforeEach(() => {
+    prevExitCode = process.exitCode
+    process.exitCode = 0
+  })
+  afterEach(() => {
+    process.exitCode = prevExitCode
+  })
+
+  it("renames the account label of a credential (bearer) — --json shows the new account", async () => {
+    await withTempHome(async () => {
+      const repos = await setupApiKeyPlatform("rename-plat")
+      const storeResult = await createCredentialStore(getPaths())
+      if (storeResult.isErr()) throw new Error("store setup failed")
+      const added = await addCredential(
+        { platformId: "rename-plat", account: "work", kind: "api-key", secret: "v" },
+        (await repos.platforms.get("rename-plat"))._unsafeUnwrap(),
+        storeResult.value,
+        repos.credentials,
+      )
+      if (added.isErr()) throw new Error("seed failed")
+
+      const rename = getCredentialSubCmd("rename")
+      const out = await captureStdout(() =>
+        rename.run?.(ctx({ id: added.value.id, account: "work-primary", json: true })),
+      )
+      const parsed = JSON.parse(out.trim()) as {
+        ok: boolean
+        credential?: { account: string; id: string }
+      }
+      expect(parsed.ok).toBe(true)
+      expect(parsed.credential?.account).toBe("work-primary")
+      // Persisted.
+      const reread = (await repos.credentials.get(added.value.id))._unsafeUnwrap()
+      expect(reread.profileName).toBe("work-primary")
+      // The secret still resolves under the unchanged secretRef.
+      const secret = (await storeResult.value.get(reread.secretRef))._unsafeUnwrap()
+      expect(secret).toBe("v")
+    })
+  })
+
+  it("empty --account → clean error, exit 1", async () => {
+    await withTempHome(async () => {
+      const repos = await setupApiKeyPlatform("rename-empty-plat")
+      const storeResult = await createCredentialStore(getPaths())
+      if (storeResult.isErr()) throw new Error("store setup failed")
+      const added = await addCredential(
+        { platformId: "rename-empty-plat", account: "work", kind: "api-key", secret: "v" },
+        (await repos.platforms.get("rename-empty-plat"))._unsafeUnwrap(),
+        storeResult.value,
+        repos.credentials,
+      )
+      if (added.isErr()) throw new Error("seed failed")
+
+      const rename = getCredentialSubCmd("rename")
+      const out = await captureStdout(() =>
+        rename.run?.(ctx({ id: added.value.id, account: "  ", json: true })),
+      )
+      const parsed = JSON.parse(out.trim()) as { ok: boolean; error?: string }
+      expect(parsed.ok).toBe(false)
+      expect(process.exitCode).toBe(1)
+    })
+  })
+
+  it("unknown credential id → clean not-found error, exit 1", async () => {
+    await withTempHome(async () => {
+      const rename = getCredentialSubCmd("rename")
+      const out = await captureStdout(() =>
+        rename.run?.(ctx({ id: "does-not-exist", account: "work", json: true })),
+      )
+      const parsed = JSON.parse(out.trim()) as { ok: boolean }
+      expect(parsed.ok).toBe(false)
+      expect(process.exitCode).toBe(1)
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
 // D4 — `credential rotate` refuses oauth2 credentials.
 // ---------------------------------------------------------------------------
 

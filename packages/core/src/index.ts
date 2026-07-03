@@ -73,8 +73,10 @@ export {
   compatibleCredentialKinds,
   createCredentialStore,
   isKindAccepted,
+  type RenameCredentialInput,
   type RotateCredentialInput,
   removeCredential,
+  renameCredential,
   rotateCredential,
 } from "./credentials/index.js"
 // Database + repositories

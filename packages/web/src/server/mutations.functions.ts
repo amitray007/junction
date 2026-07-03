@@ -13,6 +13,7 @@ import { assertLocalHost, requireString } from "./fn-guards.server.js"
 import {
   mutateAddCredential,
   mutateRemoveCredential,
+  mutateRenameCredential,
   mutateRotateCredential,
   testCredential,
 } from "./mutations.server.js"
@@ -81,6 +82,21 @@ export const removeCredentialFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     assertLocalHost()
     return mutateRemoveCredential(data.credentialId)
+  })
+
+// Rename — edit the account LABEL in place (Task 5). The only in-place metadata
+// edit; the secret stays rotate-only, client_id is a reconnect concern.
+export const renameCredentialFn = createServerFn({ method: "POST" })
+  .validator((raw: unknown) => {
+    const d = raw as Record<string, unknown>
+    return {
+      credentialId: requireString(d.credentialId, "credentialId"),
+      account: requireString(d.account, "account"),
+    }
+  })
+  .handler(async ({ data }) => {
+    assertLocalHost()
+    return mutateRenameCredential(data)
   })
 
 // Test Connection (28.9) — re-verify an existing credential on demand (the row

@@ -113,6 +113,26 @@ export function createCredentialsRepo(db: Db) {
       }
     },
 
+    /**
+     * Update a credential row's profileName (the account label) in place — used
+     * by renameCredential. Only the profileName column is modified; id,
+     * platformId, kind, secretRef, and oauthMeta are untouched. Read-before-write
+     * so a not-found surfaces (and the full updated Credential is returned).
+     */
+    setProfileName(id: string, newProfileName: string): ResultAsync<Credential, DbError> {
+      try {
+        const found = fetchRowOrNotFound(db, id)
+        if (!found.ok) return errAsync(found.error)
+        db.update(credentials)
+          .set({ profileName: newProfileName })
+          .where(eq(credentials.id, id))
+          .run()
+        return okAsync(rowToCredential({ ...found.row, profileName: newProfileName }))
+      } catch (cause) {
+        return errAsync(mapDbError(cause))
+      }
+    },
+
     delete(id: string): ResultAsync<void, DbError> {
       try {
         db.delete(credentials).where(eq(credentials.id, id)).run()
