@@ -9,4 +9,6 @@ description = "Fake test sentinels — deliberately high-entropy constants used 
 regexes = [
   # openapi-client credential-leak test sentinel (http-exec.test.ts).
   '''s3cr3t-sentinel-abc123''',
+  # source-runtime verify-credential secret-discipline test sentinel (inc 28.9).
+  '''sentinel-verify-secret-xyz789''',
 ]
