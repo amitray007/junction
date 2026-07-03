@@ -493,7 +493,7 @@ describe("verifyCredential — mcp (http + stdio)", () => {
 // ---------------------------------------------------------------------------
 
 describe("verifyCredential — secret/URL discipline (serialize + assert)", () => {
-  const SENTINEL_SECRET = "sentinel-verify-secret-xyz789"
+  const SENTINEL_SECRET = "sentinel-verify-secret-xyz789" // gitleaks:allow
   const SENTINEL_URL = "https://leaked-internal-host.example.com/mcp"
 
   it("mcp auth-failed outcome never contains the secret or a URL", async () => {

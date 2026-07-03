@@ -58,6 +58,7 @@ import {
   TablePagination,
   TableRow,
   TableSkeleton,
+  Textarea,
 } from "../ui/index.js"
 
 export const Route = createFileRoute("/credentials")({
@@ -140,21 +141,48 @@ interface SecretFieldProps {
   readonly onChange: (v: string) => void
   readonly error?: string
   readonly placeholder?: string
+  /**
+   * kind "file" stores multiline content (e.g. a service-account JSON or
+   * kubeconfig) — a single-line password input can't hold that comfortably.
+   * Swaps to a Textarea (still never rendered/echoed elsewhere — input only).
+   */
+  readonly multiline?: boolean
 }
 
-function SecretField({ id, label, value, onChange, error, placeholder }: SecretFieldProps) {
+function SecretField({
+  id,
+  label,
+  value,
+  onChange,
+  error,
+  placeholder,
+  multiline,
+}: SecretFieldProps) {
   return (
     <Field id={id} label={label} error={error}>
-      <Input
-        id={id}
-        type="password"
-        autoComplete="new-password"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        hasError={!!error}
-        aria-required="true"
-        placeholder={placeholder}
-      />
+      {multiline ? (
+        <Textarea
+          id={id}
+          autoComplete="off"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          hasError={!!error}
+          aria-required="true"
+          placeholder={placeholder}
+          rows={6}
+        />
+      ) : (
+        <Input
+          id={id}
+          type="password"
+          autoComplete="new-password"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          hasError={!!error}
+          aria-required="true"
+          placeholder={placeholder}
+        />
+      )}
     </Field>
   )
 }
@@ -334,7 +362,12 @@ function AddCredentialDialog({ open, onOpenChange, platforms, onSuccess }: AddDi
               value={secret}
               onChange={setSecret}
               error={errors.secret}
-              placeholder="Paste your secret here"
+              placeholder={
+                kind === "file"
+                  ? "Paste the file content here (e.g. a service-account JSON)"
+                  : "Paste your secret here"
+              }
+              multiline={kind === "file"}
             />
             {verifiable && (
               <div className="flex items-center gap-2">

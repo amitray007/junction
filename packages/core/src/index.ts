@@ -87,6 +87,7 @@ export type {
   CliArgvSegment,
   CliConnection,
   CliPolicy,
+  CliSecret,
   CliTool,
 } from "./schema/cli-connection.js"
 // CliConnection — sandboxed CLI source descriptor

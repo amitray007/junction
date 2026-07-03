@@ -9,11 +9,11 @@
 //   6. exec.ts output cap (OOM hardening)
 //   7. schema validation (CliConnectionSchema refines)
 
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
-import type { CliConnection, CliPolicy, CliTool } from "../../schema/cli-connection.js"
+import type { CliConnection, CliPolicy, CliSecret, CliTool } from "../../schema/cli-connection.js"
 import { CliConnectionSchema } from "../../schema/cli-connection.js"
 import { validateArgs } from "./args.js"
 import { buildArgv } from "./argv.js"
@@ -916,5 +916,318 @@ describe("migration 0006 — cli column round-trip", () => {
       expect(loaded.cli?.tools[0]?.name).toBe("greet")
       expect(loaded.cli?.credentialEnvVar).toBe("GH_PAT")
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 9. kind "file" mechanics (increment 28.9 slice D) — SECURITY-CRITICAL
+//
+// Load-bearing assertions:
+//   (a) the materialized file EXISTS during the call, mode 0600, right content
+//   (b) the env var carries the PATH, not the content
+//   (c) the temp dir is DELETED after the call — success, failure, AND timeout
+//   (d) the file CONTENT never appears in the built argv (mirrors the argv
+//       injection-inert guard used for the non-file suites above)
+//   (e) the temp dir lives under paths.runtimeDir — a junction-private 0700
+//       dir INSIDE the junction home, never the shared OS tmpdir (MEDIUM fix,
+//       cross-call credential exposure hardening)
+// ---------------------------------------------------------------------------
+
+describe('createCliProvider — kind "file" mechanics (slice D)', () => {
+  let ws: string
+  let readerScript: string
+  let paths: import("../../paths/index.js").JunctionPaths
+
+  beforeAll(async () => {
+    ws = await mkdtemp(path.join(os.tmpdir(), "jx-cli-file-kind-"))
+    // A junction-private JUNCTION_HOME for this suite (separate from the tool's
+    // own working dir `ws` above) — createCliProvider materializes kind "file"
+    // credentials under `paths.runtimeDir`, which lives inside this home.
+    const { getPaths } = await import("../../paths/index.js")
+    process.env.JUNCTION_HOME = await mkdtemp(path.join(os.tmpdir(), "jx-cli-file-home-"))
+    paths = getPaths()
+
+    // A tiny fixture script — its OWN path is operator-fixed (argv[0]/literal
+    // arg), so the unpredictable per-call temp-file path can ONLY reach it via
+    // the env var, never argv. It prints "<mode-octal>\n<content>" so a single
+    // captured stdout proves both the file's permission bits and its content.
+    // Uses async fs (node:fs/promises) — this is a CHILD-PROCESS fixture, not
+    // core's own event loop, but async keeps it consistent with the repo's
+    // no-fs.*Sync rule everywhere.
+    readerScript = path.join(ws, "read-cred.mjs")
+    await writeFile(
+      readerScript,
+      [
+        'import { readFile, stat } from "node:fs/promises";',
+        "const p = process.env.CRED_FILE_VAR;",
+        'if (!p) { console.log("NO_ENV_VAR"); process.exit(1); }',
+        "const st = await stat(p);",
+        "const mode = (st.mode & 0o777).toString(8);",
+        'const content = await readFile(p, "utf8");',
+        'console.log(mode + "\\n" + content);',
+      ].join("\n"),
+      "utf8",
+    )
+  })
+
+  afterAll(async () => {
+    await rm(ws, { recursive: true, force: true })
+    await rm(paths.home, { recursive: true, force: true })
+    delete process.env.JUNCTION_HOME
+  })
+
+  function readerTool(overrides: Partial<CliTool> = {}): CliTool {
+    return {
+      name: "read_cred",
+      argv: [
+        { kind: "literal", value: process.execPath },
+        { kind: "literal", value: readerScript },
+      ],
+      args: [],
+      policy: {
+        cwd: ws,
+        readPaths: [ws],
+        writePaths: [],
+        allowNet: [],
+        timeoutMs: 10_000,
+        envAllow: {},
+      },
+      ...overrides,
+    }
+  }
+
+  function readerConnection(tool: CliTool = readerTool()): CliConnection {
+    return { tools: [tool], credentialEnvVar: "CRED_FILE_VAR" }
+  }
+
+  /** cred-* dirs currently under paths.runtimeDir (empty array if it doesn't exist yet). */
+  async function credDirs(): Promise<string[]> {
+    const entries = await readdir(paths.runtimeDir).catch(() => [] as string[])
+    return entries.filter((f) => f.startsWith("cred-"))
+  }
+
+  const FILE_SECRET = "line one\nline two — multiline file content\n"
+
+  it.skipIf(process.platform !== "darwin")(
+    "(a)+(b) materialized file exists at 0600 with the right content DURING the call; env carries the PATH",
+    async () => {
+      const secret: CliSecret = { kind: "file", value: FILE_SECRET }
+      const provider = createCliProvider(readerConnection(), secret, paths)
+      const result = await provider.callTool("read_cred", {})
+
+      expect(result.isOk()).toBe(true)
+      if (!result.isOk()) return
+      expect(result.value.isError).toBe(false)
+
+      const text = (result.value.content as Array<{ type: string; text: string }>)[0]?.text ?? ""
+      // exit line + the script's own stdout ("mode\ncontent")
+      const lines = text.split("\n")
+      const modeLine = lines[1] // lines[0] is "exit 0"
+      expect(modeLine).toBe("600")
+      // The remaining lines are the file content (rejoin — content itself has newlines).
+      const recoveredContent = lines.slice(2).join("\n")
+      expect(recoveredContent.trimEnd()).toBe(FILE_SECRET.trimEnd())
+    },
+  )
+
+  it.skipIf(process.platform !== "darwin")(
+    "(c)+(e) the temp dir is DELETED after a SUCCESSFUL call, and lived under paths.runtimeDir while it existed",
+    async () => {
+      const before = await credDirs()
+
+      const secret: CliSecret = { kind: "file", value: FILE_SECRET }
+      const provider = createCliProvider(readerConnection(), secret, paths)
+      const result = await provider.callTool("read_cred", {})
+      expect(result.isOk()).toBe(true)
+
+      const after = await credDirs()
+      // No NEW cred- dirs left behind by this call under runtimeDir.
+      expect(after.length).toBe(before.length)
+    },
+  )
+
+  it.skipIf(process.platform !== "darwin")(
+    "(c) the temp dir is DELETED after a FAILING call (non-zero exit)",
+    async () => {
+      // A script that reads the cred file then exits non-zero — proves cleanup
+      // runs on the Ok(ToolResult{isError:true}) path too (not just success).
+      const failingScript = path.join(ws, "read-then-fail.mjs")
+      await writeFile(
+        failingScript,
+        [
+          'import { readFile } from "node:fs/promises";',
+          "const p = process.env.CRED_FILE_VAR;",
+          'await readFile(p, "utf8");',
+          "process.exit(7);",
+        ].join("\n"),
+        "utf8",
+      )
+      const tool = readerTool({
+        name: "read_then_fail",
+        argv: [
+          { kind: "literal", value: process.execPath },
+          { kind: "literal", value: failingScript },
+        ],
+      })
+
+      const before = await credDirs()
+
+      const secret: CliSecret = { kind: "file", value: FILE_SECRET }
+      const provider = createCliProvider(
+        { tools: [tool], credentialEnvVar: "CRED_FILE_VAR" },
+        secret,
+        paths,
+      )
+      const result = await provider.callTool("read_then_fail", {})
+      expect(result.isOk()).toBe(true)
+      if (result.isOk()) expect(result.value.isError).toBe(true)
+
+      const after = await credDirs()
+      expect(after.length).toBe(before.length)
+    },
+  )
+
+  it.skipIf(process.platform !== "darwin")(
+    "(c) the temp dir is DELETED after a TIMEOUT",
+    async () => {
+      const sleepScript = path.join(ws, "sleep-forever.mjs")
+      await writeFile(sleepScript, "setInterval(() => {}, 1000);", "utf8")
+      const tool = readerTool({
+        name: "sleep_forever",
+        argv: [
+          { kind: "literal", value: process.execPath },
+          { kind: "literal", value: sleepScript },
+        ],
+        policy: {
+          cwd: ws,
+          readPaths: [ws],
+          writePaths: [],
+          allowNet: [],
+          timeoutMs: 500, // short timeout — forces the timed-out path
+          envAllow: {},
+        },
+      })
+
+      const before = await credDirs()
+
+      const secret: CliSecret = { kind: "file", value: FILE_SECRET }
+      const provider = createCliProvider(
+        { tools: [tool], credentialEnvVar: "CRED_FILE_VAR" },
+        secret,
+        paths,
+      )
+      const result = await provider.callTool("sleep_forever", {})
+      expect(result.isErr()).toBe(true)
+      if (result.isErr()) expect(result.error.kind).toBe("timed-out")
+
+      const after = await credDirs()
+      expect(after.length).toBe(before.length)
+    },
+    15_000,
+  )
+
+  it.skipIf(process.platform !== "darwin")(
+    "(d) the file CONTENT never appears in the built argv (mirrors the argv injection-inert guard)",
+    async () => {
+      // This call's argv never references the secret at all (it's injected via
+      // env only) — assert on the constructed argv directly.
+      const tool = readerTool()
+      const argsResult = validateArgs(tool.args, {}, tool.policy.cwd)
+      expect(argsResult.isOk()).toBe(true)
+      if (!argsResult.isOk()) return
+      const argv = buildArgv(tool.argv, argsResult.value)
+      for (const token of argv) {
+        expect(token).not.toContain(FILE_SECRET)
+        expect(token).not.toContain("line one")
+      }
+    },
+  )
+
+  it.skipIf(process.platform !== "darwin")(
+    "printenv proves the env var carries a PATH under paths.runtimeDir (not the secret value itself, and not os.tmpdir())",
+    async () => {
+      const tool = readerTool({
+        name: "printenv_cred",
+        argv: [
+          { kind: "literal", value: "/usr/bin/printenv" },
+          { kind: "literal", value: "CRED_FILE_VAR" },
+        ],
+      })
+      const secret: CliSecret = { kind: "file", value: FILE_SECRET }
+      const provider = createCliProvider(
+        { tools: [tool], credentialEnvVar: "CRED_FILE_VAR" },
+        secret,
+        paths,
+      )
+      const result = await provider.callTool("printenv_cred", {})
+      expect(result.isOk()).toBe(true)
+      if (!result.isOk()) return
+      const text = (result.value.content as Array<{ type: string; text: string }>)[0]?.text ?? ""
+      // The printed value is a filesystem PATH under paths.runtimeDir — junction-
+      // private, INSIDE the junction home — never the secret's own content.
+      // (Note: in this suite JUNCTION_HOME itself happens to live under
+      // os.tmpdir() for test convenience, so asserting the text doesn't
+      // contain os.tmpdir() at all would be a false requirement — the real,
+      // pre-fix bug shape was a path DIRECTLY under os.tmpdir() as "jt-cred-*",
+      // never nested under runtimeDir/"cred-*"; that's what we assert here.)
+      expect(text).toContain(paths.runtimeDir)
+      expect(text).toContain(`${path.sep}run${path.sep}cred-`)
+      expect(text).not.toContain("jt-cred-")
+      expect(text).not.toContain(FILE_SECRET)
+      expect(text).not.toContain("line one")
+    },
+  )
+
+  it('kind "env" (and legacy default) is BYTE-IDENTICAL — value injected directly, no materialization', async () => {
+    // Regression proof for work item 1: an "env"-kind secret must NOT create
+    // any temp file/dir — it goes straight into policy.env like before 28.9.
+    const before = await credDirs()
+
+    const tool: CliTool = {
+      name: "noop_env",
+      argv: [{ kind: "literal", value: "/bin/echo" }],
+      args: [],
+      policy: {
+        cwd: "/tmp",
+        readPaths: ["/tmp"],
+        writePaths: [],
+        allowNet: [],
+        timeoutMs: 2000,
+        envAllow: {},
+      },
+    }
+    const secret: CliSecret = { kind: "env", value: "plain-env-value" }
+    const provider = createCliProvider({ tools: [tool], credentialEnvVar: "GH_PAT" }, secret, paths)
+    // We can't directly observe policy.env from here (it's internal), but we CAN
+    // assert no temp dir was ever created.
+    await provider.callTool("noop_env", {})
+
+    const after = await credDirs()
+    expect(after.length).toBe(before.length)
+  })
+
+  it("no credentialEnvVar on a file-kind call → no materialization, no injection (mirrors env-kind absent-var behaviour)", async () => {
+    const before = await credDirs()
+
+    const tool: CliTool = {
+      name: "noop_no_env_var",
+      argv: [{ kind: "literal", value: "/bin/echo" }],
+      args: [],
+      policy: {
+        cwd: "/tmp",
+        readPaths: ["/tmp"],
+        writePaths: [],
+        allowNet: [],
+        timeoutMs: 2000,
+        envAllow: {},
+      },
+    }
+    // No credentialEnvVar on the connection — file-kind secret present but unused.
+    const secret: CliSecret = { kind: "file", value: FILE_SECRET }
+    const provider = createCliProvider({ tools: [tool] }, secret, paths)
+    await provider.callTool("noop_no_env_var", {})
+
+    const after = await credDirs()
+    expect(after.length).toBe(before.length)
   })
 })

@@ -89,7 +89,13 @@ async function withProvider(
   paths: JunctionPaths,
   fn: (provider: ToolProvider) => Promise<VerifyOutcome>,
 ): Promise<VerifyOutcome> {
-  const providerResult = await buildProvider(platform, secret, paths)
+  // withProvider is only ever called from the openapi/graphql/mcp branches
+  // below — the "cli" branch of verifyCredentialAsync returns not-verifiable
+  // before ever reaching here, so buildProvider's cli branch (the only one
+  // that consults `kind`) never sees this tag. "bearer" is a placeholder that
+  // is structurally never read.
+  const resolvedSecret = secret === null ? null : { kind: "bearer" as const, value: secret }
+  const providerResult = await buildProvider(platform, resolvedSecret, paths)
   if (providerResult.isErr()) {
     if (providerResult.error.kind === "auth-failed") return { status: "auth-failed" }
     return { status: "unreachable", detail: formatDetail(providerResult.error) }

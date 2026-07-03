@@ -78,6 +78,21 @@ export function addCredential(
     })
   }
 
+  // 32 KiB cap on kind "file" content, BEFORE any store write — fits macOS
+  // Keychain AND Linux keyutils' ~32 KiB item ceiling (see method file 28.9).
+  // Reuses "invalid-input" (least invasive — avoids widening the exhaustive
+  // CredentialError formatters for a single new variant).
+  if (input.kind === "file") {
+    const byteLength = Buffer.byteLength(input.secret, "utf8")
+    const FILE_SECRET_MAX_BYTES = 32 * 1024
+    if (byteLength > FILE_SECRET_MAX_BYTES) {
+      return errAsync({
+        kind: "invalid-input" as const,
+        reason: `file credential exceeds 32 KiB (got ${byteLength} bytes)`,
+      })
+    }
+  }
+
   // Validate the full credential shape (defensive; CLI pre-validates, but we
   // must not trust the caller).
   const credentialParse = CredentialSchema.safeParse({

@@ -138,6 +138,38 @@ async function setupNoAuthPlatform(platformId: string) {
   return repos
 }
 
+/** Upsert a cli platform (accepts kind "file", among env/bearer) into the temp-home DB. */
+async function setupCliPlatform(platformId: string) {
+  const dbResult = await getDatabase(getPaths())
+  if (dbResult.isErr()) throw new Error(`DB error: ${dbResult.error.kind}`)
+  const repos = createRepositories(dbResult.value)
+  const platform = PlatformSchema.parse({
+    id: PlatformIdSchema.parse(platformId),
+    kind: "cli" as const,
+    displayName: "CLI Platform",
+    cli: {
+      tools: [
+        {
+          name: "greet",
+          argv: [{ kind: "literal", value: "/bin/echo" }],
+          args: [],
+          policy: {
+            cwd: "/tmp",
+            readPaths: ["/tmp"],
+            writePaths: [],
+            allowNet: [],
+            timeoutMs: 5000,
+            envAllow: {},
+          },
+        },
+      ],
+      credentialEnvVar: "GH_PAT",
+    },
+  })
+  await repos.platforms.upsert(platform)
+  return repos
+}
+
 describe("credential add — kind derivation + kind-compat (unit)", () => {
   let prevStore: string | undefined
   let prevExitCode: number | undefined
@@ -235,6 +267,224 @@ describe("credential add — kind derivation + kind-compat (unit)", () => {
       expect(parsed.ok).toBe(false)
       expect(parsed.error).toContain("no auth")
       expect(process.exitCode).toBe(1)
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// --secret-file (increment 28.9 slice D): reads the file's CONTENT and stores
+// it — the PATH itself must never reach the store.
+// ---------------------------------------------------------------------------
+
+describe("credential add --secret-file (unit)", () => {
+  let prevStore: string | undefined
+  let prevExitCode: number | undefined
+
+  beforeEach(() => {
+    prevStore = process.env.JUNCTION_STORE
+    prevExitCode = process.exitCode
+    process.env.JUNCTION_STORE = "file"
+    process.exitCode = 0
+  })
+
+  afterEach(() => {
+    if (prevStore === undefined) delete process.env.JUNCTION_STORE
+    else process.env.JUNCTION_STORE = prevStore
+    process.exitCode = prevExitCode
+  })
+
+  it("--secret-file reads the file CONTENT; the store receives the content, never the path", async () => {
+    await withTempHome(async () => {
+      await setupCliPlatform("cli-file-plat")
+
+      const { mkdtemp, writeFile: writeFileP, rm } = await import("node:fs/promises")
+      const os = await import("node:os")
+      const dir = await mkdtemp(join(os.tmpdir(), "jx-secret-file-test-"))
+      const secretPath = join(dir, "cred.json")
+      const CONTENT = '{"type":"service_account","key":"multi\\nline-content"}'
+      await writeFileP(secretPath, CONTENT, "utf8")
+
+      try {
+        const add = getCredentialSubCmd("add")
+        const out = await captureStdout(() =>
+          add.run?.(
+            ctx({
+              platform: "cli-file-plat",
+              account: "work",
+              kind: "file",
+              "secret-file": secretPath,
+              "token-stdin": false,
+              verify: false,
+              json: true,
+            }),
+          ),
+        )
+
+        const parsed = JSON.parse(out.trim()) as {
+          ok: boolean
+          credential?: { id?: string; kind?: string }
+        }
+        expect(parsed.ok).toBe(true)
+        expect(parsed.credential?.kind).toBe("file")
+
+        // The PATH must never appear anywhere in the command's stdout.
+        expect(out).not.toContain(secretPath)
+
+        // The store must have received the CONTENT (verified via a real read-back
+        // through the store — never by inspecting DB rows, which hold only refs).
+        const credId = parsed.credential?.id
+        expect(credId).toBeTruthy()
+        const storeResult = await createCredentialStore(getPaths())
+        if (storeResult.isErr()) throw new Error("store setup failed")
+        const dbResult = await getDatabase(getPaths())
+        if (dbResult.isErr()) throw new Error("db setup failed")
+        const repos = createRepositories(dbResult.value)
+        const credResult = await repos.credentials.get(String(credId))
+        if (credResult.isErr()) throw new Error("credential lookup failed")
+        const secretResult = await storeResult.value.get(credResult.value.secretRef)
+        if (secretResult.isErr()) throw new Error("secret lookup failed")
+        expect(secretResult.value).toBe(CONTENT)
+        expect(secretResult.value).not.toBe(secretPath)
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
+    })
+  })
+
+  it("--secret-file and --token-stdin together → clean mutually-exclusive error", async () => {
+    await withTempHome(async () => {
+      await setupCliPlatform("cli-file-mutex-plat")
+
+      const add = getCredentialSubCmd("add")
+      const out = await captureStdout(() =>
+        add.run?.(
+          ctx({
+            platform: "cli-file-mutex-plat",
+            account: "work",
+            kind: "file",
+            "secret-file": "/nonexistent/path",
+            "token-stdin": true,
+            verify: false,
+            json: true,
+          }),
+        ),
+      )
+
+      const parsed = JSON.parse(out.trim()) as { ok: boolean; error?: string }
+      expect(parsed.ok).toBe(false)
+      expect(parsed.error).toContain("mutually exclusive")
+      expect(process.exitCode).toBe(1)
+    })
+  })
+
+  it("--secret-file pointing at a nonexistent path → clean error, no crash", async () => {
+    await withTempHome(async () => {
+      await setupCliPlatform("cli-file-missing-plat")
+
+      const add = getCredentialSubCmd("add")
+      const out = await captureStdout(() =>
+        add.run?.(
+          ctx({
+            platform: "cli-file-missing-plat",
+            account: "work",
+            kind: "file",
+            "secret-file": "/definitely/does/not/exist/cred.json",
+            "token-stdin": false,
+            verify: false,
+            json: true,
+          }),
+        ),
+      )
+
+      const parsed = JSON.parse(out.trim()) as { ok: boolean; error?: string }
+      expect(parsed.ok).toBe(false)
+      expect(process.exitCode).toBe(1)
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // CORR-1 fix: --secret-file is restricted to kind "file". It reads content
+  // WITHOUT trimming (correct for kind "file"'s byte-exactness), so using it
+  // with any other kind can inject an untrimmed trailing newline into a
+  // bearer/api-key value — undici then rejects the resulting header value as
+  // a control character, an opaque failure far from this flag. Reject early
+  // with a clear, actionable message instead.
+  // -------------------------------------------------------------------------
+
+  it("--secret-file with an explicit non-file kind (--kind env) → clean, actionable error", async () => {
+    await withTempHome(async () => {
+      await setupCliPlatform("cli-file-kind-mismatch-plat")
+
+      const { mkdtemp, writeFile: writeFileP, rm } = await import("node:fs/promises")
+      const os = await import("node:os")
+      const dir = await mkdtemp(join(os.tmpdir(), "jx-secret-file-kind-test-"))
+      const secretPath = join(dir, "token.txt")
+      await writeFileP(secretPath, "bearer-token-value\n", "utf8")
+
+      try {
+        const add = getCredentialSubCmd("add")
+        const out = await captureStdout(() =>
+          add.run?.(
+            ctx({
+              platform: "cli-file-kind-mismatch-plat",
+              account: "work",
+              kind: "env",
+              "secret-file": secretPath,
+              "token-stdin": false,
+              verify: false,
+              json: true,
+            }),
+          ),
+        )
+
+        const parsed = JSON.parse(out.trim()) as { ok: boolean; error?: string }
+        expect(parsed.ok).toBe(false)
+        expect(parsed.error).toContain("--secret-file is only valid for file-kind credentials")
+        expect(parsed.error).toContain("--token-stdin")
+        expect(process.exitCode).toBe(1)
+        // The path itself must never leak into the error message either.
+        expect(parsed.error).not.toContain(secretPath)
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
+    })
+  })
+
+  it("--secret-file with the DERIVED (omitted --kind) non-file default → clean, actionable error", async () => {
+    // setupApiKeyPlatform derives to kind "api-key" (not "file") when --kind is
+    // omitted — proves the check applies to the DERIVED kind, not only an
+    // explicit --kind.
+    await withTempHome(async () => {
+      await setupApiKeyPlatform("apikey-file-mismatch-plat")
+
+      const { mkdtemp, writeFile: writeFileP, rm } = await import("node:fs/promises")
+      const os = await import("node:os")
+      const dir = await mkdtemp(join(os.tmpdir(), "jx-secret-file-derived-test-"))
+      const secretPath = join(dir, "token.txt")
+      await writeFileP(secretPath, "api-key-value\n", "utf8")
+
+      try {
+        const add = getCredentialSubCmd("add")
+        const out = await captureStdout(() =>
+          add.run?.(
+            ctx({
+              platform: "apikey-file-mismatch-plat",
+              account: "work",
+              "secret-file": secretPath,
+              "token-stdin": false,
+              verify: false,
+              json: true,
+            }),
+          ),
+        )
+
+        const parsed = JSON.parse(out.trim()) as { ok: boolean; error?: string }
+        expect(parsed.ok).toBe(false)
+        expect(parsed.error).toContain("--secret-file is only valid for file-kind credentials")
+        expect(process.exitCode).toBe(1)
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
     })
   })
 })

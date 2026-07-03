@@ -10,7 +10,8 @@
 // handler shape, a serving concern that stays in cli (see method file 28,
 // "Boundary note — why adaptToMcpHandlers stays in cli").
 
-export { buildProvider } from "./build-provider.js"
+export type { ResolvedSecret } from "./build-provider.js"
+export { buildProvider, toResolvedSecret } from "./build-provider.js"
 export { formatUpstreamError } from "./format-error.js"
 export type { ResolveCredentialError } from "./resolve-credential.js"
 export { resolveCredentialSecret } from "./resolve-credential.js"

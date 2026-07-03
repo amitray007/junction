@@ -1019,3 +1019,96 @@ describe.skipIf(process.platform === "win32")(
     })
   },
 )
+
+// ---------------------------------------------------------------------------
+// runtimeDir credential-materialization leaf vs. parent (increment 28.9 slice D
+// hardening, MEDIUM fix): granting the CLI source's own per-call `cred-XXXX`
+// leaf under paths.runtimeDir must be ALLOWED (it's junction's own grant, never
+// operator input) — but an operator-declared readPath that names the runtime
+// PARENT dir (or the junction home itself) must still be REJECTED, exactly
+// like any other secret-adjacent grant. grantedPathExposesSecrets only ever
+// flags a granted path that is an ANCESTOR of (or equal to) a secret path —
+// a `cred-XXXX` leaf is a DESCENDANT of the home dir, so it structurally can
+// never trip this guard; this suite proves that reasoning against the real
+// runCommand path (not just the helper in isolation).
+// ---------------------------------------------------------------------------
+describe("runtimeDir credential leaf vs. parent (grantedPathExposesSecrets interaction)", () => {
+  it("granting the runtime dir's own cred-XXXX leaf is ALLOWED (not flagged as exposing secrets)", async () => {
+    const fakeJunctionHome = await mkdtemp(path.join(os.tmpdir(), "jx-fake-junction-"))
+    const prevJunctionHome = process.env.JUNCTION_HOME
+    process.env.JUNCTION_HOME = fakeJunctionHome
+
+    try {
+      const { getPaths, ensureRuntimeDir } = await import("../paths/index.js")
+      const paths = getPaths()
+      const runtimeDirResult = await ensureRuntimeDir(paths)
+      expect(runtimeDirResult.isOk()).toBe(true)
+      if (!runtimeDirResult.isErr()) {
+        const credLeaf = await mkdtemp(path.join(runtimeDirResult.value, "cred-"))
+
+        const ws = await makeWorkspace()
+        try {
+          const sb = await createSandbox()
+          expect(sb.isOk()).toBe(true)
+          if (!sb.isOk()) return
+          const policy: SandboxPolicy = {
+            readPaths: [ws, credLeaf],
+            writePaths: [],
+            allowNet: [],
+            env: {},
+            cwd: ws,
+            timeoutMs: 5_000,
+          }
+          const result = await sb.value.runCommand(["/bin/echo", "hi"], policy)
+          // Must NOT be policy-invalid — the leaf is junction's own grant.
+          if (result.isErr()) {
+            expect(result.error.kind).not.toBe("policy-invalid")
+          }
+        } finally {
+          await cleanup(ws)
+        }
+      }
+    } finally {
+      if (prevJunctionHome === undefined) delete process.env.JUNCTION_HOME
+      else process.env.JUNCTION_HOME = prevJunctionHome
+      await cleanup(fakeJunctionHome)
+    }
+  })
+
+  it("granting the runtime dir's PARENT (junction home) is still REJECTED as policy-invalid", async () => {
+    const fakeJunctionHome = await mkdtemp(path.join(os.tmpdir(), "jx-fake-junction-"))
+    const prevJunctionHome = process.env.JUNCTION_HOME
+    process.env.JUNCTION_HOME = fakeJunctionHome
+
+    // A credential file must exist for the always-denied check to have
+    // something concrete inside the home to protect (mirrors the symlink test above).
+    await writeFile(path.join(fakeJunctionHome, "credentials.enc.json"), "{}")
+
+    try {
+      const ws = await makeWorkspace()
+      try {
+        const sb = await createSandbox()
+        expect(sb.isOk()).toBe(true)
+        if (!sb.isOk()) return
+        const policy: SandboxPolicy = {
+          readPaths: [ws, fakeJunctionHome], // the WHOLE junction home, not a cred leaf
+          writePaths: [],
+          allowNet: [],
+          env: {},
+          cwd: ws,
+          timeoutMs: 5_000,
+        }
+        const result = await sb.value.runCommand(["/bin/echo", "hi"], policy)
+        expect(result.isErr()).toBe(true)
+        if (!result.isErr()) return
+        expect(result.error.kind).toBe("policy-invalid")
+      } finally {
+        await cleanup(ws)
+      }
+    } finally {
+      if (prevJunctionHome === undefined) delete process.env.JUNCTION_HOME
+      else process.env.JUNCTION_HOME = prevJunctionHome
+      await cleanup(fakeJunctionHome)
+    }
+  })
+})

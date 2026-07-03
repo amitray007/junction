@@ -14,6 +14,17 @@ export type JunctionPaths = {
   dbFile: string
   credentialsFile: string
   masterKeyFile: string
+  /**
+   * Junction-private runtime scratch dir (`<home>/run`) for ephemeral,
+   * per-call artifacts that must NEVER live in the shared OS tmpdir —
+   * e.g. kind "file" credential materialization (increment 28.9 slice D).
+   * `os.tmpdir()` is world-writable-parent (`/tmp` on Linux) and same-uid
+   * siblings can be granted `readPaths` overlapping it; this dir lives
+   * inside `~/.junction` (already 0700) so only an operator grant of the
+   * junction home itself — which `grantedPathExposesSecrets` blocks —
+   * could expose it. Created lazily at 0700 by `ensureRuntimeDir`.
+   */
+  runtimeDir: string
 }
 
 export function resolveHome(): string {
@@ -31,6 +42,7 @@ export function getPaths(): JunctionPaths {
     dbFile: path.join(home, "junction.db"),
     credentialsFile: path.join(home, "credentials.enc.json"),
     masterKeyFile: path.join(home, "master.key"),
+    runtimeDir: path.join(home, "run"),
   }
 }
 
@@ -49,6 +61,24 @@ export function ensureHome(): ResultAsync<JunctionPaths, PathsError> {
     mkdir(home, { recursive: true })
       .then(() => chmod(home, 0o700))
       .then(() => getPaths()),
+    (cause) => ({ kind: "home-unresolvable" as const, cause }),
+  )
+}
+
+/**
+ * Lazily create `paths.runtimeDir` at 0700 — idempotent (safe to call before
+ * every materialization). `mkdir`'s `mode` option is only honored on initial
+ * creation (a no-op if the dir already exists), so an explicit `chmod` after
+ * `mkdir` — mirroring `ensureHome` — guarantees 0700 on every call, not just
+ * the first. Callers that materialize per-call artifacts under `runtimeDir`
+ * (e.g. the CLI source's kind "file" credential mechanics) call this before
+ * their own `mkdtemp`.
+ */
+export function ensureRuntimeDir(paths: JunctionPaths): ResultAsync<string, PathsError> {
+  return ResultAsync.fromPromise(
+    mkdir(paths.runtimeDir, { recursive: true })
+      .then(() => chmod(paths.runtimeDir, 0o700))
+      .then(() => paths.runtimeDir),
     (cause) => ({ kind: "home-unresolvable" as const, cause }),
   )
 }

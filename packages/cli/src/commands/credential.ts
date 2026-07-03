@@ -4,6 +4,7 @@
 // it NEVER appears in output, --json responses, error causes, or DB columns.
 // Edge stays thin: calls core, formats output. No business logic here.
 
+import { readFile } from "node:fs/promises"
 import {
   addCredential,
   type Credential,
@@ -101,6 +102,11 @@ const addCommand = defineCommand({
       description: "Read the token from stdin (headless/agent mode)",
       default: false,
     },
+    "secret-file": {
+      type: "string",
+      description:
+        "Read the secret from this file's CONTENT (for kind file — e.g. a service-account JSON or kubeconfig). The path itself is never stored. Mutually exclusive with --token-stdin.",
+    },
     verify: {
       type: "boolean",
       description:
@@ -123,6 +129,13 @@ const addCommand = defineCommand({
     }
     if (!args.account || args.account.trim() === "") {
       const msg = "invalid input: --account must not be empty"
+      if (json) process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
+      else consola.error(msg)
+      process.exitCode = 1
+      return
+    }
+    if (args["secret-file"] && args["token-stdin"]) {
+      const msg = "invalid input: --secret-file and --token-stdin are mutually exclusive"
       if (json) process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
       else consola.error(msg)
       process.exitCode = 1
@@ -159,12 +172,42 @@ const addCommand = defineCommand({
       kind = derived
     }
 
-    // Acquire the token — either from stdin (headless) or interactive masked prompt
-    const secret = await acquireSecret({
-      fromStdin: args["token-stdin"],
-      promptMessage: `Secret (${kind}) for ${args.platform} (${args.account}):`,
-      json,
-    })
+    // --secret-file reads the file's CONTENT WITHOUT trimming — correct for
+    // kind "file" (byte-exactness matters for a kubeconfig/service-account
+    // JSON), but wrong for every other kind: a bearer-token file with a
+    // trailing "\n" would inject `Authorization: Bearer abc\n`, which undici
+    // rejects as a control character in a header value — an opaque failure
+    // far from this flag. The kind is already known (derived above or
+    // explicit) before the file read, so refuse here with a clear, actionable
+    // error rather than let it surface as a confusing upstream failure later.
+    if (args["secret-file"] && kind !== "file") {
+      const msg = `invalid input: --secret-file is only valid for file-kind credentials (kind is "${kind}"); use --token-stdin for bearer/api-key`
+      if (json) process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
+      else consola.error(msg)
+      process.exitCode = 1
+      return
+    }
+
+    // Acquire the secret — from a file's CONTENT (--secret-file; the path itself
+    // is never stored), stdin (headless), or an interactive masked prompt.
+    let secret: string | null
+    if (args["secret-file"]) {
+      const fileResult = await readSecretFile(args["secret-file"])
+      if (fileResult === null) {
+        const msg = `could not read --secret-file "${args["secret-file"]}"`
+        if (json) process.stdout.write(`${JSON.stringify({ ok: false, error: msg })}\n`)
+        else consola.error(msg)
+        process.exitCode = 1
+        return
+      }
+      secret = fileResult
+    } else {
+      secret = await acquireSecret({
+        fromStdin: args["token-stdin"],
+        promptMessage: `Secret (${kind}) for ${args.platform} (${args.account}):`,
+        json,
+      })
+    }
     if (secret === null) return
 
     if (!secret) {
@@ -555,6 +598,21 @@ async function readTokenFromStdin(): Promise<string> {
     // Resume in case stdin is paused (e.g. if it was already consumed)
     process.stdin.resume()
   })
+}
+
+/**
+ * Read a secret-file's CONTENT for `--secret-file` (kind "file"). The path
+ * itself is never stored — only this returned content flows into addCredential.
+ * Returns `null` on any read failure (caller reports and returns); the content
+ * is NOT trimmed (multiline file-shaped secrets like a kubeconfig or
+ * service-account JSON must round-trip byte-for-byte).
+ */
+async function readSecretFile(path: string): Promise<string | null> {
+  try {
+    return await readFile(path, "utf8")
+  } catch {
+    return null
+  }
 }
 
 /**
