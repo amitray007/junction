@@ -863,7 +863,7 @@ describe("CredentialsPage — OAuth status badges (Expiring / Auth Failed) + Rec
     expect(getByText("Connected")).toBeInTheDocument()
   })
 
-  it("an oauth2 credential expiring within the window shows the Expiring badge", () => {
+  it("near expiry + NO refresh token → Expiring badge (can't self-heal)", () => {
     const soon = new Date(Date.now() + 60 * 60 * 1000).toISOString() // 1h from now
     const creds: CredentialMeta[] = [
       {
@@ -871,12 +871,39 @@ describe("CredentialsPage — OAuth status badges (Expiring / Auth Failed) + Rec
         platformId: "github",
         account: "alice",
         kind: "oauth2",
-        oauthState: { providerId: "github", expiresAt: soon, needsReauth: false },
+        oauthState: {
+          providerId: "github",
+          expiresAt: soon,
+          needsReauth: false,
+          hasRefreshToken: false,
+        },
       },
     ]
     mockUseLoaderData.mockReturnValue({ credentials: creds, platforms, oauthProviders })
     const { getByText } = render(<CredentialsPage />)
     expect(getByText("Expiring")).toBeInTheDocument()
+  })
+
+  it("near expiry + HAS a refresh token → Connected (auto-refreshed, never Expiring)", () => {
+    const soon = new Date(Date.now() + 60 * 60 * 1000).toISOString() // 1h from now — but refreshable
+    const creds: CredentialMeta[] = [
+      {
+        id: "c1",
+        platformId: "github",
+        account: "alice",
+        kind: "oauth2",
+        oauthState: {
+          providerId: "github",
+          expiresAt: soon,
+          needsReauth: false,
+          hasRefreshToken: true,
+        },
+      },
+    ]
+    mockUseLoaderData.mockReturnValue({ credentials: creds, platforms, oauthProviders })
+    const { getByText, queryByText } = render(<CredentialsPage />)
+    expect(getByText("Connected")).toBeInTheDocument()
+    expect(queryByText("Expiring")).not.toBeInTheDocument()
   })
 
   it("an oauth2 credential expiring far in the future is NOT flagged Expiring", () => {
@@ -887,7 +914,12 @@ describe("CredentialsPage — OAuth status badges (Expiring / Auth Failed) + Rec
         platformId: "github",
         account: "alice",
         kind: "oauth2",
-        oauthState: { providerId: "github", expiresAt: farFuture, needsReauth: false },
+        oauthState: {
+          providerId: "github",
+          expiresAt: farFuture,
+          needsReauth: false,
+          hasRefreshToken: false,
+        },
       },
     ]
     mockUseLoaderData.mockReturnValue({ credentials: creds, platforms, oauthProviders })
@@ -903,7 +935,12 @@ describe("CredentialsPage — OAuth status badges (Expiring / Auth Failed) + Rec
         platformId: "github",
         account: "alice",
         kind: "oauth2",
-        oauthState: { providerId: "github", expiresAt: null, needsReauth: true },
+        oauthState: {
+          providerId: "github",
+          expiresAt: null,
+          needsReauth: true,
+          hasRefreshToken: false,
+        },
       },
     ]
     mockUseLoaderData.mockReturnValue({ credentials: creds, platforms, oauthProviders })
@@ -920,7 +957,12 @@ describe("CredentialsPage — OAuth status badges (Expiring / Auth Failed) + Rec
         platformId: "github",
         account: "alice",
         kind: "oauth2",
-        oauthState: { providerId: "github", expiresAt: null, needsReauth: true },
+        oauthState: {
+          providerId: "github",
+          expiresAt: null,
+          needsReauth: true,
+          hasRefreshToken: false,
+        },
       },
     ]
     mockUseLoaderData.mockReturnValue({ credentials: creds, platforms, oauthProviders })
@@ -941,7 +983,12 @@ describe("CredentialsPage — OAuth status badges (Expiring / Auth Failed) + Rec
         platformId: "github",
         account: "alice",
         kind: "oauth2",
-        oauthState: { providerId: "github", expiresAt: null, needsReauth: true },
+        oauthState: {
+          providerId: "github",
+          expiresAt: null,
+          needsReauth: true,
+          hasRefreshToken: false,
+        },
       },
     ]
     mockUseLoaderData.mockReturnValue({ credentials: creds, platforms, oauthProviders })

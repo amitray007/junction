@@ -185,11 +185,18 @@ export type CredentialMeta = {
   lastVerifyResult?: "ok" | "auth-failed" | "unreachable"
   /**
    * OAuth-only metadata (increment 29) — the catalog provider key, token
-   * expiry (ISO string), and the first-class needsReauth state. Absent for
-   * non-oauth2 credentials. NEVER includes a token/ref value — see
-   * core's OAuthMetaSchema (docs/rules/security.md's refs-not-values rule).
+   * expiry (ISO string), the first-class needsReauth state, and whether a
+   * refresh token is on file (a BOOLEAN — never the ref value — so the badge
+   * can tell an auto-refreshable credential from one that will need a manual
+   * reconnect). Absent for non-oauth2 credentials. NEVER includes a token/ref
+   * value — see core's OAuthMetaSchema (docs/rules/security.md refs-not-values).
    */
-  oauthState?: { providerId: string; expiresAt: string | null; needsReauth: boolean }
+  oauthState?: {
+    providerId: string
+    expiresAt: string | null
+    needsReauth: boolean
+    hasRefreshToken: boolean
+  }
 }
 
 export async function readCredentials(): Promise<CredentialMeta[]> {
@@ -210,6 +217,8 @@ export async function readCredentials(): Promise<CredentialMeta[]> {
               providerId: c.oauthMeta.providerId,
               expiresAt: c.oauthMeta.expiresAt ?? null,
               needsReauth: c.oauthMeta.needsReauth ?? false,
+              // boolean-only — presence of a refresh token, never the ref value
+              hasRefreshToken: c.oauthMeta.refreshTokenRef !== undefined,
             },
           }
         : {}),

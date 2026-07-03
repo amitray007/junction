@@ -177,10 +177,15 @@ describe("data.server", () => {
       providerId: "github",
       expiresAt: "2026-01-01T00:00:00.000Z",
       needsReauth: false,
+      // hasRefreshToken is a BOOLEAN derived from refreshTokenRef's presence —
+      // true here (the fixture has a refreshTokenRef) — never the ref VALUE.
+      hasRefreshToken: true,
     })
 
     // SECURITY: no ref VALUES anywhere in the serialized credential — only the
-    // fields explicitly whitelisted onto oauthState (providerId/expiresAt/needsReauth).
+    // fields explicitly whitelisted onto oauthState (providerId/expiresAt/
+    // needsReauth/hasRefreshToken-as-a-bool). The FAKE_REFRESH_REF value below
+    // must be absent even though hasRefreshToken:true is derived from it.
     const serialized = JSON.stringify(cred)
     expect(serialized).not.toContain("FAKE_ACCESS_REF_NEVER_EXPOSE")
     expect(serialized).not.toContain("FAKE_REFRESH_REF_NEVER_EXPOSE")
