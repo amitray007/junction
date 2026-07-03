@@ -852,12 +852,18 @@ interface ReconnectDialogProps {
 }
 
 function ReconnectOAuthDialog({ credential, onOpenChange }: ReconnectDialogProps) {
+  // Reconnect REUSES the stored client creds by default — the user just
+  // re-authorizes (approves consent), no re-typing. "Use different credentials"
+  // reveals the fields for the one case that needs new creds: the OAuth app's
+  // secret was rotated provider-side.
+  const [useDifferent, setUseDifferent] = useState(false)
   const [clientId, setClientId] = useState("")
   const [clientSecret, setClientSecret] = useState("")
   const [errors, setErrors] = useState<{ clientId?: string; clientSecret?: string }>({})
   const [submitting, setSubmitting] = useState(false)
 
   function reset() {
+    setUseDifferent(false)
     setClientId("")
     setClientSecret("")
     setErrors({})
@@ -871,18 +877,24 @@ function ReconnectOAuthDialog({ credential, onOpenChange }: ReconnectDialogProps
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    const newErrors: typeof errors = {}
-    if (!clientId.trim()) newErrors.clientId = "Client ID is required"
-    if (!clientSecret) newErrors.clientSecret = "Client secret is required"
-    if (Object.keys(newErrors).length > 0) {
-      setErrors(newErrors)
-      return
+    if (useDifferent) {
+      const newErrors: typeof errors = {}
+      if (!clientId.trim()) newErrors.clientId = "Client ID is required"
+      if (!clientSecret) newErrors.clientSecret = "Client secret is required"
+      if (Object.keys(newErrors).length > 0) {
+        setErrors(newErrors)
+        return
+      }
     }
     if (!credential) return
     setSubmitting(true)
     try {
+      // Omit client creds → the server reuses the stored ones. Only send them
+      // when the user explicitly chose to swap OAuth apps.
       const result = await startReconnectFn({
-        data: { credentialId: credential.id, clientId: clientId.trim(), clientSecret },
+        data: useDifferent
+          ? { credentialId: credential.id, clientId: clientId.trim(), clientSecret }
+          : { credentialId: credential.id },
       })
       if (!result.ok) {
         toast.error(`Failed to reconnect: ${result.error}`)
@@ -903,30 +915,45 @@ function ReconnectOAuthDialog({ credential, onOpenChange }: ReconnectDialogProps
           <DialogTitle>Reconnect</DialogTitle>
           <DialogDescription>
             Re-authorize <MonoCode>{credential?.account}</MonoCode> on{" "}
-            <MonoCode>{credential?.platformId}</MonoCode>. Paste the same OAuth app's client
-            credentials to continue.
+            <MonoCode>{credential?.platformId}</MonoCode>.{" "}
+            {useDifferent
+              ? "Enter the new OAuth app's client credentials to swap them."
+              : "junction reuses the OAuth app credentials you already provided — you'll just approve access again."}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} noValidate>
           <div className="flex flex-col gap-4">
-            <Field id="reconnect-client-id" label="Client ID" error={errors.clientId}>
-              <Input
-                id="reconnect-client-id"
-                autoComplete="off"
-                value={clientId}
-                onChange={(e) => setClientId(e.target.value)}
-                hasError={!!errors.clientId}
-                aria-required="true"
-              />
-            </Field>
-            <SecretField
-              id="reconnect-client-secret"
-              label="Client Secret"
-              value={clientSecret}
-              onChange={setClientSecret}
-              error={errors.clientSecret}
-              placeholder="Paste the client secret here"
-            />
+            {!useDifferent ? (
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setUseDifferent(true)}
+                className="self-start"
+              >
+                Use different client credentials
+              </Button>
+            ) : (
+              <>
+                <Field id="reconnect-client-id" label="Client ID" error={errors.clientId}>
+                  <Input
+                    id="reconnect-client-id"
+                    autoComplete="off"
+                    value={clientId}
+                    onChange={(e) => setClientId(e.target.value)}
+                    hasError={!!errors.clientId}
+                    aria-required="true"
+                  />
+                </Field>
+                <SecretField
+                  id="reconnect-client-secret"
+                  label="Client Secret"
+                  value={clientSecret}
+                  onChange={setClientSecret}
+                  error={errors.clientSecret}
+                  placeholder="Paste the new client secret here"
+                />
+              </>
+            )}
           </div>
           <DialogFooter>
             <Button type="button" variant="secondary" onClick={() => handleOpenChange(false)}>

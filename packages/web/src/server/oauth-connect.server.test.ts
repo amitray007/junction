@@ -17,6 +17,7 @@ const credentialsCreateMock = vi.fn()
 const setOAuthTokensMock = vi.fn()
 const storeSetMock = vi.fn()
 const storeDeleteMock = vi.fn()
+const storeGetMock = vi.fn()
 const buildAuthorizeUrlMock = vi.fn()
 const exchangeCodeMock = vi.fn()
 const persistOAuthTokensMock = vi.fn()
@@ -30,7 +31,7 @@ vi.mock("@junction/core", async (importOriginal) => {
     createCredentialStore: vi.fn(
       () =>
         okAsync({
-          get: vi.fn(),
+          get: storeGetMock,
           set: storeSetMock,
           delete: storeDeleteMock,
         }) as unknown as ReturnType<typeof actual.createCredentialStore>,
@@ -85,6 +86,8 @@ const GITHUB_PROVIDER = {
 }
 
 const SENTINEL_SECRET = "sentinel-client-secret-do-not-leak-xyz123"
+// A distinct sentinel for the stored client_secret (reconnect-reuse path).
+const STORED_CLIENT_SECRET = "stored-client-secret-do-not-leak-abc789" // gitleaks:allow
 
 afterEach(() => {
   getProviderMock.mockReset()
@@ -93,6 +96,7 @@ afterEach(() => {
   setOAuthTokensMock.mockReset()
   storeSetMock.mockReset()
   storeDeleteMock.mockReset()
+  storeGetMock.mockReset()
   buildAuthorizeUrlMock.mockReset()
   exchangeCodeMock.mockReset()
   persistOAuthTokensMock.mockReset()
@@ -234,6 +238,104 @@ describe("startReconnect", () => {
     const pending = takePending("state-reconnect")
     expect(pending?.intent).toEqual({ mode: "update", credentialId: "cred-1" })
     expect(pending?.scopes).toEqual(["repo"])
+  })
+
+  it("REUSES stored client creds when none are supplied (no re-typing) — resolves clientIdRef/clientSecretRef from the store", async () => {
+    credentialsGetMock.mockReturnValue(
+      okAsync({
+        id: "cred-reuse",
+        platformId: "github-platform",
+        profileName: "work",
+        kind: "oauth2",
+        secretRef: "ref-access",
+        oauthMeta: {
+          providerId: "github",
+          scopes: ["repo"],
+          needsReauth: true,
+          clientIdRef: "ref-client-id",
+          clientSecretRef: "ref-client-secret",
+        },
+      }),
+    )
+    getProviderMock.mockReturnValue(GITHUB_PROVIDER)
+    // The store resolves the stored client creds — this is the whole point.
+    // Only the EXACT stored refs succeed; any other ref resolves to null (a lost
+    // secret), so the test fails loudly if the impl reads the wrong ref.
+    storeGetMock.mockImplementation((ref: string) => {
+      if (ref === "ref-client-id") return okAsync("stored-client-id")
+      if (ref === "ref-client-secret") return okAsync(STORED_CLIENT_SECRET)
+      return okAsync(null)
+    })
+    buildAuthorizeUrlMock.mockReturnValue({
+      url: "https://github.com/login/oauth/authorize?reuse=1",
+      state: "state-reuse",
+      codeVerifier: "verifier-reuse",
+    })
+
+    // NO clientId/clientSecret in the input → reuse path.
+    const result = await startReconnect({ credentialId: "cred-reuse" })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error("expected ok")
+    expect(result.authorizeUrl).toBe("https://github.com/login/oauth/authorize?reuse=1")
+    // The stored client_secret must NEVER appear in the returned value.
+    expect(JSON.stringify(result)).not.toContain(STORED_CLIENT_SECRET)
+    // buildAuthorizeUrl was called with the STORED client_id (not re-typed).
+    expect(buildAuthorizeUrlMock).toHaveBeenCalledWith(
+      expect.objectContaining({ clientId: "stored-client-id" }),
+    )
+    // The pending stash carries the resolved creds for the token exchange.
+    const pending = takePending("state-reuse")
+    expect(pending?.clientId).toBe("stored-client-id")
+    expect(pending?.clientSecret).toBe(STORED_CLIENT_SECRET)
+  })
+
+  it("errors when reusing but the credential has no stored client refs", async () => {
+    credentialsGetMock.mockReturnValue(
+      okAsync({
+        id: "cred-norefs",
+        platformId: "github-platform",
+        profileName: "work",
+        kind: "oauth2",
+        secretRef: "ref-access",
+        // no clientIdRef/clientSecretRef
+        oauthMeta: { providerId: "github", scopes: ["repo"], needsReauth: true },
+      }),
+    )
+    getProviderMock.mockReturnValue(GITHUB_PROVIDER)
+
+    const result = await startReconnect({ credentialId: "cred-norefs" })
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error("expected error")
+    expect(result.error).toContain("no stored client credentials")
+  })
+
+  it("rejects a PARTIAL swap (clientId without clientSecret) rather than silently reusing", async () => {
+    credentialsGetMock.mockReturnValue(
+      okAsync({
+        id: "cred-partial",
+        platformId: "github-platform",
+        profileName: "work",
+        kind: "oauth2",
+        secretRef: "ref-access",
+        oauthMeta: {
+          providerId: "github",
+          scopes: ["repo"],
+          needsReauth: true,
+          clientIdRef: "ref-client-id",
+          clientSecretRef: "ref-client-secret",
+        },
+      }),
+    )
+    getProviderMock.mockReturnValue(GITHUB_PROVIDER)
+
+    // Only clientId — no clientSecret. Must error, NOT silently reuse the stored pair.
+    const result = await startReconnect({ credentialId: "cred-partial", clientId: "typed-id" })
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error("expected error")
+    expect(result.error).toContain("both client ID and client secret")
+    // The store was never consulted (no silent swap).
+    expect(storeGetMock).not.toHaveBeenCalled()
   })
 
   it("returns an error when the credential has no oauth provider on file", async () => {

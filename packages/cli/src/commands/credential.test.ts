@@ -1071,6 +1071,81 @@ describe("credential reconnect (D2, unit)", () => {
       expect(parsed.credential?.id).toBe(cred.id)
     })
   })
+
+  it("rejects a PARTIAL swap (--client-secret-stdin without --client-id) rather than silently reusing", async () => {
+    await withTempHome(async () => {
+      const cred = await seedOAuthCredential("google", {
+        oauthMeta: { providerId: "google", needsReauth: true } as Credential["oauthMeta"],
+      })
+      const reconnect = getCredentialSubCmd("reconnect")
+      const out = await captureStdout(() =>
+        // --client-secret-stdin set but NO --client-id → must error, not reuse.
+        reconnect.run?.(
+          ctx({ id: cred.id, device: true, "client-secret-stdin": true, json: true }),
+        ),
+      )
+      const parsed = JSON.parse(out.trim()) as { ok: boolean; error?: string }
+      expect(parsed.ok).toBe(false)
+      expect(parsed.error).toContain("both --client-id and --client-secret-stdin")
+      // Reuse never fired: no device flow, no persist.
+      expect(deviceAuthorizeMock).not.toHaveBeenCalled()
+      expect(persistOAuthTokensMock).not.toHaveBeenCalled()
+    })
+  })
+
+  it("REUSES stored client creds when --client-id is omitted (no stdin, no re-typing)", async () => {
+    await withTempHome(async () => {
+      const cred = await seedOAuthCredential("google", {
+        oauthMeta: {
+          providerId: "google",
+          needsReauth: true,
+          clientIdRef: "ref-stored-cid",
+          clientSecretRef: "ref-stored-csec",
+        } as Credential["oauthMeta"],
+      })
+      // Seed the store so the stored client refs actually resolve.
+      const storeResult = await createCredentialStore(getPaths())
+      if (storeResult.isErr()) throw new Error("store setup failed")
+      await storeResult.value.set("ref-stored-cid", "stored-cid-value")
+      await storeResult.value.set("ref-stored-csec", "stored-csec-value")
+
+      deviceAuthorizeMock.mockResolvedValue(
+        ok({
+          deviceCode: "devcode",
+          userCode: "RECN-0002",
+          verificationUri: "https://www.google.com/device",
+          intervalSeconds: 0,
+          expiresInSeconds: 600,
+        }),
+      )
+      devicePollMock.mockResolvedValueOnce({
+        isOk: () => true,
+        isErr: () => false,
+        value: { accessToken: "new-access", refreshToken: "new-refresh", expiresInSeconds: 3600 },
+      })
+      persistOAuthTokensMock.mockReturnValue(
+        new ResultAsync(
+          Promise.resolve(ok({ ...cred, oauthMeta: { ...cred.oauthMeta, needsReauth: false } })),
+        ),
+      )
+
+      // NO fakeStdin / --client-id / --client-secret-stdin → reuse path.
+      const reconnect = getCredentialSubCmd("reconnect")
+      const out = await captureStdout(() =>
+        reconnect.run?.(ctx({ id: cred.id, device: true, json: true })),
+      )
+
+      // The device flow ran with the STORED client_id (resolved server-side).
+      expect(deviceAuthorizeMock).toHaveBeenCalledWith(
+        expect.objectContaining({ clientId: "stored-cid-value" }),
+      )
+      const parsed = JSON.parse(out.trim()) as { ok: boolean; credential?: { id: string } }
+      expect(parsed.ok).toBe(true)
+      expect(parsed.credential?.id).toBe(cred.id)
+      // No secret leaked into output.
+      expect(out).not.toContain("stored-csec-value")
+    })
+  })
 })
 
 describe.skipIf(!builtBinReady)("credential commands (built bin, child process)", () => {

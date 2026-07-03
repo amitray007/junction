@@ -86,8 +86,14 @@ export async function startConnect(input: StartConnectInput): Promise<StartConne
 
 export interface StartReconnectInput {
   credentialId: string
-  clientId: string
-  clientSecret: string
+  /**
+   * BYO client creds — OPTIONAL. Omitted (the default) → reconnect REUSES the
+   * credential's already-stored client_id/secret (read server-side from the
+   * store, never re-typed). Supplied → swap to a DIFFERENT OAuth app (e.g. the
+   * provider-side secret was rotated). Both must be present together to swap.
+   */
+  clientId?: string
+  clientSecret?: string
 }
 
 export type StartReconnectResult = { ok: true; authorizeUrl: string } | { ok: false; error: string }
@@ -108,11 +114,54 @@ export async function startReconnect(input: StartReconnectInput): Promise<StartR
   const provider = getProvider(providerId)
   if (provider === undefined) return { ok: false, error: "Unknown OAuth provider" }
 
+  // Reconnect REUSES the stored client_id/secret by default — resolve them
+  // server-side from the store (never returned to the browser, never re-typed).
+  // The caller supplies clientId/clientSecret ONLY to swap to a different OAuth
+  // app (e.g. the provider-side secret was rotated); those take precedence.
+  //
+  // Reject a PARTIAL swap (exactly one of the two supplied) rather than silently
+  // discarding the typed value and reusing the stored pair — that would be a
+  // dishonest swap. This mirrors the CLI's honest error and keeps the CLI↔web
+  // contract symmetric. (The UI always sends the pair or neither, so this is
+  // reachable only by a direct server-fn call.)
+  if ((input.clientId === undefined) !== (input.clientSecret === undefined)) {
+    return {
+      ok: false,
+      error: "Supply both client ID and client secret to swap credentials, or neither to reuse",
+    }
+  }
+
+  let clientId: string
+  let clientSecret: string
+  if (input.clientId !== undefined && input.clientSecret !== undefined) {
+    clientId = input.clientId
+    clientSecret = input.clientSecret
+  } else {
+    const clientIdRef = credential.oauthMeta?.clientIdRef
+    const clientSecretRef = credential.oauthMeta?.clientSecretRef
+    if (clientIdRef === undefined || clientSecretRef === undefined) {
+      return { ok: false, error: "Credential has no stored client credentials" }
+    }
+    const storeResult = await createCredentialStore(getPaths())
+    if (storeResult.isErr()) return { ok: false, error: "Credential store unavailable" }
+    const store = storeResult.value
+    const idResult = await store.get(clientIdRef)
+    const secretResult = await store.get(clientSecretRef)
+    if (idResult.isErr() || secretResult.isErr()) {
+      return { ok: false, error: "Failed to read the stored client credentials" }
+    }
+    if (idResult.value === null || secretResult.value === null) {
+      return { ok: false, error: "Credential has lost its stored client credentials" }
+    }
+    clientId = idResult.value
+    clientSecret = secretResult.value
+  }
+
   const scopes = credential.oauthMeta?.scopes ?? provider.defaultScopes ?? []
 
   const { url, state, codeVerifier } = buildAuthorizeUrl({
     provider,
-    clientId: input.clientId,
+    clientId,
     redirectUri: WEB_REDIRECT_URI,
     scopes,
   })
@@ -120,8 +169,8 @@ export async function startReconnect(input: StartReconnectInput): Promise<StartR
   putPending(state, {
     codeVerifier: provider.pkce === "disabled" ? null : codeVerifier,
     providerId,
-    clientId: input.clientId,
-    clientSecret: input.clientSecret,
+    clientId,
+    clientSecret,
     scopes,
     createdAt: Date.now(),
     intent: { mode: "update", credentialId: input.credentialId },
