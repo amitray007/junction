@@ -10,11 +10,17 @@ import {
   createCredentialStore,
   createRepositories,
   getPaths,
+  refreshIfExpired,
   removeCredential,
   renameCredential,
   rotateCredential,
 } from "@junction/core"
-import { type VerifyOutcome, verifyCredential } from "@junction/source-runtime"
+import {
+  oauthRefreshFn,
+  refreshIfExpiredSingleFlight,
+  type VerifyOutcome,
+  verifyCredential,
+} from "@junction/source-runtime"
 import { getDb } from "./shared.server.js"
 
 // ---------------------------------------------------------------------------
@@ -248,7 +254,13 @@ async function loadPlatformForCredential(
   repos: ReturnType<typeof createRepositories>,
   credentialId: string,
 ): Promise<
-  | { ok: true; platform: Platform; secretRef: string; oauthProviderId?: string }
+  | {
+      ok: true
+      platform: Platform
+      credential: Credential
+      secretRef: string
+      oauthProviderId?: string
+    }
   | { ok: false; error: string }
 > {
   const credResult = await repos.credentials.get(credentialId)
@@ -268,6 +280,7 @@ async function loadPlatformForCredential(
   return {
     ok: true,
     platform: platformResult.value,
+    credential,
     secretRef: credential.secretRef,
     oauthProviderId: credential.oauthMeta?.providerId,
   }
@@ -289,6 +302,52 @@ function outcomeDetail(outcome: VerifyOutcome): string | undefined {
 // the method file (rule-of-three not yet hit at 2 sites).
 const STORED_SECRET_MISSING_DETAIL = "stored secret missing — rotate this credential"
 
+/** An honest "can't get a trustworthy token right now" detail for Test. */
+const NEEDS_REAUTH_DETAIL = "needs reconnect"
+
+/**
+ * Resolve the token to hand `verifyCredential` for Test Connection.
+ *
+ * For an oauth2 credential this mirrors the runtime's refresh-ahead path
+ * (source-runtime's resolve-provider.ts L126–172, single-flighted on the same
+ * `credential.id` key) so Test reports the credential's TRUE current status,
+ * not the status of a possibly-expired access token. Non-oauth2 credentials
+ * never reach this helper — `testCredential` keeps their plain `store.get`
+ * path unchanged.
+ *
+ * Returns a small tagged union rather than a `VerifyOutcome` directly: the
+ * caller still has to call `verifyCredential` with the resolved token, so
+ * this only decides WHICH token (or terminal outcome) feeds that call.
+ */
+async function resolveTokenForTest(
+  credential: Credential,
+  store: CredentialStore,
+  repos: ReturnType<typeof createRepositories>,
+): Promise<
+  { kind: "token"; value: string } | { kind: "lost" } | { kind: "auth-failed"; detail?: string }
+> {
+  const refreshResult = await refreshIfExpiredSingleFlight(credential.id, () =>
+    refreshIfExpired({ credential, store, repos, refreshFn: oauthRefreshFn, now: Date.now() }),
+  )
+
+  if (refreshResult.isErr()) {
+    const error = refreshResult.error
+    if (error.kind === "needs-reauth") {
+      return { kind: "auth-failed", detail: NEEDS_REAUTH_DETAIL }
+    }
+    // refresh-failed | not-oauth (defensive) — can't get a trustworthy token
+    // right now; matches resolve-provider's mapping (L152–163). Must NOT be
+    // reported as a false "ok".
+    return { kind: "auth-failed" }
+  }
+
+  const { accessToken } = refreshResult.value
+  // null accessToken = a lost/cleared secret (refreshIfExpired's own
+  // readCurrentToken/rotation both propagate this honestly) — never coerce
+  // to "" and never hand it to verifyCredential.
+  return accessToken === null ? { kind: "lost" } : { kind: "token", value: accessToken }
+}
+
 export async function testCredential(credentialId: string): Promise<TestCredentialResult> {
   const db = await getDb()
   if (db === null) return { ok: false, error: "Database unavailable" }
@@ -296,22 +355,53 @@ export async function testCredential(credentialId: string): Promise<TestCredenti
 
   const loaded = await loadPlatformForCredential(repos, credentialId)
   if (!loaded.ok) return { ok: false, error: loaded.error }
-  const { platform, secretRef, oauthProviderId } = loaded
+  const { platform, credential, secretRef, oauthProviderId } = loaded
 
   const storeResult = await createCredentialStore(getPaths())
   if (storeResult.isErr()) return { ok: false, error: "Credential store unavailable" }
+  const store = storeResult.value
 
-  const secretResult = await storeResult.value.get(secretRef)
-  if (secretResult.isErr()) return { ok: false, error: "Failed to read the stored secret" }
-  const secret = secretResult.value
+  let result: VerifyOutcome
+  // Set only for the oauth2 refresh-ahead's needs-reauth outcome — a detail
+  // string `VerifyOutcome`'s `auth-failed` variant has no room for (it's
+  // `verify-credential.ts`'s type, out of scope for this fix), but
+  // `TestCredentialResult` can carry regardless of status. Undefined for
+  // every other path (including a directly auth-failed verify, which stays
+  // detail-less exactly as it reports today).
+  let authFailedDetail: string | undefined
 
-  const result: VerifyOutcome =
-    secret === null
-      ? { status: "unreachable", detail: STORED_SECRET_MISSING_DETAIL }
-      : (await verifyCredential(platform, secret, getPaths(), { oauthProviderId })).unwrapOr({
-          status: "unreachable" as const,
-          detail: "verify failed unexpectedly",
-        })
+  if (credential.kind === "oauth2") {
+    // oauth2: refresh-ahead so Test reports the TRUE status, not the stale
+    // token's — see resolveTokenForTest for the full rationale. This is the
+    // ONE oauth2-specific branch in testCredential; non-oauth2 credentials
+    // fall through to the unchanged plain-store-read path below.
+    const resolved = await resolveTokenForTest(credential, store, repos)
+    if (resolved.kind === "auth-failed") {
+      result = { status: "auth-failed" }
+      authFailedDetail = resolved.detail
+    } else if (resolved.kind === "lost") {
+      result = { status: "unreachable", detail: STORED_SECRET_MISSING_DETAIL }
+    } else {
+      result = (
+        await verifyCredential(platform, resolved.value, getPaths(), { oauthProviderId })
+      ).unwrapOr({
+        status: "unreachable" as const,
+        detail: "verify failed unexpectedly",
+      })
+    }
+  } else {
+    const secretResult = await store.get(secretRef)
+    if (secretResult.isErr()) return { ok: false, error: "Failed to read the stored secret" }
+    const secret = secretResult.value
+
+    result =
+      secret === null
+        ? { status: "unreachable", detail: STORED_SECRET_MISSING_DETAIL }
+        : (await verifyCredential(platform, secret, getPaths(), { oauthProviderId })).unwrapOr({
+            status: "unreachable" as const,
+            detail: "verify failed unexpectedly",
+          })
+  }
 
   if (
     result.status === "ok" ||
@@ -327,6 +417,6 @@ export async function testCredential(credentialId: string): Promise<TestCredenti
   }
   // "not-verifiable" is never persisted — a property of the platform, not an event.
 
-  const detail = outcomeDetail(result)
+  const detail = authFailedDetail ?? outcomeDetail(result)
   return { ok: true, status: result.status, ...(detail !== undefined ? { detail } : {}) }
 }
