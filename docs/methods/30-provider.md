@@ -67,8 +67,12 @@ are disconnected rows with nothing tying them together. Inc 30 adds the App axis
 ### Proof of done
 - `pnpm verify` green (build + typecheck + Biome + Vitest), self-contained.
 - The web dashboard shows an **Apps** nav item; `/app` lists supported apps with a
-  connected/available indicator; `/app/github` (against `/tmp/jt29ui`) lists the user's real
-  GitHub + Google connections with correct status badges and a working lifecycle menu.
+  connected/available indicator.
+- `/app/github` (against `/tmp/jt29ui`) lists the user's real GitHub connections with correct
+  status badges and a working lifecycle menu.
+- `/app/google` (against `/tmp/jt29ui`) lists the user's real Google connections with correct
+  status badges (a distinct check — guards against a shipped OAuth provider mis-grouping to
+  "Other", the bug real-server QA caught).
 - The inc-29 OAuth connect + refresh + badges are **byte-identical** after the change (driven
   against the real running server, `docs/behaviours/verify-the-artifact.md`).
 - **Grouping tests (positive AND negative controls — review C2):** a GitHub platform + a GitHub
@@ -81,6 +85,9 @@ are disconnected rows with nothing tying them together. Inc 30 adds the App axis
   test** — parity with every existing server module.
 - **Catalog-integrity test:** every app's `auth[]` `oauth2` `providerId` resolves via
   `getProvider()` (a typo would dead-link the connect CTA).
+- **Reverse-coverage test:** every non-generic OAuth provider in `listProviders()` has a
+  matching App entry (else a real OAuth connection mis-groups to "Other" — the green-but-blind
+  bug caught in real-server QA; see `docs/futures/gotchas.md`).
 
 ---
 

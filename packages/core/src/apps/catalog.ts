@@ -117,8 +117,10 @@ const APPS: readonly AppDefinition[] = [
     id: "notion",
     displayName: "Notion",
     supportedKinds: ["mcp"],
-    // Notion is OAuth-mandatory — no bearer path (research doc, cross-cutting note).
-    auth: [{ mode: "oauth2", providerId: "notion" }],
+    // Public OAuth is Notion's hosted-integration path; internal integrations
+    // authenticate with a static internal-integration bearer token, so both
+    // paths are offered (OAuth first = default).
+    auth: [{ mode: "oauth2", providerId: "notion" }, { mode: "token" }],
   },
   {
     id: "linear",

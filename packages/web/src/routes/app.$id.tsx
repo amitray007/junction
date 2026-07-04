@@ -16,6 +16,7 @@ import { createFileRoute, Link, notFound, useRouter } from "@tanstack/react-rout
 import { Plug, Plus, RefreshCw, TestTube, Trash2 } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
+import { formatCheckedAt } from "../lib/format-date.js"
 import type { AppMeta, AppsData, ConnectionMeta } from "../server/data.functions.js"
 import { getApps } from "../server/data.functions.js"
 import {
@@ -480,7 +481,7 @@ function ConnectionRow({
           <StatusBadge status={status} />
           {connection.lastVerifiedAt !== undefined && (
             <span style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)" }}>
-              checked recently
+              {formatCheckedAt(connection.lastVerifiedAt)}
             </span>
           )}
         </div>

@@ -10,6 +10,7 @@ import { createFileRoute, useRouter } from "@tanstack/react-router"
 import { Copy, Pencil, Plug, Plus, RefreshCw, TestTube, Trash2 } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
+import { formatCheckedAt } from "../lib/format-date.js"
 import type { TableColumn } from "../lib/use-table-view.js"
 import { useTableView } from "../lib/use-table-view.js"
 import type { CredentialMeta, OAuthProviderMeta, PlatformMeta } from "../server/data.functions.js"
@@ -130,24 +131,6 @@ function oauthStatus(
     if (!Number.isNaN(expiresAtMs) && expiresAtMs - now <= EXPIRING_WINDOW_MS) return "expiring"
   }
   return "connected"
-}
-
-// Pinned-UTC timestamp formatter (inc-27 SSR-hydration rule — see keys.tsx).
-// NEVER render relative time ("2h ago"): server and client clocks/renders can
-// disagree, producing a hydration mismatch. Module-scope so the Intl instance
-// is built once, not per render.
-const CHECKED_AT_FORMAT = new Intl.DateTimeFormat("en-US", {
-  year: "numeric",
-  month: "short",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false,
-  timeZone: "UTC",
-})
-
-function formatCheckedAt(ms: number): string {
-  return `checked ${CHECKED_AT_FORMAT.format(new Date(ms))} UTC`
 }
 
 // Page size for the paginated table (F12). 25 rows is comfortable for the seed (10)

@@ -68,9 +68,13 @@ function AppCard({ app }: { readonly app: AppCardData }) {
                 <MonoChip key={kind}>{kind}</MonoChip>
               ))}
             </div>
+          ) : app.id === "other" ? (
+            <span style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)" }}>
+              Connections that don't match a known app
+            </span>
           ) : (
             <span style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)" }}>
-              OAuth-only — no standable vertical
+              OAuth-only — no standalone vertical
             </span>
           )}
         </CardContent>

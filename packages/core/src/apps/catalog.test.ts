@@ -47,11 +47,11 @@ describe("getApp / listApps", () => {
     expect(github.aliases).toContain("gh")
   })
 
-  it("notion: OAuth-mandatory, no token auth mode", () => {
+  it("notion: OAuth (hosted integration) + token (internal integration), OAuth first", () => {
     const notion = getApp("notion")
     expect(notion).toBeDefined()
     if (!notion) return
-    expect(notion.auth).toEqual([{ mode: "oauth2", providerId: "notion" }])
+    expect(notion.auth).toEqual([{ mode: "oauth2", providerId: "notion" }, { mode: "token" }])
   })
 
   it("figma: both a 'none' (local MCP) and an 'oauth2' (REST API) auth mode", () => {
