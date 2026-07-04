@@ -57,11 +57,12 @@ are disconnected rows with nothing tying them together. Inc 30 adds the App axis
 - **The per-app page is a list of connections**, not a dense grid — honoring "choose once"
   (a vertical is a choice made at connect time, not a checklist) while keeping the
   **multi-account wedge** (accounts multiply: work + personal).
-- **Lifecycle menu** per connection surfaces shipped inc-24–29 ops + one NEW op ("Change
-  method" = guided disconnect+reconnect via a different vertical — a compose of shipped ops,
-  NOT an atomic in-place mutation).
-- **IA:** new **Apps** sidebar item (primary); Platforms/Credentials/Profiles kept reachable
-  under an "Advanced" group (junction's transparency differentiator is preserved, not hidden).
+- **Lifecycle menu** per connection surfaces **shipped inc-24–29 ops only** (test / reconnect
+  / rotate / rename / disconnect + "+ Connect account"). **"Change method" is DEFERRED to
+  inc 30.5** (§8) — the one genuinely new, non-atomic op; not built here.
+- **IA:** new **Apps** sidebar item (primary); Platforms/Credentials/Profiles kept reachable,
+  separated by the existing bare hairline (**no eyebrow label** — inc-24.5 rule honored).
+  junction's transparency differentiator is preserved, not hidden.
 
 ### Proof of done
 - `pnpm verify` green (build + typecheck + Biome + Vitest), self-contained.
@@ -70,8 +71,16 @@ are disconnected rows with nothing tying them together. Inc 30 adds the App axis
   GitHub + Google connections with correct status badges and a working lifecycle menu.
 - The inc-29 OAuth connect + refresh + badges are **byte-identical** after the change (driven
   against the real running server, `docs/behaviours/verify-the-artifact.md`).
-- A **positive-control test** on `groupByApp` proves a known GitHub platform+credential lands
-  under the GitHub App (guards the new "green but blind" grouping surface — STATE §3).
+- **Grouping tests (positive AND negative controls — review C2):** a GitHub platform + a GitHub
+  oauth credential (`oauthProviderId:"github"`) groups under "github"; a **bearer**-authed
+  GitHub platform whose id exactly matches groups under "github" via the id heuristic; a
+  bearer GitHub whose id does NOT match lands in **"other"** (assert it — don't pretend it
+  groups); the **wedge** (two accounts on one platform) yields two connections; a
+  public/no-credential platform yields a credential-less connection.
+- **`readApps` metadata-only test** (no secret/secretRef in the DTO) + **`getApps` host-guard
+  test** — parity with every existing server module.
+- **Catalog-integrity test:** every app's `auth[]` `oauth2` `providerId` resolves via
+  `getProvider()` (a typo would dead-link the connect CTA).
 
 ---
 
@@ -103,30 +112,62 @@ export function getApp(id: string): AppDefinition | undefined
 export function listApps(): AppDefinition[]
 ```
 
-New pure grouping function `packages/core/src/apps/group.ts`:
+New pure grouping function `packages/core/src/apps/group.ts`.
+
+**Attribution is grained at the CONNECTION level, not the platform level** (review C2). A
+"connection" = one credential + its platform (the account + the chosen vertical). Grouping
+per-connection sidesteps the "which app owns a platform that has two different-provider
+credentials" ambiguity entirely — each connection attributes independently, which also matches
+the per-app page's list-of-connections model (§7). A public/no-credential platform contributes
+a **credential-less connection** (account = "—") attributed by the platform heuristic alone.
 
 ```ts
-/** A platform's App id, or undefined if it can't be attributed. */
-export function appIdForPlatform(
-  platform: { id: string; kind: PlatformKind },
-  // the OAuth credential(s) on this platform carry the authoritative providerId
-  credentials: { platformId: string; oauthProviderId?: string }[],
-): string | undefined
+/** One connection = one account's access to an app via one vertical. */
+export interface Connection {
+  appId: string                 // resolved app id, or "other"
+  account: string               // credential profileName, or "—" for a public platform
+  platformId: string
+  kind: PlatformKind            // the chosen vertical
+  // status fields carried through from CredentialMeta (verify result, oauthState) — metadata only
+}
 
 /**
- * Group platforms + credentials into apps. PURE — no I/O. The web/cli read layers
- * feed it their already-loaded lists. Unmatched platforms bucket under "other".
+ * Resolve ONE connection's app id. Attribution order (NO fuzzy/substring matching — that rots):
+ *   1. authoritative: the credential's oauthProviderId (from oauthMeta.providerId) if present
+ *      → map providerId → appId (an app whose auth[] contains {mode:"oauth2", providerId}).
+ *   2. exact, case-insensitive match of platform.id against AppDefinition.id.
+ *   3. exact, case-insensitive match of platform.id against AppDefinition.aliases[] (see below).
+ *   4. exact, case-insensitive match of platform.displayName against id/displayName.
+ *   5. else → "other".
+ */
+export function appIdForConnection(
+  conn: { platformId: string; platformDisplayName: string; kind: PlatformKind; oauthProviderId?: string },
+  platformIndex: /* id/displayName lookups */,
+): string   // never undefined — unmatched returns "other"
+
+/**
+ * Group platforms + credentials into apps. PURE — no I/O. The web/cli read layers feed it
+ * their already-loaded metadata lists. Every connection lands in exactly one group (an app
+ * from the catalog, or the synthetic "other" group). An app in the catalog with zero
+ * connections is NOT emitted here — the /app INDEX left-joins listApps() against these groups
+ * (§2b) so unconnected apps still appear as browsable cards.
  */
 export function groupByApp(input: {
   platforms: { id: string; kind: PlatformKind; displayName: string }[]
-  credentials: { platformId: string; account: string; oauthProviderId?: string; /* status fields */ }[]
+  credentials: { platformId: string; account: string; oauthProviderId?: string; /* status */ }[]
 }): AppGroup[]
 ```
 
-`AppGroup` shape (what the per-app page renders): the App definition + the list of
-**connections** under it (each = `{ account, platformId, kind (the chosen vertical), status }`).
-Attribution rule: **prefer `oauthProviderId`** (authoritative, from `oauthMeta.providerId`);
-fall back to matching `platform.id`/`displayName` against `listApps()`; else "other".
+`AppGroup` = `{ appId, connections: Connection[] }`. **`AppDefinition` gains an optional
+`aliases?: string[]`** so a service reachable under a couple of well-known platform-ids
+(e.g. github ← "gh", "github-rest") attributes correctly WITHOUT fuzzy matching. The "other"
+group has no `AppDefinition` (see §2b for how the index/route handle it).
+
+**DTO mapping the web edge MUST do (review C2):** `CredentialMeta` nests the provider id as
+`oauthState.providerId` — there is NO flat `oauthProviderId` field. `readApps` maps
+`credential.oauthState?.providerId → oauthProviderId` before calling `groupByApp`. Skipping
+this silently buckets every OAuth connection into "other" (the exact green-but-blind failure
+the positive-control test guards).
 
 > **Why pure, in `core`:** everything imports `core`; the catalog is knowledge, the grouping
 > is a pure transform. No HTTP, no repos here — the web/cli edges load the rows and call these.
@@ -140,18 +181,27 @@ fall back to matching `platform.id`/`displayName` against `listApps()`; else "ot
   an `AppGroupMeta[]` DTO (metadata-only — reuses `CredentialMeta`'s oauth state; NEVER a
   secret/ref). Host-guarded like every other server-fn.
 - New routes:
-  - `packages/web/src/routes/apps.tsx` → `/app` index: browse `listApps()` with a
-    connected/available indicator per app (derived from the groups).
-  - `packages/web/src/routes/app.$id.tsx` → `/app/:id`: the per-app page (empty-state catalog
-    CTA when no connections; list-of-connections + lifecycle ⋯ menu when populated).
-- Sidebar: add `{ to: "/app", label: "Apps", icon: <choose a Lucide icon, e.g. Boxes/Grid> }`
-  to `NAV_TOP` (primary), and move Platforms/Profiles/Credentials under an **"Advanced"**
-  group eyebrow (they already sit in `NAV_DATA` — add the group label + visual separation).
+  - `packages/web/src/routes/apps.tsx` → `/app` index: **renders `listApps()` as the spine**,
+    left-joining connection counts from `groupByApp` (available = in catalog; connected = ≥1
+    connection). **Plus a synthetic "Other" card** when any connection attributes to "other"
+    (transparency — nothing hidden, §8), routing to a guarded `/app/other`.
+  - `packages/web/src/routes/app.$id.tsx` → `/app/:id`: the per-app page. `getApp(id)` for a
+    catalog app; for `id === "other"` render a synthetic group (fixed "Other / uncatalogued"
+    label — do NOT call `getApp("other")`, it returns undefined). Empty-state catalog CTA when
+    no connections; list-of-connections + lifecycle ⋯ menu when populated. An unknown id
+    (not in catalog, not "other", no connections) → not-found.
+- Sidebar: add `{ to: "/app", label: "Apps", icon: <a Lucide icon, e.g. Boxes/Grid/LayoutGrid> }`
+  to `NAV_TOP` at position 2 → order `Dashboard, Apps, Audit, API Keys, Settings`. Platforms/
+  Profiles/Credentials stay in `NAV_DATA`, separated by the **existing bare hairline
+  separator — NO "Advanced" eyebrow label** (honor the inc-24.5 no-eyebrow rule; user decision
+  2026-07-04). `/app` active-highlight uses the existing `startsWith` logic (stays active on
+  `/app/:id`); do NOT add a separate detail nav item.
 - The lifecycle ⋯ menu reuses the EXISTING mutation server-fns (from `mutations.functions.ts`
-  + `oauth-connect.functions.ts`): `testCredentialFn`, `startReconnectFn`, `rotateCredentialFn`,
-  `renameCredentialFn`, `removeCredentialFn`, `startConnectFn`. **"Change method"** is a guided
-  flow that composes `removeCredentialFn` (+ platform delete) then `startConnectFn` against a
-  different `Platform.kind`, reusing stored client creds (inc-29 PR #94 reconnect-reuse).
+  + `oauth-connect.functions.ts`) — surfacing shipped ops only: `testCredentialFn`,
+  `startReconnectFn`, `rotateCredentialFn`, `renameCredentialFn`, `removeCredentialFn`, and
+  `startConnectFn` (for "+ Connect account"). **"Change method" is DEFERRED to inc 30.5**
+  (user decision 2026-07-04 — see §8) — it is NOT an atomic op and needs an additive
+  reconnect-first ordering + a client-cred-reuse helper + a security pass; do NOT build it here.
 
 ### 2c. `cli` (optional leaf) — a scriptable read
 
@@ -169,29 +219,41 @@ mandate). Recommended: core first (committed-to-lock), then web (the substantive
 optional.
 
 ### Slice A (core, blocking) — `AppCatalog` + `groupByApp`
-1. `packages/core/src/apps/catalog.ts` — `AppDefinition`, `getApp`, `listApps`. Seed the
-   **OAuth-8 + generic** apps (github, github-app, google, slack, microsoft, notion,
-   atlassian, generic), each with `supportedKinds` = *what junction can stand up today* and
-   `auth` linking to the matching `oauth/catalog.ts` provider id. Keep it small and honest.
-2. `packages/core/src/apps/group.ts` — `appIdForPlatform`, `groupByApp` (pure). Attribution
-   prefers `oauthProviderId`; falls back to id/displayName match; else "other".
+1. `packages/core/src/apps/catalog.ts` — `AppDefinition` (+ optional `aliases`), `getApp`,
+   `listApps`. **Seed from the researched real-service data** (`docs/design/app-catalog-data.md`
+   — the orchestrator's research output, ≥10 verified real services PER category across oauth /
+   mcp / openapi / graphql / cli). Each entry: `supportedKinds` = *what junction can stand up
+   today*, `auth[]` linking oauth2 entries to the matching `oauth/catalog.ts` provider id.
+   **Include non-OAuth apps** (token/BYO) so the catalog proves App ⊥ auth-mechanism (design
+   §6). Only ship VERIFIED connection data — no invented package names / spec URLs / endpoints.
+2. `packages/core/src/apps/group.ts` — `appIdForConnection`, `groupByApp` (pure).
+   **Connection-level attribution** (§2a): authoritative `oauthProviderId` → then EXACT
+   case-insensitive id → `aliases` → displayName; else "other". NO fuzzy/substring matching.
 3. Barrel exports in `packages/core/src/index.ts`.
-4. **Tests** (`apps/catalog.test.ts`, `apps/group.test.ts`): catalog lookups; and the
-   **positive-control** grouping test — a GitHub platform + a GitHub oauth credential (with
-   `oauthProviderId: "github"`) groups under the "github" App; an unattributable platform
-   lands in "other"; the wedge (two accounts on one platform) yields two connections.
+4. **Tests** (`apps/catalog.test.ts`, `apps/group.test.ts`): catalog lookups; **catalog
+   integrity** (every oauth2 `providerId` resolves via `getProvider`); and grouping
+   **positive + negative controls** — GitHub-oauth groups under "github"; bearer-GitHub with
+   matching id groups; bearer-GitHub with NON-matching id lands in "other" (asserted); the
+   wedge → two connections; a public/no-credential platform → a credential-less connection.
 5. `pnpm verify` green. Commit-to-lock before any leaf fan-out (STATE §3 orchestration rule).
 
 ### Slice B (web, leaf) — the Apps surface
 6. `readApps` (`data.server.ts`) + `getApps` (`data.functions.ts`) — `AppGroupMeta[]` DTO,
-   metadata-only, host-guarded. Reuse `readPlatforms`/`readCredentials`.
-7. `/app` index route (`apps.tsx`) — browse apps, connected/available indicator.
+   metadata-only, host-guarded. Reuse `readPlatforms`/`readCredentials`; **map
+   `oauthState?.providerId → oauthProviderId`** before calling `groupByApp` (review C2).
+7. `/app` index route (`apps.tsx`) — **`listApps()` as the spine**, left-joined with the
+   groups for connected/available; **synthetic "Other" card** when any "other" connections
+   exist.
 8. `/app/:id` route (`app.$id.tsx`) — empty-state catalog CTA + list-of-connections + the
-   lifecycle ⋯ menu (wired to existing mutation fns). "Change method" guided flow.
-9. Sidebar: add **Apps** to `NAV_TOP`; group Platforms/Profiles/Credentials under "Advanced".
-10. **Component tests** (happy-dom/Testing-Library) for the two routes: empty state renders
-    the CTA; populated state lists connections with correct badges; the ⋯ menu exposes the
-    lifecycle actions. Follow the inc-24+ web write-path test patterns.
+   lifecycle ⋯ menu (wired to EXISTING mutation fns — **no "Change method"**, deferred to 30.5).
+   `id === "other"` renders the synthetic group (fixed label, do NOT `getApp("other")`).
+9. Sidebar: add **Apps** to `NAV_TOP` at position 2 (`Dashboard, Apps, Audit, API Keys,
+   Settings`); keep Platforms/Profiles/Credentials in `NAV_DATA` behind the **existing bare
+   hairline separator — no eyebrow label**.
+10. **Tests:** component tests (happy-dom/Testing-Library) for both routes (empty→CTA,
+    populated→connections+badges, ⋯ menu exposes the shipped lifecycle actions); the `readApps`
+    **metadata-only** assertion (JSON-stringify negative test, like `data.server.test.ts`); the
+    `getApps` **host-guard** test. Follow inc-24+ web patterns.
 11. Clean stale `.js` in `src/routes/` before `vite build` (inc-24.5 gotcha).
 
 ### Slice C (cli, optional leaf) — `junction app`
@@ -218,10 +280,9 @@ optional.
   bucket + wedge cardinality), `ce-maintainability-reviewer` (catalog stays curated-small).
 - **Slice B (web):** `junction-web-reviewer` (server-only-core boundary, credentials
   metadata-only, design-token discipline, a11y, component tests), `ce-correctness-reviewer`
-  (the "Change method" compose-of-ops flow — the one genuinely new behaviour).
-- **Security lens:** confirm the new read surface leaks no secret/ref (metadata-only DTO) and
-  that "Change method" can't strand a credential or leak client creds during the
-  disconnect+reconnect. Reuse the `web:leakcheck` gate on the built bundle.
+  (the index left-join + the "other" routing + active-nav behaviour).
+- **Security lens:** confirm the new read surface leaks no secret/ref (metadata-only DTO).
+  Reuse the `web:leakcheck` gate on the built bundle.
 - Run CodeRabbit CLI before merge (repo helper); resolve AND reply to every thread
   (GraphQL `resolveReviewThread` — the merge-block gotcha, STATE §3 / gotchas.md).
 
@@ -230,16 +291,17 @@ optional.
 - Do NOT create an owning App entity/table (option E, deferred — trigger in revisit-when.md).
 - Do NOT touch `OAuthMetaSchema`, `persistOAuthTokens`, or the refresh engine.
 - Do NOT name anything `Provider` in code.
-- Do NOT hide/remove the Platforms/Credentials/Profiles pages — they move to "Advanced",
+- Do NOT hide/remove the Platforms/Credentials/Profiles pages — bare-separator only, no label,
   stay fully functional.
-- Do NOT make "Change method" an in-place `Platform.kind` mutation — compose shipped ops.
+- Do NOT build "Change method" (deferred to inc 30.5, §8).
+- Do NOT fuzzy/substring-match in attribution — exact case-insensitive only, else "other".
+- Do NOT ship invented catalog data — only VERIFIED real connection details (§8 research).
 - Do NOT return raw core types at the web edge — metadata-only DTOs.
 
 ## 6. Report-back (what the builder returns)
-- Files created/changed; `pnpm verify` result (paste tail); the grouping positive-control
-  test output; confirmation the inc-29 flow is unchanged (byte-identical badges); any
-  attribution edge cases found (what landed in "other" and why); whether the cli slice shipped
-  or deferred.
+- Files created/changed; `pnpm verify` result (paste tail); the grouping positive+negative
+  control test output; confirmation the inc-29 flow is unchanged (byte-identical badges); which
+  connections landed in "other" and why; whether the cli slice shipped or deferred.
 
 ---
 
@@ -252,3 +314,24 @@ optional.
   record the symptom + that the authoritative `oauthProviderId` is the reliable key.
 - Update `docs/methods/README.md` (mark inc 30 `done`), `docs/STATE.md` (§1 snapshot + §7 log
   + the `STATE-done-through` marker), via the `junction-handover` skill.
+
+---
+
+## 8. Deferred to inc 30.5 (its own follow-up increment — user decision 2026-07-04)
+
+inc 30 ships the App **surface**; the richer, higher-risk lifecycle lands in **inc 30.5**,
+which collects everything deliberately held back from 30 so 30 stays low-risk and additive:
+
+- **"Change method"** — swap a connection's vertical (e.g. REST → MCP). NOT atomic: a REST and
+  an MCP connection are different `Platform` rows + `Credential`. Must be an **additive,
+  reconnect-first** flow: create the new-kind platform + connect the new credential + verify
+  the callback `ok` **first**, and only **then** remove the old credential + platform — so a
+  failed/abandoned reconnect leaves the original connection intact (no stranding). Requires a
+  **new named helper** to reuse the old credential's stored client creds cross-vertical
+  (`startConnect` today REQUIRES client creds and has NO reuse path — the reuse only exists in
+  `startReconnect`; PR #94's reuse does NOT apply to `startConnect`). Needs a dedicated
+  **security-reviewer pass** (credential-store touch; must not strand or leak client creds).
+- Any other lifecycle richness surfaced during the inc-30 build that isn't a straight reuse of
+  a shipped op.
+
+Add inc 30.5 to `docs/methods/README.md` as `planned` when inc 30 merges (audit stays 31).
