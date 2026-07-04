@@ -229,3 +229,11 @@ Non-obvious sharp edges we've already paid for. Each lists the **symptom** and t
 ## Credential hardening (inc 28.9)
 
 - **file-cred materialization — crash-window orphan.** A hard process kill between the per-call `writeFile` and the `finally`-rm in `createCliProvider`'s `callTool` (`packages/core/src/sources/cli/provider.ts`) leaves a 0600 `cred` file behind in `<paths.runtimeDir>/cred-XXXX` (`~/.junction/run/cred-XXXX`). Mitigation in place: the parent (`runtimeDir`) is 0700 and every file inside is 0600, so only the same user can read an orphan — but nothing currently reaps it. A best-effort startup sweep of stale `cred-*` dirs under `runtimeDir` (age-based, e.g. anything older than a few minutes) is a future hardening; not implemented this increment. Also: kind "file" content is read/written as **utf8 text** — correct for text secrets (kubeconfig, service-account JSON) but would silently corrupt a genuinely binary secret (e.g. a DER-encoded cert/key). This is documented behaviour, not byte-exact for non-utf8 content — if a binary kind is ever needed, it must be a distinct credential kind, not an extension of "file".
+
+## PR merge silently blocked on unresolved review threads (not just failing checks)
+
+**Symptom:** `gh pr merge` appears to run but the PR stays OPEN + `mergeStateStatus: BLOCKED`, even though all 7 CI checks pass and the PR is `MERGEABLE`. `main` has **no classic branch protection** (`GET .../branches/main/protection` → 404), so it's easy to assume nothing is gating the merge.
+
+**Cause:** the repo uses a **ruleset** (`GET repos/.../rulesets`), and the `pull_request` rule sets **`required_review_thread_resolution: true`** (with `required_approving_review_count: 0` — so no *approval* is needed, but every review **comment thread must be resolved**). CodeRabbit posts review-comment threads on most PRs; an unresolved thread blocks merge even when its finding is a no-op.
+
+**Fix:** for every PR, after triaging CodeRabbit's inline comments, **reply to AND resolve each thread** — replying alone is not enough. Find unresolved threads via the GraphQL `reviewThreads` query (`isResolved==false`), reply with `addPullRequestReviewThreadReply`, then `resolveReviewThread`. Then `mergeStateStatus` flips to CLEAN. (Raised inc 29 handover, 2026-07-04 — a reslot docs PR sat silently unmerged.)
