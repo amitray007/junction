@@ -1,22 +1,45 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Route test for /app (index) — the Apps browse-catalog page (increment 30).
+// Route test for /app (index) — the Apps browse-catalog page (increment 30,
+// search/filter/sort added increment 30.5 slice 2).
 // Strategy: mock createFileRoute so Route.useLoaderData() returns test fixtures,
 // then import the module and render Route.options.component. Mirrors
 // -platforms.test.tsx's mocking pattern.
+//
+// Facet filters (Status/Method): happy-dom can't drive the Radix Select portal
+// open (see -platforms.test.tsx / -credentials.test.tsx for the same
+// limitation) — these tests assert the triggers are present, labeled, and
+// default to "All …"; the compose-as-AND filtering behavior itself is exercised
+// via useTableView's predicate (generically covered by use-table-view.test.tsx)
+// and functionally proven here via search (which drives the identical
+// filtered→sorted pipeline). The open→choose→filter UI path is covered by the
+// junction-web-verify browser pass.
 
-import { cleanup, render, screen } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen } from "@testing-library/react"
 import type React from "react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { AppGroupMeta, AppMeta } from "../server/data.functions.js"
 
 // ---- Fixtures ---------------------------------------------------------------
 
+// Ordered so a naive "catalog order" test would fail if connected-first sort
+// isn't applied: GitLab (unconnected, alphabetically before GitHub) sits
+// before GitHub (connected) in the catalog array.
 const catalog: AppMeta[] = [
+  {
+    id: "gitlab",
+    displayName: "GitLab",
+    supportedKinds: ["cli", "openapi", "graphql"],
+    auth: [{ mode: "oauth2", providerId: "gitlab" }, { mode: "token" }],
+    aliases: ["glab"],
+    iconSlug: "gitlab",
+  },
   {
     id: "github",
     displayName: "GitHub",
     supportedKinds: ["mcp", "cli", "openapi", "graphql"],
     auth: [{ mode: "oauth2", providerId: "github" }, { mode: "token" }],
+    aliases: ["gh"],
+    iconSlug: "github",
   },
   {
     id: "spotify",
@@ -130,7 +153,7 @@ describe("AppsIndexPage", () => {
     mockUseLoaderData.mockReturnValue(populatedLoaderData)
     render(<AppsIndexPage />)
     expect(screen.getByText("1 connected")).toBeInTheDocument()
-    expect(screen.getByText("Available")).toBeInTheDocument()
+    expect(screen.getAllByText("Available").length).toBeGreaterThan(0)
   })
 
   it("links each app card to /app/:id", () => {
@@ -152,9 +175,126 @@ describe("AppsIndexPage", () => {
     expect(otherLink).toHaveAttribute("href", "/app/other")
   })
 
-  it("shows the OAuth-only note for an app with no supportedKinds", () => {
+  it("renders an oauth badge (not the old sentence) for an app with no supportedKinds", () => {
     mockUseLoaderData.mockReturnValue(populatedLoaderData)
     render(<AppsIndexPage />)
-    expect(screen.getByText(/oauth-only/i)).toBeInTheDocument()
+    expect(screen.queryByText(/oauth-only/i)).not.toBeInTheDocument()
+    const spotifyCard = screen.getByText("Spotify").closest("a")
+    expect(spotifyCard).toHaveTextContent("oauth")
+  })
+
+  it("renders a brand glyph for an app with a known iconSlug, and a letter tile for one without", () => {
+    mockUseLoaderData.mockReturnValue(populatedLoaderData)
+    render(<AppsIndexPage />)
+    // The glyph is decorative (aria-hidden, name is visible) — assert on the DOM.
+    // GitHub has iconSlug: "github" -> a real <path> glyph, not a blank.
+    const githubCard = screen.getByText("GitHub").closest("a")
+    expect(githubCard?.querySelector("path")).toBeInTheDocument()
+    // Spotify has no iconSlug in this fixture -> letter tile fallback (no <path>), never blank.
+    const spotifyCard = screen.getByText("Spotify").closest("a")
+    expect(spotifyCard?.querySelector("path")).not.toBeInTheDocument()
+    expect(spotifyCard).toHaveTextContent("S")
+  })
+
+  // ── Search ──────────────────────────────────────────────────────────────────
+
+  it("search input is present and labeled", () => {
+    mockUseLoaderData.mockReturnValue(populatedLoaderData)
+    render(<AppsIndexPage />)
+    expect(screen.getByRole("searchbox", { name: /search apps/i })).toBeInTheDocument()
+  })
+
+  it("narrows the grid via search (typing 'git' shows only GitHub/GitLab)", () => {
+    mockUseLoaderData.mockReturnValue(populatedLoaderData)
+    render(<AppsIndexPage />)
+    fireEvent.change(screen.getByRole("searchbox", { name: /search apps/i }), {
+      target: { value: "git" },
+    })
+    expect(screen.getByText("GitHub")).toBeInTheDocument()
+    expect(screen.getByText("GitLab")).toBeInTheDocument()
+    expect(screen.queryByText("Spotify")).not.toBeInTheDocument()
+  })
+
+  it("searches by alias (typing 'gh' matches GitHub via its alias)", () => {
+    mockUseLoaderData.mockReturnValue(populatedLoaderData)
+    render(<AppsIndexPage />)
+    fireEvent.change(screen.getByRole("searchbox", { name: /search apps/i }), {
+      target: { value: "gh" },
+    })
+    expect(screen.getByText("GitHub")).toBeInTheDocument()
+    expect(screen.queryByText("Spotify")).not.toBeInTheDocument()
+  })
+
+  it("search with no match shows the 'no apps match your filters' empty state", () => {
+    mockUseLoaderData.mockReturnValue(populatedLoaderData)
+    render(<AppsIndexPage />)
+    fireEvent.change(screen.getByRole("searchbox", { name: /search apps/i }), {
+      target: { value: "nonexistent-app-xyz" },
+    })
+    expect(screen.getByText(/no apps match your filters/i)).toBeInTheDocument()
+  })
+
+  // ── Facet filters (Status / Method) ────────────────────────────────────────
+  // See the file-level comment: the Radix Select portal can't be driven open
+  // in happy-dom, so these assert presence/labels/defaults only.
+
+  it("Status and Method filter dropdowns are present, labeled, default to 'All …'", () => {
+    mockUseLoaderData.mockReturnValue(populatedLoaderData)
+    render(<AppsIndexPage />)
+
+    const statusTrigger = screen.getByRole("combobox", { name: /filter by status/i })
+    expect(statusTrigger).toBeInTheDocument()
+    expect(statusTrigger.textContent).toMatch(/all statuses/i)
+
+    const methodTrigger = screen.getByRole("combobox", { name: /filter by method/i })
+    expect(methodTrigger).toBeInTheDocument()
+    expect(methodTrigger.textContent).toMatch(/all methods/i)
+  })
+
+  // ── Sort toggle ─────────────────────────────────────────────────────────────
+
+  it("defaults to connected-first ordering (GitHub before GitLab/Spotify despite catalog order)", () => {
+    mockUseLoaderData.mockReturnValue(populatedLoaderData)
+    render(<AppsIndexPage />)
+    const cards = screen.getAllByRole("link")
+    const names = cards.map((c) => c.textContent ?? "")
+    const githubIdx = names.findIndex((t) => t.includes("GitHub"))
+    const gitlabIdx = names.findIndex((t) => t.includes("GitLab"))
+    const spotifyIdx = names.findIndex((t) => t.includes("Spotify"))
+
+    expect(githubIdx).toBeGreaterThanOrEqual(0)
+    expect(gitlabIdx).toBeGreaterThanOrEqual(0)
+    expect(spotifyIdx).toBeGreaterThanOrEqual(0)
+
+    // Connected-first is the primary key: GitHub (connected) precedes both
+    // unconnected apps. This is non-vacuous below (with the A-Z toggle
+    // flipped) where GitLab/Spotify's relative order reverses but GitHub still
+    // leads — proving connected-first, not plain alphabetical order, wins.
+    expect(githubIdx).toBeLessThan(gitlabIdx)
+    expect(githubIdx).toBeLessThan(spotifyIdx)
+    expect(gitlabIdx).toBeLessThan(spotifyIdx)
+  })
+
+  it("A-Z sort toggle button is present and flips to Z-A on click, keeping connected-first", () => {
+    mockUseLoaderData.mockReturnValue(populatedLoaderData)
+    render(<AppsIndexPage />)
+
+    const toggle = screen.getByRole("button", { name: /sort a to z/i })
+    expect(toggle).toBeInTheDocument()
+    expect(toggle).toHaveTextContent("A–Z")
+
+    fireEvent.click(toggle)
+    expect(screen.getByRole("button", { name: /sort z to a/i })).toHaveTextContent("Z–A")
+
+    // Connected-first is preserved: GitHub (connected) still precedes the
+    // unconnected apps even after reversing alphabetical direction.
+    const names = screen.getAllByRole("link").map((c) => c.textContent ?? "")
+    const githubIdx = names.findIndex((t) => t.includes("GitHub"))
+    const gitlabIdx = names.findIndex((t) => t.includes("GitLab"))
+    const spotifyIdx = names.findIndex((t) => t.includes("Spotify"))
+    expect(githubIdx).toBeLessThan(gitlabIdx)
+    expect(githubIdx).toBeLessThan(spotifyIdx)
+    // Among the unconnected apps, order should now be reversed: Spotify before GitLab.
+    expect(spotifyIdx).toBeLessThan(gitlabIdx)
   })
 })

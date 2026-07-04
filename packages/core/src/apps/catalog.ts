@@ -42,6 +42,17 @@ export interface AppDefinition {
   aliases?: string[]
   /** Short guided-setup hints shown on the /app/:id empty state. */
   setupHints?: string[]
+  /**
+   * @thesvg/icons slug for this app's brand glyph (e.g. "github", "gitlab") —
+   * NOT a Platform.id. Verified against the installed @thesvg/icons package
+   * (increment 30.5 v2 — see docs/methods/30.5-app-lifecycle.md §4); omit
+   * rather than guess — apps without a verified slug fall back to a
+   * first-letter tile in the web UI (packages/web/src/ui/brand-icon.tsx).
+   * The codegen at packages/web/scripts/gen-brand-icons.mjs fails the build
+   * loudly if a slug set here has no matching @thesvg/icons module — see
+   * docs/futures/gotchas.md.
+   */
+  iconSlug?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -75,6 +86,7 @@ const APPS: readonly AppDefinition[] = [
       { mode: "token" },
     ],
     aliases: ["gh"],
+    iconSlug: "github",
   },
   {
     id: "gitlab",
@@ -82,6 +94,7 @@ const APPS: readonly AppDefinition[] = [
     supportedKinds: ["cli", "openapi", "graphql"],
     auth: [{ mode: "oauth2", providerId: "gitlab" }, { mode: "token" }],
     aliases: ["glab"],
+    iconSlug: "gitlab",
   },
   // The three remaining SHIPPED OAuth providers (google/slack/microsoft) get
   // first-class App entries so a real OAuth connection attributes to its own
@@ -97,21 +110,29 @@ const APPS: readonly AppDefinition[] = [
     // MCP/GraphQL/CLI vertical is asserted here without verified connection data.
     supportedKinds: ["openapi"],
     auth: [{ mode: "oauth2", providerId: "google" }],
+    iconSlug: "google",
   },
   {
     id: "slack",
     displayName: "Slack",
     // Slack ships via OAuth (bot/user token) + its Web API (REST). The MCP
     // variant is omitted until the package is confirmed (see the omission note).
+    // iconSlug added in v2 (inc 30.5): @thesvg/icons carries "slack" (full-color
+    // "default" variant, no light/dark/mono) — simple-icons had removed it on
+    // trademark request; @thesvg/icons still has it. See docs/futures/gotchas.md.
     supportedKinds: ["openapi"],
     auth: [{ mode: "oauth2", providerId: "slack" }, { mode: "token" }],
+    iconSlug: "slack",
   },
   {
     id: "microsoft",
     displayName: "Microsoft",
     // Microsoft Graph is a REST/OpenAPI surface over an OAuth bearer.
+    // iconSlug added in v2 (inc 30.5): @thesvg/icons carries "microsoft"
+    // (full-color "default" variant only) — simple-icons had removed it.
     supportedKinds: ["openapi"],
     auth: [{ mode: "oauth2", providerId: "microsoft" }],
+    iconSlug: "microsoft",
   },
   {
     id: "notion",
@@ -121,6 +142,7 @@ const APPS: readonly AppDefinition[] = [
     // authenticate with a static internal-integration bearer token, so both
     // paths are offered (OAuth first = default).
     auth: [{ mode: "oauth2", providerId: "notion" }, { mode: "token" }],
+    iconSlug: "notion",
   },
   {
     id: "linear",
@@ -128,6 +150,7 @@ const APPS: readonly AppDefinition[] = [
     supportedKinds: ["mcp", "graphql"],
     // Linear accepts OAuth 2.1 (DCR) or a bearer PAT — both vault-friendly.
     auth: [{ mode: "oauth2", providerId: "linear" }, { mode: "token" }],
+    iconSlug: "linear",
   },
   {
     id: "atlassian",
@@ -136,12 +159,14 @@ const APPS: readonly AppDefinition[] = [
     // Atlassian's remote MCP accepts OAuth 2.1 or an API token.
     auth: [{ mode: "oauth2", providerId: "atlassian" }, { mode: "token" }],
     setupHints: ["Covers Jira and Confluence Cloud sites via the shared Atlassian OAuth app."],
+    iconSlug: "atlassian",
   },
   {
     id: "discord",
     displayName: "Discord",
     supportedKinds: ["openapi"],
     auth: [{ mode: "oauth2", providerId: "discord" }, { mode: "token" }],
+    iconSlug: "discord",
   },
   {
     id: "spotify",
@@ -150,18 +175,21 @@ const APPS: readonly AppDefinition[] = [
     // Spotify was verified this pass.
     supportedKinds: [],
     auth: [{ mode: "oauth2", providerId: "spotify" }],
+    iconSlug: "spotify",
   },
   {
     id: "zoom",
     displayName: "Zoom",
     supportedKinds: [],
     auth: [{ mode: "oauth2", providerId: "zoom" }],
+    iconSlug: "zoom",
   },
   {
     id: "dropbox",
     displayName: "Dropbox",
     supportedKinds: [],
     auth: [{ mode: "oauth2", providerId: "dropbox" }],
+    iconSlug: "dropbox",
   },
   {
     id: "figma",
@@ -175,6 +203,7 @@ const APPS: readonly AppDefinition[] = [
       "The Figma Dev Mode MCP server requires no credential — it trusts the locally-running desktop app.",
       "The REST API (file/comment access) uses OAuth.",
     ],
+    iconSlug: "figma",
   },
 
   // --- Apps with NO oauth2 catalog provider (token / byo) -------------------
@@ -184,18 +213,21 @@ const APPS: readonly AppDefinition[] = [
     supportedKinds: ["mcp", "cli", "openapi"],
     auth: [{ mode: "token" }],
     setupHints: ["Use a Restricted Key for the MCP/CLI path."],
+    iconSlug: "stripe",
   },
   {
     id: "sentry",
     displayName: "Sentry",
     supportedKinds: ["mcp", "cli"],
     auth: [{ mode: "token" }],
+    iconSlug: "sentry",
   },
   {
     id: "cloudflare",
     displayName: "Cloudflare",
     supportedKinds: ["mcp", "cli"],
     auth: [{ mode: "token" }],
+    iconSlug: "cloudflare",
   },
   {
     id: "supabase",
@@ -203,12 +235,14 @@ const APPS: readonly AppDefinition[] = [
     supportedKinds: ["mcp", "cli"],
     auth: [{ mode: "token" }],
     setupHints: ["Supabase's own OAuth browser flow is not junction's vault — use a PAT instead."],
+    iconSlug: "supabase",
   },
   {
     id: "vercel",
     displayName: "Vercel",
     supportedKinds: ["cli", "openapi"],
     auth: [{ mode: "token" }],
+    iconSlug: "vercel",
   },
   {
     id: "railway",
@@ -216,6 +250,7 @@ const APPS: readonly AppDefinition[] = [
     supportedKinds: ["cli"],
     auth: [{ mode: "token" }],
     setupHints: ["RAILWAY_API_TOKEN is the account-scoped token; RAILWAY_TOKEN is project-scoped."],
+    iconSlug: "railway",
   },
   {
     id: "heroku",
@@ -223,6 +258,9 @@ const APPS: readonly AppDefinition[] = [
     supportedKinds: ["cli"],
     auth: [{ mode: "token" }],
     setupHints: ["`heroku config` prints secret values — treat reads as sensitive."],
+    // iconSlug added in v2 (inc 30.5): @thesvg/icons carries "heroku"
+    // (full-color "default" variant only) — simple-icons did not have it.
+    iconSlug: "heroku",
   },
   {
     id: "doppler",
@@ -230,66 +268,87 @@ const APPS: readonly AppDefinition[] = [
     supportedKinds: ["cli"],
     auth: [{ mode: "token" }],
     setupHints: ["`doppler secrets` prints secret values — treat reads as sensitive."],
+    // NO iconSlug: no "doppler" export in the installed simple-icons version
+    // (verified inc 30.5) — falls back to the letter tile.
   },
   {
     id: "digitalocean",
     displayName: "DigitalOcean",
     supportedKinds: ["cli", "openapi"],
     auth: [{ mode: "token" }],
+    iconSlug: "digitalocean",
   },
   {
     id: "aws",
     displayName: "AWS",
     supportedKinds: ["cli"],
     auth: [{ mode: "token" }],
+    // iconSlug added in v2 (inc 30.5): @thesvg/icons carries "aws" (full-color
+    // "default" variant; also has "color"/"mono"/"icon" but none add themed
+    // light/dark, so this stays category "color").
+    iconSlug: "aws",
   },
   {
     id: "brave-search",
     displayName: "Brave Search",
     supportedKinds: ["mcp"],
     auth: [{ mode: "token" }],
+    // Uses the parent-brand "brave" logo (@thesvg/icons has no Brave-Search-
+    // specific mark; Brave Search is Brave's own product — user-approved
+    // related-logo use, inc 30.5 v2).
+    iconSlug: "brave",
   },
   {
     id: "playwright",
     displayName: "Playwright",
     supportedKinds: ["mcp"],
     auth: [{ mode: "none" }],
+    iconSlug: "playwright",
   },
   {
     id: "filesystem",
     displayName: "Filesystem",
     supportedKinds: ["mcp"],
     auth: [{ mode: "none" }],
+    // No brand logo — generic capability, not a vendor. Letter tile.
   },
   {
     id: "openai",
     displayName: "OpenAI",
     supportedKinds: ["openapi"],
     auth: [{ mode: "token" }],
+    // iconSlug added in v2 (inc 30.5): @thesvg/icons carries "openai" with
+    // both light+dark variants (category "themed") — simple-icons only had
+    // the unrelated "openaigym" slug.
+    iconSlug: "openai",
   },
   {
     id: "box",
     displayName: "Box",
     supportedKinds: ["openapi"],
     auth: [{ mode: "token" }],
+    iconSlug: "box",
   },
   {
     id: "adyen",
     displayName: "Adyen",
     supportedKinds: ["openapi"],
     auth: [{ mode: "token" }],
+    iconSlug: "adyen",
   },
   {
     id: "pagerduty",
     displayName: "PagerDuty",
     supportedKinds: ["openapi"],
     auth: [{ mode: "token" }],
+    iconSlug: "pagerduty",
   },
   {
     id: "asana",
     displayName: "Asana",
     supportedKinds: ["openapi"],
     auth: [{ mode: "token" }],
+    iconSlug: "asana",
   },
   {
     id: "twilio",
@@ -297,6 +356,9 @@ const APPS: readonly AppDefinition[] = [
     supportedKinds: ["openapi"],
     auth: [{ mode: "token" }],
     aliases: ["twilio-accounts"],
+    // iconSlug added in v2 (inc 30.5): @thesvg/icons carries "twilio"
+    // (full-color "default" variant only) — simple-icons did not have it.
+    iconSlug: "twilio",
   },
   {
     id: "sendgrid",
@@ -304,6 +366,8 @@ const APPS: readonly AppDefinition[] = [
     supportedKinds: ["openapi"],
     auth: [{ mode: "token" }],
     aliases: ["sendgrid-mail"],
+    // NO iconSlug: no "sendgrid" export in the installed simple-icons version
+    // (verified inc 30.5) — falls back to the letter tile.
   },
   {
     id: "shopify",
@@ -311,36 +375,45 @@ const APPS: readonly AppDefinition[] = [
     supportedKinds: ["graphql"],
     auth: [{ mode: "token" }],
     aliases: ["shopify-admin", "shopify-storefront"],
+    iconSlug: "shopify",
   },
   {
     id: "contentful",
     displayName: "Contentful",
     supportedKinds: ["graphql"],
     auth: [{ mode: "token" }],
+    iconSlug: "contentful",
   },
   {
     id: "yelp",
     displayName: "Yelp",
     supportedKinds: ["graphql"],
     auth: [{ mode: "token" }],
+    iconSlug: "yelp",
   },
   {
     id: "datocms",
     displayName: "DatoCMS",
     supportedKinds: ["graphql"],
     auth: [{ mode: "token" }],
+    iconSlug: "datocms",
   },
   {
     id: "braintree",
     displayName: "Braintree",
     supportedKinds: ["graphql"],
     auth: [{ mode: "token" }],
+    iconSlug: "braintree",
   },
   {
     id: "monday",
     displayName: "monday.com",
     supportedKinds: ["graphql"],
     auth: [{ mode: "token" }],
+    // NO iconSlug: @thesvg/icons only has monday as a WIDE WORDMARK (viewBox
+    // ~467×46, all variants) — squeezed into the compact square glyph slot it
+    // renders as an illegible sliver. A clean letter tile beats a broken
+    // wordmark, so monday stays on the fallback (verified inc 30.5 v2).
   },
   {
     id: "wpgraphql",
@@ -348,6 +421,10 @@ const APPS: readonly AppDefinition[] = [
     supportedKinds: ["graphql"],
     auth: [{ mode: "byo" }],
     setupHints: ["Self-hosted WordPress site — the endpoint host is user-supplied."],
+    // Uses the parent-brand "wordpress" logo (WPGraphQL is a WordPress GraphQL
+    // plugin; @thesvg/icons has no WPGraphQL-specific mark — user-approved
+    // related-logo use, inc 30.5 v2).
+    iconSlug: "wordpress",
   },
   {
     id: "saleor",
@@ -355,6 +432,8 @@ const APPS: readonly AppDefinition[] = [
     supportedKinds: ["graphql"],
     auth: [{ mode: "token" }, { mode: "none" }],
     setupHints: ["The public demo endpoint needs no auth; authed queries use a Bearer token."],
+    // NO iconSlug: no "saleor" export in the installed simple-icons version
+    // (verified inc 30.5) — falls back to the letter tile.
   },
 
   // --- No-auth public demo/reference apps ------------------------------------
@@ -364,18 +443,24 @@ const APPS: readonly AppDefinition[] = [
     supportedKinds: ["openapi"],
     auth: [{ mode: "token" }],
     setupHints: ["Public demo API — an api_key header is accepted but not required for reads."],
+    // Uses the "swagger" logo — the Petstore is Swagger's own canonical demo
+    // API (user-approved related-logo use, inc 30.5 v2).
+    iconSlug: "swagger",
   },
   {
     id: "countries",
     displayName: "Countries (trevorblades)",
     supportedKinds: ["graphql"],
     auth: [{ mode: "none" }],
+    // No brand logo — community reference API. Letter tile.
   },
   {
     id: "rickandmorty",
     displayName: "Rick and Morty API",
     supportedKinds: ["graphql"],
     auth: [{ mode: "none" }],
+    // NO iconSlug: no "rickandmorty" export in the installed simple-icons
+    // version (verified inc 30.5) — falls back to the letter tile.
   },
   {
     id: "anilist",
@@ -383,6 +468,7 @@ const APPS: readonly AppDefinition[] = [
     supportedKinds: ["graphql"],
     auth: [{ mode: "none" }],
     setupHints: ["Public reads need no auth; mutations require OAuth (not modeled here)."],
+    iconSlug: "anilist",
   },
 ]
 

@@ -74,3 +74,10 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 [AGPL-3.0-only](LICENSE) — copyleft with §13 network-use disclosure. If you run a modified
 junction over a network, you must offer the Corresponding Source to users of that service.
+
+### Third-party notices
+
+Brand logos provided by [@thesvg/icons](https://github.com/glincker/thesvg) (MIT), each mark
+under its upstream license (mostly CC0-1.0). All product names, logos, and brands are property
+of their respective owners and are used for identification only under nominative fair use; no
+affiliation or endorsement is implied.
