@@ -222,6 +222,31 @@ html[data-sidebar="collapsed"] {
   --shadow-md: 0 1px 1px rgba(0, 0, 0, 0.3), 0 4px 8px -4px rgba(0, 0, 0, 0.5), 0 16px 24px -8px rgba(0, 0, 0, 0.6);
 }
 
+/* ─── Brand icon theme swap (increment 30.5 v2) ─────────────────────────── */
+/* BrandIcon's "themed" category (pure black/white marks — github, vercel,
+   railway, openai) renders TWO <svg> and lets CSS show exactly one, matched
+   to the SAME :root:not([data-theme="light"]) default-dark pattern the design
+   tokens above use — data-theme is set by a BLOCKING pre-hydration script
+   (__root.tsx THEME_SCRIPT) before first paint, so there is no flash even
+   though the attribute is absent from the raw SSR HTML. Pure display toggle:
+   NOT motion-gated, no JS at the component level. */
+
+.brand-icon-light {
+  display: none;
+}
+
+.brand-icon-dark {
+  display: block;
+}
+
+[data-theme="light"] .brand-icon-light {
+  display: block;
+}
+
+[data-theme="light"] .brand-icon-dark {
+  display: none;
+}
+
 /* ─── Tailwind v4 theme mapping ─────────────────────────────────────────── */
 /* Maps CSS vars → Tailwind utilities                                         */
 

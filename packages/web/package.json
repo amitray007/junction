@@ -9,6 +9,7 @@
     "clean:stale-js": "find src -name '*.js' ! -name 'entry-server.js' ! -name 'entry-client.js' -delete",
     "prebuild": "pnpm run clean:stale-js",
     "build": "vite build",
+    "gen:icons": "node scripts/gen-brand-icons.mjs",
     "start": "node serve.mjs",
     "typecheck": "tsr generate && tsc --noEmit",
     "test": "vitest run --config vitest.config.ts"
@@ -50,6 +51,7 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
+    "@thesvg/icons": "^3.0.18",
     "@types/node": "^26.0.1",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",

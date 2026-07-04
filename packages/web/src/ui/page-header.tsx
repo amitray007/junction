@@ -15,9 +15,18 @@ interface PageHeaderProps {
   readonly subtitle?: string
   readonly actions?: ReactNode
   readonly className?: string
+  /** Optional glyph rendered before the <h1> in the title row (e.g. a per-app brand icon). */
+  readonly leading?: ReactNode
 }
 
-export function PageHeader({ title, count, subtitle, actions, className }: PageHeaderProps) {
+export function PageHeader({
+  title,
+  count,
+  subtitle,
+  actions,
+  className,
+  leading,
+}: PageHeaderProps) {
   return (
     <div className={cn("flex items-start justify-between gap-4 pb-6", className)}>
       <div className="flex flex-col gap-1 min-w-0">
@@ -25,6 +34,7 @@ export function PageHeader({ title, count, subtitle, actions, className }: PageH
             center against the 24px h1 reads correctly (baseline-align dropped the pill
             visibly low next to the large heading — agentation feedback). */}
         <div className="flex items-center gap-2.5">
+          {leading}
           <h1
             style={{
               fontSize: "var(--text-h1)",

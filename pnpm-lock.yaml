@@ -348,6 +348,9 @@ importers:
       '@testing-library/user-event':
         specifier: ^14.6.1
         version: 14.6.1(@testing-library/dom@10.4.1)
+      '@thesvg/icons':
+        specifier: ^3.0.18
+        version: 3.0.18
       '@types/node':
         specifier: ^26.0.1
         version: 26.0.1
@@ -2136,6 +2139,10 @@ packages:
     engines: {node: '>=12', npm: '>=6'}
     peerDependencies:
       '@testing-library/dom': '>=7.21.4'
+
+  '@thesvg/icons@3.0.18':
+    resolution: {integrity: sha512-APzMPld6fdK5ReiPsbC9K1+bhjUmZTjIIGcIT63iBQj/VzijOXcbYfG89fsCiT+0MoKAl5WgbeDL7+BGTF8tUw==}
+    engines: {node: '>=18'}
 
   '@tybys/wasm-util@0.10.2':
     resolution: {integrity: sha512-RoBvJ2X0wuKlWFIjrwffGw1IqZHKQqzIchKaadZZfnNpsAYp2mM0h36JtPCjNDAHGgYez/15uMBpfGwchhiMgg==}
@@ -6050,6 +6057,8 @@ snapshots:
   '@testing-library/user-event@14.6.1(@testing-library/dom@10.4.1)':
     dependencies:
       '@testing-library/dom': 10.4.1
+
+  '@thesvg/icons@3.0.18': {}
 
   '@tybys/wasm-util@0.10.2':
     dependencies:

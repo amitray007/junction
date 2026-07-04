@@ -5,19 +5,28 @@
 // synthetic "Other" card appears when any connection attributes to "other"
 // (transparency — nothing hidden, design doc §8).
 // No @junction/core import. Core access is only inside getApps' createServerFn.
+//
+// Search + filters + sort (increment 30.5 slice 2): a client-side
+// search/facet/sort toolbar over the 45-card catalog grid, mirroring
+// credentials.tsx's useTableView + FacetSelect pattern. No pagination — the
+// catalog is small enough that narrowing via search/filters is sufficient.
 
 import { createFileRoute, Link } from "@tanstack/react-router"
 import { LayoutGrid } from "lucide-react"
-import { useMemo } from "react"
+import { useCallback, useMemo, useState } from "react"
+import { useTableView } from "../lib/use-table-view.js"
 import type { AppGroupMeta, AppMeta, AppsData } from "../server/data.functions.js"
 import { getApps } from "../server/data.functions.js"
 import {
   Badge,
+  BrandIcon,
   Card,
   CardContent,
   CardHeader,
   CardTitle,
   EmptyState,
+  FacetSelect,
+  Input,
   MonoChip,
   PageHeader,
 } from "../ui/index.js"
@@ -35,6 +44,11 @@ interface AppCardData {
   displayName: string
   supportedKinds: string[]
   connectedCount: number
+  iconSlug?: string
+  aliases?: string[]
+  /** Real oauth signal from AppMeta.auth (a {mode:"oauth2"} entry) — preferred
+   *  over the "empty supportedKinds" heuristic for the Method=oauth facet. */
+  hasOauth: boolean
 }
 
 const OTHER_APP: AppCardData = {
@@ -42,7 +56,27 @@ const OTHER_APP: AppCardData = {
   displayName: "Other",
   supportedKinds: [],
   connectedCount: 0,
+  iconSlug: undefined,
+  aliases: undefined,
+  hasOauth: false,
 }
+
+// Facet sentinel — "all" clears that facet (composes as AND across
+// status/method + the search box, via useTableView's predicate).
+const ALL_FILTER = "all"
+
+const STATUS_OPTIONS = [
+  { value: "connected", label: "Connected" },
+  { value: "available", label: "Available" },
+]
+
+const METHOD_OPTIONS = [
+  { value: "mcp", label: "mcp" },
+  { value: "openapi", label: "openapi" },
+  { value: "graphql", label: "graphql" },
+  { value: "cli", label: "cli" },
+  { value: "oauth", label: "oauth" },
+]
 
 function AppCard({ app }: { readonly app: AppCardData }) {
   const connected = app.connectedCount > 0
@@ -54,7 +88,10 @@ function AppCard({ app }: { readonly app: AppCardData }) {
     >
       <Card className="h-full transition-colors duration-[var(--motion-fast)] hover:bg-[var(--gray-100)]">
         <CardHeader className="flex flex-row items-start justify-between gap-2">
-          <CardTitle>{app.displayName}</CardTitle>
+          <div className="flex items-center gap-2 min-w-0">
+            <BrandIcon slug={app.iconSlug} displayName={app.displayName} />
+            <CardTitle>{app.displayName}</CardTitle>
+          </div>
           {connected ? (
             <Badge variant="ok">{app.connectedCount} connected</Badge>
           ) : (
@@ -73,9 +110,9 @@ function AppCard({ app }: { readonly app: AppCardData }) {
               Connections that don't match a known app
             </span>
           ) : (
-            <span style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)" }}>
-              OAuth-only — no standalone vertical
-            </span>
+            <div className="flex flex-wrap gap-1.5">
+              <MonoChip>oauth</MonoChip>
+            </div>
           )}
         </CardContent>
       </Card>
@@ -100,12 +137,61 @@ function AppsIndexPage() {
       displayName: app.displayName,
       supportedKinds: app.supportedKinds,
       connectedCount: connectedCounts.get(app.id) ?? 0,
+      iconSlug: app.iconSlug,
+      aliases: app.aliases,
+      hasOauth: app.auth?.some((a) => a.mode === "oauth2") ?? app.supportedKinds.length === 0,
     }))
     const hasOther = (connectedCounts.get("other") ?? 0) > 0
     return hasOther
       ? [...catalogCards, { ...OTHER_APP, connectedCount: connectedCounts.get("other") ?? 0 }]
       : catalogCards
   }, [catalog, connectedCounts])
+
+  const [statusFilter, setStatusFilter] = useState(ALL_FILTER)
+  const [methodFilter, setMethodFilter] = useState(ALL_FILTER)
+  // A–Z toggle: false = ascending (default), true = descending. Connected-first
+  // stays the primary sort key regardless of direction (see nameCompare below).
+  const [reverseAlpha, setReverseAlpha] = useState(false)
+
+  const predicate = useCallback(
+    (app: AppCardData) => {
+      const statusOk =
+        statusFilter === ALL_FILTER ||
+        (statusFilter === "connected" ? app.connectedCount > 0 : app.connectedCount === 0)
+      const methodOk =
+        methodFilter === ALL_FILTER ||
+        (methodFilter === "oauth" ? app.hasOauth : app.supportedKinds.includes(methodFilter))
+      return statusOk && methodOk
+    },
+    [statusFilter, methodFilter],
+  )
+
+  // Default order: connected-first, then A–Z (or Z–A when toggled). Connected
+  // status is always the primary key — the toggle only flips the alphabetical
+  // direction within/across that grouping.
+  const nameCompare = useCallback(
+    (a: AppCardData, b: AppCardData) => {
+      const aConnected = a.connectedCount > 0
+      const bConnected = b.connectedCount > 0
+      if (aConnected !== bConnected) return aConnected ? -1 : 1
+      const cmp = a.displayName.localeCompare(b.displayName)
+      return reverseAlpha ? -cmp : cmp
+    },
+    [reverseAlpha],
+  )
+
+  const { search, setSearch, filteredSortedRows } = useTableView({
+    rows: cards,
+    searchFields: (app) => [app.id, app.displayName, ...(app.aliases ?? [])],
+    columns: [{ key: "name", compare: nameCompare }],
+    initialSortKey: "name",
+    predicate,
+  })
+
+  const visibleCards = filteredSortedRows
+
+  const isFiltered =
+    search.trim().length > 0 || statusFilter !== ALL_FILTER || methodFilter !== ALL_FILTER
 
   return (
     <div>
@@ -114,10 +200,62 @@ function AppsIndexPage() {
       {cards.length === 0 ? (
         <EmptyState icon={<LayoutGrid className="h-5 w-5" />} label="No apps in the catalog yet." />
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {cards.map((app) => (
-            <AppCard key={app.id} app={app} />
-          ))}
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap gap-[var(--space-2)]">
+            <Input
+              id="app-search"
+              type="search"
+              placeholder="Search apps"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{ maxWidth: "320px" }}
+              aria-label="Search apps"
+            />
+            <FacetSelect
+              ariaLabel="Filter by status"
+              allLabel="All statuses"
+              allValue={ALL_FILTER}
+              value={statusFilter}
+              onValueChange={setStatusFilter}
+              options={STATUS_OPTIONS}
+            />
+            <FacetSelect
+              ariaLabel="Filter by method"
+              allLabel="All methods"
+              allValue={ALL_FILTER}
+              value={methodFilter}
+              onValueChange={setMethodFilter}
+              options={METHOD_OPTIONS}
+            />
+            <button
+              type="button"
+              onClick={() => setReverseAlpha((v) => !v)}
+              aria-label={reverseAlpha ? "Sort Z to A" : "Sort A to Z"}
+              className="inline-flex items-center rounded-[var(--radius-6)] border border-[var(--alpha-400)] px-3 text-[var(--text-body)] text-[var(--gray-900)] hover:bg-[var(--gray-100)] transition-colors duration-[var(--motion-fast)]"
+            >
+              {reverseAlpha ? "Z–A" : "A–Z"}
+            </button>
+          </div>
+
+          {visibleCards.length === 0 ? (
+            isFiltered ? (
+              <EmptyState
+                icon={<LayoutGrid className="h-5 w-5" />}
+                label="No apps match your filters."
+              />
+            ) : (
+              <EmptyState
+                icon={<LayoutGrid className="h-5 w-5" />}
+                label="No apps in the catalog yet."
+              />
+            )
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {visibleCards.map((app) => (
+                <AppCard key={app.id} app={app} />
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

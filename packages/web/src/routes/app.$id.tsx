@@ -28,6 +28,7 @@ import type { AppMeta, AppsData, ConnectionMeta } from "../server/data.functions
 import { getApps } from "../server/data.functions.js"
 import { startReconnectFn } from "../server/oauth-connect.functions.js"
 import {
+  BrandIcon,
   Button,
   Dialog,
   DialogContent,
@@ -56,12 +57,14 @@ export interface AppDisplay {
   supportedKinds: string[]
   auth?: AppMeta["auth"]
   setupHints?: string[]
+  iconSlug?: string
 }
 
 const OTHER_APP_DISPLAY: AppDisplay = {
   id: "other",
   displayName: "Other",
   supportedKinds: [],
+  iconSlug: undefined,
 }
 
 interface AppDetailLoaderData {
@@ -82,7 +85,7 @@ function loadAppDetail(id: string, { catalog, groups }: AppsData): AppDetailLoad
     throw notFound()
   }
   return {
-    app: app ?? { id, displayName: id, supportedKinds: [] },
+    app: app ?? { id, displayName: id, supportedKinds: [], iconSlug: undefined },
     connections: group?.connections ?? [],
   }
 }
@@ -413,6 +416,7 @@ function AppDetailPage() {
     <div>
       <PageHeader
         title={app.displayName}
+        leading={<BrandIcon slug={app.iconSlug} displayName={app.displayName} />}
         count={connections.length > 0 ? connections.length : undefined}
         actions={
           connections.length > 0 ? (

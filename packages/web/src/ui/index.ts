@@ -5,6 +5,8 @@
 export { AgentConfig } from "./agent-config.js"
 export type { BadgeProps } from "./badge.js"
 export { Badge, StatusBadge } from "./badge.js"
+export type { BrandIconProps } from "./brand-icon.js"
+export { BrandIcon } from "./brand-icon.js"
 export type { ButtonProps, ButtonVariants } from "./button.js"
 export { Button } from "./button.js"
 export { Card, CardContent, CardHeader, CardTitle } from "./card.js"
