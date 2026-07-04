@@ -80,6 +80,21 @@ describe("appIdForConnection", () => {
     expect(appId).toBe("other")
     expect(appId).not.toBeUndefined()
   })
+
+  it("PRECEDENCE: an oauthProviderId that NO app declares FALLS THROUGH to id-matching (not early 'other')", () => {
+    // Load-bearing contract: step 1 is a guarded return, not an unconditional
+    // early return under `if (oauthProviderId)`. A regression to the latter would
+    // pass every other test but break every token platform carrying a stale
+    // providerId. Here the bogus providerId must be ignored and the exact id
+    // match ("github") must win.
+    const appId = appIdForConnection({
+      platformId: "github",
+      platformDisplayName: "irrelevant",
+      kind: "openapi",
+      oauthProviderId: "no-such-provider",
+    })
+    expect(appId).toBe("github")
+  })
 })
 
 describe("groupByApp", () => {
@@ -157,6 +172,42 @@ describe("groupByApp", () => {
     })
     const totalConnections = groups.reduce((sum, g) => sum + g.connections.length, 0)
     expect(totalConnections).toBe(3)
+  })
+
+  it("DIVERGENT wedge: two creds on one platform with different providerIds split across their app groups (per-connection grain, intended)", () => {
+    // A pathological-but-possible case: one platform row carrying two OAuth
+    // credentials for DIFFERENT services. Attribution is per-connection and the
+    // authoritative providerId wins, so the platform legitimately appears under
+    // BOTH app headers. Pinned as intended behavior (per-connection grain), not
+    // a surprise — see the correctness review (inc 30 Slice A).
+    const groups = groupByApp({
+      platforms: [{ id: "shared-host", kind: "graphql", displayName: "Shared Host" }],
+      credentials: [
+        { platformId: "shared-host", account: "gh", oauthProviderId: "github" },
+        { platformId: "shared-host", account: "gl", oauthProviderId: "gitlab" },
+      ],
+    })
+    expect(groups.find((g) => g.appId === "github")?.connections).toHaveLength(1)
+    expect(groups.find((g) => g.appId === "gitlab")?.connections).toHaveLength(1)
+  })
+
+  it("ORPHAN credential (platformId absent from platforms) is silently dropped — documented, FK-guaranteed unreachable", () => {
+    // group.ts iterates platforms and looks creds up by platform.id; a cred
+    // whose platformId isn't in the platforms list is never visited. This is
+    // acknowledged in-code (staying pure over throwing) and safe because the DB
+    // FK + the web readApps caller (loads ALL platforms + ALL credentials)
+    // guarantee platforms ⊇ credential.platformIds. Pinned so a loop refactor
+    // can't silently change it.
+    const groups = groupByApp({
+      platforms: [{ id: "github", kind: "mcp", displayName: "GitHub" }],
+      credentials: [
+        { platformId: "github", account: "work", oauthProviderId: "github" },
+        { platformId: "ghost", account: "orphan" },
+      ],
+    })
+    const total = groups.reduce((sum, g) => sum + g.connections.length, 0)
+    expect(total).toBe(1)
+    expect(groups.some((g) => g.connections.some((c) => c.account === "orphan"))).toBe(false)
   })
 
   it("does NOT emit a catalog app with zero connections", () => {
