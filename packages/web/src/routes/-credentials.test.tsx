@@ -78,12 +78,14 @@ vi.mock("../server/data.functions.js", () => ({
 const mockAddCredentialFn = vi.fn()
 const mockRotateCredentialFn = vi.fn()
 const mockRemoveCredentialFn = vi.fn()
+const mockRenameCredentialFn = vi.fn()
 const mockTestCredentialFn = vi.fn()
 
 vi.mock("../server/mutations.functions.js", () => ({
   addCredentialFn: (...args: unknown[]) => mockAddCredentialFn(...args),
   rotateCredentialFn: (...args: unknown[]) => mockRotateCredentialFn(...args),
   removeCredentialFn: (...args: unknown[]) => mockRemoveCredentialFn(...args),
+  renameCredentialFn: (...args: unknown[]) => mockRenameCredentialFn(...args),
   testCredentialFn: (...args: unknown[]) => mockTestCredentialFn(...args),
 }))
 
@@ -96,7 +98,7 @@ vi.mock("../server/oauth-connect.functions.js", () => ({
   startReconnectFn: (...args: unknown[]) => mockStartReconnectFn(...args),
 }))
 
-const { Route, FlatCredentialsTable } = await import("./credentials.js")
+const { Route, FlatCredentialsTable, EditAccountDialog } = await import("./credentials.js")
 // biome-ignore lint/suspicious/noExplicitAny: test utility — typing the internal options shape is not worth the boilerplate
 const CredentialsPage = (Route as any).options.component as React.FC
 
@@ -113,6 +115,7 @@ afterEach(() => {
   mockAddCredentialFn.mockReset()
   mockRotateCredentialFn.mockReset()
   mockRemoveCredentialFn.mockReset()
+  mockRenameCredentialFn.mockReset()
   mockTestCredentialFn.mockReset()
   mockStartConnectFn.mockReset()
   mockStartReconnectFn.mockReset()
@@ -386,6 +389,7 @@ describe("CredentialsPage", () => {
         platforms={platforms}
         onRotate={onRotate}
         onDelete={onDelete}
+        onEdit={vi.fn()}
         onTestConnection={onTestConnection}
         onReconnect={onReconnect}
         pageSize={2}
@@ -737,6 +741,7 @@ describe("CredentialsPage", () => {
         platforms={verifiablePlatforms}
         onRotate={vi.fn()}
         onDelete={vi.fn()}
+        onEdit={vi.fn()}
         onTestConnection={onTestConnection}
         onReconnect={vi.fn()}
       />,
@@ -1066,5 +1071,56 @@ describe("CredentialsPage — ?connect= outcome handling", () => {
     mockUseSearch.mockReturnValue({})
     render(<CredentialsPage />)
     expect(mockNavigate).not.toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Edit account dialog (Task 5) — tested directly (Radix dropdown item can't be
+// clicked in happy-dom; same limitation as Rotate/Delete).
+// ---------------------------------------------------------------------------
+
+describe("EditAccountDialog (Task 5)", () => {
+  const cred: CredentialMeta = {
+    id: "c1",
+    platformId: "github",
+    account: "work",
+    kind: "bearer",
+  }
+
+  it("pre-fills the current account and submits the trimmed new label to renameCredentialFn", async () => {
+    mockRenameCredentialFn.mockResolvedValue({
+      ok: true,
+      credential: { ...cred, account: "work-primary" },
+    })
+    const onSuccess = vi.fn()
+    const { getByLabelText, getByRole } = render(
+      <EditAccountDialog credential={cred} onOpenChange={vi.fn()} onSuccess={onSuccess} />,
+    )
+
+    // Pre-filled with the current account.
+    const input = getByLabelText("Account label") as HTMLInputElement
+    expect(input.value).toBe("work")
+
+    fireEvent.change(input, { target: { value: "  work-primary  " } })
+    const submit = getByRole("dialog").querySelector("button[type='submit']") as HTMLButtonElement
+    fireEvent.click(submit)
+
+    await waitFor(() => expect(mockRenameCredentialFn).toHaveBeenCalled())
+    // Trimmed before send.
+    expect(mockRenameCredentialFn).toHaveBeenCalledWith({
+      data: { credentialId: "c1", account: "work-primary" },
+    })
+    await waitFor(() => expect(onSuccess).toHaveBeenCalled())
+  })
+
+  it("validates a non-empty label before calling renameCredentialFn", async () => {
+    const { getByLabelText, getByRole, getByText } = render(
+      <EditAccountDialog credential={cred} onOpenChange={vi.fn()} onSuccess={vi.fn()} />,
+    )
+    fireEvent.change(getByLabelText("Account label"), { target: { value: "   " } })
+    fireEvent.click(getByRole("dialog").querySelector("button[type='submit']") as HTMLButtonElement)
+
+    await waitFor(() => expect(getByText("Account label is required")).toBeInTheDocument())
+    expect(mockRenameCredentialFn).not.toHaveBeenCalled()
   })
 })

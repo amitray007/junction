@@ -11,6 +11,7 @@ import {
   createRepositories,
   getPaths,
   removeCredential,
+  renameCredential,
   rotateCredential,
 } from "@junction/core"
 import { type VerifyOutcome, verifyCredential } from "@junction/source-runtime"
@@ -172,6 +173,26 @@ export async function mutateAddCredential(input: {
       verify: verifyResult,
     }
   })
+}
+
+export async function mutateRenameCredential(input: {
+  credentialId: string
+  account: string
+}): Promise<{ ok: true; credential: CredentialMutationMeta } | { ok: false; error: string }> {
+  const db = await getDb()
+  if (db === null) return { ok: false, error: "Database unavailable" }
+  const repos = createRepositories(db)
+
+  const result = await renameCredential(
+    { credentialId: input.credentialId, account: input.account },
+    repos.credentials,
+  )
+  if (result.isErr()) {
+    const e = result.error
+    if (e.kind === "invalid-input") return { ok: false, error: e.reason }
+    return { ok: false, error: credentialErrorMessage(e.kind) }
+  }
+  return { ok: true, credential: toMutationMeta(result.value) }
 }
 
 export async function mutateRemoveCredential(

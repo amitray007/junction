@@ -13,6 +13,7 @@ import {
   createCredentialStore,
   getPaths,
   removeCredential,
+  renameCredential,
   rotateCredential,
 } from "@junction/core"
 import type { VerifyOutcome } from "@junction/source-runtime"
@@ -520,6 +521,56 @@ const removeCommand = defineCommand({
 })
 
 // ---------------------------------------------------------------------------
+// credential rename — edit the account LABEL (profileName) in place. The only
+// editable metadata: the secret stays rotate-only, and the oauth client_id is a
+// reconnect concern (see renameCredential in core for the rationale).
+// ---------------------------------------------------------------------------
+
+const renameCommand = defineCommand({
+  meta: {
+    name: "rename",
+    description: "Rename a credential's account label (the only in-place edit; not the secret).",
+  },
+  args: {
+    id: {
+      type: "positional",
+      description: "Credential ID to rename",
+      required: true,
+    },
+    account: {
+      type: "string",
+      description: "The new account label (e.g. work-primary)",
+      required: true,
+    },
+    json: JSON_ARG,
+  },
+  async run({ args }) {
+    const json = args.json ?? false
+    const credentialId = args.id as string
+
+    if (!credentialId || credentialId.trim() === "") {
+      reportError(json, "invalid input: id must not be empty")
+      return
+    }
+    const account = args.account
+    if (!account || account.trim() === "") {
+      reportError(json, "invalid input: --account must not be empty")
+      return
+    }
+
+    const repos = await openDb(json)
+    if (!repos) return
+
+    const result = await renameCredential({ credentialId, account }, repos.credentials)
+    if (result.isErr()) {
+      reportCredentialOpError(result.error, json)
+      return
+    }
+    writeCredentialMeta(result.value, json, "renamed")
+  },
+})
+
+// ---------------------------------------------------------------------------
 // credential rotate — swap the secret in place (atomic/fail-safe via core)
 // ---------------------------------------------------------------------------
 
@@ -756,6 +807,7 @@ export const credentialCommand = defineCommand({
     list: listCommand,
     test: testCommand,
     remove: removeCommand,
+    rename: renameCommand,
     rotate: rotateCommand,
     reconnect: reconnectCommand,
   },

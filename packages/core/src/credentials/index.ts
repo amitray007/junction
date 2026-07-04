@@ -14,6 +14,7 @@ import type { CredentialStore } from "./store.js"
 export { type AddCredentialInput, addCredential } from "./add-credential.js"
 export { compatibleCredentialKinds, isKindAccepted } from "./kind-compat.js"
 export { removeCredential } from "./remove-credential.js"
+export { type RenameCredentialInput, renameCredential } from "./rename-credential.js"
 export { type RotateCredentialInput, rotateCredential } from "./rotate-credential.js"
 export type { CredentialStore }
 

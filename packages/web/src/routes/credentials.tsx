@@ -7,7 +7,7 @@
 // No @junction/core import. Secret is input-only; never rendered or returned.
 
 import { createFileRoute, useRouter } from "@tanstack/react-router"
-import { Copy, Plug, Plus, RefreshCw, TestTube, Trash2 } from "lucide-react"
+import { Copy, Pencil, Plug, Plus, RefreshCw, TestTube, Trash2 } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 import type { TableColumn } from "../lib/use-table-view.js"
@@ -17,6 +17,7 @@ import { getCredentials, getOAuthProviders, getPlatforms } from "../server/data.
 import {
   addCredentialFn,
   removeCredentialFn,
+  renameCredentialFn,
   rotateCredentialFn,
   testCredentialFn,
 } from "../server/mutations.functions.js"
@@ -531,6 +532,106 @@ function RotateCredentialDialog({ credential, onOpenChange, onSuccess }: RotateD
 }
 
 // ---------------------------------------------------------------------------
+// Edit account dialog (Task 5) — rename the account LABEL in place. The ONLY
+// editable metadata: the secret stays rotate-only, and client_id is a reconnect
+// concern. Pre-fills the current account; submits the trimmed new label.
+// ---------------------------------------------------------------------------
+
+// Exported for direct unit testing — the Edit action is a Radix dropdown item,
+// which happy-dom can't reliably click (same limitation the Rotate/Delete tests
+// document), so the dialog is exercised directly, like FlatCredentialsTable.
+export function EditAccountDialog({ credential, onOpenChange, onSuccess }: RotateDialogProps) {
+  const [account, setAccount] = useState("")
+  const [error, setError] = useState<string | undefined>()
+  const [submitting, setSubmitting] = useState(false)
+
+  // Pre-fill with the current account when the dialog opens for a credential.
+  // Keyed off the credential ID (not the object) so a same-id re-render with a
+  // fresh object reference can't clobber an in-progress edit.
+  const editingId = credential?.id
+  const editingAccount = credential?.account
+  useEffect(() => {
+    if (editingId !== undefined) {
+      setAccount(editingAccount ?? "")
+      setError(undefined)
+      setSubmitting(false)
+    }
+  }, [editingId, editingAccount])
+
+  function handleOpenChange(next: boolean) {
+    if (!next) {
+      setAccount("")
+      setError(undefined)
+      setSubmitting(false)
+    }
+    onOpenChange(next)
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!account.trim()) {
+      setError("Account label is required")
+      return
+    }
+    if (!credential) return
+    setSubmitting(true)
+    try {
+      const result = await renameCredentialFn({
+        data: { credentialId: credential.id, account: account.trim() },
+      })
+      if (!result.ok) {
+        toast.error(`Failed to rename: ${result.error}`)
+        setSubmitting(false)
+        return
+      }
+      toast.success("Account label updated")
+      handleOpenChange(false)
+      onSuccess()
+    } catch {
+      toast.error("Failed to rename")
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <Dialog open={credential !== null} onOpenChange={handleOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Edit account label</DialogTitle>
+          <DialogDescription>
+            Rename the account label for this credential on{" "}
+            <MonoCode>{credential?.platformId}</MonoCode>. This is a display label only — the secret
+            and connection are unchanged.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} noValidate>
+          <div className="flex flex-col gap-4">
+            <Field id="edit-account" label="Account label" error={error}>
+              <Input
+                id="edit-account"
+                autoComplete="off"
+                value={account}
+                onChange={(e) => setAccount(e.target.value)}
+                hasError={!!error}
+                aria-required="true"
+              />
+            </Field>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="secondary" onClick={() => handleOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" disabled={submitting}>
+              {submitting ? "Saving…" : "Save"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Delete confirmation dialog — uses shared ConfirmDialog (FIX 5).
 // ---------------------------------------------------------------------------
 
@@ -983,6 +1084,7 @@ interface FlatTableProps {
   readonly platforms: PlatformMeta[]
   readonly onRotate: (c: CredentialMeta) => void
   readonly onDelete: (c: CredentialMeta) => void
+  readonly onEdit: (c: CredentialMeta) => void
   readonly onTestConnection: (c: CredentialMeta) => void
   /** needsReauth oauth2 credentials show a prominent Reconnect action (inc 29). */
   readonly onReconnect: (c: CredentialMeta) => void
@@ -1003,6 +1105,7 @@ export function FlatCredentialsTable({
   platforms,
   onRotate,
   onDelete,
+  onEdit,
   onTestConnection,
   onReconnect,
   testingId = null,
@@ -1317,6 +1420,10 @@ export function FlatCredentialsTable({
                               Rotate Secret
                             </DropdownMenuItem>
                           )}
+                          <DropdownMenuItem onSelect={() => onEdit(c)}>
+                            <Pencil className="h-4 w-4" aria-hidden="true" />
+                            Edit account
+                          </DropdownMenuItem>
                           <DropdownMenuItem
                             onSelect={() => onDelete(c)}
                             style={{ color: "var(--status-error-fg)" }}
@@ -1366,6 +1473,7 @@ function CredentialsPage() {
   const [rotatingCred, setRotatingCred] = useState<CredentialMeta | null>(null)
   const [deletingCred, setDeletingCred] = useState<CredentialMeta | null>(null)
   const [reconnectingCred, setReconnectingCred] = useState<CredentialMeta | null>(null)
+  const [editingCred, setEditingCred] = useState<CredentialMeta | null>(null)
   const [testingId, setTestingId] = useState<string | null>(null)
 
   // Post-/oauth/callback toast — the redirect lands here with ?connect=ok|
@@ -1436,6 +1544,7 @@ function CredentialsPage() {
         platforms={platforms}
         onRotate={setRotatingCred}
         onDelete={setDeletingCred}
+        onEdit={setEditingCred}
         onTestConnection={(c) => void handleTestConnection(c)}
         onReconnect={setReconnectingCred}
         testingId={testingId}
@@ -1471,6 +1580,13 @@ function CredentialsPage() {
         credential={deletingCred}
         onOpenChange={(open) => {
           if (!open) setDeletingCred(null)
+        }}
+        onSuccess={invalidate}
+      />
+      <EditAccountDialog
+        credential={editingCred}
+        onOpenChange={(open) => {
+          if (!open) setEditingCred(null)
         }}
         onSuccess={invalidate}
       />
