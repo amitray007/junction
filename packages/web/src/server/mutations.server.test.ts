@@ -19,6 +19,19 @@ const storeGetMock = vi.fn()
 const storeSetMock = vi.fn()
 const credentialsCreateMock = vi.fn()
 const verifyCredentialMock = vi.fn()
+// refreshIfExpired (core) and oauthRefreshFn (source-runtime) are mocked at
+// the module boundary rather than driven for real: testCredential's oauth2
+// branch only needs to prove ITS OWN dispatch on refreshIfExpired's outcome
+// (token/needs-reauth/refresh-failed) — refreshIfExpired's own refresh
+// mechanics (store reads, rotation, atomic write) already have a dedicated
+// suite in packages/core/src/oauth/refresh.test.ts. Driving the real thing
+// here would mean re-mocking store.get for 3 different refs + setOAuthTokens
+// just to re-prove logic this file isn't responsible for.
+const refreshIfExpiredMock = vi.fn()
+// refreshIfExpiredSingleFlight is a real pass-through to `run()` here (not a
+// vi.fn stub) — it's pure plumbing (keys an in-memory Map by credentialId);
+// stubbing it would hide a wiring bug where testCredential forgets to call it.
+const refreshIfExpiredSingleFlightMock = vi.fn((_credentialId: string, run: () => unknown) => run())
 
 vi.mock("@junction/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@junction/core")>()
@@ -42,11 +55,15 @@ vi.mock("@junction/core", async (importOriginal) => {
           },
         }) as unknown as ReturnType<typeof actual.createRepositories>,
     ),
+    refreshIfExpired: (...args: unknown[]) => refreshIfExpiredMock(...args),
   }
 })
 
 vi.mock("@junction/source-runtime", () => ({
   verifyCredential: (...args: unknown[]) => verifyCredentialMock(...args),
+  oauthRefreshFn: vi.fn(),
+  refreshIfExpiredSingleFlight: (...args: [string, () => unknown]) =>
+    refreshIfExpiredSingleFlightMock(...args),
 }))
 
 vi.mock("./shared.server.js", () => ({
@@ -63,6 +80,8 @@ afterEach(() => {
   storeSetMock.mockReset()
   credentialsCreateMock.mockReset()
   verifyCredentialMock.mockReset()
+  refreshIfExpiredMock.mockReset()
+  refreshIfExpiredSingleFlightMock.mockClear()
 })
 
 describe("mutateAddCredential — platform lookup error mapping", () => {
@@ -280,5 +299,144 @@ describe("testCredential", () => {
     expect(verifyCredentialMock).not.toHaveBeenCalled()
     // Persisted as "unreachable", never "ok"/"auth-failed".
     expect(setVerifyStateMock).toHaveBeenCalledWith("cred-1", "unreachable", expect.any(Number))
+  })
+})
+
+// ---------------------------------------------------------------------------
+// testCredential — oauth2 refresh-ahead (increment 30.5, slice 1 bug fix).
+//
+// The bug: testCredential used to hand verifyCredential the CURRENT
+// (possibly-expired) access token straight from `store.get`, so a valid,
+// refreshable oauth2 credential reported a false "Auth Failed". The fix
+// mirrors source-runtime's resolve-provider.ts refresh-ahead path: for an
+// oauth2 credential, refresh via refreshIfExpiredSingleFlight+refreshIfExpired
+// BEFORE ever calling verifyCredential.
+//
+// These tests mock refreshIfExpired directly (not the store reads it makes
+// internally) — see the mock-declaration comment above for why: refreshIfExpired
+// has its own dedicated suite, this file only owns testCredential's dispatch
+// on its outcome.
+// ---------------------------------------------------------------------------
+
+const fakeOAuthCredentialRow = {
+  id: "cred-oauth-1",
+  platformId: "plat-1",
+  secretRef: "ref-1",
+  kind: "oauth2" as const,
+  oauthMeta: { providerId: "google" },
+}
+
+describe("testCredential — oauth2 refresh-ahead (30.5 bug fix)", () => {
+  it("expired-but-refreshable oauth2 credential → refreshes THEN verifies against the FRESH token, not the stale one → ok", async () => {
+    credentialsGetMock.mockReturnValue(okAsync(fakeOAuthCredentialRow))
+    getMock.mockReturnValue(okAsync(fakePlatform))
+    refreshIfExpiredMock.mockReturnValue(okAsync({ accessToken: "fresh-rotated-token" }))
+    verifyCredentialMock.mockReturnValue(okAsync({ status: "ok" }))
+    setVerifyStateMock.mockReturnValue(okAsync(undefined))
+
+    const result = await testCredential("cred-oauth-1")
+
+    expect(result).toEqual({ ok: true, status: "ok" })
+    // Non-vacuous: assert verifyCredential ran against the FRESH token,
+    // never the stale store.get value (store.get is not even mocked/called
+    // on this path — the oauth2 branch must not read the store directly).
+    expect(verifyCredentialMock).toHaveBeenCalledWith(
+      fakePlatform,
+      "fresh-rotated-token",
+      expect.anything(),
+      { oauthProviderId: "google" },
+    )
+    expect(storeGetMock).not.toHaveBeenCalled()
+    // Single-flighted on the credential's id, matching resolve-provider.ts.
+    expect(refreshIfExpiredSingleFlightMock).toHaveBeenCalledWith(
+      "cred-oauth-1",
+      expect.any(Function),
+    )
+    expect(setVerifyStateMock).toHaveBeenCalledWith("cred-oauth-1", "ok", expect.any(Number))
+  })
+
+  it("needsReauth (refreshIfExpired → needs-reauth) → auth-failed, not ok, not a thrown 500", async () => {
+    credentialsGetMock.mockReturnValue(okAsync(fakeOAuthCredentialRow))
+    getMock.mockReturnValue(okAsync(fakePlatform))
+    refreshIfExpiredMock.mockReturnValue(
+      errAsync({ kind: "needs-reauth", platformId: "plat-1", account: "work" }),
+    )
+    setVerifyStateMock.mockReturnValue(okAsync(undefined))
+
+    const result = await testCredential("cred-oauth-1")
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error("expected ok:true (a verify outcome, not a thrown error)")
+    expect(result.status).toBe("auth-failed")
+    // verifyCredential must never run against a needs-reauth credential.
+    expect(verifyCredentialMock).not.toHaveBeenCalled()
+    expect(setVerifyStateMock).toHaveBeenCalledWith(
+      "cred-oauth-1",
+      "auth-failed",
+      expect.any(Number),
+    )
+  })
+
+  it("refresh SUCCEEDS (rotates the token) but the grant is revoked at the provider → verify still reports auth-failed (NOT a false ok)", async () => {
+    credentialsGetMock.mockReturnValue(okAsync(fakeOAuthCredentialRow))
+    getMock.mockReturnValue(okAsync(fakePlatform))
+    // Refresh succeeds and rotates — this is the real "rotate-then-still-fail"
+    // case: refreshIfExpired's own atomic write already committed the new
+    // token; the OLD grant was simply revoked at the provider independent of
+    // the refresh, so the NEW access token still fails verification.
+    refreshIfExpiredMock.mockReturnValue(okAsync({ accessToken: "rotated-but-revoked-token" }))
+    verifyCredentialMock.mockReturnValue(okAsync({ status: "auth-failed" }))
+    setVerifyStateMock.mockReturnValue(okAsync(undefined))
+
+    const result = await testCredential("cred-oauth-1")
+
+    expect(result).toEqual({ ok: true, status: "auth-failed" })
+    expect(verifyCredentialMock).toHaveBeenCalledWith(
+      fakePlatform,
+      "rotated-but-revoked-token",
+      expect.anything(),
+      { oauthProviderId: "google" },
+    )
+    expect(setVerifyStateMock).toHaveBeenCalledWith(
+      "cred-oauth-1",
+      "auth-failed",
+      expect.any(Number),
+    )
+  })
+
+  it("non-oauth2 credential → unchanged plain store.get path, NO refresh attempted", async () => {
+    credentialsGetMock.mockReturnValue(okAsync(fakeCredentialRow))
+    getMock.mockReturnValue(okAsync(fakePlatform))
+    storeGetMock.mockReturnValue(okAsync("plaintext-secret"))
+    verifyCredentialMock.mockReturnValue(okAsync({ status: "ok" }))
+    setVerifyStateMock.mockReturnValue(okAsync(undefined))
+
+    const result = await testCredential("cred-1")
+
+    expect(result).toEqual({ ok: true, status: "ok" })
+    expect(refreshIfExpiredMock).not.toHaveBeenCalled()
+    expect(refreshIfExpiredSingleFlightMock).not.toHaveBeenCalled()
+    expect(verifyCredentialMock).toHaveBeenCalledWith(
+      fakePlatform,
+      "plaintext-secret",
+      expect.anything(),
+      expect.anything(),
+    )
+  })
+
+  it("oauth2 credential whose refreshed token is lost (accessToken: null) → unreachable stored-secret-missing detail, verifyCredential never called", async () => {
+    credentialsGetMock.mockReturnValue(okAsync(fakeOAuthCredentialRow))
+    getMock.mockReturnValue(okAsync(fakePlatform))
+    refreshIfExpiredMock.mockReturnValue(okAsync({ accessToken: null }))
+    setVerifyStateMock.mockReturnValue(okAsync(undefined))
+
+    const result = await testCredential("cred-oauth-1")
+
+    expect(result).toEqual({
+      ok: true,
+      status: "unreachable",
+      detail: "stored secret missing — rotate this credential",
+    })
+    expect(verifyCredentialMock).not.toHaveBeenCalled()
   })
 })
