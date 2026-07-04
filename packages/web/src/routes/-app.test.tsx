@@ -5,6 +5,7 @@
 // -platforms.test.tsx's mocking pattern.
 
 import { cleanup, render, screen } from "@testing-library/react"
+import type React from "react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { AppGroupMeta, AppMeta } from "../server/data.functions.js"
 

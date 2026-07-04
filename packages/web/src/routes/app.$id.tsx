@@ -14,7 +14,7 @@
 
 import { createFileRoute, Link, notFound, useRouter } from "@tanstack/react-router"
 import { Plug, Plus, RefreshCw, TestTube, Trash2 } from "lucide-react"
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { toast } from "sonner"
 import type { ConnectionTarget } from "../components/connection-dialogs.js"
 import {
@@ -390,7 +390,10 @@ function AppDetailPage() {
   const [rotating, setRotating] = useState<ConnectionMeta | null>(null)
   const [renaming, setRenaming] = useState<ConnectionMeta | null>(null)
   const [disconnecting, setDisconnecting] = useState<ConnectionMeta | null>(null)
-  const now = Date.now()
+  // Memoized so the Expiring/Connected boundary is stable across re-renders
+  // (test/rotate/rename/disconnect state changes) + SSR-hydration consistent —
+  // mirrors credentials.tsx's FlatCredentialsTable.
+  const now = useMemo(() => Date.now(), [])
 
   async function invalidate() {
     await router.invalidate()

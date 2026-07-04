@@ -10,6 +10,7 @@
 // path is covered by the junction-web-verify browser pass (real Chromium).
 
 import { cleanup, render, screen } from "@testing-library/react"
+import type React from "react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { ConnectionMeta } from "../server/data.functions.js"
 
