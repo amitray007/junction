@@ -295,6 +295,58 @@ function serializeNode(node, indent) {
   return `${pad}<${node.tag}${attrSrc}>\n${childrenSrc}\n${pad}</${node.tag}>`
 }
 
+// ─── 3b. Per-icon id namespacing ───────────────────────────────────────────
+// @thesvg/icons marks are minified with SHORT local ids (`a`, `b`, `clip0`…)
+// for their <linearGradient>/<clipPath>/<filter> defs, referenced via
+// url(#id) / href="#id". Those ids are document-GLOBAL once inlined, so two
+// icons rendered on the same page that both define id="a" collide — SVG
+// resolves url(#a) to the FIRST match in document order, painting later icons
+// with an earlier icon's gradient (CodeRabbit CRITICAL, inc 30.5). Fix: prefix
+// every defined id AND every reference to it with a per-slot prefix, so each
+// rendered icon's internal refs stay self-contained. Runs on the AST before
+// serialization.
+
+const ID_REF_ATTRS = new Set(["href", "xlink:href"])
+
+/** Rewrites `id` attrs + url(#…)/href="#…" refs in-place under a unique prefix. */
+function namespaceIds(nodes, prefix) {
+  // Pass 1: collect every defined id so we only rewrite refs we actually own
+  // (a stray href to an external/undefined anchor is left untouched).
+  const defined = new Set()
+  const collect = (list) => {
+    for (const n of list) {
+      if (n.type !== "element") continue
+      if (typeof n.attrs.id === "string") defined.add(n.attrs.id)
+      collect(n.children)
+    }
+  }
+  collect(nodes)
+  if (defined.size === 0) return
+
+  const ns = (id) => `${prefix}-${id}`
+  const rewriteUrlRefs = (value) =>
+    value.replace(/url\(\s*#([^)\s]+)\s*\)/g, (m, id) => (defined.has(id) ? `url(#${ns(id)})` : m))
+
+  const apply = (list) => {
+    for (const n of list) {
+      if (n.type !== "element") continue
+      if (typeof n.attrs.id === "string" && defined.has(n.attrs.id)) {
+        n.attrs.id = ns(n.attrs.id)
+      }
+      for (const [name, value] of Object.entries(n.attrs)) {
+        if (name === "id") continue
+        if (ID_REF_ATTRS.has(name) && value.startsWith("#") && defined.has(value.slice(1))) {
+          n.attrs[name] = `#${ns(value.slice(1))}`
+        } else if (value.includes("url(#")) {
+          n.attrs[name] = rewriteUrlRefs(value)
+        }
+      }
+      apply(n.children)
+    }
+  }
+  apply(nodes)
+}
+
 /** Serializes a list of sibling nodes as a JSX fragment (`<>...</>`) source string. */
 function serializeAsFragment(nodes, indent) {
   if (nodes.length === 0) {
@@ -386,6 +438,10 @@ for (const slug of slugs) {
     if (viewBox === undefined) {
       throw new Error(`gen-brand-icons: iconSlug "${slug}" variant "${variantName}" has no viewBox`)
     }
+    // Namespace this slot's internal ids so no two rendered icons collide on a
+    // shared short id (e.g. two "a" gradients on the same page). Prefix is
+    // per-slug + per-slot (light/dark of one icon also stay distinct).
+    namespaceIds(nodes, `${slug}-${slotName}`)
     jsxBySlot[slotName] = serializeAsFragment(nodes, 3)
     viewBoxBySlot[slotName] = viewBox
   }
