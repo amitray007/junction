@@ -16,19 +16,19 @@ import { createFileRoute, Link, notFound, useRouter } from "@tanstack/react-rout
 import { Plug, Plus, RefreshCw, TestTube, Trash2 } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
+import type { ConnectionTarget } from "../components/connection-dialogs.js"
+import {
+  DisconnectDialog,
+  EditAccountLabelDialog,
+  RotateSecretDialog,
+} from "../components/connection-dialogs.js"
 import { formatCheckedAt } from "../lib/format-date.js"
+import { testConnection } from "../lib/test-connection.js"
 import type { AppMeta, AppsData, ConnectionMeta } from "../server/data.functions.js"
 import { getApps } from "../server/data.functions.js"
-import {
-  removeCredentialFn,
-  renameCredentialFn,
-  rotateCredentialFn,
-  testCredentialFn,
-} from "../server/mutations.functions.js"
 import { startReconnectFn } from "../server/oauth-connect.functions.js"
 import {
   Button,
-  ConfirmDialog,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -38,8 +38,6 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   EmptyState,
-  Field,
-  Input,
   MonoChip,
   MonoCode,
   PageHeader,
@@ -125,226 +123,18 @@ function connectionStatus(
 }
 
 // ---------------------------------------------------------------------------
-// Rotate dialog (non-oauth connections only) — mirrors credentials.tsx's
-// RotateCredentialDialog, scoped to a ConnectionMeta instead of CredentialMeta.
+// Rotate / rename / disconnect dialogs now live in
+// components/connection-dialogs.tsx (shared with credentials.tsx — rule of
+// three, inc 30 jscpd dedupe). AppDetailPage maps its ConnectionMeta to the
+// shared ConnectionTarget shape at each call site below (only rendered when
+// credentialId is defined — a credential-less connection has nothing to
+// rotate/rename/disconnect).
 // ---------------------------------------------------------------------------
 
-interface RotateDialogProps {
-  readonly connection: ConnectionMeta | null
-  readonly onOpenChange: (open: boolean) => void
-  readonly onSuccess: () => void
-}
-
-function RotateConnectionDialog({ connection, onOpenChange, onSuccess }: RotateDialogProps) {
-  const [newSecret, setNewSecret] = useState("")
-  const [error, setError] = useState<string | undefined>()
-  const [submitting, setSubmitting] = useState(false)
-
-  function reset() {
-    setNewSecret("")
-    setError(undefined)
-    setSubmitting(false)
-  }
-
-  function handleOpenChange(next: boolean) {
-    if (!next) reset()
-    onOpenChange(next)
-  }
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!newSecret) {
-      setError("New secret is required")
-      return
-    }
-    if (!connection?.credentialId) return
-    setSubmitting(true)
-    try {
-      const result = await rotateCredentialFn({
-        data: { credentialId: connection.credentialId, newSecret },
-      })
-      if (!result.ok) {
-        toast.error(`Failed to rotate credential: ${result.error}`)
-        setSubmitting(false)
-        return
-      }
-      toast.success("Credential rotated")
-      handleOpenChange(false)
-      onSuccess()
-    } catch {
-      toast.error("Failed to rotate credential")
-      setSubmitting(false)
-    }
-  }
-
-  return (
-    <Dialog open={connection !== null} onOpenChange={handleOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Rotate Credential</DialogTitle>
-          <DialogDescription>
-            Enter a new secret for <MonoCode>{connection?.account}</MonoCode>. The old secret is
-            deleted from the store on success.
-          </DialogDescription>
-        </DialogHeader>
-        <form onSubmit={handleSubmit} noValidate>
-          <div className="flex flex-col gap-4">
-            <Field id="app-rotate-secret" label="New secret" error={error}>
-              <Input
-                id="app-rotate-secret"
-                type="password"
-                autoComplete="new-password"
-                value={newSecret}
-                onChange={(e) => setNewSecret(e.target.value)}
-                hasError={!!error}
-                aria-required="true"
-                placeholder="Paste new secret here"
-              />
-            </Field>
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="secondary" onClick={() => handleOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" variant="primary" disabled={submitting}>
-              {submitting ? "Rotating…" : "Rotate Secret"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Rename dialog — mirrors credentials.tsx's EditAccountDialog.
-// ---------------------------------------------------------------------------
-
-function RenameConnectionDialog({ connection, onOpenChange, onSuccess }: RotateDialogProps) {
-  const [account, setAccount] = useState(connection?.account ?? "")
-  const [error, setError] = useState<string | undefined>()
-  const [submitting, setSubmitting] = useState(false)
-
-  const editingId = connection?.credentialId
-
-  function handleOpenChange(next: boolean) {
-    if (!next) {
-      setAccount("")
-      setError(undefined)
-      setSubmitting(false)
-    } else {
-      setAccount(connection?.account ?? "")
-    }
-    onOpenChange(next)
-  }
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!account.trim()) {
-      setError("Account label is required")
-      return
-    }
-    if (!editingId) return
-    setSubmitting(true)
-    try {
-      const result = await renameCredentialFn({
-        data: { credentialId: editingId, account: account.trim() },
-      })
-      if (!result.ok) {
-        toast.error(`Failed to rename: ${result.error}`)
-        setSubmitting(false)
-        return
-      }
-      toast.success("Account label updated")
-      handleOpenChange(false)
-      onSuccess()
-    } catch {
-      toast.error("Failed to rename")
-      setSubmitting(false)
-    }
-  }
-
-  return (
-    <Dialog open={connection !== null} onOpenChange={handleOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Edit account label</DialogTitle>
-          <DialogDescription>
-            Rename the account label for this connection. This is a display label only — the secret
-            and connection are unchanged.
-          </DialogDescription>
-        </DialogHeader>
-        <form onSubmit={handleSubmit} noValidate>
-          <div className="flex flex-col gap-4">
-            <Field id="app-rename-account" label="Account label" error={error}>
-              <Input
-                id="app-rename-account"
-                autoComplete="off"
-                value={account}
-                onChange={(e) => setAccount(e.target.value)}
-                hasError={!!error}
-                aria-required="true"
-              />
-            </Field>
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="secondary" onClick={() => handleOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" variant="primary" disabled={submitting}>
-              {submitting ? "Saving…" : "Save"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Disconnect confirmation — mirrors credentials.tsx's DeleteCredentialDialog.
-// ---------------------------------------------------------------------------
-
-interface DisconnectDialogProps {
-  readonly connection: ConnectionMeta | null
-  readonly onOpenChange: (open: boolean) => void
-  readonly onSuccess: () => void
-}
-
-function DisconnectDialog({ connection, onOpenChange, onSuccess }: DisconnectDialogProps) {
-  async function handleConfirm(): Promise<boolean> {
-    if (!connection?.credentialId) return false
-    try {
-      const result = await removeCredentialFn({ data: { credentialId: connection.credentialId } })
-      if (!result.ok) {
-        toast.error(`Failed to disconnect: ${result.error}`)
-        return false
-      }
-      toast.success("Disconnected")
-      onSuccess()
-      return true
-    } catch {
-      toast.error("Failed to disconnect")
-      return false
-    }
-  }
-
-  return (
-    <ConfirmDialog
-      open={connection !== null}
-      title="Disconnect"
-      description={
-        <>
-          Disconnect <MonoCode>{connection?.account}</MonoCode>? This removes the credential from
-          the store and cannot be undone.
-        </>
-      }
-      confirmLabel="Disconnect"
-      confirmingLabel="Disconnecting…"
-      onConfirm={handleConfirm}
-      onOpenChange={onOpenChange}
-    />
-  )
+/** Maps a ConnectionMeta with a defined credentialId to the shared ConnectionTarget shape. */
+function connectionToTarget(connection: ConnectionMeta | null): ConnectionTarget | null {
+  if (connection === null || connection.credentialId === undefined) return null
+  return { credentialId: connection.credentialId, account: connection.account }
 }
 
 // ---------------------------------------------------------------------------
@@ -610,23 +400,7 @@ function AppDetailPage() {
     if (!c.credentialId) return
     setTestingId(c.credentialId)
     try {
-      const result = await testCredentialFn({ data: { credentialId: c.credentialId } })
-      if (!result.ok) {
-        toast.error(`Failed to test connection: ${result.error}`)
-        return
-      }
-      if (result.status === "ok") {
-        toast.success("Connected")
-      } else if (result.status === "auth-failed") {
-        toast.error("Auth failed — check the token")
-      } else if (result.status === "unreachable") {
-        toast.warning("Couldn't reach the source")
-      } else {
-        toast.message(result.detail ?? "Not auto-verifiable for this source")
-      }
-      await invalidate()
-    } catch {
-      toast.error("Failed to test connection")
+      await testConnection(c.credentialId, invalidate)
     } finally {
       setTestingId(null)
     }
@@ -675,22 +449,22 @@ function AppDetailPage() {
           if (!open) setReconnecting(null)
         }}
       />
-      <RotateConnectionDialog
-        connection={rotating}
+      <RotateSecretDialog
+        target={connectionToTarget(rotating)}
         onOpenChange={(open) => {
           if (!open) setRotating(null)
         }}
         onSuccess={invalidate}
       />
-      <RenameConnectionDialog
-        connection={renaming}
+      <EditAccountLabelDialog
+        target={connectionToTarget(renaming)}
         onOpenChange={(open) => {
           if (!open) setRenaming(null)
         }}
         onSuccess={invalidate}
       />
       <DisconnectDialog
-        connection={disconnecting}
+        target={connectionToTarget(disconnecting)}
         onOpenChange={(open) => {
           if (!open) setDisconnecting(null)
         }}

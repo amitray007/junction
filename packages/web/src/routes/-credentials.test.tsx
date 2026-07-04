@@ -98,7 +98,7 @@ vi.mock("../server/oauth-connect.functions.js", () => ({
   startReconnectFn: (...args: unknown[]) => mockStartReconnectFn(...args),
 }))
 
-const { Route, FlatCredentialsTable, EditAccountDialog } = await import("./credentials.js")
+const { Route, FlatCredentialsTable } = await import("./credentials.js")
 // biome-ignore lint/suspicious/noExplicitAny: test utility — typing the internal options shape is not worth the boilerplate
 const CredentialsPage = (Route as any).options.component as React.FC
 
@@ -1074,53 +1074,7 @@ describe("CredentialsPage — ?connect= outcome handling", () => {
   })
 })
 
-// ---------------------------------------------------------------------------
-// Edit account dialog (Task 5) — tested directly (Radix dropdown item can't be
-// clicked in happy-dom; same limitation as Rotate/Delete).
-// ---------------------------------------------------------------------------
-
-describe("EditAccountDialog (Task 5)", () => {
-  const cred: CredentialMeta = {
-    id: "c1",
-    platformId: "github",
-    account: "work",
-    kind: "bearer",
-  }
-
-  it("pre-fills the current account and submits the trimmed new label to renameCredentialFn", async () => {
-    mockRenameCredentialFn.mockResolvedValue({
-      ok: true,
-      credential: { ...cred, account: "work-primary" },
-    })
-    const onSuccess = vi.fn()
-    const { getByLabelText, getByRole } = render(
-      <EditAccountDialog credential={cred} onOpenChange={vi.fn()} onSuccess={onSuccess} />,
-    )
-
-    // Pre-filled with the current account.
-    const input = getByLabelText("Account label") as HTMLInputElement
-    expect(input.value).toBe("work")
-
-    fireEvent.change(input, { target: { value: "  work-primary  " } })
-    const submit = getByRole("dialog").querySelector("button[type='submit']") as HTMLButtonElement
-    fireEvent.click(submit)
-
-    await waitFor(() => expect(mockRenameCredentialFn).toHaveBeenCalled())
-    // Trimmed before send.
-    expect(mockRenameCredentialFn).toHaveBeenCalledWith({
-      data: { credentialId: "c1", account: "work-primary" },
-    })
-    await waitFor(() => expect(onSuccess).toHaveBeenCalled())
-  })
-
-  it("validates a non-empty label before calling renameCredentialFn", async () => {
-    const { getByLabelText, getByRole, getByText } = render(
-      <EditAccountDialog credential={cred} onOpenChange={vi.fn()} onSuccess={vi.fn()} />,
-    )
-    fireEvent.change(getByLabelText("Account label"), { target: { value: "   " } })
-    fireEvent.click(getByRole("dialog").querySelector("button[type='submit']") as HTMLButtonElement)
-
-    await waitFor(() => expect(getByText("Account label is required")).toBeInTheDocument())
-    expect(mockRenameCredentialFn).not.toHaveBeenCalled()
-  })
-})
+// EditAccountLabelDialog (formerly EditAccountDialog) is now extracted to
+// components/connection-dialogs.tsx and tested there directly
+// (connection-dialogs.test.tsx) — shared with app.$id.tsx (rule of three,
+// inc 30 jscpd dedupe).
