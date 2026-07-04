@@ -471,6 +471,38 @@ const triggerButtonClassName = cn(
   "opacity-40 group-hover:opacity-100 group-focus-within:opacity-100",
 )
 
+/**
+ * The ⋯ row-actions trigger + menu, WITHOUT a table cell wrapper. Use this on
+ * non-table surfaces (e.g. a flex/list row) so no stray `<td>` is emitted
+ * outside a `<table>` (invalid HTML). `TableActionsCell` wraps this in a
+ * `<td>` for real table rows.
+ *
+ * Click-to-open (Radix default, uncontrolled). A previous hover-to-open impl
+ * flickered: Radix portals the menu with a gap (sideOffset) from the trigger,
+ * so the pointer crossing that gap fired mouseleave→close while the open state
+ * + zoom animation re-triggered — a visible open/close loop. Click is the
+ * robust, flicker-free standard; the trigger stays keyboard-reachable
+ * (Enter/Space) and always-visible.
+ */
+export function RowActionsMenu({ menu }: { readonly menu: React.ReactNode }) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label="Row actions"
+          aria-haspopup="menu"
+          className={triggerButtonClassName}
+          style={{ color: "var(--gray-700)", backgroundColor: "transparent" }}
+        >
+          <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+        </button>
+      </DropdownMenuTrigger>
+      {menu}
+    </DropdownMenu>
+  )
+}
+
 export function TableActionsCell({
   className,
   menu,
@@ -480,27 +512,9 @@ export function TableActionsCell({
    * that have no actions should omit the column entirely (don't render TableActionsCell). */
   readonly menu: React.ReactNode
 }) {
-  // Click-to-open (Radix default, uncontrolled). A previous hover-to-open implementation
-  // flickered: Radix portals the menu with a gap (sideOffset) from the trigger, so the
-  // pointer crossing that gap fired mouseleave→close while the open state + zoom animation
-  // re-triggered — a visible open/close loop. Click is the robust, flicker-free standard;
-  // the trigger stays keyboard-reachable (Enter/Space) and always-visible.
   return (
     <TableCell className={cn("w-12 text-right pr-2", className)}>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button
-            type="button"
-            aria-label="Row actions"
-            aria-haspopup="menu"
-            className={triggerButtonClassName}
-            style={{ color: "var(--gray-700)", backgroundColor: "transparent" }}
-          >
-            <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
-          </button>
-        </DropdownMenuTrigger>
-        {menu}
-      </DropdownMenu>
+      <RowActionsMenu menu={menu} />
     </TableCell>
   )
 }

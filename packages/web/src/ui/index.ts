@@ -85,6 +85,7 @@ export { Switch } from "./switch.js"
 export type { SortDirection, TableHeadProps } from "./table.js"
 export {
   EmptyTableRow,
+  RowActionsMenu,
   Table,
   TableActionsCell,
   TableActionsHead,

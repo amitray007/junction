@@ -10,23 +10,24 @@ import { createFileRoute, useRouter } from "@tanstack/react-router"
 import { Copy, Pencil, Plug, Plus, RefreshCw, TestTube, Trash2 } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
+import type { ConnectionTarget } from "../components/connection-dialogs.js"
+import {
+  DisconnectDialog,
+  EditAccountLabelDialog,
+  RotateSecretDialog,
+} from "../components/connection-dialogs.js"
+import { formatCheckedAt } from "../lib/format-date.js"
+import { testConnection } from "../lib/test-connection.js"
 import type { TableColumn } from "../lib/use-table-view.js"
 import { useTableView } from "../lib/use-table-view.js"
 import type { CredentialMeta, OAuthProviderMeta, PlatformMeta } from "../server/data.functions.js"
 import { getCredentials, getOAuthProviders, getPlatforms } from "../server/data.functions.js"
-import {
-  addCredentialFn,
-  removeCredentialFn,
-  renameCredentialFn,
-  rotateCredentialFn,
-  testCredentialFn,
-} from "../server/mutations.functions.js"
+import { addCredentialFn } from "../server/mutations.functions.js"
 import { startConnectFn, startReconnectFn } from "../server/oauth-connect.functions.js"
 import { MonoCode } from "../ui/code.js"
 import {
   Button,
   Checkbox,
-  ConfirmDialog,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -130,24 +131,6 @@ function oauthStatus(
     if (!Number.isNaN(expiresAtMs) && expiresAtMs - now <= EXPIRING_WINDOW_MS) return "expiring"
   }
   return "connected"
-}
-
-// Pinned-UTC timestamp formatter (inc-27 SSR-hydration rule — see keys.tsx).
-// NEVER render relative time ("2h ago"): server and client clocks/renders can
-// disagree, producing a hydration mismatch. Module-scope so the Intl instance
-// is built once, not per render.
-const CHECKED_AT_FORMAT = new Intl.DateTimeFormat("en-US", {
-  year: "numeric",
-  month: "short",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false,
-  timeZone: "UTC",
-})
-
-function formatCheckedAt(ms: number): string {
-  return `checked ${CHECKED_AT_FORMAT.format(new Date(ms))} UTC`
 }
 
 // Page size for the paginated table (F12). 25 rows is comfortable for the seed (10)
@@ -444,240 +427,10 @@ function AddCredentialDialog({ open, onOpenChange, platforms, onSuccess }: AddDi
 }
 
 // ---------------------------------------------------------------------------
-// Rotate credential dialog
-// ---------------------------------------------------------------------------
-
-interface RotateDialogProps {
-  readonly credential: CredentialMeta | null
-  readonly onOpenChange: (open: boolean) => void
-  readonly onSuccess: () => void
-}
-
-function RotateCredentialDialog({ credential, onOpenChange, onSuccess }: RotateDialogProps) {
-  const [newSecret, setNewSecret] = useState("")
-  const [error, setError] = useState<string | undefined>()
-  const [submitting, setSubmitting] = useState(false)
-
-  function reset() {
-    setNewSecret("")
-    setError(undefined)
-    setSubmitting(false)
-  }
-
-  function handleOpenChange(next: boolean) {
-    if (!next) reset()
-    onOpenChange(next)
-  }
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!newSecret) {
-      setError("New secret is required")
-      return
-    }
-    if (!credential) return
-    setSubmitting(true)
-    try {
-      const result = await rotateCredentialFn({
-        data: { credentialId: credential.id, newSecret },
-      })
-      if (!result.ok) {
-        toast.error(`Failed to rotate credential: ${result.error}`)
-        setSubmitting(false)
-        return
-      }
-      toast.success("Credential rotated")
-      handleOpenChange(false)
-      onSuccess()
-    } catch {
-      toast.error("Failed to rotate credential")
-      setSubmitting(false)
-    }
-  }
-
-  return (
-    <Dialog open={credential !== null} onOpenChange={handleOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Rotate Credential</DialogTitle>
-          <DialogDescription>
-            Enter a new secret for <MonoCode>{credential?.account}</MonoCode> on{" "}
-            <MonoCode>{credential?.platformId}</MonoCode>. The old secret is deleted from the store
-            on success.
-          </DialogDescription>
-        </DialogHeader>
-        <form onSubmit={handleSubmit} noValidate>
-          <div className="flex flex-col gap-4">
-            <SecretField
-              id="rotate-secret"
-              label="New secret"
-              value={newSecret}
-              onChange={setNewSecret}
-              error={error}
-              placeholder="Paste new secret here"
-            />
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="secondary" onClick={() => handleOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" variant="primary" disabled={submitting}>
-              {submitting ? "Rotating…" : "Rotate Secret"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Edit account dialog (Task 5) — rename the account LABEL in place. The ONLY
-// editable metadata: the secret stays rotate-only, and client_id is a reconnect
-// concern. Pre-fills the current account; submits the trimmed new label.
-// ---------------------------------------------------------------------------
-
-// Exported for direct unit testing — the Edit action is a Radix dropdown item,
-// which happy-dom can't reliably click (same limitation the Rotate/Delete tests
-// document), so the dialog is exercised directly, like FlatCredentialsTable.
-export function EditAccountDialog({ credential, onOpenChange, onSuccess }: RotateDialogProps) {
-  const [account, setAccount] = useState("")
-  const [error, setError] = useState<string | undefined>()
-  const [submitting, setSubmitting] = useState(false)
-
-  // Pre-fill with the current account when the dialog opens for a credential.
-  // Keyed off the credential ID (not the object) so a same-id re-render with a
-  // fresh object reference can't clobber an in-progress edit.
-  const editingId = credential?.id
-  const editingAccount = credential?.account
-  useEffect(() => {
-    if (editingId !== undefined) {
-      setAccount(editingAccount ?? "")
-      setError(undefined)
-      setSubmitting(false)
-    }
-  }, [editingId, editingAccount])
-
-  function handleOpenChange(next: boolean) {
-    if (!next) {
-      setAccount("")
-      setError(undefined)
-      setSubmitting(false)
-    }
-    onOpenChange(next)
-  }
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!account.trim()) {
-      setError("Account label is required")
-      return
-    }
-    if (!credential) return
-    setSubmitting(true)
-    try {
-      const result = await renameCredentialFn({
-        data: { credentialId: credential.id, account: account.trim() },
-      })
-      if (!result.ok) {
-        toast.error(`Failed to rename: ${result.error}`)
-        setSubmitting(false)
-        return
-      }
-      toast.success("Account label updated")
-      handleOpenChange(false)
-      onSuccess()
-    } catch {
-      toast.error("Failed to rename")
-      setSubmitting(false)
-    }
-  }
-
-  return (
-    <Dialog open={credential !== null} onOpenChange={handleOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Edit account label</DialogTitle>
-          <DialogDescription>
-            Rename the account label for this credential on{" "}
-            <MonoCode>{credential?.platformId}</MonoCode>. This is a display label only — the secret
-            and connection are unchanged.
-          </DialogDescription>
-        </DialogHeader>
-        <form onSubmit={handleSubmit} noValidate>
-          <div className="flex flex-col gap-4">
-            <Field id="edit-account" label="Account label" error={error}>
-              <Input
-                id="edit-account"
-                autoComplete="off"
-                value={account}
-                onChange={(e) => setAccount(e.target.value)}
-                hasError={!!error}
-                aria-required="true"
-              />
-            </Field>
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="secondary" onClick={() => handleOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" variant="primary" disabled={submitting}>
-              {submitting ? "Saving…" : "Save"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Delete confirmation dialog — uses shared ConfirmDialog (FIX 5).
-// ---------------------------------------------------------------------------
-
-interface DeleteDialogProps {
-  readonly credential: CredentialMeta | null
-  readonly onOpenChange: (open: boolean) => void
-  readonly onSuccess: () => void
-}
-
-function DeleteCredentialDialog({ credential, onOpenChange, onSuccess }: DeleteDialogProps) {
-  async function handleConfirm(): Promise<boolean> {
-    if (!credential) return false
-    try {
-      const result = await removeCredentialFn({ data: { credentialId: credential.id } })
-      if (!result.ok) {
-        toast.error(`Failed to delete credential: ${result.error}`)
-        return false
-      }
-      toast.success("Credential deleted")
-      onSuccess()
-      return true
-    } catch {
-      toast.error("Failed to delete credential")
-      return false
-    }
-  }
-
-  return (
-    <ConfirmDialog
-      open={credential !== null}
-      title="Delete Credential"
-      description={
-        <>
-          Delete credential <MonoCode>{credential?.account}</MonoCode> on{" "}
-          <MonoCode>{credential?.platformId}</MonoCode>? This removes the secret from the store and
-          cannot be undone.
-        </>
-      }
-      confirmLabel="Delete Credential"
-      confirmingLabel="Deleting…"
-      onConfirm={handleConfirm}
-      onOpenChange={onOpenChange}
-    />
-  )
-}
-
+// Rotate / edit-account-label / delete dialogs now live in
+// components/connection-dialogs.tsx (shared with app.$id.tsx — rule of
+// three, inc 30 jscpd dedupe). CredentialsPage maps its CredentialMeta to the
+// shared ConnectionTarget shape at each call site below.
 // ---------------------------------------------------------------------------
 // Connect (OAuth) dialog — the web "Connect" flow (inc 29, slice C). Picks a
 // catalog provider, takes BYO client_id/client_secret (secret is input-only,
@@ -1452,6 +1205,16 @@ export function FlatCredentialsTable({
 // Main page
 // ---------------------------------------------------------------------------
 
+/** Maps a CredentialMeta to the shared ConnectionTarget shape (or null passthrough). */
+function credentialToTarget(credential: CredentialMeta | null): ConnectionTarget | null {
+  if (credential === null) return null
+  return {
+    credentialId: credential.id,
+    account: credential.account,
+    platformId: credential.platformId,
+  }
+}
+
 // Toast copy for the post-callback ?connect= outcome (inc 29). Kept as a plain
 // map (not a component) — this is a one-shot side effect on mount/search
 // change, not rendered UI.
@@ -1497,23 +1260,7 @@ function CredentialsPage() {
   async function handleTestConnection(c: CredentialMeta) {
     setTestingId(c.id)
     try {
-      const result = await testCredentialFn({ data: { credentialId: c.id } })
-      if (!result.ok) {
-        toast.error(`Failed to test connection: ${result.error}`)
-        return
-      }
-      if (result.status === "ok") {
-        toast.success("Connected")
-      } else if (result.status === "auth-failed") {
-        toast.error("Auth failed — check the token")
-      } else if (result.status === "unreachable") {
-        toast.warning("Couldn't reach the source")
-      } else {
-        toast.message(result.detail ?? "Not auto-verifiable for this source")
-      }
-      await invalidate()
-    } catch {
-      toast.error("Failed to test connection")
+      await testConnection(c.id, invalidate)
     } finally {
       setTestingId(null)
     }
@@ -1569,22 +1316,23 @@ function CredentialsPage() {
         platforms={platforms}
         onSuccess={invalidate}
       />
-      <RotateCredentialDialog
-        credential={rotatingCred}
+      <RotateSecretDialog
+        target={credentialToTarget(rotatingCred)}
         onOpenChange={(open) => {
           if (!open) setRotatingCred(null)
         }}
         onSuccess={invalidate}
       />
-      <DeleteCredentialDialog
-        credential={deletingCred}
+      <DisconnectDialog
+        target={credentialToTarget(deletingCred)}
+        copy="delete"
         onOpenChange={(open) => {
           if (!open) setDeletingCred(null)
         }}
         onSuccess={invalidate}
       />
-      <EditAccountDialog
-        credential={editingCred}
+      <EditAccountLabelDialog
+        target={credentialToTarget(editingCred)}
         onOpenChange={(open) => {
           if (!open) setEditingCred(null)
         }}

@@ -4,6 +4,7 @@
 // SECURITY: credentials output is metadata-only — no secret, no secretRef.
 
 import {
+  type AppDefinition,
   compatibleCredentialKinds,
   createCredentialStore,
   createRepositories,
@@ -11,7 +12,9 @@ import {
   getMcpHost,
   getMcpPort,
   getPaths,
+  groupByApp,
   type JunctionPaths,
+  listApps,
   listProviders,
   loadConfig,
   loadConfigState,
@@ -356,4 +359,109 @@ export async function readProfiles(): Promise<ProfileMeta[]> {
       }),
     }))
   })
+}
+
+// ---------------------------------------------------------------------------
+// Apps (increment 30) — the "connect a service" surface. The grouping is
+// DERIVED live (no schema change, no persistence) from readPlatforms() +
+// readCredentials() (already metadata-only) via core's pure groupByApp().
+//
+// DTO shape: {catalog, groups} — one reader, two facets of the same read.
+// `catalog` is listApps() (the full App catalog — the /app index's spine,
+// including apps with zero connections). `groups` is the live-derived
+// per-app connection list (only apps/"other" that actually have ≥1
+// connection are present — an unconnected catalog app is NOT in `groups`,
+// by groupByApp's contract; the index left-joins catalog against groups).
+//
+// SECURITY: metadata-only, like readCredentials — NEVER a secret/secretRef.
+// The per-connection status fields below are a SUBSET of CredentialMeta's
+// verify/oauth fields, re-keyed onto the Connection shape.
+// ---------------------------------------------------------------------------
+
+export type AppMeta = AppDefinition
+
+export type ConnectionMeta = {
+  /** Underlying credential id — undefined for a credential-less (public) connection. */
+  credentialId?: string
+  account: string
+  platformId: string
+  platformDisplayName: string
+  kind: string
+  lastVerifiedAt?: number
+  lastVerifyResult?: "ok" | "auth-failed" | "unreachable"
+  oauthState?: {
+    providerId: string
+    expiresAt: string | null
+    needsReauth: boolean
+    hasRefreshToken: boolean
+  }
+}
+
+export type AppGroupMeta = {
+  appId: string
+  connections: ConnectionMeta[]
+}
+
+export type AppsData = {
+  catalog: AppMeta[]
+  groups: AppGroupMeta[]
+}
+
+export async function readApps(): Promise<AppsData> {
+  const [platforms, credentials] = await Promise.all([readPlatforms(), readCredentials()])
+
+  // Core's groupByApp is pure and only needs {platformId, account, oauthProviderId}
+  // per credential — map CredentialMeta's nested oauthState.providerId onto the
+  // flat oauthProviderId field groupByApp expects (review C2 — skipping this
+  // silently buckets every OAuth connection into "other").
+  const groupInput = {
+    platforms: platforms.map((p) => ({
+      id: p.id,
+      kind: p.kind as Platform["kind"],
+      displayName: p.displayName,
+    })),
+    credentials: credentials.map((c) => ({
+      platformId: c.platformId,
+      account: c.account,
+      ...(c.oauthState?.providerId !== undefined
+        ? { oauthProviderId: c.oauthState.providerId }
+        : {}),
+    })),
+  }
+  const groups = groupByApp(groupInput)
+
+  // Lookups to re-attach full connection metadata: platform displayName/kind,
+  // and (when the connection has a real credential) its status fields. A
+  // credential-less connection (account === "—") has no CredentialMeta match.
+  const platformById = new Map(platforms.map((p) => [p.id, p]))
+  const credentialByPlatformAndAccount = new Map(
+    credentials.map((c) => [`${c.platformId} ${c.account}`, c]),
+  )
+
+  const groupMetas: AppGroupMeta[] = groups.map((group) => ({
+    appId: group.appId,
+    connections: group.connections.map((conn) => {
+      const platform = platformById.get(conn.platformId)
+      const credential =
+        conn.account === "—"
+          ? undefined
+          : credentialByPlatformAndAccount.get(`${conn.platformId} ${conn.account}`)
+      return {
+        ...(credential !== undefined ? { credentialId: credential.id } : {}),
+        account: conn.account,
+        platformId: conn.platformId,
+        platformDisplayName: platform?.displayName ?? conn.platformId,
+        kind: conn.kind,
+        ...(credential?.lastVerifiedAt !== undefined
+          ? { lastVerifiedAt: credential.lastVerifiedAt }
+          : {}),
+        ...(credential?.lastVerifyResult !== undefined
+          ? { lastVerifyResult: credential.lastVerifyResult }
+          : {}),
+        ...(credential?.oauthState !== undefined ? { oauthState: credential.oauthState } : {}),
+      }
+    }),
+  }))
+
+  return { catalog: listApps(), groups: groupMetas }
 }

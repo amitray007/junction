@@ -8,6 +8,7 @@
 import { createServerFn } from "@tanstack/react-start"
 import { getRequest } from "@tanstack/react-start/server"
 import {
+  readApps,
   readCredentials,
   readDashboard,
   readOAuthProviders,
@@ -21,6 +22,10 @@ import { assertLocalHost } from "./fn-guards.server.js"
 // Re-export types so route files can annotate useLoaderData() without a
 // direct import from data.server.ts (which is server-only by convention).
 export type {
+  AppGroupMeta,
+  AppMeta,
+  AppsData,
+  ConnectionMeta,
   CredentialMeta,
   DashboardData,
   OAuthProviderMeta,
@@ -48,6 +53,13 @@ export const getPlatforms = createServerFn({ method: "GET" }).handler(async () =
 export const getCredentials = createServerFn({ method: "GET" }).handler(async () => {
   assertLocalHost()
   return readCredentials()
+})
+
+// Apps (increment 30) — the derived "connect a service" surface. See
+// readApps' header comment in data.server.ts for the {catalog, groups} shape.
+export const getApps = createServerFn({ method: "GET" }).handler(async () => {
+  assertLocalHost()
+  return readApps()
 })
 
 // The catalog is pure data (no I/O) — readOAuthProviders is synchronous, but
