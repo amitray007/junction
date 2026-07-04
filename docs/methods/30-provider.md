@@ -338,6 +338,22 @@ which collects everything deliberately held back from 30 so 30 stays low-risk an
   (`startConnect` today REQUIRES client creds and has NO reuse path — the reuse only exists in
   `startReconnect`; PR #94's reuse does NOT apply to `startConnect`). Needs a dedicated
   **security-reviewer pass** (credential-store touch; must not strand or leak client creds).
+- **Test Connection should auto-refresh before testing (OAuth) — BUG.** A Google credential
+  connected yesterday shows "Auth Failed" on Test Connection because it verifies the CURRENT
+  (expired) access token without refreshing first — yet the credential is valid (it
+  auto-refreshes when actually used via MCP). Fix: for an OAuth credential with a refresh
+  token, Test Connection must `refreshIfExpired` (or force a refresh) FIRST, then verify — so a
+  refreshable credential reports Connected, not Auth Failed. Affects BOTH the Credentials page
+  test and the new Apps per-connection Test (shared verify path — inc-29 refresh engine
+  `shouldRefresh`/`refreshIfExpired` + single-flight). Verify against `/tmp/jt29ui` (real
+  Google, expired access token + valid refresh token → Test refreshes + passes).
+- **Per-app icons/logos in the Apps surface — ENHANCEMENT.** Add a per-app glyph to the catalog
+  cards + per-app header so the surface is scannable. Needs a research pass on the SVG source:
+  MUST be self-contained (no runtime CDN — web CSP + AGPL self-host), theme-aware, license OK
+  for AGPL redistribution. Candidates: **simple-icons** (large brand-icon npm set, offline
+  SVGs — likely the strongest fit), `@thesvg/cli` (user suggestion, build-time fetch); lucide
+  (already used but generic, not brand). Add an optional `iconId`/slug to `AppDefinition`;
+  render inline SVG with a first-letter-tile fallback for apps without one.
 - Any other lifecycle richness surfaced during the inc-30 build that isn't a straight reuse of
   a shipped op.
 
