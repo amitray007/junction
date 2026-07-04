@@ -157,12 +157,9 @@ const PROVIDERS: readonly OAuthProvider[] = [
   },
   {
     // GitHub OAuth App: token never expires, no refresh — the historical
-    // GitHub OAuth flow. GitHub OAuth Apps don't require PKCE (there is no
-    // client-side confidentiality concern for a public client historically),
-    // but the authorize endpoint accepts S256 harmlessly for the web flow —
-    // defaulting to S256 here since it's strictly safer and GitHub ignores
-    // unknown/unused PKCE params rather than rejecting them. B should confirm
-    // against the real provider before relying on this.
+    // GitHub OAuth flow. GitHub added mandatory PKCE (S256) for OAuth Apps in
+    // July 2025 (confirmed against GitHub's OAuth Apps docs, inc 30 research)
+    // — S256 here is correct and required, not just harmlessly accepted.
     id: "github",
     displayName: "GitHub",
     authorizationUrl: "https://github.com/login/oauth/authorize",
@@ -327,6 +324,160 @@ const PROVIDERS: readonly OAuthProvider[] = [
     // A userinfo check that 403s for a validly-connected token would be a
     // misleading auth-failed, so we omit it and let Test Connection fall
     // through to the source-verify / not-verifiable (honest > confidently wrong).
+  },
+  {
+    // Discord OAuth2 — standard authorization-code flow, PKCE S256, refresh
+    // supported. Authorize/token URLs confirmed against Discord's OAuth2 docs
+    // (inc 30 research).
+    id: "discord",
+    displayName: "Discord",
+    authorizationUrl: "https://discord.com/oauth2/authorize",
+    tokenUrl: "https://discord.com/api/oauth2/token",
+    pkce: "S256",
+    scopeSeparator: " ",
+    tokenAuthMethod: "client_secret_post",
+    bodyFormat: "form",
+    expiryStrategy: "expires_in",
+    redirectMode: "loopback-fixed",
+    supportsRefresh: true,
+    registrationHint: {
+      redirectUri: OAUTH_CALLBACK_URI,
+      scopes: "identify email (adjust per platform)",
+      docsUrl: "https://discord.com/developers/docs/topics/oauth2",
+    },
+    // Discord's own-identity endpoint — a plain bearer GET.
+    userinfoUrl: "https://discord.com/api/users/@me",
+  },
+  {
+    // Spotify Accounts service — standard authorization-code flow, PKCE S256,
+    // refresh supported. Confirmed against Spotify's Authorization Code docs.
+    id: "spotify",
+    displayName: "Spotify",
+    authorizationUrl: "https://accounts.spotify.com/authorize",
+    tokenUrl: "https://accounts.spotify.com/api/token",
+    pkce: "S256",
+    scopeSeparator: " ",
+    tokenAuthMethod: "client_secret_basic",
+    bodyFormat: "form",
+    expiryStrategy: "expires_in",
+    redirectMode: "loopback-fixed",
+    supportsRefresh: true,
+    registrationHint: {
+      redirectUri: OAUTH_CALLBACK_URI,
+      scopes: "user-read-email user-read-private (adjust per platform)",
+      docsUrl: "https://developer.spotify.com/documentation/web-api/tutorials/code-flow",
+    },
+    userinfoUrl: "https://api.spotify.com/v1/me",
+  },
+  {
+    // Zoom OAuth2 — standard authorization-code flow, PKCE S256, refresh
+    // supported. Confirmed against Zoom's OAuth docs.
+    id: "zoom",
+    displayName: "Zoom",
+    authorizationUrl: "https://zoom.us/oauth/authorize",
+    tokenUrl: "https://zoom.us/oauth/token",
+    pkce: "S256",
+    scopeSeparator: " ",
+    tokenAuthMethod: "client_secret_basic",
+    bodyFormat: "form",
+    expiryStrategy: "expires_in",
+    redirectMode: "loopback-fixed",
+    supportsRefresh: true,
+    registrationHint: {
+      redirectUri: OAUTH_CALLBACK_URI,
+      scopes: "user:read:user (adjust per platform)",
+      docsUrl: "https://developers.zoom.us/docs/integrations/oauth/",
+    },
+    userinfoUrl: "https://api.zoom.us/v2/users/me",
+  },
+  {
+    // Dropbox OAuth2 — standard authorization-code flow, PKCE S256, refresh
+    // supported. NOTE the token host is api.dropboxapi.com, NOT
+    // api.dropbox.com (confirmed against Dropbox's OAuth guide).
+    id: "dropbox",
+    displayName: "Dropbox",
+    authorizationUrl: "https://www.dropbox.com/oauth2/authorize",
+    tokenUrl: "https://api.dropboxapi.com/oauth2/token",
+    pkce: "S256",
+    scopeSeparator: " ",
+    tokenAuthMethod: "client_secret_basic",
+    bodyFormat: "form",
+    expiryStrategy: "expires_in",
+    redirectMode: "loopback-fixed",
+    supportsRefresh: true,
+    registrationHint: {
+      redirectUri: OAUTH_CALLBACK_URI,
+      scopes: "account_info.read files.content.read (adjust per platform)",
+      docsUrl: "https://developers.dropbox.com/oauth-guide",
+    },
+    userinfoUrl: "https://api.dropboxapi.com/2/users/get_current_account",
+  },
+  {
+    // Linear OAuth 2.1 (DCR) — also accepts a bearer PAT, but this entry
+    // covers the OAuth path. Confirmed against Linear's MCP/OAuth docs.
+    id: "linear",
+    displayName: "Linear",
+    authorizationUrl: "https://linear.app/oauth/authorize",
+    tokenUrl: "https://api.linear.app/oauth/token",
+    pkce: "S256",
+    scopeSeparator: " ",
+    tokenAuthMethod: "client_secret_post",
+    bodyFormat: "form",
+    expiryStrategy: "expires_in",
+    redirectMode: "loopback-fixed",
+    supportsRefresh: true,
+    registrationHint: {
+      redirectUri: OAUTH_CALLBACK_URI,
+      scopes: "read write issues:create (adjust per platform)",
+      docsUrl: "https://linear.app/docs/mcp",
+    },
+    // Linear's GraphQL "viewer" query is the identity check, not a REST GET —
+    // no stable bearer-GET userinfo endpoint to assume here (honest > guessed).
+  },
+  {
+    // GitLab.com OAuth2 — standard authorization-code flow, PKCE S256,
+    // refresh supported. Confirmed against GitLab's OAuth2 docs.
+    id: "gitlab",
+    displayName: "GitLab",
+    authorizationUrl: "https://gitlab.com/oauth/authorize",
+    tokenUrl: "https://gitlab.com/oauth/token",
+    pkce: "S256",
+    scopeSeparator: " ",
+    tokenAuthMethod: "client_secret_post",
+    bodyFormat: "form",
+    expiryStrategy: "expires_in",
+    redirectMode: "loopback-fixed",
+    supportsRefresh: true,
+    registrationHint: {
+      redirectUri: OAUTH_CALLBACK_URI,
+      scopes: "read_user read_api read_repository (adjust per platform)",
+      docsUrl: "https://docs.gitlab.com/ee/api/oauth2.html",
+    },
+    userinfoUrl: "https://gitlab.com/api/v4/user",
+  },
+  {
+    // Figma OAuth2 — standard authorization-code flow, PKCE S256, refresh
+    // supported. Token host is api.figma.com, NOT figma.com (confirmed
+    // against Figma's OAuth docs). NOTE: the Figma Dev Mode MCP server itself
+    // uses NO credential (trusts the local desktop app) — this OAuth entry is
+    // for the REST API vault path, a separate connection from that MCP.
+    id: "figma",
+    displayName: "Figma",
+    authorizationUrl: "https://www.figma.com/oauth",
+    tokenUrl: "https://api.figma.com/v1/oauth/token",
+    pkce: "S256",
+    scopeSeparator: " ",
+    tokenAuthMethod: "client_secret_post",
+    bodyFormat: "form",
+    expiryStrategy: "expires_in",
+    redirectMode: "loopback-fixed",
+    supportsRefresh: true,
+    registrationHint: {
+      redirectUri: OAUTH_CALLBACK_URI,
+      scopes: "file_content:read current_user:read (files:read is deprecated)",
+      docsUrl: "https://www.figma.com/developers/api#oauth2",
+    },
+    userinfoUrl: "https://api.figma.com/v1/me",
   },
   {
     // The escape hatch: user supplies authorizationUrl/tokenUrl (and scopes)

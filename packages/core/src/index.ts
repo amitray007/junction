@@ -59,6 +59,13 @@ export {
   verifyApiKey,
 } from "./api-keys/index.js"
 // ---------------------------------------------------------------------------
+// App catalog + grouping — pure data + pure functions (inc 30; no HTTP)
+// ---------------------------------------------------------------------------
+export type { AppAuth, AppDefinition } from "./apps/catalog.js"
+export { getApp, listApps } from "./apps/catalog.js"
+export type { AppGroup, Connection } from "./apps/group.js"
+export { appIdForConnection, groupByApp } from "./apps/group.js"
+// ---------------------------------------------------------------------------
 // Browser — generic "open a URL" util (extracted from cli's `web` command;
 // shared by web, the OAuth connect flow, and the OAuth device-code flow)
 // ---------------------------------------------------------------------------

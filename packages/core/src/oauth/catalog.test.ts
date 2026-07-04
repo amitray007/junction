@@ -26,9 +26,50 @@ describe("getProvider / listProviders", () => {
         "microsoft",
         "notion",
         "atlassian",
+        "discord",
+        "spotify",
+        "zoom",
+        "dropbox",
+        "linear",
+        "gitlab",
+        "figma",
         "generic",
       ]),
     )
+  })
+})
+
+describe("inc-30 new providers (App catalog OAuth backing)", () => {
+  it.each([
+    "discord",
+    "spotify",
+    "zoom",
+    "dropbox",
+    "linear",
+    "gitlab",
+    "figma",
+  ])("%s: PKCE S256, supports refresh, has authorize/token URLs", (id) => {
+    const p = getProvider(id)
+    expect(p).toBeDefined()
+    if (!p) return
+    expect(p.pkce).toBe("S256")
+    expect(p.supportsRefresh).toBe(true)
+    expect(typeof p.authorizationUrl).toBe("string")
+    expect(p.authorizationUrl).not.toBe("")
+    expect(typeof p.tokenUrl).toBe("string")
+    expect(p.tokenUrl).not.toBe("")
+  })
+
+  it("dropbox: token endpoint is api.dropboxapi.com, not api.dropbox.com", () => {
+    expect(getProvider("dropbox")?.tokenUrl).toBe("https://api.dropboxapi.com/oauth2/token")
+  })
+
+  it("figma: token endpoint is api.figma.com", () => {
+    expect(getProvider("figma")?.tokenUrl).toBe("https://api.figma.com/v1/oauth/token")
+  })
+
+  it("linear: no userinfoUrl (identity is a GraphQL viewer query, not a bearer GET)", () => {
+    expect(getProvider("linear")?.userinfoUrl).toBeUndefined()
   })
 })
 
