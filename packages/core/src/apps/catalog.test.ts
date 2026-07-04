@@ -3,7 +3,7 @@
 // providerId must resolve against the OAuth provider catalog).
 
 import { describe, expect, it } from "vitest"
-import { getProvider } from "../oauth/catalog.js"
+import { getProvider, listProviders } from "../oauth/catalog.js"
 import { getApp, listApps } from "./catalog.js"
 
 describe("getApp / listApps", () => {
@@ -100,6 +100,21 @@ describe("catalog integrity", () => {
           ).toBeDefined()
         }
       }
+    }
+  })
+
+  it("every non-generic OAuth provider is covered by an App (else a real OAuth connection mis-groups to 'Other')", () => {
+    // Regression guard for the inc-30 real-server-QA bug: a shipped OAuth
+    // provider (google) had no App entry, so a dogfooded Google connection
+    // landed in "Other" and /app/google 404'd. Every connectable provider must
+    // have a first-class App whose auth[] links to it.
+    const apps = listApps()
+    for (const provider of listProviders()) {
+      if (provider.id === "generic") continue // the BYO escape hatch has no fixed App
+      const covered = apps.some((app) =>
+        app.auth.some((a) => a.mode === "oauth2" && a.providerId === provider.id),
+      )
+      expect(covered, `OAuth provider "${provider.id}" has no App entry`).toBe(true)
     }
   })
 

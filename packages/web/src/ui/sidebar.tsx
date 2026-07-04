@@ -12,6 +12,7 @@ import {
   Key,
   KeyRound,
   LayoutDashboard,
+  LayoutGrid,
   type LucideIcon,
   Moon,
   PanelLeft,
@@ -67,9 +68,11 @@ interface NavItem {
   readonly icon: LucideIcon
 }
 
-// Group 1: top — Dashboard + Audit + API Keys + Settings (no "Manage" eyebrow — A6/A7)
+// Group 1: top — Dashboard, Apps, Audit, API Keys, Settings (no "Manage" eyebrow — A6/A7).
+// Apps (inc 30) sits at position 2 — the new primary "connect a service" surface.
 const NAV_TOP: NavItem[] = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
+  { to: "/app", label: "Apps", icon: LayoutGrid },
   { to: "/audit", label: "Audit", icon: ScrollText },
   { to: "/keys", label: "API Keys", icon: KeyRound },
   { to: "/settings", label: "Settings", icon: Settings },

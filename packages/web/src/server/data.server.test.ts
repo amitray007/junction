@@ -13,9 +13,11 @@ import {
   newCredentialId,
   newPlatformId,
   newProfileId,
+  PlatformIdSchema,
 } from "@junction/core"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import {
+  readApps,
   readCredentials,
   readDashboard,
   readOAuthProviders,
@@ -316,5 +318,153 @@ describe("data.server", () => {
     const [src] = prof.sources
     if (!src) throw new Error("no source in result")
     expect(src.credentialAccount).toBe("(none)")
+  })
+
+  // ---------------------------------------------------------------------------
+  // readApps (increment 30) — the derived App grouping. Metadata-only test
+  // mirrors readCredentials' security invariant; a positive-control grouping
+  // test confirms the oauthState.providerId → oauthProviderId mapping (review
+  // C2) is actually wired, not just declared.
+  // ---------------------------------------------------------------------------
+
+  it("readApps: catalog is non-empty and groups is empty on an empty DB", async () => {
+    const { catalog, groups } = await readApps()
+    expect(catalog.length).toBeGreaterThan(0)
+    expect(catalog.find((a) => a.id === "github")).toBeDefined()
+    expect(groups).toEqual([])
+  })
+
+  it("readApps: a GitHub oauth2 credential groups under the github App (positive control)", async () => {
+    const dbResult = await getDatabase(getPaths())
+    if (dbResult.isErr()) throw new Error(String(dbResult.error))
+    const repos = createRepositories(dbResult.value)
+
+    const platformId = newPlatformId()
+    await repos.platforms.create({ id: platformId, kind: "mcp", displayName: "My GitHub MCP" })
+    await repos.credentials.create({
+      id: newCredentialId(),
+      platformId,
+      profileName: "work",
+      kind: "oauth2",
+      secretRef: "FAKE_ACCESS_REF_NEVER_EXPOSE",
+      oauthMeta: {
+        providerId: "github",
+        expiresAt: "2026-01-01T00:00:00.000Z",
+        needsReauth: false,
+        scopes: ["repo"],
+      },
+    })
+
+    const { groups } = await readApps()
+    const github = groups.find((g) => g.appId === "github")
+    expect(github).toBeDefined()
+    expect(github?.connections).toHaveLength(1)
+    expect(github?.connections[0]?.account).toBe("work")
+  })
+
+  it("readApps: a platform with no matching id/provider lands in 'other' (negative control)", async () => {
+    const dbResult = await getDatabase(getPaths())
+    if (dbResult.isErr()) throw new Error(String(dbResult.error))
+    const repos = createRepositories(dbResult.value)
+
+    const platformId = newPlatformId()
+    await repos.platforms.create({ id: platformId, kind: "mcp", displayName: "Unrecognized Thing" })
+    await repos.credentials.create({
+      id: newCredentialId(),
+      platformId,
+      profileName: "work",
+      kind: "bearer",
+      secretRef: "REF",
+    })
+
+    const { groups } = await readApps()
+    const other = groups.find((g) => g.appId === "other")
+    expect(other).toBeDefined()
+    expect(other?.connections.some((c) => c.platformId === String(platformId))).toBe(true)
+  })
+
+  it("readApps: metadata only — no secret or secretRef anywhere in the serialized result", async () => {
+    const dbResult = await getDatabase(getPaths())
+    if (dbResult.isErr()) throw new Error(String(dbResult.error))
+    const repos = createRepositories(dbResult.value)
+
+    const platformId = newPlatformId()
+    await repos.platforms.create({ id: platformId, kind: "mcp", displayName: "GitHub" })
+
+    const credId = newCredentialId()
+    await repos.credentials.create({
+      id: credId,
+      platformId,
+      profileName: "work",
+      kind: "oauth2",
+      secretRef: "FAKE_ACCESS_REF_NEVER_EXPOSE",
+      oauthMeta: {
+        providerId: "github",
+        refreshTokenRef: "FAKE_REFRESH_REF_NEVER_EXPOSE",
+        clientIdRef: "FAKE_CLIENT_ID_REF",
+        clientSecretRef: "FAKE_CLIENT_SECRET_REF_NEVER_EXPOSE",
+        expiresAt: "2026-01-01T00:00:00.000Z",
+        needsReauth: false,
+        scopes: ["repo"],
+      },
+    })
+
+    const data = await readApps()
+    const serialized = JSON.stringify(data)
+    expect(serialized).not.toContain("FAKE_ACCESS_REF_NEVER_EXPOSE")
+    expect(serialized).not.toContain("FAKE_REFRESH_REF_NEVER_EXPOSE")
+    expect(serialized).not.toContain("FAKE_CLIENT_ID_REF")
+    expect(serialized).not.toContain("FAKE_CLIENT_SECRET_REF_NEVER_EXPOSE")
+    expect(serialized).not.toContain('"secret"')
+    expect(serialized).not.toContain('"secretRef"')
+  })
+
+  it("readApps: a public/no-credential platform yields a credential-less connection", async () => {
+    const dbResult = await getDatabase(getPaths())
+    if (dbResult.isErr()) throw new Error(String(dbResult.error))
+    const repos = createRepositories(dbResult.value)
+
+    await repos.platforms.create({
+      id: PlatformIdSchema.parse("github"),
+      kind: "mcp",
+      displayName: "GitHub (public)",
+    })
+
+    const { groups } = await readApps()
+    const github = groups.find((g) => g.appId === "github")
+    expect(github?.connections).toHaveLength(1)
+    expect(github?.connections[0]?.account).toBe("—")
+    expect(github?.connections[0]?.credentialId).toBeUndefined()
+  })
+
+  it("readApps: the wedge — two credentials on one platform yield two connections", async () => {
+    const dbResult = await getDatabase(getPaths())
+    if (dbResult.isErr()) throw new Error(String(dbResult.error))
+    const repos = createRepositories(dbResult.value)
+
+    const platformId = newPlatformId()
+    await repos.platforms.create({ id: platformId, kind: "mcp", displayName: "GitHub" })
+    await repos.credentials.create({
+      id: newCredentialId(),
+      platformId,
+      profileName: "work",
+      kind: "oauth2",
+      secretRef: "REF1",
+      oauthMeta: { providerId: "github", needsReauth: false },
+    })
+    await repos.credentials.create({
+      id: newCredentialId(),
+      platformId,
+      profileName: "personal",
+      kind: "oauth2",
+      secretRef: "REF2",
+      oauthMeta: { providerId: "github", needsReauth: false },
+    })
+
+    const { groups } = await readApps()
+    const github = groups.find((g) => g.appId === "github")
+    expect(github?.connections).toHaveLength(2)
+    const accounts = github?.connections.map((c) => c.account).sort()
+    expect(accounts).toEqual(["personal", "work"])
   })
 })

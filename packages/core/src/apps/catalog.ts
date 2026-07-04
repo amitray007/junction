@@ -83,6 +83,36 @@ const APPS: readonly AppDefinition[] = [
     auth: [{ mode: "oauth2", providerId: "gitlab" }, { mode: "token" }],
     aliases: ["glab"],
   },
+  // The three remaining SHIPPED OAuth providers (google/slack/microsoft) get
+  // first-class App entries so a real OAuth connection attributes to its own
+  // App instead of landing in "Other" (caught in inc-30 real-server QA against
+  // a dogfooded Google connection). supportedKinds reflect what junction can
+  // stand up today via a bearer/OAuth token over HTTP; kept conservative and
+  // honest rather than claiming every vertical each vendor offers.
+  {
+    id: "google",
+    displayName: "Google",
+    // Google's APIs (Drive, Gmail, Calendar, …) are REST/OpenAPI-shaped over an
+    // OAuth bearer; the token is protocol-agnostic. No single junction-standable
+    // MCP/GraphQL/CLI vertical is asserted here without verified connection data.
+    supportedKinds: ["openapi"],
+    auth: [{ mode: "oauth2", providerId: "google" }],
+  },
+  {
+    id: "slack",
+    displayName: "Slack",
+    // Slack ships via OAuth (bot/user token) + its Web API (REST). The MCP
+    // variant is omitted until the package is confirmed (see the omission note).
+    supportedKinds: ["openapi"],
+    auth: [{ mode: "oauth2", providerId: "slack" }, { mode: "token" }],
+  },
+  {
+    id: "microsoft",
+    displayName: "Microsoft",
+    // Microsoft Graph is a REST/OpenAPI surface over an OAuth bearer.
+    supportedKinds: ["openapi"],
+    auth: [{ mode: "oauth2", providerId: "microsoft" }],
+  },
   {
     id: "notion",
     displayName: "Notion",
