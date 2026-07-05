@@ -4,6 +4,15 @@
 
 export type { SpecBaseUrlError } from "./base-url.js"
 export { resolveSpecBaseUrl } from "./base-url.js"
+export type { BoundParam, BuildAndExecuteRequestArgs } from "./http.js"
+// Shared request-binding engine (increment 30.7) — reused by @junction/http-client.
+export {
+  buildAndExecuteRequest,
+  DEFAULT_TIMEOUT_MS,
+  injectAuth,
+  RESPONSE_BYTE_CAP,
+  validatePathValue,
+} from "./http.js"
 export { sanitizeOperationId } from "./naming.js"
 export { parseSpec } from "./parse.js"
 export { createOpenApiProvider } from "./provider.js"

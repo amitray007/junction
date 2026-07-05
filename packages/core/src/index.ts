@@ -199,11 +199,14 @@ export { ProfileSchema } from "./schema/profile.js"
 export type { SourceRef, ToolFilter } from "./schema/source-ref.js"
 // SourceRef + ToolFilter
 export { SourceRefSchema, ToolFilterSchema } from "./schema/source-ref.js"
-// CLI provider — sandboxed code-execution source (inc 21)
-export { createCliProvider } from "./sources/cli/provider.js"
 // ---------------------------------------------------------------------------
 // Sources — ToolProvider interface, naming helpers, profile proxy, providers
 // ---------------------------------------------------------------------------
+// Shared agent-arg string validation primitive (inc 30.7) — reused by every
+// source provider that validates agent-supplied strings (cli, http-client).
+export { rejectControlCharacters } from "./sources/arg-validation.js"
+// CLI provider — sandboxed code-execution source (inc 21)
+export { createCliProvider } from "./sources/cli/provider.js"
 export { namespaceToolName, splitNamespacedName } from "./sources/naming.js"
 export type { ProviderTool, ToolProvider, ToolResult } from "./sources/provider.js"
 export type { ProfileProxy, ResolveProviderFn } from "./sources/proxy.js"
