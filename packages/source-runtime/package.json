@@ -16,6 +16,7 @@
   "dependencies": {
     "@junction/core": "workspace:*",
     "@junction/graphql-client": "workspace:*",
+    "@junction/http-client": "workspace:*",
     "@junction/mcp-client": "workspace:*",
     "@junction/openapi-client": "workspace:*",
     "arctic": "^3.7.0"
