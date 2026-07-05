@@ -100,6 +100,13 @@ export function compatibleCredentialKinds(platform: Platform): CredentialKind[] 
     case "cli":
       return ["env", "file", "bearer"]
 
+    case "http": {
+      // HttpConnection reuses OpenApiAuthSchema verbatim (see http-connection.ts) —
+      // same auth-shaped matrix as openapi/graphql.
+      const auth = platform.http?.auth
+      return auth === undefined ? [] : kindsForOpenApiAuth(auth)
+    }
+
     case "custom":
       // No connection descriptor shape defined yet for "custom" — no credential
       // kind can be safely derived or validated against.

@@ -148,6 +148,13 @@ export {
 export type { GraphQlConnection } from "./schema/graphql-connection.js"
 // GraphQlConnection — generic GraphQL source descriptor
 export { GraphQlConnectionSchema } from "./schema/graphql-connection.js"
+export type { HttpConnection, HttpParam, HttpRequestTool } from "./schema/http-connection.js"
+// HttpConnection — user-authored REST request-tool source descriptor
+export {
+  HttpConnectionSchema,
+  HttpParamSchema,
+  HttpRequestToolSchema,
+} from "./schema/http-connection.js"
 export type { McpConnection, McpHttpAuth } from "./schema/mcp-connection.js"
 // McpConnection — generic MCP transport descriptor (http | stdio)
 export { McpConnectionSchema, McpHttpAuthSchema } from "./schema/mcp-connection.js"

@@ -316,6 +316,13 @@ async function verifyCredentialAsync(
     return { status: "not-verifiable", reason: `platform kind "custom" is not verifiable` }
   }
 
+  if (platform.kind === "http") {
+    // No operator-designated verify tool concept yet (tracked for a later http
+    // slice, mirroring openapi's verifyOperationId) — junction never auto-picks
+    // a declared request-tool to fire (could be a POST/DELETE). Honest default.
+    return { status: "not-verifiable", reason: `platform kind "http" is not verifiable` }
+  }
+
   // Exhaustiveness guard (docs/rules/typescript.md): compile error if a new
   // PlatformKind is added without a corresponding branch above.
   const _: never = platform.kind

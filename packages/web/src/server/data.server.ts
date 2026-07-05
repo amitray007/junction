@@ -146,6 +146,10 @@ function isVerifiable(p: Platform): boolean {
       return p.openapi?.verifyOperationId !== undefined
     case "cli":
     case "custom":
+    case "http":
+      // http: no operator-designated verify tool concept yet (mirrors
+      // source-runtime's verifyCredential honesty matrix — never auto-picks a
+      // declared request-tool to fire).
       return false
     default: {
       const _: never = p.kind
