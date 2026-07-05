@@ -125,6 +125,89 @@ describe("HttpRequestToolSchema — path↔param cross-check refine", () => {
     expect(r.success).toBe(true)
   })
 
+  it('REJECTS an optional in:"path" param (a {placeholder} is structurally mandatory)', () => {
+    // inc-30.7 SSRF review: an optional in:"path" param omitted by the agent would
+    // leave a literal "{owner}" in the outbound URL — reject at the boundary.
+    const r = HttpRequestToolSchema.safeParse({
+      name: "getIssue",
+      description: "Get issue",
+      method: "GET",
+      path: "/repos/{owner}",
+      params: [{ name: "owner", in: "path", type: "string", required: false }],
+    })
+    expect(r.success).toBe(false)
+  })
+
+  it('accepts a required in:"path" param (the normal case)', () => {
+    const r = HttpRequestToolSchema.safeParse({
+      name: "getIssue",
+      description: "Get issue",
+      method: "GET",
+      path: "/repos/{owner}",
+      params: [{ name: "owner", in: "path", type: "string", required: true }],
+    })
+    expect(r.success).toBe(true)
+  })
+
+  it("allows an optional query param (only path params are forced required)", () => {
+    const r = HttpRequestToolSchema.safeParse({
+      name: "search",
+      description: "Search",
+      method: "GET",
+      path: "/search",
+      params: [{ name: "sort", in: "query", type: "string", required: false }],
+    })
+    expect(r.success).toBe(true)
+  })
+
+  it("REJECTS a repeated {placeholder} in the path (can't bind past the first)", () => {
+    // inc-30.7 correctness review: /a/{id}/b/{id} — .replace binds only the first.
+    const r = HttpRequestToolSchema.safeParse({
+      name: "t",
+      description: "d",
+      method: "GET",
+      path: "/a/{id}/b/{id}",
+      params: [{ name: "id", in: "path", type: "string", required: true }],
+    })
+    expect(r.success).toBe(false)
+  })
+
+  it('REJECTS an in:"body" param on a GET tool (fetch throws on GET+body)', () => {
+    const r = HttpRequestToolSchema.safeParse({
+      name: "t",
+      description: "d",
+      method: "GET",
+      path: "/x",
+      params: [{ name: "q", in: "body", type: "string", required: false }],
+    })
+    expect(r.success).toBe(false)
+  })
+
+  it('accepts an in:"body" param on a POST tool', () => {
+    const r = HttpRequestToolSchema.safeParse({
+      name: "t",
+      description: "d",
+      method: "POST",
+      path: "/x",
+      params: [{ name: "payload", in: "body", type: "string", required: true }],
+    })
+    expect(r.success).toBe(true)
+  })
+
+  it("REJECTS duplicate param names across different locations (dual-bind collision)", () => {
+    const r = HttpRequestToolSchema.safeParse({
+      name: "t",
+      description: "d",
+      method: "GET",
+      path: "/x/{id}",
+      params: [
+        { name: "id", in: "path", type: "string", required: true },
+        { name: "id", in: "query", type: "string", required: false },
+      ],
+    })
+    expect(r.success).toBe(false)
+  })
+
   it('REJECTS more than one in:"body" param', () => {
     const r = HttpRequestToolSchema.safeParse({
       name: "createIssue",

@@ -270,6 +270,22 @@ migration doesn't break it. **Round-trip through the real built CLI
 (`platform add … --json` then `platform list --json`) to prove the descriptor
 survives — a green unit suite does not.**
 
+## HTTP surface — an upstream host that echoes the auth back returns it to the agent (inc 30.7)
+
+**Not a junction leak, but worth knowing.** The `http` surface injects the credential
+into the outgoing request and returns the upstream response body to the agent
+verbatim. If an operator points a request-tool at a host that **echoes the injected
+apiKey/bearer back in its own response body** (debug/echo endpoints like
+`httpbin.org/bearer` do exactly this), that value returns to the agent inside the
+tool result — junction cannot distinguish it from legitimate response data. This is
+inherent to ANY credential-injecting HTTP proxy: the operator *chose* to send the
+key to that host, and junction faithfully relays what the host sends back. junction's
+own surfaces (logs, SSR, errors, at-rest storage) stay clean — the adversarial sweep
+confirmed the secret is absent everywhere junction controls; the only echo is the
+upstream's own response. No code fix warranted; flagged so a future reviewer doesn't
+mistake the upstream echo for a junction leak. (Raised inc-30.7 credential-security
+LEAD review, confirmed in the real-httpbin QA.)
+
 ## PR merge silently blocked on unresolved review threads (not just failing checks)
 
 **Symptom:** `gh pr merge` appears to run but the PR stays OPEN + `mergeStateStatus: BLOCKED`, even though all 7 CI checks pass and the PR is `MERGEABLE`. `main` has **no classic branch protection** (`GET .../branches/main/protection` → 404), so it's easy to assume nothing is gating the merge.

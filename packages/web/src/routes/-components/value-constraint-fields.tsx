@@ -44,7 +44,12 @@ export function ValueConstraintFields({
             id={`${idPrefix}-enum`}
             value={enumValues.join(", ")}
             onChange={(e) =>
-              onChange({ enumValues: e.target.value.split(",").map((v) => v.trim()).filter(Boolean) })
+              onChange({
+                enumValues: e.target.value
+                  .split(",")
+                  .map((v) => v.trim())
+                  .filter(Boolean),
+              })
             }
           />
         </Field>

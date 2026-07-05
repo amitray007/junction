@@ -74,6 +74,18 @@ function pathPlaceholders(path: string): Set<string> {
   return names
 }
 
+/** The full list of `{placeholder}` occurrences (WITH duplicates) — for the
+ *  repeated-placeholder guard: `String.replace(string, …)` substitutes only the
+ *  first occurrence, so `/a/{id}/b/{id}` would leave the 2nd `{id}` literal.
+ *  Reject a repeated placeholder at author-time (inc-30.7 correctness review). */
+function pathPlaceholderList(path: string): string[] {
+  const names: string[] = []
+  for (const m of path.matchAll(PLACEHOLDER_RE)) {
+    if (m[1] !== undefined) names.push(m[1])
+  }
+  return names
+}
+
 /**
  * One operator-declared REST request. Becomes one namespaced MCP tool.
  *
@@ -131,6 +143,51 @@ export const HttpRequestToolSchema = z
     message: 'at most one param with in:"body" is allowed (v1: single JSON-pass-through body)',
     path: ["params"],
   })
+  // A path placeholder is STRUCTURALLY mandatory: if an in:"path" param were
+  // optional and the agent omitted it, the literal "{name}" would be left in the
+  // outbound URL path (a malformed request). Reject the footgun declaration at the
+  // trust boundary rather than emit a broken path per-call. (inc-30.7 SSRF review.)
+  .refine((tool) => tool.params.filter((p) => p.in === "path").every((p) => p.required), {
+    message: 'params with in:"path" must be required (a {placeholder} is structurally mandatory)',
+    path: ["params"],
+  })
+  // A placeholder repeated in the path (`/a/{id}/b/{id}`) can't be bound: the
+  // call-time `path.replace("{id}", …)` substitutes only the FIRST occurrence,
+  // leaving the rest literal. Reject at author-time. (inc-30.7 correctness review.)
+  .refine(
+    (tool) => {
+      const list = pathPlaceholderList(tool.path)
+      return list.length === new Set(list).size
+    },
+    {
+      message:
+        "a {placeholder} may appear at most once in `path` (repeated placeholders can't bind)",
+      path: ["path"],
+    },
+  )
+  // A GET/HEAD request cannot carry a body — fetch throws on every call. Reject a
+  // body param on GET/HEAD at author-time, not per-call. (inc-30.7 correctness review.)
+  .refine(
+    (tool) =>
+      !(
+        (tool.method === "GET" || tool.method === "HEAD") &&
+        tool.params.some((p) => p.in === "body")
+      ),
+    {
+      message: 'a GET or HEAD request tool cannot declare an in:"body" param',
+      path: ["params"],
+    },
+  )
+  // Param names must be unique across the whole tool — a duplicate name (even
+  // across different `in` locations) would bind ONE agent arg to two places and
+  // collide in the generated input schema. (inc-30.7 correctness review.)
+  .refine(
+    (tool) => {
+      const names = tool.params.map((p) => p.name)
+      return names.length === new Set(names).size
+    },
+    { message: "param names must be unique within a request tool", path: ["params"] },
+  )
 
 export type HttpRequestTool = z.infer<typeof HttpRequestToolSchema>
 
@@ -146,8 +203,16 @@ export type HttpRequestTool = z.infer<typeof HttpRequestToolSchema>
  * descriptor and never reaches a tool result, log, or error message.
  */
 export const HttpConnectionSchema = z.object({
-  /** Host-pinned base URL. Agent args never set the host — only path/query/body values. */
-  baseUrl: z.string().url(),
+  /**
+   * Host-pinned base URL. Agent args never set the host — only path/query/body
+   * values. Enforced http/https at the trust boundary (z.string().url() alone
+   * accepts file://, ftp://, gopher:// — reject non-http schemes at add-time
+   * rather than store-then-fail-per-call; inc-30.7 SSRF review, mirrors openapi).
+   */
+  baseUrl: z
+    .string()
+    .url()
+    .refine((u) => /^https?:\/\//i.test(u), { message: "baseUrl must be an http or https URL" }),
   /** How to authenticate outbound requests — reused verbatim from the OpenAPI surface. */
   auth: OpenApiAuthSchema.optional(),
   /** Extra headers added to every outbound request. */
