@@ -240,6 +240,135 @@ describe("platform-mutations.server", () => {
   })
 
   // ---------------------------------------------------------------------------
+  // mutateAddPlatform — http (inc 30.7)
+  // ---------------------------------------------------------------------------
+
+  describe("mutateAddPlatform (http)", () => {
+    function validHttpConnection() {
+      return {
+        baseUrl: "https://api.example.com",
+        tools: [
+          {
+            name: "listIssues",
+            description: "List issues for a repo",
+            method: "GET" as const,
+            path: "/repos/{owner}/{repo}/issues",
+            params: [
+              { name: "owner", in: "path" as const, type: "string" as const, required: true },
+              { name: "repo", in: "path" as const, type: "string" as const, required: true },
+              { name: "state", in: "query" as const, type: "string" as const, required: false },
+            ],
+          },
+        ],
+      }
+    }
+
+    it("adds an http platform from a valid connection (assemble → HttpConnectionSchema authority)", async () => {
+      const result = await mutateAddPlatform({
+        kind: "http",
+        id: "rest-api",
+        displayName: "REST API",
+        connection: validHttpConnection(),
+      })
+      expect(result.ok).toBe(true)
+      if (!result.ok) throw new Error("expected ok")
+      expect(result.platform.kind).toBe("http")
+
+      const repos = await makeRepos(tmpHome)
+      const stored = await repos.platforms.get("rest-api")
+      expect(stored.isOk()).toBe(true)
+      if (stored.isOk()) {
+        expect(stored.value.http?.baseUrl).toBe("https://api.example.com")
+        expect(stored.value.http?.tools).toHaveLength(1)
+        expect(stored.value.http?.tools[0]?.params).toHaveLength(3)
+      }
+    })
+
+    it("respects a bearer auth scheme", async () => {
+      const result = await mutateAddPlatform({
+        kind: "http",
+        id: "rest-api-bearer",
+        displayName: "REST API Bearer",
+        connection: { ...validHttpConnection(), auth: { scheme: "bearer" } },
+      })
+      expect(result.ok).toBe(true)
+      const repos = await makeRepos(tmpHome)
+      const stored = await repos.platforms.get("rest-api-bearer")
+      expect(stored.isOk()).toBe(true)
+      if (stored.isOk()) {
+        expect(stored.value.http?.auth?.scheme).toBe("bearer")
+      }
+    })
+
+    it("respects an apiKey auth scheme with a header name", async () => {
+      const result = await mutateAddPlatform({
+        kind: "http",
+        id: "rest-api-apikey",
+        displayName: "REST API ApiKey",
+        connection: {
+          ...validHttpConnection(),
+          auth: { scheme: "apiKey", name: "X-API-Key" },
+        },
+      })
+      expect(result.ok).toBe(true)
+      const repos = await makeRepos(tmpHome)
+      const stored = await repos.platforms.get("rest-api-apikey")
+      expect(stored.isOk()).toBe(true)
+      if (stored.isOk() && stored.value.http?.auth?.scheme === "apiKey") {
+        expect(stored.value.http.auth.name).toBe("X-API-Key")
+      }
+    })
+
+    it("returns a fieldError when a path placeholder has no matching declared path param", async () => {
+      const result = await mutateAddPlatform({
+        kind: "http",
+        id: "bad-http-mismatch",
+        displayName: "Bad",
+        connection: {
+          baseUrl: "https://api.example.com",
+          tools: [
+            {
+              name: "listIssues",
+              description: "List issues",
+              method: "GET" as const,
+              // {repo} has no matching declared path param — the core schema's
+              // path↔param cross-check refine must reject this.
+              path: "/repos/{owner}/{repo}/issues",
+              params: [
+                { name: "owner", in: "path" as const, type: "string" as const, required: true },
+              ],
+            },
+          ],
+        },
+      })
+      expect(result.ok).toBe(false)
+      if (result.ok) throw new Error("expected error")
+      expect(result.error.length).toBeGreaterThan(0)
+      expect(result.fieldErrors).toBeDefined()
+    })
+
+    it("returns an error for a connection with no tools", async () => {
+      const result = await mutateAddPlatform({
+        kind: "http",
+        id: "bad-http-no-tools",
+        displayName: "Bad",
+        connection: { baseUrl: "https://api.example.com", tools: [] },
+      })
+      expect(result.ok).toBe(false)
+    })
+
+    it("returns an error for an invalid baseUrl", async () => {
+      const result = await mutateAddPlatform({
+        kind: "http",
+        id: "bad-http-baseurl",
+        displayName: "Bad",
+        connection: { ...validHttpConnection(), baseUrl: "not-a-url" },
+      })
+      expect(result.ok).toBe(false)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
   // mutateUpdatePlatform — full per-kind rebuild (inc 26 wave 3)
   // ---------------------------------------------------------------------------
 

@@ -3,11 +3,11 @@
 // (accordion, one open by default, at least one tool required) + a collapsed
 // connection-level credentialEnvVar disclosure.
 
-import { Plus } from "lucide-react"
 import { useState } from "react"
-import { Button, Field, Input } from "../../../ui/index.js"
+import { Field, Input } from "../../../ui/index.js"
+import { ToolCardList } from "../tool-card-list.js"
 import { ToolCard } from "./tool-card.js"
-import type { CliConnectionFormState, CliToolFormState } from "./types.js"
+import type { CliConnectionFormState } from "./types.js"
 import { emptyTool } from "./types.js"
 
 const RESERVED_SUFFIX_RE = /_TOKEN$|_SECRET$|_KEY$/
@@ -33,49 +33,20 @@ interface CliConnectionFormProps {
 }
 
 export function CliConnectionForm({ connection, onChange, toolErrors }: CliConnectionFormProps) {
-  const [expandedKey, setExpandedKey] = useState<string | undefined>(connection.tools[0]?.key)
   const [credentialExpanded, setCredentialExpanded] = useState(connection.credentialEnvVar !== "")
-
-  function updateTool(key: string, tool: CliToolFormState) {
-    onChange({
-      ...connection,
-      tools: connection.tools.map((t) => (t.key === key ? tool : t)),
-    })
-  }
-
-  function addTool() {
-    const tool = emptyTool()
-    onChange({ ...connection, tools: [...connection.tools, tool] })
-    setExpandedKey(tool.key)
-  }
-
-  function removeTool(key: string) {
-    if (connection.tools.length <= 1) return
-    onChange({ ...connection, tools: connection.tools.filter((t) => t.key !== key) })
-  }
 
   const envError = credentialEnvVarError(connection.credentialEnvVar)
 
   return (
     <div className="flex flex-col gap-4">
-      {connection.tools.map((tool, i) => (
-        <ToolCard
-          key={tool.key}
-          tool={tool}
-          index={i}
-          expanded={expandedKey === tool.key}
-          onToggle={() => setExpandedKey((cur) => (cur === tool.key ? undefined : tool.key))}
-          onChange={(next) => updateTool(tool.key, next)}
-          onRemove={() => removeTool(tool.key)}
-          canRemove={connection.tools.length > 1}
-          errors={toolErrors?.[i]}
-        />
-      ))}
-
-      <Button type="button" variant="secondary" size="sm" className="self-start" onClick={addTool}>
-        <Plus className="h-4 w-4" aria-hidden="true" />
-        Add Tool
-      </Button>
+      <ToolCardList
+        tools={connection.tools}
+        onChange={(tools) => onChange({ ...connection, tools })}
+        toolErrors={toolErrors}
+        makeTool={emptyTool}
+        addLabel="Add Tool"
+        renderCard={(props) => <ToolCard key={props.tool.key} {...props} />}
+      />
 
       <div className="rounded-[var(--radius-6)] border" style={{ borderColor: "var(--alpha-400)" }}>
         <button

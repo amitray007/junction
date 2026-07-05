@@ -42,6 +42,29 @@ async function upsertPlatform(platform: Platform, json: boolean): Promise<Platfo
 }
 
 /**
+ * Upsert a fully-assembled platform and emit the shared add-success output
+ * (JSON `{ok:true, platform, toolCount}` or the text success line). Shared by the
+ * cli + http add paths, which differed only in the `kind:` label. A DB failure is
+ * already reported by upsertPlatform; this is a no-op then.
+ */
+async function persistAndReport(
+  platform: Platform,
+  toolCount: number,
+  kind: string,
+  json: boolean,
+): Promise<void> {
+  const persisted = await upsertPlatform(platform, json)
+  if (!persisted) return
+  if (json) {
+    process.stdout.write(`${JSON.stringify({ ok: true, platform: persisted, toolCount })}\n`)
+  } else {
+    consola.success(
+      `Platform "${persisted.displayName}" (${persisted.id}) defined — kind: ${kind}, ${toolCount} tool(s)`,
+    )
+  }
+}
+
+/**
  * Reconstruct the exact user-facing error string the original inlined logic produced,
  * from a PlatformOrchestrationError. `context` disambiguates the two "too-many-tools"
  * strings (add vs. refresh) and the two "spec-cache-failed" strings.
@@ -470,16 +493,7 @@ async function addCliPlatform(args: Record<string, unknown>, json: boolean): Pro
     else consola.warn(sandboxWarning)
   }
 
-  const persisted = await upsertPlatform(platform, json)
-  if (!persisted) return
-
-  if (json) {
-    process.stdout.write(`${JSON.stringify({ ok: true, platform: persisted, toolCount })}\n`)
-  } else {
-    consola.success(
-      `Platform "${persisted.displayName}" (${persisted.id}) defined — kind: cli, ${toolCount} tool(s)`,
-    )
-  }
+  await persistAndReport(platform, toolCount, "cli", json)
 }
 
 // ---------------------------------------------------------------------------
@@ -519,17 +533,7 @@ async function addHttpPlatform(args: Record<string, unknown>, json: boolean): Pr
   }
 
   const { platform, toolCount }: AddHttpPlatformResult = result.value
-
-  const persisted = await upsertPlatform(platform, json)
-  if (!persisted) return
-
-  if (json) {
-    process.stdout.write(`${JSON.stringify({ ok: true, platform: persisted, toolCount })}\n`)
-  } else {
-    consola.success(
-      `Platform "${persisted.displayName}" (${persisted.id}) defined — kind: http, ${toolCount} tool(s)`,
-    )
-  }
+  await persistAndReport(platform, toolCount, "http", json)
 }
 
 // ---------------------------------------------------------------------------

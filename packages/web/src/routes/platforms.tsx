@@ -7,7 +7,7 @@
 // No @junction/core import. All core access via createServerFn.
 
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router"
-import { Plus, RefreshCw, SquarePen, Trash2, X } from "lucide-react"
+import { Plus, RefreshCw, SquarePen, Trash2 } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 import type { TableColumn } from "../lib/use-table-view.js"
@@ -61,6 +61,11 @@ import { CliConnectionForm } from "./-components/cli-form/cli-connection-form.js
 import { connectionFromDetail, toConnectionInput } from "./-components/cli-form/convert.js"
 import type { CliConnectionFormState } from "./-components/cli-form/types.js"
 import { emptyConnection } from "./-components/cli-form/types.js"
+import { httpConnectionFromDetail, toHttpConnectionInput } from "./-components/http-form/convert.js"
+import { HttpConnectionForm } from "./-components/http-form/http-connection-form.js"
+import type { HttpConnectionFormState } from "./-components/http-form/types.js"
+import { emptyHttpConnection } from "./-components/http-form/types.js"
+import { KeyValueRepeater } from "./-components/key-value-repeater.js"
 
 export const Route = createFileRoute("/platforms")({
   loader: async () => {
@@ -101,7 +106,7 @@ function PlatformsPending() {
 // platform-mutations.server.ts mutateUpdatePlatform for why edit is a full
 // rebuild (re-fetch/re-introspect on save), not a displayName-only patch.
 //
-// Kind Select offers MCP / OpenAPI / GraphQL / CLI. MCP has a Transport
+// Kind Select offers MCP / OpenAPI / GraphQL / CLI / HTTP. MCP has a Transport
 // sub-select (HTTP / stdio); at submit, (kind===mcp, transport) maps to the
 // server's discriminated "mcp-http" | "mcp-stdio".
 //
@@ -111,9 +116,13 @@ function PlatformsPending() {
 //   openapi:   none | bearer | apiKey (header name).
 //   graphql:   none | bearer | apiKey (header name).
 //   cli:       none (connection carries its own credentialEnvVar).
+//   http:      none | bearer | apiKey (header name) — same shared auth Select as
+//              openapi/graphql. The form is metadata-only: it collects the auth
+//              SCHEME/NAME, never a token — the actual secret is bound separately
+//              on the Credentials page, exactly like every other credentialed kind.
 // ---------------------------------------------------------------------------
 
-type PlatformKind = "mcp" | "openapi" | "graphql" | "cli"
+type PlatformKind = "mcp" | "openapi" | "graphql" | "cli" | "http"
 type McpTransport = "http" | "stdio"
 type SimpleAuthScheme = "none" | "bearer" | "apiKey"
 
@@ -150,64 +159,6 @@ function envRowsToRecord(rows: EnvVarRow[]): Record<string, string> | undefined 
   return Object.keys(out).length > 0 ? out : undefined
 }
 
-/** Repeatable [key][value][×] list for static env vars — used by mcp-stdio. */
-function EnvVarListField({
-  rows,
-  onChange,
-}: {
-  readonly rows: EnvVarRow[]
-  readonly onChange: (rows: EnvVarRow[]) => void
-}) {
-  return (
-    <div className="flex flex-col gap-2">
-      <span style={{ fontSize: "var(--text-label)", fontWeight: 500, color: "var(--gray-1000)" }}>
-        Env Vars
-      </span>
-      {rows.map((row, i) => (
-        <div key={row.id} className="flex gap-2">
-          <Input
-            placeholder="KEY"
-            value={row.key}
-            onChange={(e) => {
-              const next = [...rows]
-              next[i] = { ...row, key: e.target.value }
-              onChange(next)
-            }}
-          />
-          <Input
-            placeholder="value"
-            value={row.value}
-            onChange={(e) => {
-              const next = [...rows]
-              next[i] = { ...row, value: e.target.value }
-              onChange(next)
-            }}
-          />
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            aria-label="Remove env variable"
-            onClick={() => onChange(rows.filter((r) => r.id !== row.id))}
-          >
-            <X className="h-4 w-4" aria-hidden="true" />
-          </Button>
-        </div>
-      ))}
-      <Button
-        type="button"
-        variant="secondary"
-        size="sm"
-        className="self-start"
-        onClick={() => onChange([...rows, emptyEnvVarRow()])}
-      >
-        <Plus className="h-4 w-4" aria-hidden="true" />
-        Add variable
-      </Button>
-    </div>
-  )
-}
-
 interface PlatformFormState {
   kind: PlatformKind
   transport: McpTransport
@@ -227,6 +178,7 @@ interface PlatformFormState {
   /** Operator-designated verify operationId (28.9) — openapi only, optional. */
   verifyOperationId: string
   cli: CliConnectionFormState
+  http: HttpConnectionFormState
 }
 
 function emptyFormState(): PlatformFormState {
@@ -248,6 +200,7 @@ function emptyFormState(): PlatformFormState {
     authName: "",
     verifyOperationId: "",
     cli: emptyConnection(),
+    http: emptyHttpConnection(),
   }
 }
 
@@ -292,6 +245,17 @@ function formStateFromDetail(detail: PlatformDetail): PlatformFormState {
       endpoint: detail.endpoint ?? "",
       authScheme,
       authName: authScheme === "apiKey" ? (detail.authHeaderOrName ?? "") : "",
+    }
+  }
+  if (detail.kind === "http") {
+    return {
+      ...base,
+      kind: "http",
+      id: detail.id,
+      displayName: detail.displayName,
+      authScheme,
+      authName: authScheme === "apiKey" ? (detail.authHeaderOrName ?? "") : "",
+      http: httpConnectionFromDetail(detail),
     }
   }
   // cli
@@ -380,6 +344,9 @@ function PlatformDialog({ mode, platform, open, onOpenChange, onSuccess }: Platf
       newErrors.specUrl = "Spec URL is required"
     if (state.kind === "graphql" && !state.endpoint.trim())
       newErrors.endpoint = "Endpoint is required"
+    if (state.kind === "http" && !state.http.baseUrl.trim()) {
+      newErrors.baseUrl = "Base URL is required"
+    }
     if (state.authScheme === "apiKey" && !state.authName.trim()) {
       newErrors.authName = "Header name is required"
     }
@@ -436,12 +403,19 @@ function PlatformDialog({ mode, platform, open, onOpenChange, onSuccess }: Platf
                   endpoint: state.endpoint.trim(),
                   ...(auth ? { auth } : {}),
                 }
-              : {
-                  kind: "cli" as const,
-                  id: state.id.trim(),
-                  displayName: state.displayName.trim(),
-                  connection: toConnectionInput(state.cli),
-                }
+              : state.kind === "http"
+                ? {
+                    kind: "http" as const,
+                    id: state.id.trim(),
+                    displayName: state.displayName.trim(),
+                    connection: { ...toHttpConnectionInput(state.http), auth },
+                  }
+                : {
+                    kind: "cli" as const,
+                    id: state.id.trim(),
+                    displayName: state.displayName.trim(),
+                    connection: toConnectionInput(state.cli),
+                  }
     } catch {
       // JSON.parse failure from a CLI tool's advanced-mode rawJson escape hatch.
       toast.error("One or more tool descriptors have invalid JSON")
@@ -470,7 +444,7 @@ function PlatformDialog({ mode, platform, open, onOpenChange, onSuccess }: Platf
   }
 
   const showAuthNote =
-    state.kind === "openapi" || state.kind === "graphql"
+    state.kind === "openapi" || state.kind === "graphql" || state.kind === "http"
       ? state.authScheme !== "none"
       : state.kind === "mcp" && state.transport === "http"
 
@@ -509,6 +483,7 @@ function PlatformDialog({ mode, platform, open, onOpenChange, onSuccess }: Platf
                   <SelectItem value="openapi">OpenAPI</SelectItem>
                   <SelectItem value="graphql">GraphQL</SelectItem>
                   <SelectItem value="cli">CLI (sandboxed)</SelectItem>
+                  <SelectItem value="http">HTTP</SelectItem>
                 </SelectContent>
               </Select>
             </Field>
@@ -627,7 +602,14 @@ function PlatformDialog({ mode, platform, open, onOpenChange, onSuccess }: Platf
                         onChange={(e) => set("tokenEnvVar", e.target.value)}
                       />
                     </Field>
-                    <EnvVarListField rows={state.env} onChange={(env) => set("env", env)} />
+                    <KeyValueRepeater
+                      label="Env Vars"
+                      rows={state.env}
+                      onChange={(env) => set("env", env)}
+                      addLabel="Add variable"
+                      removeAriaLabel="Remove env variable"
+                      makeRow={() => emptyEnvVarRow()}
+                    />
                   </>
                 )}
               </>
@@ -700,7 +682,15 @@ function PlatformDialog({ mode, platform, open, onOpenChange, onSuccess }: Platf
               <CliConnectionForm connection={state.cli} onChange={(cli) => set("cli", cli)} />
             )}
 
-            {(state.kind === "openapi" || state.kind === "graphql") && (
+            {state.kind === "http" && (
+              <HttpConnectionForm
+                connection={state.http}
+                onChange={(http) => set("http", http)}
+                baseUrlError={errors.baseUrl}
+              />
+            )}
+
+            {(state.kind === "openapi" || state.kind === "graphql" || state.kind === "http") && (
               <>
                 <Field id="platform-auth-scheme" label="Auth">
                   <Select
@@ -813,10 +803,10 @@ function buildPlatformColumns(
   ]
 }
 
-// Kind facet options — hardcoded to the 4 known platform kinds (simpler than
+// Kind facet options — hardcoded to the known platform kinds (simpler than
 // deriving from the loaded data, per the method-file note). "all" is the
 // clear-filter sentinel ("All kinds").
-const KIND_FILTER_OPTIONS = ["all", "mcp", "openapi", "graphql", "cli"] as const
+const KIND_FILTER_OPTIONS = ["all", "mcp", "openapi", "graphql", "cli", "http"] as const
 type KindFilter = (typeof KIND_FILTER_OPTIONS)[number]
 
 function PlatformsPage() {
@@ -918,7 +908,13 @@ function PlatformsPage() {
           allLabel="All kinds"
           value={kindFilter}
           onValueChange={(v) => setKindFilter(v as KindFilter)}
-          options={[{ value: "mcp" }, { value: "openapi" }, { value: "graphql" }, { value: "cli" }]}
+          options={[
+            { value: "mcp" },
+            { value: "openapi" },
+            { value: "graphql" },
+            { value: "cli" },
+            { value: "http" },
+          ]}
         />
       </div>
 

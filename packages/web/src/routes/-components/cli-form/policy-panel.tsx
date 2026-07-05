@@ -5,7 +5,8 @@
 import { Plus, X } from "lucide-react"
 import { useState } from "react"
 import { Button, Field, Input } from "../../../ui/index.js"
-import type { CliEnvAllowFormState, CliPathFormState, CliPolicyFormState } from "./types.js"
+import { KeyValueRepeater } from "../key-value-repeater.js"
+import type { CliPathFormState, CliPolicyFormState } from "./types.js"
 import { emptyEnvAllowRow, emptyPathRow } from "./types.js"
 
 interface PolicyPanelProps {
@@ -167,82 +168,14 @@ export function PolicyPanel({ toolKey, policy, onChange }: PolicyPanelProps) {
             />
           </Field>
 
-          <EnvAllowRepeater
-            entries={policy.envAllow}
+          <KeyValueRepeater
+            label="Static Env Vars"
+            rows={policy.envAllow}
             onChange={(envAllow) => set("envAllow", envAllow)}
+            removeAriaLabel="Remove env var"
+            collapsible
+            makeRow={() => emptyEnvAllowRow()}
           />
-        </div>
-      )}
-    </div>
-  )
-}
-
-function EnvAllowRepeater({
-  entries,
-  onChange,
-}: {
-  readonly entries: CliEnvAllowFormState[]
-  readonly onChange: (entries: CliEnvAllowFormState[]) => void
-}) {
-  const [expanded, setExpanded] = useState(false)
-
-  return (
-    <div className="flex flex-col gap-2">
-      <button
-        type="button"
-        className="flex items-center justify-between text-left"
-        onClick={() => setExpanded((v) => !v)}
-        aria-expanded={expanded}
-      >
-        <span style={{ fontSize: "var(--text-label)", fontWeight: 500, color: "var(--gray-1000)" }}>
-          Static Env Vars
-        </span>
-        <span style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)" }}>
-          {entries.length} set
-        </span>
-      </button>
-      {expanded && (
-        <div className="flex flex-col gap-2">
-          {entries.map((entry, i) => (
-            <div key={entry.id} className="flex gap-2">
-              <Input
-                placeholder="KEY"
-                value={entry.key}
-                onChange={(e) => {
-                  const next = [...entries]
-                  next[i] = { ...entry, key: e.target.value }
-                  onChange(next)
-                }}
-              />
-              <Input
-                placeholder="value"
-                value={entry.value}
-                onChange={(e) => {
-                  const next = [...entries]
-                  next[i] = { ...entry, value: e.target.value }
-                  onChange(next)
-                }}
-              />
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                aria-label="Remove env var"
-                onClick={() => onChange(entries.filter((_, idx) => idx !== i))}
-              >
-                <X className="h-4 w-4" aria-hidden="true" />
-              </Button>
-            </div>
-          ))}
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            onClick={() => onChange([...entries, emptyEnvAllowRow()])}
-          >
-            <Plus className="h-4 w-4" aria-hidden="true" />
-            Add Variable
-          </Button>
         </div>
       )}
     </div>
