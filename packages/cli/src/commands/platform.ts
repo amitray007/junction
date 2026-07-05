@@ -9,6 +9,7 @@ import type { Platform } from "@junction/core"
 import type {
   AddCliPlatformResult,
   AddGraphQlPlatformResult,
+  AddHttpPlatformResult,
   AddMcpPlatformInput,
   AddOpenApiPlatformResult,
   AuthInput,
@@ -47,7 +48,7 @@ async function upsertPlatform(platform: Platform, json: boolean): Promise<Platfo
  */
 function formatOrchestrationError(
   e: PlatformOrchestrationError,
-  context: "add" | "add-graphql" | "refresh",
+  context: "add" | "add-graphql" | "add-http" | "refresh",
   id?: string,
 ): string {
   switch (e.kind) {
@@ -96,7 +97,9 @@ function formatOrchestrationError(
     case "apikey-in-query-unsupported":
       return "--auth-in query is not supported for graphql (single POST endpoint); use --auth-in header (or cookie)"
     case "invalid-descriptor":
-      return `Invalid CLI descriptor: ${e.message}`
+      return context === "add-http"
+        ? `Invalid HTTP descriptor: ${e.message}`
+        : `Invalid CLI descriptor: ${e.message}`
     case "policy-invalid":
       return `Tool "${e.toolName}" has an invalid policy: ${e.reason}`
     case "spec-cache-failed":
@@ -207,11 +210,12 @@ const addCommand = defineCommand({
       description:
         "[graphql] Extra request header in key=value form (repeatable: --header User-Agent=junction)",
     },
-    // CLI flags
+    // CLI / HTTP flags
     descriptor: {
       type: "string",
       description:
-        "[cli] JSON descriptor string (CliConnectionSchema). Use --descriptor '$(cat file.json)'",
+        "[cli/http] JSON descriptor string (CliConnectionSchema for --kind cli, " +
+        "HttpConnectionSchema for --kind http). Use --descriptor '$(cat file.json)'",
     },
     json: JSON_ARG,
   },
@@ -239,6 +243,11 @@ const addCommand = defineCommand({
 
     if (kind === "cli") {
       await addCliPlatform(args, json)
+      return
+    }
+
+    if (kind === "http") {
+      await addHttpPlatform(args, json)
       return
     }
 
@@ -469,6 +478,56 @@ async function addCliPlatform(args: Record<string, unknown>, json: boolean): Pro
   } else {
     consola.success(
       `Platform "${persisted.displayName}" (${persisted.id}) defined — kind: cli, ${toolCount} tool(s)`,
+    )
+  }
+}
+
+// ---------------------------------------------------------------------------
+// addHttpPlatform — handle --kind http add path
+// ---------------------------------------------------------------------------
+
+async function addHttpPlatform(args: Record<string, unknown>, json: boolean): Promise<void> {
+  const descriptorStr = args.descriptor as string | undefined
+  if (!descriptorStr) {
+    reportError(
+      "--descriptor is required for http kind. Pass the HttpConnectionSchema JSON inline:\n" +
+        '  --descriptor \'{"baseUrl":"https://api.example.com","tools":[...]}\'\n' +
+        '  --descriptor "$(cat http-descriptor.json)"',
+      json,
+    )
+    return
+  }
+
+  // Parse the JSON string
+  let descriptor: unknown
+  try {
+    descriptor = JSON.parse(descriptorStr) as unknown
+  } catch (cause) {
+    reportError(`--descriptor is not valid JSON: ${String(cause)}`, json)
+    return
+  }
+
+  const { addHttpPlatform: addHttp } = await import("@junction/platform-orchestration")
+  const result = await addHttp({
+    id: args.id as string,
+    displayName: args["display-name"] as string,
+    descriptor,
+  })
+  if (result.isErr()) {
+    reportError(formatOrchestrationError(result.error, "add-http"), json)
+    return
+  }
+
+  const { platform, toolCount }: AddHttpPlatformResult = result.value
+
+  const persisted = await upsertPlatform(platform, json)
+  if (!persisted) return
+
+  if (json) {
+    process.stdout.write(`${JSON.stringify({ ok: true, platform: persisted, toolCount })}\n`)
+  } else {
+    consola.success(
+      `Platform "${persisted.displayName}" (${persisted.id}) defined — kind: http, ${toolCount} tool(s)`,
     )
   }
 }
