@@ -11,19 +11,26 @@ import { OpenApiAuthSchema } from "./openapi-connection.js"
 
 /**
  * Lightweight author-time guard against the classic catastrophic-backtracking
- * (ReDoS) shapes — a quantified group that is itself quantified, e.g. `(a+)+`,
- * `(a*)*`, `(.+)*`, `(x{1,9})+`. The operator's `pattern` is compiled to a RegExp
- * and run against agent-supplied values on EVERY tool call, so a pathological
- * pattern could stall the event loop even within the bounded maxLength. This is a
- * heuristic (not a full safe-regex analysis — that would need an RE2/AST engine,
- * out of scope for a data-only core schema); it rejects the common footgun at
- * add-time. `maxLength` is still required with `pattern` as defence-in-depth.
- * (inc-30.7 CodeRabbit #502/#511.)
+ * (ReDoS) shape: a group whose content ends in an UNBOUNDED quantifier (`*`/`+`)
+ * that is ITSELF immediately followed by another unbounded quantifier — e.g.
+ * `(a+)+`, `(a*)*`, `(.+)*`, `(\w+)+`. The operator's `pattern` is compiled to a
+ * RegExp and run against agent-supplied values on EVERY tool call, so a
+ * pathological pattern could stall the event loop even within the bounded
+ * maxLength.
+ *
+ * Deliberately NARROW to avoid false positives on SAFE patterns (inc-30.7
+ * CodeRabbit re-review): an optional group `(\d+)?`, bounded repeats
+ * `\d{1,3}(\.\d{1,3}){3}`, and a plainly-quantified group `(ab)+` are all fine —
+ * only nested *unbounded* quantifiers backtrack catastrophically. This is a
+ * heuristic, not a full safe-regex analysis (that needs an RE2/AST engine, out of
+ * scope for a data-only core schema); `maxLength`-with-`pattern` remains the
+ * input-bound defence-in-depth. (inc-30.7 CodeRabbit #502/#511.)
  */
 function looksLikeCatastrophicRegex(pattern: string): boolean {
-  // A group closing then immediately quantified — `)` followed by * + ? or {n,}
-  // — where the group's LAST token was itself a quantifier ⇒ nested quantifier.
-  return /\([^)]*[*+?}][^)]*\)\s*[*+{]/.test(pattern) || /\([^)]*[*+][^)]*\)[*+?]/.test(pattern)
+  // group content ending in `*` or `+` (optionally lazy `*?`/`+?`), then `)`,
+  // then another `*` or `+`. Bounded `{n,m}` and optional `?` quantifiers on the
+  // outer group are NOT flagged (they don't cause the exponential blowup).
+  return /[*+]\??\)[*+]/.test(pattern)
 }
 
 // ---------------------------------------------------------------------------

@@ -291,6 +291,24 @@ describe("HttpRequestToolSchema — path↔param cross-check refine", () => {
     expect(r.success).toBe(true)
   })
 
+  it("accepts SAFE patterns the ReDoS heuristic must not over-flag (CodeRabbit re-review)", () => {
+    // An over-broad heuristic would wrongly reject these — only nested UNBOUNDED
+    // quantifiers backtrack catastrophically; optional/bounded groups are fine.
+    const safe = ["(\\d+)?", "(\\w+)?", "\\d{1,3}(\\.\\d{1,3}){3}", "(ab)+", "(foo|bar)+"]
+    for (const pattern of safe) {
+      const r = HttpRequestToolSchema.safeParse({
+        name: "t",
+        description: "d",
+        method: "GET",
+        path: "/x",
+        params: [
+          { name: "q", in: "query", type: "string", required: false, pattern, maxLength: 64 },
+        ],
+      })
+      expect(r.success, `pattern ${pattern} should be accepted`).toBe(true)
+    }
+  })
+
   it('REJECTS more than one in:"body" param', () => {
     const r = HttpRequestToolSchema.safeParse({
       name: "createIssue",
