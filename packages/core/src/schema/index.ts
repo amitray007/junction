@@ -5,6 +5,9 @@
 export type { Credential, OAuthMeta } from "./credential.js"
 // Credential
 export { CredentialKind, CredentialSchema, OAuthMetaSchema } from "./credential.js"
+export type { HttpConnection, HttpParam, HttpRequestTool } from "./http-connection.js"
+// HttpConnection — user-authored REST request-tool source descriptor
+export { HttpConnectionSchema, HttpParamSchema, HttpRequestToolSchema } from "./http-connection.js"
 export type { McpConnection } from "./mcp-connection.js"
 // McpConnection — generic MCP transport descriptor (http | stdio)
 export { McpConnectionSchema } from "./mcp-connection.js"

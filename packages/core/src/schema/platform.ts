@@ -6,6 +6,7 @@ import { z } from "zod"
 
 import { CliConnectionSchema } from "./cli-connection.js"
 import { GraphQlConnectionSchema } from "./graphql-connection.js"
+import { HttpConnectionSchema } from "./http-connection.js"
 import { McpConnectionSchema } from "./mcp-connection.js"
 import { OpenApiConnectionSchema } from "./openapi-connection.js"
 import { PlatformIdSchema } from "./primitives.js"
@@ -14,7 +15,7 @@ import { PlatformIdSchema } from "./primitives.js"
 // PlatformKind
 // ---------------------------------------------------------------------------
 
-export const PlatformKind = z.enum(["mcp", "openapi", "graphql", "cli", "custom"])
+export const PlatformKind = z.enum(["mcp", "openapi", "graphql", "cli", "http", "custom"])
 export type PlatformKind = z.infer<typeof PlatformKind>
 
 // ---------------------------------------------------------------------------
@@ -54,6 +55,11 @@ export const PlatformSchema = z.object({
    * createSandbox() — never a raw shell. No vendor-specific fields.
    */
   cli: CliConnectionSchema.optional(),
+  /**
+   * User-authored REST request-tool source descriptor.
+   * Meaningful when kind === "http". No vendor-specific fields.
+   */
+  http: HttpConnectionSchema.optional(),
 })
 
 export type Platform = z.infer<typeof PlatformSchema>

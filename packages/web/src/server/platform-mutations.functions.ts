@@ -13,6 +13,9 @@ import type {
   CliConnectionInput,
   CliToolArgInput,
   CliToolInput,
+  HttpConnectionInput,
+  HttpParamInput,
+  HttpToolInput,
   SimpleAuthInput,
   UpdatePlatformInput,
 } from "./platform-mutations.server.js"
@@ -32,6 +35,9 @@ export type {
   CliConnectionInput,
   CliToolArgInput,
   CliToolInput,
+  HttpConnectionInput,
+  HttpParamInput,
+  HttpToolInput,
   PlatformDetail,
   PlatformDetailResult,
 } from "./platform-mutations.server.js"
@@ -137,17 +143,89 @@ function validateCliTool(raw: unknown, toolIndex: number): CliToolInput {
   }
 }
 
-function validateCliConnection(raw: unknown): CliConnectionInput {
-  const d = raw as Record<string, unknown>
+/**
+ * Extract + guard the `tools` array shared by every connection validator (cli +
+ * http): must be a non-empty array, else a 400. Returns the raw tools array for
+ * the caller to map through its per-kind tool validator.
+ */
+function requireNonEmptyTools(d: Record<string, unknown>): unknown[] {
   const toolsRaw = Array.isArray(d.tools) ? d.tools : []
   if (toolsRaw.length === 0) {
     throw new Response("Bad Request: connection.tools must have at least one tool", {
       status: 400,
     })
   }
+  return toolsRaw
+}
+
+function validateCliConnection(raw: unknown): CliConnectionInput {
+  const d = raw as Record<string, unknown>
+  const toolsRaw = requireNonEmptyTools(d)
   return {
     tools: toolsRaw.map((t, i) => validateCliTool(t, i)),
     credentialEnvVar: optionalString(d.credentialEnvVar),
+  }
+}
+
+// ---------------------------------------------------------------------------
+// HTTP validators — hand-written boundary pre-checks (web is zod-free). Core's
+// HttpConnectionSchema (assembleHttpConnection in platform-mutations.server.ts)
+// stays the final authority; these just reject obviously-malformed shapes early.
+// ---------------------------------------------------------------------------
+
+const HTTP_PARAM_LOCATIONS = new Set(["path", "query", "header", "body"])
+const HTTP_PARAM_TYPES = new Set(["string", "number", "boolean", "enum"])
+const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"])
+
+function validateHttpParam(raw: unknown, toolIndex: number, paramIndex: number): HttpParamInput {
+  const d = raw as Record<string, unknown>
+  const context = `tools[${toolIndex}].params[${paramIndex}]`
+  if (!HTTP_PARAM_LOCATIONS.has(d.in as string)) {
+    throw new Response(`Bad Request: ${context}.in must be one of path|query|header|body`, {
+      status: 400,
+    })
+  }
+  if (!HTTP_PARAM_TYPES.has(d.type as string)) {
+    throw new Response(`Bad Request: ${context}.type is invalid`, { status: 400 })
+  }
+  return {
+    name: requireString(d.name, `${context}.name`),
+    in: d.in as HttpParamInput["in"],
+    type: d.type as HttpParamInput["type"],
+    required: d.required === true,
+    description: optionalString(d.description),
+    enum: optionalStringArray(d.enum),
+    pattern: optionalString(d.pattern),
+    maxLength: typeof d.maxLength === "number" ? d.maxLength : undefined,
+  }
+}
+
+function validateHttpTool(raw: unknown, toolIndex: number): HttpToolInput {
+  const d = raw as Record<string, unknown>
+  const context = `tools[${toolIndex}]`
+  if (!HTTP_METHODS.has(d.method as string)) {
+    throw new Response(`Bad Request: ${context}.method is invalid`, { status: 400 })
+  }
+  const paramsRaw = Array.isArray(d.params) ? d.params : []
+  return {
+    name: requireString(d.name, `${context}.name`),
+    description: requireString(d.description, `${context}.description`),
+    method: d.method as HttpToolInput["method"],
+    path: requireString(d.path, `${context}.path`),
+    params: paramsRaw.map((p, i) => validateHttpParam(p, toolIndex, i)),
+    responseHint: optionalString(d.responseHint),
+    timeoutMs: typeof d.timeoutMs === "number" ? d.timeoutMs : undefined,
+  }
+}
+
+function validateHttpConnection(raw: unknown): HttpConnectionInput {
+  const d = raw as Record<string, unknown>
+  const toolsRaw = requireNonEmptyTools(d)
+  return {
+    baseUrl: requireString(d.baseUrl, "connection.baseUrl"),
+    auth: validateAuth(d.auth),
+    defaultHeaders: optionalStringRecord(d.defaultHeaders),
+    tools: toolsRaw.map((t, i) => validateHttpTool(t, i)),
   }
 }
 
@@ -203,6 +281,13 @@ function validatePlatformInput(raw: unknown): AddPlatformInput {
         id,
         displayName,
         connection: validateCliConnection(d.connection),
+      }
+    case "http":
+      return {
+        kind: "http",
+        id,
+        displayName,
+        connection: validateHttpConnection(d.connection),
       }
     default:
       throw new Response(`Bad Request: unknown platform kind "${String(d.kind)}"`, {

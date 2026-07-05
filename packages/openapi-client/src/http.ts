@@ -3,9 +3,19 @@
 // SECURITY-CRITICAL: credential injected ONLY into the HTTP request.
 // No secret in tool results, errors, logs, or URLs surfaced anywhere.
 // SOURCE-AGNOSTIC: no vendor-specific code.
+//
+// FACTORING (increment 30.7): the schema-agnostic "build + execute a request
+// from a resolved (baseUrl, method, pathTemplate, typed params, auth, secret,
+// defaultHeaders, args, timeoutMs)" engine lives in `buildAndExecuteRequest`
+// (below). It has TWO consumers: `callOperation` here (OpenAPI — resolves the
+// operation from a parsed spec first, then delegates) and
+// `@junction/http-client`'s `createHttpProvider` (operator-declared REST
+// tools — the tool IS the resolved operation, no spec lookup needed). Do NOT
+// fork this logic — both providers must share ONE copy (see
+// docs/futures/gotchas.md).
 
 import type { OpenApiAuth, OpenApiConnection, ToolResult, UpstreamError } from "@junction/core"
-import { err, ok, ResultAsync } from "neverthrow"
+import { err, ok, type Result, ResultAsync } from "neverthrow"
 import { deriveNameFromMethodPath, sanitizeOperationId } from "./naming.js"
 
 // ---------------------------------------------------------------------------
@@ -42,7 +52,7 @@ interface OpenApiServer {
  * Validate a path parameter value for injection safety.
  * Rejects values containing /, .., control chars, or URL scheme/host patterns.
  */
-function validatePathValue(value: string): string | null {
+export function validatePathValue(value: string): string | null {
   if (value.includes("/")) return "path segment must not contain '/'"
   if (value.includes("..")) return "path segment must not contain '..'"
   // Check for control characters (U+0000–U+001F, U+007F)
@@ -93,7 +103,7 @@ function resolveBaseUrl(
  * SECURITY: The secret never appears in logs, error messages, or returned output.
  * For apiKey-in-query: the URL with the key is NEVER logged or returned in results.
  */
-function injectAuth(
+export function injectAuth(
   auth: OpenApiAuth | undefined,
   secret: string | null,
   headers: Record<string, string>,
@@ -171,58 +181,74 @@ function findOperation(
 }
 
 // ---------------------------------------------------------------------------
-// callOperation — main entry point
+// buildAndExecuteRequest — the shared, schema-agnostic request engine
 // ---------------------------------------------------------------------------
 
-/**
- * Execute an OpenAPI operation by name with the given args.
- *
- * SECURITY:
- * - Secret injected ONLY into HTTP request (header / query / cookie / bearer / basic).
- * - apiKey-in-query: URL is NEVER logged or returned.
- * - Host is pinned to connection.baseUrl or spec servers[0]; agent args fill only
- *   path/query/body values, never scheme/host/path-template.
- * - Path param injection guarded (no / .. control chars).
- * - 1 MB response cap + 30s timeout.
- */
-export function callOperation(
-  schema: Record<string, unknown>,
-  connection: OpenApiConnection,
-  secret: string | null,
-  operationName: string,
-  args: Record<string, unknown>,
-  timeoutMs = DEFAULT_TIMEOUT_MS,
-): ResultAsync<ToolResult, UpstreamError> {
-  return new ResultAsync(
-    callOperationAsync(schema, connection, secret, operationName, args, timeoutMs),
-  )
+/** A single param location declared by the caller — the schema-agnostic shape both
+ * OpenAPI (extracted from the spec op) and http-client (from HttpRequestTool.params)
+ * reduce their params to before calling the shared engine. */
+export interface BoundParam {
+  name: string
+  in: "path" | "query" | "header" | "body" | "cookie"
+  required: boolean
 }
 
-async function callOperationAsync(
-  schema: Record<string, unknown>,
-  connection: OpenApiConnection,
-  secret: string | null,
-  operationName: string,
-  args: Record<string, unknown>,
-  timeoutMs: number,
-) {
-  // Find the operation in the schema
-  const found = findOperation(schema, operationName)
-  if (!found) {
-    return err<ToolResult, UpstreamError>({ kind: "tool-not-found", name: operationName })
-  }
+export interface BuildAndExecuteRequestArgs {
+  /** Already resolved, host-pinned. Agent args never set the host. */
+  baseUrl: string
+  /** HTTP method — any case; normalized before fetch. */
+  method: string
+  /** Path template, e.g. "/repos/{owner}/{repo}" — {placeholders} bind to `in:"path"` params. */
+  pathTemplate: string
+  /** Declared params with their binding location. */
+  params: BoundParam[]
+  auth: OpenApiAuth | undefined
+  secret: string | null
+  defaultHeaders: Record<string, string> | undefined
+  /** The agent's validated args, keyed by param name. */
+  args: Record<string, unknown>
+  timeoutMs: number
+  /**
+   * Which key in `args` carries the JSON body value. OpenAPI hardcodes "body"
+   * (its merged inputSchema always uses that key); http-client passes the
+   * name of its one `in:"body"` param (the operator names it). Defaults to
+   * "body" so OpenAPI's call site needs no change.
+   */
+  bodyArgKey?: string
+}
 
-  const { path, method, operation } = found
+/**
+ * Build and execute an HTTP request from a resolved, schema-agnostic
+ * description of the call. Shared by openapi-client's `callOperation` (after
+ * it resolves an operation from a parsed spec) and `@junction/http-client`'s
+ * `createHttpProvider` (the tool IS the resolved operation already).
+ *
+ * SECURITY (identical to the pre-extraction behaviour):
+ * - Secret injected ONLY into HTTP request (header / query / cookie / bearer / basic).
+ * - apiKey-in-query: URL is NEVER logged or returned.
+ * - Host is pinned to `baseUrl`; agent args fill only path/query/header/body
+ *   values, never scheme/host/path-template.
+ * - Path param injection guarded (no / .. control chars).
+ * - 1 MB response cap + timeout.
+ */
+export function buildAndExecuteRequest(
+  reqArgs: BuildAndExecuteRequestArgs,
+): ResultAsync<ToolResult, UpstreamError> {
+  return new ResultAsync(buildAndExecuteRequestAsync(reqArgs))
+}
 
-  // Resolve base URL (host-pinned — agent args NEVER override this)
-  const baseUrl = resolveBaseUrl(connection, schema)
-  if (!baseUrl) {
-    return err<ToolResult, UpstreamError>({
-      kind: "connect-failed",
-      cause: "no base URL: set --base-url or include a servers entry in the spec",
-    })
-  }
-
+async function buildAndExecuteRequestAsync({
+  baseUrl,
+  method,
+  pathTemplate,
+  params,
+  auth,
+  secret,
+  defaultHeaders,
+  args,
+  timeoutMs,
+  bodyArgKey = "body",
+}: BuildAndExecuteRequestArgs): Promise<Result<ToolResult, UpstreamError>> {
   // Validate base URL scheme
   if (!/^https?:\/\//i.test(baseUrl)) {
     return err<ToolResult, UpstreamError>({
@@ -231,18 +257,17 @@ async function callOperationAsync(
     })
   }
 
-  // Build path (substitute path params)
-  const params = Array.isArray(operation.parameters) ? operation.parameters : []
-  let resolvedPath = path
+  const methodLower = method.toLowerCase()
 
-  for (const p of params) {
-    if (p === null || typeof p !== "object") continue
-    const param = p as OpenApiParameter
-    if (param.in !== "path" || typeof param.name !== "string") continue
+  // Build path (substitute path params)
+  let resolvedPath = pathTemplate
+
+  for (const param of params) {
+    if (param.in !== "path") continue
 
     const val = args[param.name]
     if (val === undefined || val === null) {
-      if (param.required === true) {
+      if (param.required) {
         return err<ToolResult, UpstreamError>({
           kind: "invalid-args",
           reason: `missing required path parameter: ${param.name}`,
@@ -264,15 +289,13 @@ async function callOperationAsync(
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Accept: "application/json",
-    ...(connection.defaultHeaders ?? {}),
+    ...(defaultHeaders ?? {}),
   }
   const queryParams = new URLSearchParams()
 
   // Add query params from args
-  for (const p of params) {
-    if (p === null || typeof p !== "object") continue
-    const param = p as OpenApiParameter
-    if (param.in !== "query" || typeof param.name !== "string") continue
+  for (const param of params) {
+    if (param.in !== "query") continue
 
     const val = args[param.name]
     if (val !== undefined && val !== null) {
@@ -281,10 +304,8 @@ async function callOperationAsync(
   }
 
   // Add header params from args
-  for (const p of params) {
-    if (p === null || typeof p !== "object") continue
-    const param = p as OpenApiParameter
-    if (param.in !== "header" || typeof param.name !== "string") continue
+  for (const param of params) {
+    if (param.in !== "header") continue
 
     const val = args[param.name]
     if (val !== undefined && val !== null) {
@@ -293,20 +314,21 @@ async function callOperationAsync(
   }
 
   // Inject credential into request (ONLY here — never in result/log/URL-output)
-  injectAuth(connection.auth, secret, headers, queryParams)
+  injectAuth(auth, secret, headers, queryParams)
 
   // Build body
   let body: string | undefined
-  if (args.body !== undefined && args.body !== null) {
+  const bodyValue = args[bodyArgKey]
+  if (bodyValue !== undefined && bodyValue !== null) {
     try {
-      body = JSON.stringify(args.body)
+      body = JSON.stringify(bodyValue)
     } catch (_cause) {
       return err<ToolResult, UpstreamError>({
         kind: "invalid-args",
         reason: "body is not JSON-serializable",
       })
     }
-  } else if (method !== "get" && method !== "head" && method !== "delete") {
+  } else if (methodLower !== "get" && methodLower !== "head" && methodLower !== "delete") {
     // No Content-Type for methods without body
     delete headers["Content-Type"]
   }
@@ -335,7 +357,7 @@ async function callOperationAsync(
 
   try {
     const res = await fetch(fullUrl, {
-      method: method.toUpperCase(),
+      method: methodLower.toUpperCase(),
       headers,
       body,
       signal: controller.signal,
@@ -401,4 +423,86 @@ async function callOperationAsync(
   } finally {
     clearTimeout(timer)
   }
+}
+
+// ---------------------------------------------------------------------------
+// callOperation — main entry point (OpenAPI: resolves the operation from a
+// parsed spec, then delegates to the shared buildAndExecuteRequest engine)
+// ---------------------------------------------------------------------------
+
+/**
+ * Execute an OpenAPI operation by name with the given args.
+ *
+ * SECURITY: see `buildAndExecuteRequest` — this function only adds the
+ * schema-specific half (find the operation, resolve the base URL, extract
+ * the operation's raw `parameters` into the `BoundParam[]` shape).
+ */
+export function callOperation(
+  schema: Record<string, unknown>,
+  connection: OpenApiConnection,
+  secret: string | null,
+  operationName: string,
+  args: Record<string, unknown>,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+): ResultAsync<ToolResult, UpstreamError> {
+  return new ResultAsync(
+    callOperationAsync(schema, connection, secret, operationName, args, timeoutMs),
+  )
+}
+
+async function callOperationAsync(
+  schema: Record<string, unknown>,
+  connection: OpenApiConnection,
+  secret: string | null,
+  operationName: string,
+  args: Record<string, unknown>,
+  timeoutMs: number,
+) {
+  // Find the operation in the schema
+  const found = findOperation(schema, operationName)
+  if (!found) {
+    return err<ToolResult, UpstreamError>({ kind: "tool-not-found", name: operationName })
+  }
+
+  const { path, method, operation } = found
+
+  // Resolve base URL (host-pinned — agent args NEVER override this)
+  const baseUrl = resolveBaseUrl(connection, schema)
+  if (!baseUrl) {
+    return err<ToolResult, UpstreamError>({
+      kind: "connect-failed",
+      cause: "no base URL: set --base-url or include a servers entry in the spec",
+    })
+  }
+
+  // Extract the operation's raw `parameters` into the schema-agnostic BoundParam[] shape.
+  const rawParams = Array.isArray(operation.parameters) ? operation.parameters : []
+  const params: BoundParam[] = []
+  for (const p of rawParams) {
+    if (p === null || typeof p !== "object") continue
+    const param = p as OpenApiParameter
+    if (typeof param.name !== "string") continue
+    if (
+      param.in !== "path" &&
+      param.in !== "query" &&
+      param.in !== "header" &&
+      param.in !== "cookie"
+    ) {
+      continue
+    }
+    params.push({ name: param.name, in: param.in, required: param.required === true })
+  }
+
+  return buildAndExecuteRequest({
+    baseUrl,
+    method,
+    pathTemplate: path,
+    params,
+    auth: connection.auth,
+    secret,
+    defaultHeaders: connection.defaultHeaders,
+    args,
+    timeoutMs,
+    bodyArgKey: "body",
+  })
 }

@@ -11,6 +11,7 @@ import path from "node:path"
 import type { UpstreamError } from "../../errors/index.js"
 import { err, ok, type Result } from "../../result/index.js"
 import type { CliArg } from "../../schema/cli-connection.js"
+import { rejectControlCharacters } from "../arg-validation.js"
 
 // ---------------------------------------------------------------------------
 // validateArgValue — validate a single agent value against its CliArg spec
@@ -60,15 +61,8 @@ export function validateArgValue(
   // particular makes Node's spawn() throw ERR_INVALID_ARG_VALUE synchronously —
   // which would escape as an uncaught rejection across the proxy boundary. Reject
   // here so it becomes a clean invalid-args instead. (Applies to string/enum/path.)
-  for (let i = 0; i < strValue.length; i++) {
-    const c = strValue.charCodeAt(i)
-    if (c < 0x20 || (c >= 0x7f && c <= 0x9f)) {
-      return err({
-        kind: "invalid-args",
-        reason: `arg "${arg.name}": value contains a control character (code ${c}) which is not allowed`,
-      })
-    }
-  }
+  const controlCharResult = rejectControlCharacters(strValue, `arg "${arg.name}"`)
+  if (controlCharResult.isErr()) return err(controlCharResult.error)
 
   // maxLength check (character count — consistent with JSON Schema maxLength)
   if (arg.maxLength !== undefined && strValue.length > arg.maxLength) {

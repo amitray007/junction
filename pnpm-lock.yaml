@@ -166,6 +166,22 @@ importers:
         specifier: ^26.0.1
         version: 26.0.1
 
+  packages/http-client:
+    dependencies:
+      '@junction/core':
+        specifier: workspace:*
+        version: link:../core
+      '@junction/openapi-client':
+        specifier: workspace:*
+        version: link:../openapi-client
+      neverthrow:
+        specifier: 'catalog:'
+        version: 8.2.0
+    devDependencies:
+      '@types/node':
+        specifier: ^26.0.1
+        version: 26.0.1
+
   packages/mcp/client:
     dependencies:
       '@junction/core':
@@ -238,6 +254,9 @@ importers:
       '@junction/graphql-client':
         specifier: workspace:*
         version: link:../graphql-client
+      '@junction/http-client':
+        specifier: workspace:*
+        version: link:../http-client
       '@junction/mcp-client':
         specifier: workspace:*
         version: link:../mcp/client

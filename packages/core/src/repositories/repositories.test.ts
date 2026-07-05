@@ -2534,14 +2534,20 @@ describe("migration 0008 — credential verify-state columns", () => {
     }
   })
 
-  it("journal gate: the 0008 entry's `when` exceeds the current max (not necessarily strictly sorted overall)", async () => {
+  it("journal gate: the 0008 entry's `when` exceeds the max of entries BEFORE it (not necessarily strictly sorted overall)", async () => {
     const journalText = await readFile(join(migrationsDir, "meta/_journal.json"), "utf8")
-    const journal = JSON.parse(journalText) as { entries: Array<{ tag: string; when: number }> }
+    const journal = JSON.parse(journalText) as {
+      entries: Array<{ idx: number; tag: string; when: number }>
+    }
     const entry0008 = journal.entries.find((e) => e.tag.startsWith("0008_"))
     expect(entry0008).toBeDefined()
+    if (!entry0008) return
+    // Compare against entries strictly BEFORE 0008 in migration order (idx), not
+    // "every other entry" — later migrations (0009+) are expected to have a
+    // LARGER `when` than 0008 and must not be included in this backward-looking check.
     const maxOfPriorEntries = Math.max(
-      ...journal.entries.filter((e) => e.tag !== entry0008?.tag).map((e) => e.when),
+      ...journal.entries.filter((e) => e.idx < entry0008.idx).map((e) => e.when),
     )
-    expect(entry0008?.when).toBeGreaterThan(maxOfPriorEntries)
+    expect(entry0008.when).toBeGreaterThan(maxOfPriorEntries)
   })
 })

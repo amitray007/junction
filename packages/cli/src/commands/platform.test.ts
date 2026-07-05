@@ -1125,6 +1125,184 @@ describe("platform refresh (unit)", () => {
 })
 
 // ---------------------------------------------------------------------------
+// platform add — http (unit, direct command invocation)
+// ---------------------------------------------------------------------------
+
+describe("platform add — http (unit)", () => {
+  let home: string
+  let prevHome: string | undefined
+  let prevStore: string | undefined
+  let prevExitCode: number | undefined
+
+  beforeEach(async () => {
+    prevHome = process.env.JUNCTION_HOME
+    prevStore = process.env.JUNCTION_STORE
+    prevExitCode = process.exitCode
+    home = await mkdtemp(join(tmpdir(), "junction-http-test-"))
+    process.env.JUNCTION_HOME = home
+    process.env.JUNCTION_STORE = "file"
+    process.exitCode = 0
+  })
+
+  afterEach(async () => {
+    if (prevHome === undefined) delete process.env.JUNCTION_HOME
+    else process.env.JUNCTION_HOME = prevHome
+    if (prevStore === undefined) delete process.env.JUNCTION_STORE
+    else process.env.JUNCTION_STORE = prevStore
+    process.exitCode = prevExitCode
+    await rm(home, { recursive: true, force: true })
+  })
+
+  const validDescriptor = JSON.stringify({
+    baseUrl: "https://api.example.com",
+    tools: [
+      {
+        name: "getIssue",
+        description: "Fetch a single issue by owner/repo/number.",
+        method: "GET",
+        path: "/repos/{owner}/{repo}/issues/{number}",
+        params: [
+          { name: "owner", in: "path", type: "string", required: true },
+          { name: "repo", in: "path", type: "string", required: true },
+          { name: "number", in: "path", type: "number", required: true },
+        ],
+      },
+    ],
+  })
+
+  it("--descriptor '<valid json>' --json → creates the platform and reports toolCount", async () => {
+    const add = getPlatformSubCmd("add")
+
+    const out = await captureStdout(
+      () =>
+        add.run?.(
+          ctx({
+            id: "http-plat",
+            kind: "http",
+            "display-name": "HTTP Platform",
+            descriptor: validDescriptor,
+            json: true,
+          }),
+        ) ?? Promise.resolve(),
+    )
+
+    expect(process.exitCode).toBe(0)
+    const parsed = JSON.parse(out.trim()) as {
+      ok: boolean
+      platform?: { id: string; kind: string; http?: { baseUrl: string } }
+      toolCount?: number
+    }
+    expect(parsed.ok).toBe(true)
+    expect(parsed.toolCount).toBe(1)
+    expect(parsed.platform?.kind).toBe("http")
+    expect(parsed.platform?.http?.baseUrl).toBe("https://api.example.com")
+
+    // Verify DB state directly
+    const dbResult = await getDatabase(getPaths())
+    expect(dbResult.isOk()).toBe(true)
+    if (dbResult.isErr()) return
+    const repos = createRepositories(dbResult.value)
+    const got = await repos.platforms.get("http-plat")
+    expect(got.isOk()).toBe(true)
+    if (!got.isOk()) return
+    expect(got.value.kind).toBe("http")
+    expect(got.value.http?.tools.length).toBe(1)
+  })
+
+  it("bad JSON in --descriptor → {ok:false}, platform not persisted", async () => {
+    const add = getPlatformSubCmd("add")
+
+    const out = await captureStdout(
+      () =>
+        add.run?.(
+          ctx({
+            id: "http-badjson",
+            kind: "http",
+            "display-name": "Bad JSON",
+            descriptor: "{not valid json",
+            json: true,
+          }),
+        ) ?? Promise.resolve(),
+    )
+
+    expect(process.exitCode).toBe(1)
+    const parsed = JSON.parse(out.trim()) as { ok: boolean; error?: string }
+    expect(parsed.ok).toBe(false)
+    expect(parsed.error).toMatch(/not valid JSON/)
+
+    const dbResult = await getDatabase(getPaths())
+    if (dbResult.isErr()) return
+    const repos = createRepositories(dbResult.value)
+    const list = await repos.platforms.list()
+    if (!list.isOk()) return
+    expect(list.value.find((p) => p.id === "http-badjson")).toBeUndefined()
+  })
+
+  it("missing --descriptor → {ok:false}", async () => {
+    const add = getPlatformSubCmd("add")
+
+    const out = await captureStdout(
+      () =>
+        add.run?.(
+          ctx({
+            id: "http-missing-descriptor",
+            kind: "http",
+            "display-name": "Missing Descriptor",
+            descriptor: undefined,
+            json: true,
+          }),
+        ) ?? Promise.resolve(),
+    )
+
+    expect(process.exitCode).toBe(1)
+    const parsed = JSON.parse(out.trim()) as { ok: boolean; error?: string }
+    expect(parsed.ok).toBe(false)
+    expect(parsed.error).toMatch(/--descriptor is required/)
+  })
+
+  it("descriptor failing the path↔param cross-check → {ok:false} invalid descriptor, not persisted", async () => {
+    const add = getPlatformSubCmd("add")
+    const badDescriptor = JSON.stringify({
+      baseUrl: "https://api.example.com",
+      tools: [
+        {
+          name: "getIssue",
+          description: "Missing the path param declaration.",
+          method: "GET",
+          path: "/repos/{owner}/{repo}/issues/{number}",
+          params: [{ name: "owner", in: "path", type: "string", required: true }],
+        },
+      ],
+    })
+
+    const out = await captureStdout(
+      () =>
+        add.run?.(
+          ctx({
+            id: "http-mismatch",
+            kind: "http",
+            "display-name": "Mismatch",
+            descriptor: badDescriptor,
+            json: true,
+          }),
+        ) ?? Promise.resolve(),
+    )
+
+    expect(process.exitCode).toBe(1)
+    const parsed = JSON.parse(out.trim()) as { ok: boolean; error?: string }
+    expect(parsed.ok).toBe(false)
+    expect(parsed.error).toMatch(/Invalid HTTP descriptor/)
+
+    const dbResult = await getDatabase(getPaths())
+    if (dbResult.isErr()) return
+    const repos = createRepositories(dbResult.value)
+    const list = await repos.platforms.list()
+    if (!list.isOk()) return
+    expect(list.value.find((p) => p.id === "http-mismatch")).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
 // platform add — graphql (unit, direct command invocation)
 // ---------------------------------------------------------------------------
 

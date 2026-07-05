@@ -148,6 +148,13 @@ export {
 export type { GraphQlConnection } from "./schema/graphql-connection.js"
 // GraphQlConnection — generic GraphQL source descriptor
 export { GraphQlConnectionSchema } from "./schema/graphql-connection.js"
+export type { HttpConnection, HttpParam, HttpRequestTool } from "./schema/http-connection.js"
+// HttpConnection — user-authored REST request-tool source descriptor
+export {
+  HttpConnectionSchema,
+  HttpParamSchema,
+  HttpRequestToolSchema,
+} from "./schema/http-connection.js"
 export type { McpConnection, McpHttpAuth } from "./schema/mcp-connection.js"
 // McpConnection — generic MCP transport descriptor (http | stdio)
 export { McpConnectionSchema, McpHttpAuthSchema } from "./schema/mcp-connection.js"
@@ -192,11 +199,14 @@ export { ProfileSchema } from "./schema/profile.js"
 export type { SourceRef, ToolFilter } from "./schema/source-ref.js"
 // SourceRef + ToolFilter
 export { SourceRefSchema, ToolFilterSchema } from "./schema/source-ref.js"
-// CLI provider — sandboxed code-execution source (inc 21)
-export { createCliProvider } from "./sources/cli/provider.js"
 // ---------------------------------------------------------------------------
 // Sources — ToolProvider interface, naming helpers, profile proxy, providers
 // ---------------------------------------------------------------------------
+// Shared agent-arg string validation primitive (inc 30.7) — reused by every
+// source provider that validates agent-supplied strings (cli, http-client).
+export { rejectControlCharacters } from "./sources/arg-validation.js"
+// CLI provider — sandboxed code-execution source (inc 21)
+export { createCliProvider } from "./sources/cli/provider.js"
 export { namespaceToolName, splitNamespacedName } from "./sources/naming.js"
 export type { ProviderTool, ToolProvider, ToolResult } from "./sources/provider.js"
 export type { ProfileProxy, ResolveProviderFn } from "./sources/proxy.js"

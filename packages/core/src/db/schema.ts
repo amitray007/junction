@@ -19,6 +19,8 @@ export const platforms = sqliteTable("platforms", {
   graphql: text("graphql"),
   /** JSON-serialized CliConnection — optional; meaningful when kind === "cli" */
   cli: text("cli"),
+  /** JSON-serialized HttpConnection — optional; meaningful when kind === "http" */
+  http: text("http"),
 })
 
 export const credentials = sqliteTable("credentials", {

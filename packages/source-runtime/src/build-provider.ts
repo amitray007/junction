@@ -148,6 +148,21 @@ export function buildProvider(
       return ok(createGraphQlProvider(platform.graphql, secretValue))
     }
 
+    if (platform.kind === "http") {
+      if (platform.http === undefined) {
+        return err({
+          kind: "connect-failed" as const,
+          cause: "platform has no http descriptor",
+        } satisfies UpstreamError)
+      }
+      const { createHttpProvider } = await import("@junction/http-client")
+      // createHttpProvider returns ToolProvider (synchronous) — normalize to
+      // ResultAsync. Secret is a plain string | null injected into the request
+      // header/query by injectAuth (NOT an env var like cli). Mirrors the
+      // openapi/graphql cases.
+      return ok(createHttpProvider(platform.http, secretValue))
+    }
+
     if (platform.kind === "cli") {
       if (platform.cli === undefined) {
         return err({

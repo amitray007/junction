@@ -6,6 +6,7 @@
     { "path": "packages/mcp/client" },
     { "path": "packages/openapi-client" },
     { "path": "packages/graphql-client" },
+    { "path": "packages/http-client" },
     { "path": "packages/platform-orchestration" },
     { "path": "packages/source-runtime" },
     { "path": "packages/cli" }

@@ -15,6 +15,7 @@ const mcpServerSrc = fileURLToPath(new URL("./packages/mcp/server/src", import.m
 const mcpClientSrc = fileURLToPath(new URL("./packages/mcp/client/src", import.meta.url))
 const openapiClientSrc = fileURLToPath(new URL("./packages/openapi-client/src", import.meta.url))
 const graphqlClientSrc = fileURLToPath(new URL("./packages/graphql-client/src", import.meta.url))
+const httpClientSrc = fileURLToPath(new URL("./packages/http-client/src", import.meta.url))
 const platformOrchestrationSrc = fileURLToPath(
   new URL("./packages/platform-orchestration/src", import.meta.url),
 )
@@ -28,6 +29,7 @@ const alias = {
   "@junction/mcp-client": `${mcpClientSrc}/index.ts`,
   "@junction/openapi-client": `${openapiClientSrc}/index.ts`,
   "@junction/graphql-client": `${graphqlClientSrc}/index.ts`,
+  "@junction/http-client": `${httpClientSrc}/index.ts`,
   "@junction/platform-orchestration": `${platformOrchestrationSrc}/index.ts`,
   "@junction/source-runtime": `${sourceRuntimeSrc}/index.ts`,
 }

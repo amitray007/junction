@@ -19,11 +19,12 @@
 // CliConnectionSchema.parse as the final authority before the descriptor reaches
 // addCliPlatform/validatePolicy/the sandbox. Never trust a client-sent argv array.
 
-import type { CliConnection, Platform } from "@junction/core"
-import { CliConnectionSchema } from "@junction/core"
+import type { CliConnection, HttpConnection, Platform } from "@junction/core"
+import { CliConnectionSchema, HttpConnectionSchema } from "@junction/core"
 import {
   addCliPlatform,
   addGraphQlPlatform,
+  addHttpPlatform,
   addMcpPlatform,
   addOpenApiPlatform,
   refreshOpenApiPlatform,
@@ -77,6 +78,41 @@ export interface CliConnectionInput {
   credentialEnvVar?: string
 }
 
+// ---------------------------------------------------------------------------
+// HTTP surface input shapes — straight field copy (no tokenizer, unlike CLI).
+// HttpConnectionSchema (core) is the final authority; these are the boundary shapes.
+// ---------------------------------------------------------------------------
+
+/** One declared param on an HTTP request-tool — mirrors core's HttpParamSchema. */
+export interface HttpParamInput {
+  name: string
+  in: "path" | "query" | "header" | "body"
+  type: "string" | "number" | "boolean" | "enum"
+  required: boolean
+  description?: string
+  enum?: string[]
+  pattern?: string
+  maxLength?: number
+}
+
+/** One operator-declared REST request — becomes one namespaced MCP tool. */
+export interface HttpToolInput {
+  name: string
+  description: string
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD"
+  path: string
+  params: HttpParamInput[]
+  responseHint?: string
+  timeoutMs?: number
+}
+
+export interface HttpConnectionInput {
+  baseUrl: string
+  auth?: SimpleAuthInput
+  defaultHeaders?: Record<string, string>
+  tools: HttpToolInput[]
+}
+
 export type AddPlatformInput =
   | {
       kind: "mcp-http"
@@ -123,6 +159,12 @@ export type AddPlatformInput =
       displayName: string
       connection: CliConnectionInput
     }
+  | {
+      kind: "http"
+      id: string
+      displayName: string
+      connection: HttpConnectionInput
+    }
 
 /** Update = add's per-kind shape plus the existing platform's id. */
 export type UpdatePlatformInput = AddPlatformInput
@@ -160,7 +202,7 @@ function orchestrationErrorMessage(e: { kind: string; [k: string]: unknown }): s
     case "apikey-in-query-unsupported":
       return "API key in query is not supported for GraphQL — use a header instead"
     case "invalid-descriptor":
-      return `Invalid CLI descriptor: ${e.message}`
+      return `Invalid descriptor: ${e.message}`
     case "policy-invalid":
       return `Policy invalid for tool "${e.toolName}": ${e.reason}`
     case "spec-cache-failed":
@@ -200,6 +242,28 @@ function zodFieldErrors(error: ZodErrorLike): Record<string, string> {
     if (!(key in out)) out[key] = issue.message
   }
   return out
+}
+
+/**
+ * Shared tail for the connection assemblers: run a Zod safeParse result into the
+ * `{ ok:true, connection } | { ok:false, message, fieldErrors }` shape every
+ * assembleXConnection returns (cli + http; the safeParse→ZodError→fieldErrors
+ * mapping was identical in both). The caller owns building the raw object per
+ * kind; this owns only the validate-and-shape step.
+ */
+function finishAssemble<T>(
+  parsed: { success: true; data: T } | { success: false; error: { issues: ZodIssueLike[] } },
+):
+  | { ok: true; connection: T }
+  | { ok: false; message: string; fieldErrors: Record<string, string> } {
+  if (!parsed.success) {
+    return {
+      ok: false,
+      message: parsed.error.issues.map((i) => i.message).join(", "),
+      fieldErrors: zodFieldErrors(parsed.error as ZodErrorLike),
+    }
+  }
+  return { ok: true, connection: parsed.data }
 }
 
 function toPlatformMeta(p: Platform): PlatformMetaResult & { ok: true } {
@@ -282,15 +346,45 @@ function assembleCliConnection(
     ...(input.credentialEnvVar ? { credentialEnvVar: input.credentialEnvVar } : {}),
   }
 
-  const parsed = CliConnectionSchema.safeParse(raw)
-  if (!parsed.success) {
-    return {
-      ok: false,
-      message: parsed.error.issues.map((i) => i.message).join(", "),
-      fieldErrors: zodFieldErrors(parsed.error),
-    }
+  return finishAssemble(CliConnectionSchema.safeParse(raw))
+}
+
+// ---------------------------------------------------------------------------
+// HTTP assembly — straight field copy (no tokenizer, unlike CLI: HTTP has no
+// argv/command-line to reconstruct). HttpConnectionSchema.safeParse is the
+// final authority, same ZodError → {message, fieldErrors} mapping as CLI.
+// ---------------------------------------------------------------------------
+
+function assembleHttpConnection(
+  input: HttpConnectionInput,
+):
+  | { ok: true; connection: HttpConnection }
+  | { ok: false; message: string; fieldErrors: Record<string, string> } {
+  const raw = {
+    baseUrl: input.baseUrl,
+    ...(input.auth ? { auth: toAuthInput(input.auth) } : {}),
+    ...(input.defaultHeaders ? { defaultHeaders: input.defaultHeaders } : {}),
+    tools: input.tools.map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      method: tool.method,
+      path: tool.path,
+      params: tool.params.map((p) => ({
+        name: p.name,
+        in: p.in,
+        type: p.type,
+        required: p.required,
+        description: p.description,
+        enum: p.enum,
+        pattern: p.pattern,
+        maxLength: p.maxLength,
+      })),
+      responseHint: tool.responseHint,
+      timeoutMs: tool.timeoutMs,
+    })),
   }
-  return { ok: true, connection: parsed.data }
+
+  return finishAssemble(HttpConnectionSchema.safeParse(raw))
 }
 
 // ---------------------------------------------------------------------------
@@ -352,6 +446,21 @@ function addByKind(
         displayName: input.displayName,
         descriptor: assembled.connection,
       }).map(({ platform, sandboxWarning }) => ({ platform, sandboxWarning }))
+    }
+    case "http": {
+      const assembled = assembleHttpConnection(input.connection)
+      if (!assembled.ok) {
+        return errAsync({
+          kind: "invalid-descriptor",
+          message: assembled.message,
+          fieldErrors: assembled.fieldErrors,
+        })
+      }
+      return addHttpPlatform({
+        id: input.id,
+        displayName: input.displayName,
+        descriptor: assembled.connection,
+      }).map(({ platform }) => ({ platform }))
     }
   }
 }
@@ -523,6 +632,26 @@ export interface PlatformDetail {
     rawJson?: string
   }>
   cliCredentialEnvVar?: string
+  // http (baseUrl/authScheme/authHeaderOrName shared with openapi above)
+  httpDefaultHeaders?: Record<string, string>
+  httpTools?: Array<{
+    name: string
+    description: string
+    method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD"
+    path: string
+    params: Array<{
+      name: string
+      in: "path" | "query" | "header" | "body"
+      type: "string" | "number" | "boolean" | "enum"
+      required: boolean
+      description?: string
+      enum?: string[]
+      pattern?: string
+      maxLength?: number
+    }>
+    responseHint?: string
+    timeoutMs?: number
+  }>
 }
 
 export type PlatformDetailResult =
@@ -637,6 +766,36 @@ function toPlatformDetail(p: Platform): PlatformDetail {
         }
       }),
       cliCredentialEnvVar: p.cli.credentialEnvVar,
+    }
+  }
+
+  if (p.kind === "http" && p.http) {
+    const auth = p.http.auth
+    return {
+      ...base,
+      baseUrl: p.http.baseUrl,
+      authScheme: auth === undefined ? "none" : auth.scheme === "apiKey" ? "apiKey" : "bearer",
+      authHeaderOrName:
+        auth?.scheme === "apiKey" ? auth.name : auth?.scheme === "bearer" ? auth.header : undefined,
+      httpDefaultHeaders: p.http.defaultHeaders,
+      httpTools: p.http.tools.map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        method: tool.method,
+        path: tool.path,
+        params: tool.params.map((param) => ({
+          name: param.name,
+          in: param.in,
+          type: param.type,
+          required: param.required,
+          description: param.description,
+          enum: param.enum,
+          pattern: param.pattern,
+          maxLength: param.maxLength,
+        })),
+        responseHint: tool.responseHint,
+        timeoutMs: tool.timeoutMs,
+      })),
     }
   }
 

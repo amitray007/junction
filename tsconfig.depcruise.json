@@ -10,6 +10,7 @@
       "@junction/mcp-client": ["./packages/mcp/client/src/index.ts"],
       "@junction/openapi-client": ["./packages/openapi-client/src/index.ts"],
       "@junction/graphql-client": ["./packages/graphql-client/src/index.ts"],
+      "@junction/http-client": ["./packages/http-client/src/index.ts"],
       "@junction/platform-orchestration": ["./packages/platform-orchestration/src/index.ts"],
       "@junction/source-runtime": ["./packages/source-runtime/src/index.ts"],
       "junction": ["./packages/cli/src/index.ts"],

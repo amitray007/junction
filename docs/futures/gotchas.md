@@ -238,6 +238,54 @@ Non-obvious sharp edges we've already paid for. Each lists the **symptom** and t
 
 - **file-cred materialization — crash-window orphan.** A hard process kill between the per-call `writeFile` and the `finally`-rm in `createCliProvider`'s `callTool` (`packages/core/src/sources/cli/provider.ts`) leaves a 0600 `cred` file behind in `<paths.runtimeDir>/cred-XXXX` (`~/.junction/run/cred-XXXX`). Mitigation in place: the parent (`runtimeDir`) is 0700 and every file inside is 0600, so only the same user can read an orphan — but nothing currently reaps it. A best-effort startup sweep of stale `cred-*` dirs under `runtimeDir` (age-based, e.g. anything older than a few minutes) is a future hardening; not implemented this increment. Also: kind "file" content is read/written as **utf8 text** — correct for text secrets (kubeconfig, service-account JSON) but would silently corrupt a genuinely binary secret (e.g. a DER-encoded cert/key). This is documented behaviour, not byte-exact for non-utf8 content — if a binary kind is ever needed, it must be a distinct credential kind, not an extension of "file".
 
+## Adding a new Platform.kind — the DB column is a SEPARATE, easily-missed step (inc 30.7)
+
+**Symptom:** a new surface kind (`http` in inc 30.7) can pass core-schema tests +
+provider tests + source-runtime dispatch tests **all green**, while every DB save
+**silently drops the connection descriptor**. `platform add` builds a valid
+`Platform` object in memory, `repos.platforms.upsert` runs without error, but
+`platform list` reads back the row with the new kind's field **gone** — because the
+`platforms` table had no column for it.
+
+**Cause:** each per-kind connection is a JSON TEXT column on `platforms`
+(`connection` for mcp, `openapi`, `graphql`, `cli`, and now `http`) with explicit
+read/write mapping in `repositories/platforms.ts` (`rowToPlatform` / `toPlatformRow`
+/ the `onConflictDoUpdate` set clause). Adding the `PlatformKind` enum member +
+schema + provider + dispatch does **NOT** touch the DB layer — that's a distinct
+edit (schema.ts column + a drizzle migration + the three mapping sites). Slices A–C
+of inc 30.7 landed schema/provider/dispatch and missed it; Slice D caught it only
+because its proof-of-done required a real CLI round-trip (verify-the-artifact
+earning its keep again).
+
+**Fix / checklist when adding a Platform.kind:** (1) `PlatformKind` enum +
+`HttpConnectionSchema.optional()` field on `PlatformSchema` (core); (2) the
+`http: text("http")` column in `db/schema.ts` + a **drizzle-generated** migration
+(never hand-authored — see the drizzle-kit gotcha above); (3) `rowToPlatform`,
+`toPlatformRow`, and the upsert set-clause in `repositories/platforms.ts`;
+(4) the exhaustive kind-switches (`buildProvider` dispatch, `verify-credential`,
+`kind-compat`, web `isVerifiable`) — a defaultless switch won't error, so grep for
+the kind-switch sites; (5) the migration-journal gate test compares 0008's `when`
+only against entries with a **smaller `idx`** (prior migrations), so a new 0009+
+migration doesn't break it. **Round-trip through the real built CLI
+(`platform add … --json` then `platform list --json`) to prove the descriptor
+survives — a green unit suite does not.**
+
+## HTTP surface — an upstream host that echoes the auth back returns it to the agent (inc 30.7)
+
+**Not a junction leak, but worth knowing.** The `http` surface injects the credential
+into the outgoing request and returns the upstream response body to the agent
+verbatim. If an operator points a request-tool at a host that **echoes the injected
+apiKey/bearer back in its own response body** (debug/echo endpoints like
+`httpbin.org/bearer` do exactly this), that value returns to the agent inside the
+tool result — junction cannot distinguish it from legitimate response data. This is
+inherent to ANY credential-injecting HTTP proxy: the operator *chose* to send the
+key to that host, and junction faithfully relays what the host sends back. junction's
+own surfaces (logs, SSR, errors, at-rest storage) stay clean — the adversarial sweep
+confirmed the secret is absent everywhere junction controls; the only echo is the
+upstream's own response. No code fix warranted; flagged so a future reviewer doesn't
+mistake the upstream echo for a junction leak. (Raised inc-30.7 credential-security
+LEAD review, confirmed in the real-httpbin QA.)
+
 ## PR merge silently blocked on unresolved review threads (not just failing checks)
 
 **Symptom:** `gh pr merge` appears to run but the PR stays OPEN + `mergeStateStatus: BLOCKED`, even though all 7 CI checks pass and the PR is `MERGEABLE`. `main` has **no classic branch protection** (`GET .../branches/main/protection` → 404), so it's easy to assume nothing is gating the merge.

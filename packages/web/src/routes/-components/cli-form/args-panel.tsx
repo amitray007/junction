@@ -4,23 +4,15 @@
 // referenced but not declared gets an auto-added row; a declared-but-unused
 // arg is flagged "not used" (never silently deleted — the operator decides).
 
-import { ChevronDown, ChevronRight, X } from "lucide-react"
-import { useState } from "react"
+import { X } from "lucide-react"
 import { tokenizeCommandLine } from "../../../lib/cli-command.js"
-import {
-  Field,
-  Input,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-  Switch,
-} from "../../../ui/index.js"
+import { Field, Input } from "../../../ui/index.js"
+import { LabeledSelect, RequiredToggle } from "../labeled-select.js"
+import { ValueConstraintFields } from "../value-constraint-fields.js"
 import type { CliArgType, CliToolArgFormState } from "./types.js"
 import { nextKey } from "./types.js"
 
-const ARG_TYPES: CliArgType[] = ["string", "number", "boolean", "enum", "path"]
+const ARG_TYPES: readonly CliArgType[] = ["string", "number", "boolean", "enum", "path"]
 
 /** The set of $name references found in the command line (order of first appearance). */
 export function argNamesInCommandLine(commandLine: string): string[] {
@@ -122,8 +114,6 @@ function ArgRow({
   readonly onChange: (patch: Partial<CliToolArgFormState>) => void
   readonly onRemove: () => void
 }) {
-  const [constraintsOpen, setConstraintsOpen] = useState(false)
-
   return (
     <div
       className="flex flex-col gap-2 rounded-[var(--radius-6)] border p-3"
@@ -160,85 +150,26 @@ function ArgRow({
       </Field>
 
       <div className="flex items-center gap-4">
-        <Field id={`arg-${arg.key}-type`} label="Type" className="flex-1">
-          <Select value={arg.type} onValueChange={(v) => onChange({ type: v as CliArgType })}>
-            <SelectTrigger id={`arg-${arg.key}-type`}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {ARG_TYPES.map((t) => (
-                <SelectItem key={t} value={t}>
-                  {t}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </Field>
+        <LabeledSelect
+          id={`arg-${arg.key}-type`}
+          label="Type"
+          className="flex-1"
+          value={arg.type}
+          options={ARG_TYPES}
+          onValueChange={(v) => onChange({ type: v as CliArgType })}
+        />
 
-        <div className="flex items-center gap-2 pt-5">
-          <Switch
-            checked={arg.required}
-            onCheckedChange={(v) => onChange({ required: v })}
-            aria-label="Required"
-          />
-          <span style={{ fontSize: "var(--text-label)", color: "var(--gray-1000)" }}>Required</span>
-        </div>
+        <RequiredToggle checked={arg.required} onCheckedChange={(v) => onChange({ required: v })} />
       </div>
 
-      {arg.type === "enum" && (
-        <Field id={`arg-${arg.key}-enum`} label="Allowed Values" description="Comma-separated.">
-          <Input
-            id={`arg-${arg.key}-enum`}
-            value={arg.enumValues.join(", ")}
-            onChange={(e) =>
-              onChange({
-                enumValues: e.target.value
-                  .split(",")
-                  .map((v) => v.trim())
-                  .filter(Boolean),
-              })
-            }
-          />
-        </Field>
-      )}
-
-      <button
-        type="button"
-        className="flex items-center gap-1 self-start"
-        onClick={() => setConstraintsOpen((v) => !v)}
-        aria-expanded={constraintsOpen}
-      >
-        {constraintsOpen ? (
-          <ChevronDown className="h-3 w-3" aria-hidden="true" />
-        ) : (
-          <ChevronRight className="h-3 w-3" aria-hidden="true" />
-        )}
-        <span style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)" }}>
-          Constraints
-        </span>
-      </button>
-
-      {constraintsOpen && (
-        <div className="flex gap-2">
-          <Field id={`arg-${arg.key}-pattern`} label="Pattern" className="flex-1">
-            <Input
-              id={`arg-${arg.key}-pattern`}
-              placeholder="regex, anchored"
-              value={arg.pattern}
-              onChange={(e) => onChange({ pattern: e.target.value })}
-            />
-          </Field>
-          <Field id={`arg-${arg.key}-maxlength`} label="Max Length" className="flex-1">
-            <Input
-              id={`arg-${arg.key}-maxlength`}
-              type="number"
-              max={4096}
-              value={arg.maxLength}
-              onChange={(e) => onChange({ maxLength: e.target.value })}
-            />
-          </Field>
-        </div>
-      )}
+      <ValueConstraintFields
+        idPrefix={`arg-${arg.key}`}
+        type={arg.type}
+        enumValues={arg.enumValues}
+        pattern={arg.pattern}
+        maxLength={arg.maxLength}
+        onChange={onChange}
+      />
     </div>
   )
 }

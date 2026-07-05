@@ -4,15 +4,9 @@
 // capabilities (warn, don't fail), dry-run validatePolicy per tool, validate
 // the platform.
 
-import {
-  CliConnectionSchema,
-  createSandbox,
-  type Platform,
-  PlatformSchema,
-  validatePolicy,
-} from "@junction/core"
+import { CliConnectionSchema, createSandbox, type Platform, validatePolicy } from "@junction/core"
 import { err, ok, type Result, ResultAsync } from "neverthrow"
-import type { PlatformOrchestrationError } from "./errors.js"
+import { type PlatformOrchestrationError, parsePlatform } from "./errors.js"
 
 export interface AddCliPlatformInput {
   id: string
@@ -75,19 +69,16 @@ async function addCliPlatformAsync(
     }
   }
 
-  const platformParseResult = PlatformSchema.safeParse({
+  const platformResult = parsePlatform({
     id: input.id,
     kind: "cli",
     displayName: input.displayName,
     cli,
   })
-  if (!platformParseResult.success) {
-    const message = platformParseResult.error.issues.map((i) => i.message).join(", ")
-    return err({ kind: "invalid-platform", message })
-  }
+  if (platformResult.isErr()) return err(platformResult.error)
 
   return ok({
-    platform: platformParseResult.data,
+    platform: platformResult.value,
     toolCount: cli.tools.length,
     sandboxWarning,
   })
