@@ -9,15 +9,32 @@
 // field here); only the small pure array ops + the expand-toggle hook are
 // genuinely shared.
 
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 
 export interface KeyedItem {
   readonly key: string
 }
 
-/** Exactly-one-expanded accordion toggle, seeded from the first item's key. */
+/**
+ * Exactly-one-expanded accordion toggle, seeded from the first item's key.
+ *
+ * In edit mode the form can mount with an empty `tools` array (initialKey
+ * undefined) and fill it once the loader data arrives — `useState(initialKey)`
+ * only seeds once, leaving the first card collapsed. So when `initialKey`
+ * transitions undefined → defined (data arrived), auto-expand it. We DON'T
+ * override a later manual collapse: the sync fires only on that first
+ * undefined→defined transition (tracked via a ref), never on subsequent changes.
+ * (inc-30.7 CodeRabbit #516.)
+ */
 export function useAccordionExpansion(initialKey: string | undefined) {
   const [expandedKey, setExpandedKey] = useState<string | undefined>(initialKey)
+  const seededRef = useRef(initialKey !== undefined)
+  useEffect(() => {
+    if (!seededRef.current && initialKey !== undefined) {
+      seededRef.current = true
+      setExpandedKey(initialKey)
+    }
+  }, [initialKey])
   return {
     expandedKey,
     toggle(key: string) {

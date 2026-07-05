@@ -9,6 +9,23 @@ import { z } from "zod"
 
 import { OpenApiAuthSchema } from "./openapi-connection.js"
 
+/**
+ * Lightweight author-time guard against the classic catastrophic-backtracking
+ * (ReDoS) shapes — a quantified group that is itself quantified, e.g. `(a+)+`,
+ * `(a*)*`, `(.+)*`, `(x{1,9})+`. The operator's `pattern` is compiled to a RegExp
+ * and run against agent-supplied values on EVERY tool call, so a pathological
+ * pattern could stall the event loop even within the bounded maxLength. This is a
+ * heuristic (not a full safe-regex analysis — that would need an RE2/AST engine,
+ * out of scope for a data-only core schema); it rejects the common footgun at
+ * add-time. `maxLength` is still required with `pattern` as defence-in-depth.
+ * (inc-30.7 CodeRabbit #502/#511.)
+ */
+function looksLikeCatastrophicRegex(pattern: string): boolean {
+  // A group closing then immediately quantified — `)` followed by * + ? or {n,}
+  // — where the group's LAST token was itself a quantifier ⇒ nested quantifier.
+  return /\([^)]*[*+?}][^)]*\)\s*[*+{]/.test(pattern) || /\([^)]*[*+][^)]*\)[*+?]/.test(pattern)
+}
+
 // ---------------------------------------------------------------------------
 // Param declarations — operator specifies the shape + location; agent fills values
 // ---------------------------------------------------------------------------
@@ -24,10 +41,14 @@ import { OpenApiAuthSchema } from "./openapi-connection.js"
  */
 export const HttpParamSchema = z
   .object({
-    /** Machine-stable name (path placeholder name / query key / header name / body key). */
-    name: z
-      .string()
-      .regex(/^[a-zA-Z][a-zA-Z0-9_]*$/, "param name must match ^[a-zA-Z][a-zA-Z0-9_]*$"),
+    /**
+     * The param name. For `in:"path"` it is BOTH the `{placeholder}` identifier and
+     * the agent arg key, so it must be a strict identifier. For query/header it is
+     * the on-wire key AND the agent arg key — real HTTP keys are hyphenated
+     * (`X-Api-Key`, `If-None-Match`, `Content-Type`), so those charsets are allowed
+     * (validated per-`in` in the refine below). (inc-30.7 CodeRabbit #498/#505.)
+     */
+    name: z.string().min(1),
     /** Where this param binds in the outbound request. */
     in: z.enum(["path", "query", "header", "body"]),
     /** Value type — drives arg validation and JSON Schema generation. */
@@ -46,15 +67,37 @@ export const HttpParamSchema = z
     /** Max length (character count) for string values. Hard cap: 4096. */
     maxLength: z.number().int().positive().max(4096).optional(),
   })
+  // Per-location name charset (inc-30.7 CodeRabbit #498/#505): path + body names
+  // are strict identifiers (path interpolates into the URL; body is the arg key);
+  // query + header names are on-wire keys and must allow the hyphenated forms real
+  // HTTP uses (X-Api-Key, If-None-Match, Content-Type) — a conservative token set.
+  .refine(
+    (p) => {
+      const strict = /^[a-zA-Z][a-zA-Z0-9_]*$/
+      const wireKey = /^[A-Za-z][A-Za-z0-9_-]*$/
+      return (p.in === "path" || p.in === "body" ? strict : wireKey).test(p.name)
+    },
+    {
+      message:
+        'param name is invalid for its location (path/body: ^[a-zA-Z][a-zA-Z0-9_]*$; query/header may also contain "-")',
+      path: ["name"],
+    },
+  )
   .refine((p) => p.type !== "enum" || (p.enum !== undefined && p.enum.length > 0), {
     message: 'type:"enum" requires a non-empty `enum` array',
     path: ["enum"],
   })
   .refine((p) => p.pattern === undefined || p.maxLength !== undefined, {
-    // ReDoS guard: a catastrophic-backtracking operator pattern run against an
-    // unbounded agent value can hang the event loop. Require maxLength with pattern.
+    // ReDoS guard (input bound): require maxLength with pattern so a
+    // catastrophic-backtracking pattern can't run against an unbounded value.
     message: "`maxLength` is required when `pattern` is set (bounds regex input)",
     path: ["maxLength"],
+  })
+  .refine((p) => p.pattern === undefined || !looksLikeCatastrophicRegex(p.pattern), {
+    // ReDoS guard (pattern shape): reject the classic nested-quantifier footgun
+    // at author-time (the pattern runs on every call). (inc-30.7 CodeRabbit #502/#511.)
+    message: "`pattern` has a nested-quantifier shape that risks catastrophic backtracking (ReDoS)",
+    path: ["pattern"],
   })
 
 export type HttpParam = z.infer<typeof HttpParamSchema>
@@ -102,8 +145,8 @@ export const HttpRequestToolSchema = z
     name: z
       .string()
       .regex(/^[a-zA-Z][a-zA-Z0-9_]*$/, "tool name must match ^[a-zA-Z][a-zA-Z0-9_]*$"),
-    /** Required — this is the agent's only knowledge of what the tool does. */
-    description: z.string(),
+    /** Required, non-empty — this is the agent's only knowledge of what the tool does. */
+    description: z.string().min(1),
     /** HTTP method for this request. */
     method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]),
     /** Request path, e.g. "/repos/{owner}/{repo}/issues" — {placeholders} bind to `in:"path"` params. */
@@ -188,6 +231,14 @@ export const HttpRequestToolSchema = z
     },
     { message: "param names must be unique within a request tool", path: ["params"] },
   )
+  // The reserved arg key "body" belongs to the (optional) in:"body" param. A
+  // NON-body param named "body" would collide with the body-stringify path (the
+  // engine defaults bodyArgKey to "body" when no body param exists). Forbid it.
+  // (inc-30.7 CodeRabbit #512.)
+  .refine((tool) => !tool.params.some((p) => p.in !== "body" && p.name === "body"), {
+    message: 'only an in:"body" param may be named "body" (reserved for the request body)',
+    path: ["params"],
+  })
 
 export type HttpRequestTool = z.infer<typeof HttpRequestToolSchema>
 

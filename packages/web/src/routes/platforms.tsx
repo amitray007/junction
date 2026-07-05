@@ -685,7 +685,12 @@ function PlatformDialog({ mode, platform, open, onOpenChange, onSuccess }: Platf
             {state.kind === "http" && (
               <HttpConnectionForm
                 connection={state.http}
-                onChange={(http) => set("http", http)}
+                onChange={(http) => {
+                  set("http", http)
+                  // Clear the inline baseUrl error as the user edits — consistent
+                  // with url/command/specUrl/endpoint. (inc-30.7 CodeRabbit #518.)
+                  clearError("baseUrl")
+                }}
                 baseUrlError={errors.baseUrl}
               />
             )}

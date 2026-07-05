@@ -208,6 +208,89 @@ describe("HttpRequestToolSchema — path↔param cross-check refine", () => {
     expect(r.success).toBe(false)
   })
 
+  // inc-30.7 CodeRabbit review fixes
+  it("REJECTS an empty-string description", () => {
+    const r = HttpRequestToolSchema.safeParse({
+      name: "t",
+      description: "",
+      method: "GET",
+      path: "/x",
+      params: [],
+    })
+    expect(r.success).toBe(false)
+  })
+
+  it("accepts a hyphenated query/header param name (X-Api-Key), rejects it for a path param", () => {
+    const header = HttpRequestToolSchema.safeParse({
+      name: "t",
+      description: "d",
+      method: "GET",
+      path: "/x",
+      params: [{ name: "X-Api-Key", in: "header", type: "string", required: false }],
+    })
+    expect(header.success).toBe(true)
+    // a hyphenated name is invalid for a path param (interpolates into the URL)
+    const path = HttpRequestToolSchema.safeParse({
+      name: "t",
+      description: "d",
+      method: "GET",
+      path: "/x/{my-id}",
+      params: [{ name: "my-id", in: "path", type: "string", required: true }],
+    })
+    expect(path.success).toBe(false)
+  })
+
+  it('REJECTS a non-body param named "body" (reserved for the request body)', () => {
+    const r = HttpRequestToolSchema.safeParse({
+      name: "t",
+      description: "d",
+      method: "GET",
+      path: "/x",
+      params: [{ name: "body", in: "query", type: "string", required: false }],
+    })
+    expect(r.success).toBe(false)
+  })
+
+  it("REJECTS a nested-quantifier pattern (ReDoS shape) at author-time", () => {
+    const r = HttpRequestToolSchema.safeParse({
+      name: "t",
+      description: "d",
+      method: "GET",
+      path: "/x",
+      params: [
+        {
+          name: "q",
+          in: "query",
+          type: "string",
+          required: false,
+          pattern: "(a+)+",
+          maxLength: 64,
+        },
+      ],
+    })
+    expect(r.success).toBe(false)
+  })
+
+  it("accepts a benign pattern with maxLength", () => {
+    const r = HttpRequestToolSchema.safeParse({
+      name: "t",
+      description: "d",
+      method: "GET",
+      path: "/x",
+      params: [
+        {
+          name: "q",
+          in: "query",
+          type: "string",
+          required: false,
+          pattern: "[a-z0-9]+",
+          maxLength: 64,
+        },
+      ],
+    })
+    expect(r.success).toBe(true)
+  })
+
   it('REJECTS more than one in:"body" param', () => {
     const r = HttpRequestToolSchema.safeParse({
       name: "createIssue",

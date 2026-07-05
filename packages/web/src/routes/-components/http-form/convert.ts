@@ -22,6 +22,18 @@ import { emptyHeaderRow, nextKey } from "./types.js"
 // Form state → wire input (submit path)
 // ---------------------------------------------------------------------------
 
+/**
+ * Parse a numeric form field, returning undefined for empty OR non-finite input.
+ * `Number("abc")` is NaN and `JSON.stringify(NaN)` is `null` — sending `null`
+ * would be a bad payload the schema can't cleanly reject; omitting the field
+ * instead lets the boundary validator surface a proper error. (inc-30.7 CodeRabbit #513.)
+ */
+function finiteOrUndefined(raw: string): number | undefined {
+  if (!raw.trim()) return undefined
+  const n = Number(raw)
+  return Number.isFinite(n) ? n : undefined
+}
+
 function toParamInput(param: HttpParamFormState): HttpParamInput {
   return {
     name: param.name.trim(),
@@ -31,7 +43,7 @@ function toParamInput(param: HttpParamFormState): HttpParamInput {
     description: param.description.trim() || undefined,
     enum: param.type === "enum" ? param.enumValues : undefined,
     pattern: param.pattern.trim() || undefined,
-    maxLength: param.maxLength.trim() ? Number(param.maxLength) : undefined,
+    maxLength: finiteOrUndefined(param.maxLength),
   }
 }
 
@@ -43,7 +55,7 @@ function toToolInput(tool: HttpToolFormState): HttpToolInput {
     path: tool.path.trim(),
     params: tool.params.map(toParamInput),
     responseHint: tool.responseHint.trim() || undefined,
-    timeoutMs: tool.timeoutMs.trim() ? Number(tool.timeoutMs) : undefined,
+    timeoutMs: finiteOrUndefined(tool.timeoutMs),
   }
 }
 
