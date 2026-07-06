@@ -31,7 +31,7 @@ import {
   PageHeader,
 } from "../ui/index.js"
 
-export const Route = createFileRoute("/app")({
+export const Route = createFileRoute("/app/")({
   loader: async () => {
     const data: AppsData = await getApps()
     return data

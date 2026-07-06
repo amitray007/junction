@@ -4,15 +4,19 @@
 // SECURITY: credentials output is metadata-only — no secret, no secretRef.
 
 import {
+  type AppAuth,
   type AppDefinition,
+  type AppHelp,
   compatibleCredentialKinds,
   createCredentialStore,
   createRepositories,
   createSandbox,
+  getCatalogEntry,
   getMcpHost,
   getMcpPort,
   getPaths,
   groupByApp,
+  intersectSurfaces,
   type JunctionPaths,
   listApps,
   listProviders,
@@ -21,6 +25,7 @@ import {
   type Platform,
   type Repositories,
 } from "@junction/core"
+import { probeSurface, type ToolListResult } from "./probe.server.js"
 import { getDb } from "./shared.server.js"
 
 async function withRepos<T>(fallback: T, fn: (repos: Repositories) => Promise<T>): Promise<T> {
@@ -411,7 +416,13 @@ export type AppsData = {
   groups: AppGroupMeta[]
 }
 
-export async function readApps(): Promise<AppsData> {
+/**
+ * Shared live-grouping step behind both readApps() (the /app index's light
+ * spine) and readAppDetail() (the /app/:id rich surface view, increment
+ * 30.10) — computes the derived AppGroupMeta[] once so the two readers don't
+ * duplicate the platform/credential load + groupByApp + re-attach dance.
+ */
+async function readAppGroups(): Promise<AppGroupMeta[]> {
   const [platforms, credentials] = await Promise.all([readPlatforms(), readCredentials()])
 
   // Core's groupByApp is pure and only needs {platformId, account, oauthProviderId}
@@ -442,7 +453,7 @@ export async function readApps(): Promise<AppsData> {
     credentials.map((c) => [`${c.platformId} ${c.account}`, c]),
   )
 
-  const groupMetas: AppGroupMeta[] = groups.map((group) => ({
+  return groups.map((group) => ({
     appId: group.appId,
     connections: group.connections.map((conn) => {
       const platform = platformById.get(conn.platformId)
@@ -466,6 +477,139 @@ export async function readApps(): Promise<AppsData> {
       }
     }),
   }))
+}
 
+export async function readApps(): Promise<AppsData> {
+  const groupMetas = await readAppGroups()
   return { catalog: listApps(), groups: groupMetas }
+}
+
+// ---------------------------------------------------------------------------
+// App detail (increment 30.10) — the surface-first /app/:id capability view.
+// Renders the RICH catalog entry (getCatalogEntry, surfaces + help) against
+// this app's live connections + a per-connection tool probe. See
+// docs/methods/30.10-surface-first-app-page.md.
+//
+// SurfaceView is a FRESH, metadata-only type — NEVER a re-export of core's
+// AppSurface, which carries `connection`/`build` (secrets/build-recipe
+// fields that must never reach the client). readApps()/getApps() (the /app
+// index's light spine) are UNCHANGED by this addition.
+// ---------------------------------------------------------------------------
+
+export type SurfaceConnection = ConnectionMeta & { tools: ToolListResult }
+
+export type SurfaceView = {
+  kind: string
+  displayName: string
+  auth: AppAuth[]
+  docs?: string
+  agentGuidance?: string
+  notes?: string[]
+  state: "available" | "connected" | "serving"
+  connections: SurfaceConnection[]
+}
+
+export type AppDetail = {
+  app: { id: string; displayName: string; iconSlug?: string; help?: AppHelp }
+  surfaces: SurfaceView[]
+  otherConnections: ConnectionMeta[]
+}
+
+/**
+ * Whether a connection counts as "healthy" for surface-state aggregation
+ * (§2a truth table) — mirrors the route's connectionStatus() (app.$id.tsx):
+ * healthy = "connected" or "expiring"; unhealthy = "auth-failed" /
+ * "configured" / "no-auth". Duplicated rather than shared because
+ * connectionStatus() lives in a client route component (UI-layer, computes
+ * against `now` for rendering) — the rule-of-three isn't hit yet at 2 call
+ * sites, and moving it into server code would blur the client/server
+ * boundary for no real gain. Kept in sync deliberately; if a 3rd call site
+ * appears, factor both into a shared pure predicate.
+ */
+function isHealthyConnection(conn: ConnectionMeta): boolean {
+  if (conn.credentialId === undefined) return false // no-auth: public/credential-less
+  if (conn.oauthState !== undefined) {
+    if (conn.oauthState.needsReauth) return false // auth-failed
+    return true // connected or expiring — both count as healthy here
+  }
+  return conn.lastVerifyResult === "ok" // connected; auth-failed/configured are not healthy
+}
+
+/** Thin fallback DTO for id==="other" / undefined-catalog / no-surfaces apps (§2 item 4). */
+function thinAppDetail(id: string, displayName: string, connections: ConnectionMeta[]): AppDetail {
+  return {
+    app: { id, displayName },
+    surfaces: [],
+    otherConnections: connections,
+  }
+}
+
+export async function readAppDetail(id: string): Promise<AppDetail> {
+  const groups = await readAppGroups()
+  const connections = groups.find((g) => g.appId === id)?.connections ?? []
+
+  if (id === "other") {
+    return thinAppDetail("other", "Other", connections)
+  }
+
+  const entry = getCatalogEntry(id)
+  if (entry === undefined || entry.surfaces === undefined || entry.surfaces.length === 0) {
+    return thinAppDetail(id, entry?.displayName ?? id, connections)
+  }
+
+  const { matched, leftover } = intersectSurfaces(entry.surfaces, connections)
+
+  const surfaces: SurfaceView[] = await Promise.all(
+    matched.map(async ({ kind, connections: surfaceConnections }) => {
+      const surface = entry.surfaces?.find((s) => s.kind === kind)
+      const surfaceConnectionsWithTools: SurfaceConnection[] = await Promise.all(
+        surfaceConnections.map(async (conn) => ({
+          ...conn,
+          tools: await probeSurface({
+            platformId: conn.platformId,
+            credentialId: conn.credentialId,
+          }),
+        })),
+      )
+
+      // "serving" requires the SAME connection to be both healthy AND
+      // probed-with-tools (§2a) — NOT independent any/any scans (a healthy
+      // connection A with 0 tools + an unhealthy connection B with tools
+      // must NOT read as "serving"; review fix).
+      const anyServing = surfaceConnectionsWithTools.some(
+        (c) => isHealthyConnection(c) && c.tools.status === "ok" && c.tools.tools.length > 0,
+      )
+
+      let state: SurfaceView["state"]
+      if (surfaceConnectionsWithTools.length === 0) {
+        state = "available"
+      } else if (anyServing) {
+        state = "serving"
+      } else {
+        state = "connected"
+      }
+
+      return {
+        kind,
+        displayName: surface?.displayName ?? kind,
+        auth: surface?.auth ?? [],
+        ...(surface?.docs !== undefined ? { docs: surface.docs } : {}),
+        ...(surface?.agentGuidance !== undefined ? { agentGuidance: surface.agentGuidance } : {}),
+        ...(surface?.notes !== undefined ? { notes: surface.notes } : {}),
+        state,
+        connections: surfaceConnectionsWithTools,
+      }
+    }),
+  )
+
+  return {
+    app: {
+      id: entry.id,
+      displayName: entry.displayName,
+      ...(entry.iconSlug !== undefined ? { iconSlug: entry.iconSlug } : {}),
+      ...(entry.help !== undefined ? { help: entry.help } : {}),
+    },
+    surfaces,
+    otherConnections: leftover,
+  }
 }

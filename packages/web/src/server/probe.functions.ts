@@ -16,9 +16,19 @@ import { createServerFn } from "@tanstack/react-start"
 import { assertLocalHost, requireString } from "./fn-guards.server.js"
 import { callSourceTool, probeSource } from "./probe.server.js"
 
+// NOTE: probeSurface (increment 30.10) has no dedicated client-facing
+// server-fn here — it's called internally by data.server.ts's
+// readAppDetail(), which is itself the createServerFn boundary (getAppDetail
+// in data.functions.ts). Exporting the TYPE above is enough for route files.
+
 // Re-export the metadata result TYPES so route files can annotate without
 // importing probe.server.ts (server-only by convention).
-export type { CallSourceToolResult, ProbeSourceResult, ProbeToolEntry } from "./probe.server.js"
+export type {
+  CallSourceToolResult,
+  ProbeSourceResult,
+  ProbeToolEntry,
+  ToolListResult,
+} from "./probe.server.js"
 
 export const probeSourceFn = createServerFn({ method: "POST" })
   .validator((raw: unknown) => {

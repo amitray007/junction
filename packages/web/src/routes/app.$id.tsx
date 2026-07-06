@@ -1,19 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// /app/:id route (increment 30) — the per-app page: a list of the user's
-// connections to this app (design doc §7), or an empty-state catalog CTA.
+// /app/:id route (increment 30.10) — the surface-first per-app capability
+// view: for each catalog surface (MCP/OpenAPI/GraphQL/HTTP/CLI), show
+// whether it's connected, its live tools (via the platform-scoped probe),
+// and its catalog details. READ/DISPLAY ONLY — no connect writing (30.11).
+// See docs/methods/30.10-surface-first-app-page.md + design doc §7/§4.7.
 //
-// id === "other" renders the synthetic "Other / uncatalogued" group — it is
-// NOT in the catalog (getApp("other") returns undefined), so it is handled
-// as a special case rather than calling getApp.
+// Thin/undefined-catalog apps (incl. id==="other") fall back to the
+// pre-30.10 flat-connections-list + EmptyAppState — surface-first is
+// ADDITIVE, never worse than today (§2 item 4).
 //
 // The ⋯ lifecycle menu reuses ONLY shipped mutation server-fns (test/
 // reconnect/rotate/rename/disconnect) — "Change method" is deferred to inc
 // 30.5 (method file §5) and is NOT built here.
 //
-// No @junction/core import. Core access is only inside getApps' createServerFn.
+// No @junction/core import. Core/probe access is only inside getAppDetail's
+// createServerFn (data.functions.ts → data.server.ts → probe.server.ts).
 
-import { createFileRoute, Link, notFound, useRouter } from "@tanstack/react-router"
-import { Plug, Plus, RefreshCw, TestTube, Trash2 } from "lucide-react"
+import { createFileRoute, Link, useRouter } from "@tanstack/react-router"
+import { AlertTriangle, Plug, Plus, RefreshCw, TestTube, Trash2 } from "lucide-react"
+import type { ReactNode } from "react"
 import { useMemo, useState } from "react"
 import { toast } from "sonner"
 import type { ConnectionTarget } from "../components/connection-dialogs.js"
@@ -24,10 +29,16 @@ import {
 } from "../components/connection-dialogs.js"
 import { formatCheckedAt } from "../lib/format-date.js"
 import { testConnection } from "../lib/test-connection.js"
-import type { AppMeta, AppsData, ConnectionMeta } from "../server/data.functions.js"
-import { getApps } from "../server/data.functions.js"
+import type {
+  AppDetail,
+  ConnectionMeta,
+  SurfaceConnection,
+  SurfaceView,
+} from "../server/data.functions.js"
+import { getAppDetail } from "../server/data.functions.js"
 import { startReconnectFn } from "../server/oauth-connect.functions.js"
 import {
+  Badge,
   BrandIcon,
   Button,
   Dialog,
@@ -46,54 +57,9 @@ import {
   StatusBadge,
 } from "../ui/index.js"
 
-// The synthetic "Other" bucket is not a catalog AppDefinition — this is the
-// fixed display shape used when id === "other" (method file §3, item 3). A
-// plain unauthed/uncatalogued display record also covers the "app resolved
-// only via connections, not in the catalog" edge (shouldn't normally happen
-// given groupByApp only ever emits catalog ids or "other", but kept honest).
-export interface AppDisplay {
-  id: string
-  displayName: string
-  supportedKinds: string[]
-  auth?: AppMeta["auth"]
-  setupHints?: string[]
-  iconSlug?: string
-}
-
-const OTHER_APP_DISPLAY: AppDisplay = {
-  id: "other",
-  displayName: "Other",
-  supportedKinds: [],
-  iconSlug: undefined,
-}
-
-interface AppDetailLoaderData {
-  app: AppDisplay
-  connections: ConnectionMeta[]
-}
-
-function loadAppDetail(id: string, { catalog, groups }: AppsData): AppDetailLoaderData {
-  if (id === "other") {
-    const group = groups.find((g) => g.appId === "other")
-    return { app: OTHER_APP_DISPLAY, connections: group?.connections ?? [] }
-  }
-
-  const app = catalog.find((a) => a.id === id)
-  const group = groups.find((g) => g.appId === id)
-  // Unknown id: not in the catalog AND no connections attributed to it → 404.
-  if (app === undefined && (group === undefined || group.connections.length === 0)) {
-    throw notFound()
-  }
-  return {
-    app: app ?? { id, displayName: id, supportedKinds: [], iconSlug: undefined },
-    connections: group?.connections ?? [],
-  }
-}
-
 export const Route = createFileRoute("/app/$id")({
-  loader: async ({ params }): Promise<AppDetailLoaderData> => {
-    const data = await getApps()
-    return loadAppDetail(params.id, data)
+  loader: async ({ params }): Promise<AppDetail> => {
+    return getAppDetail({ data: { id: params.id } })
   },
   component: AppDetailPage,
 })
@@ -141,7 +107,7 @@ function connectionToTarget(connection: ConnectionMeta | null): ConnectionTarget
 }
 
 // ---------------------------------------------------------------------------
-// Empty state — the catalog CTA (design doc §7 "Empty state").
+// Auth mode label — reused for both the empty-app CTA and a surface's auth chip.
 // ---------------------------------------------------------------------------
 
 function authModeLabel(mode: "oauth2" | "token" | "byo" | "none"): string {
@@ -161,46 +127,43 @@ function authModeLabel(mode: "oauth2" | "token" | "byo" | "none"): string {
   }
 }
 
-function EmptyAppState({ app }: { readonly app: AppDisplay }) {
-  const authModes = app.auth?.map((a) => a.mode) ?? []
-  const hint = app.setupHints
+// ---------------------------------------------------------------------------
+// Empty state — the catalog CTA (design doc §7 "Empty state"). Used both by
+// the thin-app fallback (no surfaces authored) and reachable whenever an app
+// has zero connections at all.
+// ---------------------------------------------------------------------------
 
+function EmptyAppState({
+  displayName,
+  authModes,
+}: {
+  readonly displayName: string
+  readonly authModes: ("oauth2" | "token" | "byo" | "none")[]
+}) {
   return (
     <div className="flex flex-col gap-4 py-8">
       <EmptyState
         icon={<Plug className="h-5 w-5" />}
-        label={`No connections to ${app.displayName} yet.`}
-        hint={
-          app.supportedKinds.length > 0
-            ? `junction can stand up: ${app.supportedKinds.join(", ")}.`
-            : undefined
-        }
+        label={`No connections to ${displayName} yet.`}
       />
-      {(authModes.length > 0 || (hint && hint.length > 0)) && (
+      {authModes.length > 0 && (
         <div className="flex flex-col gap-3">
-          {authModes.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {authModes.map((mode) => (
-                <span
-                  key={mode}
-                  style={{
-                    fontSize: "var(--text-caption)",
-                    color: "var(--gray-700)",
-                    border: "1px solid var(--alpha-400)",
-                    borderRadius: "var(--radius-6)",
-                    padding: "4px 8px",
-                  }}
-                >
-                  {authModeLabel(mode)}
-                </span>
-              ))}
-            </div>
-          )}
-          {hint?.map((h) => (
-            <p key={h} style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)" }}>
-              {h}
-            </p>
-          ))}
+          <div className="flex flex-wrap gap-2">
+            {authModes.map((mode) => (
+              <span
+                key={mode}
+                style={{
+                  fontSize: "var(--text-caption)",
+                  color: "var(--gray-700)",
+                  border: "1px solid var(--alpha-400)",
+                  borderRadius: "var(--radius-6)",
+                  padding: "4px 8px",
+                }}
+              >
+                {authModeLabel(mode)}
+              </span>
+            ))}
+          </div>
           <div className="flex gap-2">
             {/* Connect hand-off: junction doesn't build a new connect flow here — it
                 links to the existing Credentials/Platforms surfaces (method file §3,
@@ -230,7 +193,25 @@ function EmptyAppState({ app }: { readonly app: AppDisplay }) {
 }
 
 // ---------------------------------------------------------------------------
-// Connection row
+// Connection lifecycle callbacks — the shared prop shape both ConnectionRow
+// and SurfaceCard forward down to a connection row (test/reconnect/rotate/
+// rename/disconnect + the in-flight testingId). Factored out once (jscpd —
+// the two components' destructured prop lists were otherwise byte-identical).
+// ---------------------------------------------------------------------------
+
+interface ConnectionLifecycleProps {
+  readonly now: number
+  readonly onTest: (c: ConnectionMeta) => void
+  readonly onReconnect: (c: ConnectionMeta) => void
+  readonly onRotate: (c: ConnectionMeta) => void
+  readonly onRename: (c: ConnectionMeta) => void
+  readonly onDisconnect: (c: ConnectionMeta) => void
+  readonly testingId: string | null
+}
+
+// ---------------------------------------------------------------------------
+// Connection row — reused VERBATIM under a surface card and in the "Other
+// connections" bucket and the thin-app fallback list.
 // ---------------------------------------------------------------------------
 
 function ConnectionRow({
@@ -242,15 +223,13 @@ function ConnectionRow({
   onRename,
   onDisconnect,
   testingId,
-}: {
+  children,
+}: ConnectionLifecycleProps & {
   readonly connection: ConnectionMeta
-  readonly now: number
-  readonly onTest: (c: ConnectionMeta) => void
-  readonly onReconnect: (c: ConnectionMeta) => void
-  readonly onRotate: (c: ConnectionMeta) => void
-  readonly onRename: (c: ConnectionMeta) => void
-  readonly onDisconnect: (c: ConnectionMeta) => void
-  readonly testingId: string | null
+  /** Optional content rendered BELOW the row, inside the same <li> (e.g. a
+   *  per-connection ToolsPanel under a surface card) — kept inside this <li>
+   *  rather than a sibling <li> so the DOM never nests <li> inside <li>. */
+  readonly children?: ReactNode
 }) {
   const status = connectionStatus(connection, now)
   const isOAuth = connection.oauthState !== undefined
@@ -258,59 +237,364 @@ function ConnectionRow({
   const testing = testingId !== null && testingId === connection.credentialId
 
   return (
-    <li
-      className="flex items-center justify-between gap-3 py-3"
-      style={{ borderBottom: "1px solid var(--alpha-200)" }}
-    >
-      <div className="flex flex-col gap-1 min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span style={{ fontWeight: 500, color: "var(--gray-1000)" }}>{connection.account}</span>
-          <span style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)" }}>
-            via {connection.kind}
-          </span>
-          <MonoChip>{connection.platformDisplayName}</MonoChip>
-        </div>
-        <div className="flex items-center gap-2">
-          <StatusBadge status={status} />
-          {connection.lastVerifiedAt !== undefined && (
+    <li className="flex flex-col gap-2 py-3" style={{ borderBottom: "1px solid var(--alpha-200)" }}>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-col gap-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span style={{ fontWeight: 500, color: "var(--gray-1000)" }}>{connection.account}</span>
             <span style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)" }}>
-              {formatCheckedAt(connection.lastVerifiedAt)}
+              via {connection.kind}
+            </span>
+            <MonoChip>{connection.platformDisplayName}</MonoChip>
+          </div>
+          <div className="flex items-center gap-2">
+            <StatusBadge status={status} />
+            {connection.lastVerifiedAt !== undefined && (
+              <span style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)" }}>
+                {formatCheckedAt(connection.lastVerifiedAt)}
+              </span>
+            )}
+          </div>
+        </div>
+        {hasCredential && (
+          <RowActionsMenu
+            menu={
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => onTest(connection)} disabled={testing}>
+                  <TestTube className="h-4 w-4" aria-hidden="true" />
+                  {testing ? "Testing…" : "Test Connection"}
+                </DropdownMenuItem>
+                {isOAuth ? (
+                  <DropdownMenuItem onSelect={() => onReconnect(connection)}>
+                    <Plug className="h-4 w-4" aria-hidden="true" />
+                    Reconnect
+                  </DropdownMenuItem>
+                ) : (
+                  <DropdownMenuItem onSelect={() => onRotate(connection)}>
+                    <RefreshCw className="h-4 w-4" aria-hidden="true" />
+                    Rotate Secret
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuItem onSelect={() => onRename(connection)}>Rename</DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() => onDisconnect(connection)}
+                  style={{ color: "var(--status-error-fg)" }}
+                >
+                  <Trash2 className="h-4 w-4" aria-hidden="true" />
+                  Disconnect
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            }
+          />
+        )}
+      </div>
+      {children}
+    </li>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Tools panel — THREE distinct renderings (method file §2 item 2), never
+// conflated: a tools list, an honest "no tools available", or a visibly
+// DIFFERENT "couldn't list tools" error state.
+// ---------------------------------------------------------------------------
+
+function ToolsPanel({ tools }: { readonly tools: SurfaceConnection["tools"] }) {
+  if (tools.status === "error") {
+    return (
+      <div
+        className="flex items-center gap-2 rounded-[var(--radius-6)] px-3 py-2"
+        style={{
+          border: "1px solid color-mix(in srgb, var(--status-error-fg) 30%, transparent)",
+          backgroundColor: "color-mix(in srgb, var(--status-error-fg) 8%, transparent)",
+        }}
+        role="alert"
+      >
+        <AlertTriangle
+          className="h-4 w-4 shrink-0"
+          style={{ color: "var(--status-error-fg)" }}
+          aria-hidden="true"
+        />
+        <span style={{ fontSize: "var(--text-caption)", color: "var(--status-error-fg)" }}>
+          Couldn't list tools — {tools.reason}
+        </span>
+      </div>
+    )
+  }
+
+  if (tools.tools.length === 0) {
+    return (
+      <p style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)", margin: 0 }}>
+        No tools available.
+      </p>
+    )
+  }
+
+  return (
+    <ul className="flex flex-col gap-1.5 list-none m-0 p-0">
+      {tools.tools.map((tool) => (
+        <li key={tool.raw} className="flex flex-col gap-0.5">
+          <div className="flex items-center gap-2 flex-wrap">
+            <MonoChip>{tool.raw}</MonoChip>
+            {tool.params !== undefined && (
+              <span
+                style={{
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "var(--text-mono)",
+                  color: "var(--gray-600)",
+                }}
+              >
+                {tool.params}
+              </span>
+            )}
+          </div>
+          {tool.description !== undefined && (
+            <span style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)" }}>
+              {tool.description}
             </span>
           )}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Surface card — kind tag + displayName + state, auth chip, tools panel,
+// catalog details, connection rows. All surfaces render equally (§4.7).
+// ---------------------------------------------------------------------------
+
+function SurfaceCard({
+  surface,
+  now,
+  onTest,
+  onReconnect,
+  onRotate,
+  onRename,
+  onDisconnect,
+  testingId,
+}: ConnectionLifecycleProps & { readonly surface: SurfaceView }) {
+  const primaryAuth = surface.auth[0]
+
+  return (
+    <section
+      className="flex flex-col gap-3 rounded-[var(--radius-6)] p-4"
+      style={{ border: "1px solid var(--alpha-200)" }}
+      aria-label={surface.displayName}
+    >
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Unknown/future kind: renders the raw kind string, never crashes
+              (kind is `string` at the DTO edge on purpose — doc-review I5). */}
+          <Badge variant="neutral">{surface.kind}</Badge>
+          <span style={{ fontWeight: 500, color: "var(--gray-1000)" }}>{surface.displayName}</span>
         </div>
+        <StatusBadge status={surface.state} />
       </div>
-      {hasCredential && (
-        <RowActionsMenu
-          menu={
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onSelect={() => onTest(connection)} disabled={testing}>
-                <TestTube className="h-4 w-4" aria-hidden="true" />
-                {testing ? "Testing…" : "Test Connection"}
-              </DropdownMenuItem>
-              {isOAuth ? (
-                <DropdownMenuItem onSelect={() => onReconnect(connection)}>
-                  <Plug className="h-4 w-4" aria-hidden="true" />
-                  Reconnect
-                </DropdownMenuItem>
-              ) : (
-                <DropdownMenuItem onSelect={() => onRotate(connection)}>
-                  <RefreshCw className="h-4 w-4" aria-hidden="true" />
-                  Rotate Secret
-                </DropdownMenuItem>
-              )}
-              <DropdownMenuItem onSelect={() => onRename(connection)}>Rename</DropdownMenuItem>
-              <DropdownMenuItem
-                onSelect={() => onDisconnect(connection)}
-                style={{ color: "var(--status-error-fg)" }}
-              >
-                <Trash2 className="h-4 w-4" aria-hidden="true" />
-                Disconnect
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          }
-        />
+
+      <div className="flex items-center gap-2 flex-wrap">
+        {primaryAuth !== undefined && <MonoChip>{authModeLabel(primaryAuth.mode)}</MonoChip>}
+        {surface.docs !== undefined && (
+          <a
+            href={surface.docs}
+            target="_blank"
+            rel="noreferrer"
+            style={{ fontSize: "var(--text-caption)", color: "var(--blue-700)" }}
+          >
+            Docs
+          </a>
+        )}
+      </div>
+
+      {surface.agentGuidance !== undefined && (
+        <p style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)", margin: 0 }}>
+          {surface.agentGuidance}
+        </p>
       )}
-    </li>
+
+      {surface.connections.length === 0 ? (
+        <ToolsPanel tools={{ status: "ok", tools: [] }} />
+      ) : (
+        <ul className="flex flex-col list-none m-0 p-0">
+          {surface.connections.map((conn) => (
+            <ConnectionRow
+              key={conn.credentialId ?? `${conn.platformId}-${conn.account}`}
+              connection={conn}
+              now={now}
+              onTest={onTest}
+              onReconnect={onReconnect}
+              onRotate={onRotate}
+              onRename={onRename}
+              onDisconnect={onDisconnect}
+              testingId={testingId}
+            >
+              <ToolsPanel tools={conn.tools} />
+            </ConnectionRow>
+          ))}
+        </ul>
+      )}
+
+      {surface.notes !== undefined && surface.notes.length > 0 && (
+        <ul className="flex flex-col gap-1 list-none m-0 p-0">
+          {surface.notes.map((note) => (
+            <li key={note} style={{ fontSize: "var(--text-caption)", color: "var(--gray-600)" }}>
+              {note}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Main page
+// ---------------------------------------------------------------------------
+
+function AppDetailPage() {
+  const { app, surfaces, otherConnections }: AppDetail = Route.useLoaderData()
+  const router = useRouter()
+  const [testingId, setTestingId] = useState<string | null>(null)
+  const [reconnecting, setReconnecting] = useState<ConnectionMeta | null>(null)
+  const [rotating, setRotating] = useState<ConnectionMeta | null>(null)
+  const [renaming, setRenaming] = useState<ConnectionMeta | null>(null)
+  const [disconnecting, setDisconnecting] = useState<ConnectionMeta | null>(null)
+  // Memoized so the Expiring/Connected boundary is stable across re-renders
+  // (test/rotate/rename/disconnect state changes) + SSR-hydration consistent —
+  // mirrors credentials.tsx's FlatCredentialsTable.
+  const now = useMemo(() => Date.now(), [])
+
+  async function invalidate() {
+    await router.invalidate()
+  }
+
+  async function handleTest(c: ConnectionMeta) {
+    if (!c.credentialId) return
+    setTestingId(c.credentialId)
+    try {
+      await testConnection(c.credentialId, invalidate)
+    } finally {
+      setTestingId(null)
+    }
+  }
+
+  const hasSurfaces = surfaces.length > 0
+  const connectedSurfaceCount = surfaces.filter((s) => s.state !== "available").length
+  const totalConnectionCount =
+    surfaces.reduce((sum, s) => sum + s.connections.length, 0) + otherConnections.length
+
+  return (
+    <div>
+      <PageHeader
+        title={app.displayName}
+        leading={<BrandIcon slug={app.iconSlug} displayName={app.displayName} />}
+        subtitle={
+          hasSurfaces
+            ? `${surfaces.length} surfaces · ${connectedSurfaceCount} connected`
+            : undefined
+        }
+        count={!hasSurfaces && totalConnectionCount > 0 ? totalConnectionCount : undefined}
+        actions={
+          totalConnectionCount > 0 ? (
+            <Link to="/credentials">
+              <Button variant="primary">
+                <Plus className="h-4 w-4" aria-hidden="true" />
+                Connect account
+              </Button>
+            </Link>
+          ) : undefined
+        }
+      />
+
+      {!hasSurfaces && otherConnections.length === 0 ? (
+        <EmptyAppState displayName={app.displayName} authModes={[]} />
+      ) : (
+        <div className="flex flex-col gap-4">
+          {hasSurfaces && (
+            <div className="flex flex-col gap-4">
+              {surfaces.map((surface) => (
+                <SurfaceCard
+                  // kind+displayName: `kind` alone can collide if a catalog
+                  // ever authors two same-kind surfaces (the 30.12
+                  // LIMITATION, latent today — see intersectSurfaces) —
+                  // displayName is authored per-surface and distinguishes
+                  // them (e.g. GitHub's http surface vs a hypothetical 2nd
+                  // http surface would need distinct displayNames anyway,
+                  // for the UI to be legible) — defensive, review fix.
+                  key={`${surface.kind}-${surface.displayName}`}
+                  surface={surface}
+                  now={now}
+                  onTest={(conn) => void handleTest(conn)}
+                  onReconnect={setReconnecting}
+                  onRotate={setRotating}
+                  onRename={setRenaming}
+                  onDisconnect={setDisconnecting}
+                  testingId={testingId}
+                />
+              ))}
+            </div>
+          )}
+
+          {otherConnections.length > 0 && (
+            <div className="flex flex-col gap-2">
+              <h2
+                style={{
+                  fontSize: "var(--text-body)",
+                  fontWeight: 500,
+                  color: "var(--gray-900)",
+                  margin: 0,
+                }}
+              >
+                Other connections
+              </h2>
+              <ul className="flex flex-col list-none m-0 p-0">
+                {otherConnections.map((c) => (
+                  <ConnectionRow
+                    key={c.credentialId ?? `${c.platformId}-${c.account}`}
+                    connection={c}
+                    now={now}
+                    onTest={(conn) => void handleTest(conn)}
+                    onReconnect={setReconnecting}
+                    onRotate={setRotating}
+                    onRename={setRenaming}
+                    onDisconnect={setDisconnecting}
+                    testingId={testingId}
+                  />
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      <ReconnectDialog
+        connection={reconnecting}
+        onOpenChange={(open) => {
+          if (!open) setReconnecting(null)
+        }}
+      />
+      <RotateSecretDialog
+        target={connectionToTarget(rotating)}
+        onOpenChange={(open) => {
+          if (!open) setRotating(null)
+        }}
+        onSuccess={invalidate}
+      />
+      <EditAccountLabelDialog
+        target={connectionToTarget(renaming)}
+        onOpenChange={(open) => {
+          if (!open) setRenaming(null)
+        }}
+        onSuccess={invalidate}
+      />
+      <DisconnectDialog
+        target={connectionToTarget(disconnecting)}
+        onOpenChange={(open) => {
+          if (!open) setDisconnecting(null)
+        }}
+        onSuccess={invalidate}
+      />
+    </div>
   )
 }
 
@@ -378,105 +662,5 @@ function ReconnectDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Main page
-// ---------------------------------------------------------------------------
-
-function AppDetailPage() {
-  const { app, connections }: AppDetailLoaderData = Route.useLoaderData()
-  const router = useRouter()
-  const [testingId, setTestingId] = useState<string | null>(null)
-  const [reconnecting, setReconnecting] = useState<ConnectionMeta | null>(null)
-  const [rotating, setRotating] = useState<ConnectionMeta | null>(null)
-  const [renaming, setRenaming] = useState<ConnectionMeta | null>(null)
-  const [disconnecting, setDisconnecting] = useState<ConnectionMeta | null>(null)
-  // Memoized so the Expiring/Connected boundary is stable across re-renders
-  // (test/rotate/rename/disconnect state changes) + SSR-hydration consistent —
-  // mirrors credentials.tsx's FlatCredentialsTable.
-  const now = useMemo(() => Date.now(), [])
-
-  async function invalidate() {
-    await router.invalidate()
-  }
-
-  async function handleTest(c: ConnectionMeta) {
-    if (!c.credentialId) return
-    setTestingId(c.credentialId)
-    try {
-      await testConnection(c.credentialId, invalidate)
-    } finally {
-      setTestingId(null)
-    }
-  }
-
-  return (
-    <div>
-      <PageHeader
-        title={app.displayName}
-        leading={<BrandIcon slug={app.iconSlug} displayName={app.displayName} />}
-        count={connections.length > 0 ? connections.length : undefined}
-        actions={
-          connections.length > 0 ? (
-            <Link to="/credentials">
-              <Button variant="primary">
-                <Plus className="h-4 w-4" aria-hidden="true" />
-                Connect account
-              </Button>
-            </Link>
-          ) : undefined
-        }
-      />
-
-      {connections.length === 0 ? (
-        <EmptyAppState app={app} />
-      ) : (
-        <ul className="flex flex-col list-none m-0 p-0">
-          {connections.map((c) => (
-            <ConnectionRow
-              key={c.credentialId ?? `${c.platformId}-${c.account}`}
-              connection={c}
-              now={now}
-              onTest={(conn) => void handleTest(conn)}
-              onReconnect={setReconnecting}
-              onRotate={setRotating}
-              onRename={setRenaming}
-              onDisconnect={setDisconnecting}
-              testingId={testingId}
-            />
-          ))}
-        </ul>
-      )}
-
-      <ReconnectDialog
-        connection={reconnecting}
-        onOpenChange={(open) => {
-          if (!open) setReconnecting(null)
-        }}
-      />
-      <RotateSecretDialog
-        target={connectionToTarget(rotating)}
-        onOpenChange={(open) => {
-          if (!open) setRotating(null)
-        }}
-        onSuccess={invalidate}
-      />
-      <EditAccountLabelDialog
-        target={connectionToTarget(renaming)}
-        onOpenChange={(open) => {
-          if (!open) setRenaming(null)
-        }}
-        onSuccess={invalidate}
-      />
-      <DisconnectDialog
-        target={connectionToTarget(disconnecting)}
-        onOpenChange={(open) => {
-          if (!open) setDisconnecting(null)
-        }}
-        onSuccess={invalidate}
-      />
-    </div>
   )
 }

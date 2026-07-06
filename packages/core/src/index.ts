@@ -82,6 +82,7 @@ export {
 } from "./apps/catalog-schema.js"
 export type { AppGroup, Connection } from "./apps/group.js"
 export { appIdForConnection, groupByApp } from "./apps/group.js"
+export { intersectSurfaces } from "./apps/surface-connections.js"
 // ---------------------------------------------------------------------------
 // Browser — generic "open a URL" util (extracted from cli's `web` command;
 // shared by web, the OAuth connect flow, and the OAuth device-code flow)
