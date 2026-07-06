@@ -32,12 +32,12 @@ Numbered as **30.x sub-increments** (consistent with 30.5/30.7), landing before
 
 | # | Increment | Depends on | Rough scope | Backend? |
 |---|---|---|---|---|
-| **30.8** | **App catalog schema + one hand-authored app** | 30.7 | The catalog *shape* proven on ONE real app end-to-end | core (data) + web (render) |
-| **30.9** | **integrations.sh importer (dev-time)** | 30.8 | The authoring accelerator (integrations.sh → draft); REST defaults to `http` | dev tooling only |
-| **30.9.5** | **apis.guru spec-URL top-up + Nango license review** | 30.9 | Upgrade importer `http` surfaces → `openapi` via apis.guru (CC0); Nango Elastic-2.0-vs-AGPL gate | dev tooling only |
-| **30.10** | **Surface-first `/app/:id` page** | 30.8 | Render surfaces + tools + catalog details; empty honest | web (read/display) |
+| **30.8** ✅ | **App catalog schema + one hand-authored app** | 30.7 | The catalog *shape* proven on ONE real app end-to-end | core (data) + web (render) |
+| **30.9** ✅ | **integrations.sh importer (dev-time)** | 30.8 | The authoring accelerator (integrations.sh → draft); REST defaults to `http` | dev tooling only |
+| **30.10** ← next | **Surface-first `/app/:id` page** | 30.8 | Render surfaces + tools + catalog details; empty honest | web (read/display) |
 | **30.11** | **Catalog-driven one-click connect** | 30.8, 30.10 | Build recipe → Platform+Credential, verify-on-add gate | web + orchestration |
 | **30.12** | **Multi-surface connect / add-a-surface** | 30.11 | `<appId>-<kind>` grouping; "add a surface" (ex-"change method") | core + web |
+| *(deferred)* **30.9.5** | **apis.guru spec-URL top-up + Nango license review** | 30.9 | Upgrade importer `http` surfaces → `openapi` via apis.guru (CC0); **Nango Elastic-2.0-vs-AGPL = a USER licensing decision.** Reordered AFTER 30.10 (user, 2026-07-06) — dev-tool enrichment, no user value yet, not blocking | dev tooling only |
 | *(later)* | **CLI generic-primitives rework** | — | `cli_help/search/execute/describe` (changes CLI's page display) | core + source-runtime |
 | *(deferred)* | **Semantic composition** | capability-identity | one namespace, dedup, precedence — gated (§3.3 of design) | core |
 | *(candidate)* | **gRPC surface** | — | research Node gRPC + reflection (§2.6 of design) | core |
