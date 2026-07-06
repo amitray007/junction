@@ -519,7 +519,12 @@ schema, the importer, and connect wiring land in distinct increments):
    connect wiring.**
 2. **inc 30.9 — integrations.sh importer** *(dev-time only).* The authoring
    accelerator (`/api/{domain}/surface` → draft → human/AI review → commit). Off
-   the runtime path. *(Do apis.guru spec-URL top-up + the Nango license review here.)*
+   the runtime path. Defaults REST → an `http` surface (never fabricates a specUrl).
+2b. **inc 30.9.5 — apis.guru spec-URL top-up + Nango license review** *(scope split
+   out of 30.9, orchestrator decision 2026-07-06 — keeps the importer focused).*
+   Upgrade an importer-drafted `http` REST surface → `openapi` when apis.guru (CC0)
+   has a spec URL; the Nango `providers.yaml` Elastic-2.0-vs-AGPL review is the gate
+   before ANY Nango data is used.
 3. **inc 30.10 — App page: surfaces + tools (read-only).** Rebuild `/app/:id`
    surface-first, rendering from the catalog (§4.6) + the inc-28 probe for a
    connected surface's actual tools (extend probe to surface an `inputSchema`
