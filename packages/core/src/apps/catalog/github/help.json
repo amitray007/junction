@@ -1,0 +1,36 @@
+{
+  "category": ["dev-tools", "git-hosting"],
+  "homepage": "https://github.com",
+  "statusPage": "https://www.githubstatus.com",
+  "description": "Git hosting, issues, pull requests, and CI/CD (Actions) for software projects.",
+  "agentGuidance": "Covers repos, issues, PRs, and Actions. Prefer the MCP surface for curated tools; fall back to the CLI for git-adjacent operations MCP doesn't cover.",
+  "oauthApp": {
+    "registerUrl": "https://github.com/settings/applications/new",
+    "callbackPath": "/oauth/callback/github"
+  },
+  "provenance": {
+    "authoredBy": "junction",
+    "researchedFrom": [
+      "https://docs.github.com/en/rest",
+      "https://docs.github.com/en/graphql",
+      "https://github.com/github/github-mcp-server",
+      "https://cli.github.com/manual",
+      "https://integrations.sh"
+    ],
+    "lastReviewed": "2026-07-06"
+  },
+  "install": {
+    "commands": {
+      "brew": "brew install gh",
+      "apt": "apt install gh",
+      "winget": "winget install --id GitHub.cli"
+    },
+    "verifyCmd": "gh --version",
+    "minVersion": "2.0.0"
+  },
+  "authSetup": {
+    "interactive": "gh auth login",
+    "env": "GH_TOKEN",
+    "configPath": "~/.config/gh/hosts.yml"
+  }
+}

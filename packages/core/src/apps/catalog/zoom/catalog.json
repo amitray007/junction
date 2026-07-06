@@ -1,0 +1,12 @@
+{
+  "id": "zoom",
+  "displayName": "Zoom",
+  "supportedKinds": [],
+  "auth": [
+    {
+      "mode": "oauth2",
+      "providerId": "zoom"
+    }
+  ],
+  "iconSlug": "zoom"
+}

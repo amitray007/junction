@@ -1,0 +1,15 @@
+{
+  "id": "discord",
+  "displayName": "Discord",
+  "supportedKinds": ["openapi"],
+  "auth": [
+    {
+      "mode": "oauth2",
+      "providerId": "discord"
+    },
+    {
+      "mode": "token"
+    }
+  ],
+  "iconSlug": "discord"
+}

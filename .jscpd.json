@@ -13,6 +13,9 @@
     "**/*.d.ts",
     "**/migrations/meta/**",
     "**/package.json",
-    "**/web/src/server/data.server.ts"
+    "**/web/src/server/data.server.ts",
+    "**/apps/catalog/catalog.generated.ts",
+    "**/apps/__fixtures__/**",
+    "**/apps/catalog/**/*.json"
   ]
 }

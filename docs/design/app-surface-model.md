@@ -1,9 +1,14 @@
 # App Surface Model — apps reached through multiple surfaces, one toolset for agents
 
-> **Status:** design (brainstormed with the user, 2026-07-05). Successor to
+> **Status:** design (brainstormed with the user, 2026-07-05; catalog structure +
+> starter-tools/gap-filler decisions added 2026-07-06). Successor to
 > `docs/design/provider-concept.md` (inc-30's "App as a first-class concept").
 > This doc captures the **whole vision**; it is built **incrementally** (see §8).
 > Interactive mockup that drove it: junction `/app/github` surface-first prototype.
+>
+> **Build progress:** the **HTTP surface (`http` kind) is SHIPPED** — inc 30.7,
+> merged (PR #104), marker → 30.7. Remaining tracks: the App catalog + importer
+> (§4), the surface-first App page (§7), and the deferred composition work (§3.3).
 
 ---
 
@@ -309,6 +314,98 @@ stay mandatory, not optional.
 human+AI verified, with **verify-on-add** as the runtime safety net. An *optional
 accelerator* over the manual base — nothing here is load-bearing.
 
+### 4.6 Catalog shape, file structure & richness tiers (decided 2026-07-05/06)
+
+The catalog is the **base data source for the App pages** — the page renders from
+it (plus the live proxy for a connected surface's *actual* tools). It also serves
+the connect flow. So the schema serves two readers: the page renderer and the
+connect/build path.
+
+**File structure — folder per app, split by concern** (NOT one giant file, NOT a
+folder-per-surface — the latter fragments app-level facts like the shared OAuth
+app and multiplies to ~10 files/app):
+
+```
+packages/core/src/apps/catalog/
+  github/
+    catalog.json      ← STABLE core: identity, surfaces[], connection, auth,
+                        build recipe, verify. App-level facts (shared OAuth app,
+                        cross-surface auth) live at the TOP, not per surface.
+    help.json         ← higher-rot: install commands, setup prose, docs links,
+                        agentGuidance. Isolated so it can be reviewed/updated on
+                        its own cadence without touching stable connect data.
+    tools/
+      http.tools.json ← starter tools — ONLY where a surface is user-authored
+                        AND that surface is the recommended path (see below).
+  stripe/  { catalog.json, help.json }
+  some-specless-api/
+    catalog.json
+    help.json
+    tools/http.tools.json   ← HTTP is the recommended surface here → ships starters
+```
+
+Rationale: **separates stable-core from rot-prone-rich** (the maintenance concern),
+keeps **app-level facts together**, and each file has a single purpose (junction's
+`docs/rules` "single purpose per file"). The folder can grow (a future
+`changelog.json`, more `tools/`) without restructuring. *(File format JSON vs YAML
+is an authoring-ergonomics call deferred to the build increment; JSON validates
+trivially against Zod, YAML is friendlier to hand-author with comments.)*
+
+**Richness tiers — "core + durable-rich", rot-prone excluded/flagged** (the line
+the user drew). A field earns its place if it is **high-value AND low-rot**:
+
+- **Core (required — connect/build/verify):** identity · per-surface `connection`
+  template (shaped to junction's existing `Platform` kinds) · `auth` · the **build
+  recipe** (what `Platform`+`Credential` rows each surface constructs) · `verify`.
+- **Durable-rich (included — high-value, low-rot):** `install` (per-platform
+  commands + verifyCmd + minVersion) · `authSetup` (interactive + env + configPath)
+  · how-to-obtain (MCP `server`: hosted/stdio/source + toolsets) · `docs` /
+  `specUrl` / `sdlUrl` · the app-level `oauthApp` registration · `sharedAuthWith`
+  (one token works across surfaces) · `agentGuidance` (short, factual) · provenance.
+- **Rot-prone (EXCLUDED or explicitly `optional` + "may be stale"):** rate-limit
+  *numbers* · quirk lists · spec cadence · operation counts · version headers.
+  `provenance.lastReviewed` is the honesty anchor for anything in this tier.
+
+**The build recipe targets junction's EXISTING entities — it does not replace
+them.** "Connect" executes the recipe through the normal, validated
+`addPlatform`/`addCredential` + verify-on-add. So Platform+Credential rows stay the
+single source of truth; the catalog is a *build spec + display data*, and the App
+page stays a **derived** read-view (inc-30 preserved — no new persisted entity).
+
+**Agent guidance wiring:** the short per-app / per-surface `agentGuidance` strings
+feed junction's **existing** agent channels — MCP `instructions` + tool
+descriptions — not a new invented channel. Capability description, never behavior
+scripting (avoids prompt-rot).
+
+### 4.7 Starter tools & the HTTP-as-gap-filler rule (decided 2026-07-06)
+
+For the **user-authored** surfaces (HTTP request-tools; CLI command-tools — see
+§2.3/§2.4), the catalog's highest-leverage contribution is **starter tools**: a few
+common, ready-to-use tool definitions in the *exact* shape the surface consumes
+(for HTTP: `{name, method, path, params[]-with-location}`, the 30.7 request-tool
+shape), so the user tweaks/extends instead of starting from a blank slate. The
+importer can *generate candidates* from a spec at authoring time (human-reviewed).
+
+**But HTTP is the GAP-FILLER surface, not a parallel REST option.** If an app has
+an OpenAPI spec (GitHub, Stripe), the `openapi` surface auto-generates its REST
+tools — hand-authoring HTTP request-tools there is **redundant** (re-doing by hand
+what the spec gives for free). So:
+
+- **Prefer schema-backed** (MCP / OpenAPI / GraphQL) wherever a spec/server/
+  introspection exists — tools come for free.
+- **HTTP fills gaps** — a specific endpoint the schema-backed surfaces don't expose
+  (undocumented endpoint, spec-less API, a call missing from the published spec).
+- The catalog therefore ships HTTP `tools/http.tools.json` **only for apps where
+  HTTP is the recommended path** (spec-less). For GitHub, HTTP ships **no** starter
+  tools.
+
+**App-page presentation (decided):** show **all surfaces equally** (no "advanced"
+demotion). A surface with **no tools is shown honestly** — "no tools available"
+(e.g. GitHub's HTTP: *"OpenAPI covers REST; add a custom request-tool only for an
+uncovered endpoint"*) — **not hidden**. Each surface lists its tools (tagged by who
+authored them: server / spec / introspection / user), and the page surfaces the
+catalog's details (install, docs, auth, guidance).
+
 ---
 
 ## 5. What exists today vs. what's net-new (honest capability audit)
@@ -320,7 +417,7 @@ From a direct code audit (four agents, 2026-07-05):
 | App as derived grouping | **exists** | `core/apps/group.ts appIdForConnection` |
 | MCP / OpenAPI / GraphQL / CLI surfaces | **exist** | `PlatformKindSchema`, per-kind connection schemas + providers |
 | CLI = generic primitives | **partial → needs rework** | today CLI = "one operator-declared command = one tool" (`core/sources/cli/provider.ts`). The **generic execute+help+search+describe** model is net-new. |
-| HTTP surface (`http`) | **absent** | no `http` kind; a spec-less REST API with user-authored tools is unreachable today. Machinery pattern exists (OpenAPI param-binding + CLI tool-authoring) |
+| HTTP surface (`http`) | **SHIPPED (inc 30.7, PR #104)** | `http` kind end-to-end: user-authored request-tools, param-location binding, authed/timed/size-capped fetch, CLI-form-style web authoring. The design's audit row is now DONE. |
 | gRPC surface (`grpc`) | **candidate** | not designed; research whether a Node gRPC + reflection story fits (§2.6) |
 | Show tools on the app page | **absent** | app pages show connections, never tools. The inc-28 **probe** lists a *profile route's* tools (`web/src/server/probe.server.ts`) — reusable, but profile-scoped, and it drops `inputSchema` today |
 | Multi-surface-per-app grouping | **partial** | two platforms for one app only co-group if each satisfies an exact attribution rule; the `<appId>-<kind>` structured-suffix rule is **planned, not built** (only in `docs/methods/30.5-app-lifecycle.md`) |
@@ -354,6 +451,23 @@ From a direct code audit (four agents, 2026-07-05):
    **verify-on-add is the runtime safety net.** integrations.sh is never touched at
    runtime. Validated on GitHub + Stripe (15/19 facts correct, 0 wrong).
 9. **First increment = the read-only surface-first app page** (no backend change).
+
+**Added 2026-07-06 (catalog structure + gap-filler — see §4.6/§4.7):**
+10. **Catalog file layout = folder per app, split by concern** (`catalog.json` core
+    + `help.json` rot-prone + `tools/*.tools.json` starters) — not one file, not
+    folder-per-surface. App-level facts live at the top of `catalog.json`.
+11. **Richness = "core + durable-rich"** (install/authSetup/docs/spec-URLs/
+    how-to-obtain/sharedAuth/agentGuidance IN; rate-limit-numbers/quirks/cadence
+    EXCLUDED-or-flagged-optional). `provenance.lastReviewed` anchors the rot-prone.
+12. **The catalog is the base data source for the App pages** (page renders from it
+    + the live proxy for a connected surface's actual tools).
+13. **Starter tools only where a surface is user-authored AND recommended** — HTTP
+    is the **gap-filler** (not a parallel REST option); apps with a spec (GitHub)
+    ship **no** HTTP starters. `agentGuidance` feeds MCP `instructions` + tool descs.
+14. **All surfaces shown equally; empty surfaces shown honestly** ("no tools
+    available"), never hidden.
+15. **HTTP surface SHIPPED** (inc 30.7). Next: App catalog + importer → surface-
+    first App page.
 
 **Deferred to their own decisions (with triggers in §9):**
 - Semantic composition (dedup/precedence/fallback) + a capability-identity model.
@@ -391,34 +505,43 @@ the first increment.
 
 The **whole vision** is above; it ships in slices, smallest-visible-value-first.
 
-1. **App page: surfaces + tools (read-only).** Rebuild `/app/:id` surface-first;
-   list each connected surface's tools by reusing the inc-28 probe (extend it to
-   surface an `inputSchema` summary + be app-scoped, not only profile-scoped).
-   **No schema/backend change** — pure read/display layer. Proves the model.
-   *(FIRST — user choice.)*
-2. **HTTP surface (`http`).** New `PlatformKind: "http"` + `HttpConnection` schema
-   (base URL + auth + default headers) + **user-authored request-tools** (name,
-   method, path, params-with-location, description; optional enums/examples/
-   response-hint/timeout/confirm) + a `createHttpProvider` (authed, sandboxed).
-   The REST twin of the CLI connection; reuses the OpenAPI client's param-binding
-   pattern. Fills the spec-less-REST gap. *(Consider a raw request() escape-hatch
-   tool as optional.)* Backend-heavy; the app page (inc 1) then shows it.
-3. **App catalog + importer.** Build the **dev-time integrations.sh importer**
-   (`/api/{domain}/surface` → draft AppDefinition → human/AI review → commit) and
-   the extended per-surface catalog schema; wire one-click "Connect <app>
-   <surface>" that pre-fills the existing platform+credential setup, gated by
-   verify-on-add. Optional-accelerator semantics (§4). *(Do apis.guru spec-URL
-   top-up + the Nango license review here.)*
-4. **Multi-surface connect / change-method / composition groundwork.** Connecting
-   a second surface for the same app cleanly (the `<appId>-<kind>` groupability
-   rule from `30.5-app-lifecycle.md`, now in service of *accumulation* not
-   *swap*); re-frame "Change method" as *add a surface* rather than replace.
-5. *(Deferred, gated):* semantic composition — one namespace, dedup, precedence,
+- ✅ **HTTP surface (`http`) — SHIPPED (inc 30.7, PR #104).** New `PlatformKind:
+  "http"` + `HttpConnection` (base URL + auth + default headers) + user-authored
+  request-tools (name, method, path, params-with-location) + `createHttpProvider`
+  (authed, timed, size-capped). The REST twin of CLI; reused the OpenAPI client's
+  param-binding. Done — the design's "spec-less REST" gap is closed.
+
+**Remaining, in order** (each its own increment — do NOT bundle; the catalog
+schema, the importer, and connect wiring land in distinct increments):
+1. **inc 30.8 — App catalog SCHEMA** *(SHIPPED — PR #108).* The per-app catalog
+   schema + **folder-per-app file layout** (§4.6: `catalog.json` + `help.json` +
+   `tools/`) + GitHub authored as the proof. Pure `core` data; **no importer, no
+   connect wiring.**
+2. **inc 30.9 — integrations.sh importer** *(dev-time only).* The authoring
+   accelerator (`/api/{domain}/surface` → draft → human/AI review → commit). Off
+   the runtime path. *(Do apis.guru spec-URL top-up + the Nango license review here.)*
+3. **inc 30.10 — App page: surfaces + tools (read-only).** Rebuild `/app/:id`
+   surface-first, rendering from the catalog (§4.6) + the inc-28 probe for a
+   connected surface's actual tools (extend probe to surface an `inputSchema`
+   summary + be app-scoped). All surfaces equal; empty surfaces shown honestly
+   (§4.7). Pure read/display.
+4. **inc 30.11 — Catalog-driven one-click connect.** Wire "Connect <app>
+   <surface>" that pre-fills the existing platform+credential setup from the
+   catalog's build recipe, gated by verify-on-add. **First place the catalog
+   *writes*.** Includes starter tools for user-authored surfaces (§4.7).
+5. **inc 30.12 — Multi-surface connect / add-a-surface.** Connecting a second
+   surface for the same app cleanly (the `<appId>-<kind>` groupability rule from
+   `30.5-app-lifecycle.md`, now in service of *accumulation* not *swap*); re-frame
+   "Change method" as *add a surface* rather than replace.
+6. *(Deferred, gated):* semantic composition — one namespace, dedup, precedence,
    CLI-fills-gaps — once a capability-identity approach is chosen (§9).
 
 Also: the CLI generic-primitives rework (from per-command tools) slots where it
-best serves the above — likely alongside or just after inc 1, since it changes
-what the CLI surface *shows* on the app page.
+best serves the above — it changes what the CLI surface *shows* on the app page.
+
+*(Ordering note: the app page (inc 2) and catalog (inc 1) can also interleave — the
+page can render manually-created surfaces before the catalog exists; the catalog
+then makes connect one-click. Sequence them at method-file time.)*
 
 ---
 

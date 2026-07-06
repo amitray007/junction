@@ -1,0 +1,12 @@
+{
+  "id": "anilist",
+  "displayName": "AniList",
+  "supportedKinds": ["graphql"],
+  "auth": [
+    {
+      "mode": "none"
+    }
+  ],
+  "setupHints": ["Public reads need no auth; mutations require OAuth (not modeled here)."],
+  "iconSlug": "anilist"
+}

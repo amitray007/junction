@@ -1,0 +1,11 @@
+{
+  "id": "box",
+  "displayName": "Box",
+  "supportedKinds": ["openapi"],
+  "auth": [
+    {
+      "mode": "token"
+    }
+  ],
+  "iconSlug": "box"
+}

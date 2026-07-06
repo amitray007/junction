@@ -1,0 +1,10 @@
+{
+  "id": "rickandmorty",
+  "displayName": "Rick and Morty API",
+  "supportedKinds": ["graphql"],
+  "auth": [
+    {
+      "mode": "none"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "id": "heroku",
+  "displayName": "Heroku",
+  "supportedKinds": ["cli"],
+  "auth": [
+    {
+      "mode": "token"
+    }
+  ],
+  "setupHints": ["`heroku config` prints secret values — treat reads as sensitive."],
+  "iconSlug": "heroku"
+}

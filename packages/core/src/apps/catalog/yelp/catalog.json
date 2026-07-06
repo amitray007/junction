@@ -1,0 +1,11 @@
+{
+  "id": "yelp",
+  "displayName": "Yelp",
+  "supportedKinds": ["graphql"],
+  "auth": [
+    {
+      "mode": "token"
+    }
+  ],
+  "iconSlug": "yelp"
+}

@@ -1,0 +1,12 @@
+{
+  "id": "petstore",
+  "displayName": "Swagger Petstore",
+  "supportedKinds": ["openapi"],
+  "auth": [
+    {
+      "mode": "token"
+    }
+  ],
+  "setupHints": ["Public demo API — an api_key header is accepted but not required for reads."],
+  "iconSlug": "swagger"
+}

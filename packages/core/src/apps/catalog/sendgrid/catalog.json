@@ -1,0 +1,11 @@
+{
+  "id": "sendgrid",
+  "displayName": "SendGrid",
+  "supportedKinds": ["openapi"],
+  "auth": [
+    {
+      "mode": "token"
+    }
+  ],
+  "aliases": ["sendgrid-mail"]
+}

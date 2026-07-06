@@ -1,0 +1,11 @@
+{
+  "id": "cloudflare",
+  "displayName": "Cloudflare",
+  "supportedKinds": ["mcp", "cli"],
+  "auth": [
+    {
+      "mode": "token"
+    }
+  ],
+  "iconSlug": "cloudflare"
+}

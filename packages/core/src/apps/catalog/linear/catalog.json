@@ -1,0 +1,15 @@
+{
+  "id": "linear",
+  "displayName": "Linear",
+  "supportedKinds": ["mcp", "graphql"],
+  "auth": [
+    {
+      "mode": "oauth2",
+      "providerId": "linear"
+    },
+    {
+      "mode": "token"
+    }
+  ],
+  "iconSlug": "linear"
+}

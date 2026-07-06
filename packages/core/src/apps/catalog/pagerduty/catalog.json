@@ -1,0 +1,11 @@
+{
+  "id": "pagerduty",
+  "displayName": "PagerDuty",
+  "supportedKinds": ["openapi"],
+  "auth": [
+    {
+      "mode": "token"
+    }
+  ],
+  "iconSlug": "pagerduty"
+}

@@ -1,0 +1,106 @@
+{
+  "id": "github",
+  "displayName": "GitHub",
+  "supportedKinds": ["mcp", "cli", "openapi", "graphql"],
+  "auth": [
+    { "mode": "oauth2", "providerId": "github" },
+    { "mode": "oauth2", "providerId": "github-app" },
+    { "mode": "token" }
+  ],
+  "aliases": ["gh"],
+  "iconSlug": "github",
+  "surfaces": [
+    {
+      "kind": "openapi",
+      "displayName": "REST API",
+      "connection": {
+        "kind": "openapi",
+        "specUrl": "https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json",
+        "baseUrl": "https://api.github.com",
+        "verifyOperationId": "users/get-authenticated"
+      },
+      "auth": [{ "mode": "oauth2", "providerId": "github" }, { "mode": "token" }],
+      "build": {
+        "platformIdTemplate": "{app}",
+        "via": "flattened",
+        "credential": { "kind": "oauth2", "from": "auth" }
+      },
+      "verify": { "kind": "openapi", "operationId": "users/get-authenticated" },
+      "docs": "https://docs.github.com/en/rest",
+      "agentGuidance": "The full REST surface — repos, issues, PRs, Actions, and more, generated from GitHub's own OpenAPI spec."
+    },
+    {
+      "kind": "graphql",
+      "displayName": "GraphQL API",
+      "connection": {
+        "kind": "graphql",
+        "endpoint": "https://api.github.com/graphql"
+      },
+      "auth": [{ "mode": "oauth2", "providerId": "github" }, { "mode": "token" }],
+      "build": {
+        "platformIdTemplate": "{app}",
+        "via": "flattened",
+        "credential": { "kind": "oauth2", "from": "auth" }
+      },
+      "verify": { "kind": "graphql", "typenameProbe": true },
+      "docs": "https://docs.github.com/en/graphql",
+      "agentGuidance": "GitHub's GraphQL v4 API — best for fetching nested/related data (e.g. a repo's issues + labels + assignees) in one call."
+    },
+    {
+      "kind": "mcp",
+      "displayName": "GitHub MCP Server",
+      "connection": {
+        "kind": "mcp",
+        "transport": "http",
+        "url": "https://api.githubcopilot.com/mcp/"
+      },
+      "auth": [{ "mode": "oauth2", "providerId": "github" }, { "mode": "token" }],
+      "build": {
+        "platformIdTemplate": "{app}",
+        "via": "flattened",
+        "credential": { "kind": "oauth2", "from": "auth" }
+      },
+      "verify": { "kind": "mcp", "listTools": true },
+      "docs": "https://github.com/github/github-mcp-server",
+      "agentGuidance": "GitHub's own hosted MCP server — named, curated tools for repos, issues, PRs, and Actions."
+    },
+    {
+      "kind": "cli",
+      "displayName": "gh CLI",
+      "connection": {
+        "kind": "cli",
+        "credentialEnvVar": "GH_PAT"
+      },
+      "auth": [{ "mode": "token" }],
+      "build": {
+        "platformIdTemplate": "{app}",
+        "via": "descriptor",
+        "credential": { "kind": "bearer", "from": "auth" }
+      },
+      "verify": { "kind": "none" },
+      "docs": "https://cli.github.com/manual",
+      "agentGuidance": "The gh CLI — best for git-adjacent workflows (PR checkout, release upload) the API surfaces don't model as directly.",
+      "notes": [
+        "credentialEnvVar is \"GH_PAT\" (not gh's real \"GH_TOKEN\") — CliConnectionSchema rejects any *_TOKEN/_SECRET/_KEY suffix. Mapping GH_PAT back to gh's actual GH_TOKEN env is a later-increment concern (generic CLI primitives rework)."
+      ]
+    },
+    {
+      "kind": "http",
+      "displayName": "Custom REST request",
+      "connection": {
+        "kind": "http",
+        "baseUrl": "https://api.github.com"
+      },
+      "auth": [{ "mode": "token" }],
+      "build": {
+        "platformIdTemplate": "{app}-http",
+        "via": "descriptor",
+        "credential": { "kind": "bearer", "from": "auth" }
+      },
+      "verify": { "kind": "none" },
+      "notes": [
+        "GitHub's REST is covered by OpenAPI; add a custom request-tool only for an endpoint the spec doesn't expose."
+      ]
+    }
+  ]
+}

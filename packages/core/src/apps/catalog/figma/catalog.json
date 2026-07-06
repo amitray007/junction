@@ -1,0 +1,24 @@
+{
+  "id": "figma",
+  "displayName": "Figma",
+  "supportedKinds": ["mcp"],
+  "auth": [
+    {
+      "mode": "oauth2",
+      "providerId": "figma"
+    },
+    {
+      "mode": "none"
+    }
+  ],
+  "setupHints": [
+    "The Figma Dev Mode MCP server requires no credential — it trusts the locally-running desktop app.",
+    "The REST API (file/comment access) uses OAuth."
+  ],
+  "iconSlug": "figma",
+  "help": {
+    "notes": [
+      "The Dev Mode MCP server requires no credential — it trusts the locally-running desktop app. The REST API (file/comment access) uses OAuth."
+    ]
+  }
+}

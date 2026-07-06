@@ -1,0 +1,12 @@
+{
+  "id": "supabase",
+  "displayName": "Supabase",
+  "supportedKinds": ["mcp", "cli"],
+  "auth": [
+    {
+      "mode": "token"
+    }
+  ],
+  "setupHints": ["Supabase's own OAuth browser flow is not junction's vault — use a PAT instead."],
+  "iconSlug": "supabase"
+}

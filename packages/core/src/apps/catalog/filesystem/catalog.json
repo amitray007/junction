@@ -1,0 +1,10 @@
+{
+  "id": "filesystem",
+  "displayName": "Filesystem",
+  "supportedKinds": ["mcp"],
+  "auth": [
+    {
+      "mode": "none"
+    }
+  ]
+}

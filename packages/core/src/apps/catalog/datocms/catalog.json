@@ -1,0 +1,11 @@
+{
+  "id": "datocms",
+  "displayName": "DatoCMS",
+  "supportedKinds": ["graphql"],
+  "auth": [
+    {
+      "mode": "token"
+    }
+  ],
+  "iconSlug": "datocms"
+}

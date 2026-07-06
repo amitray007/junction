@@ -1,0 +1,12 @@
+{
+  "id": "dropbox",
+  "displayName": "Dropbox",
+  "supportedKinds": [],
+  "auth": [
+    {
+      "mode": "oauth2",
+      "providerId": "dropbox"
+    }
+  ],
+  "iconSlug": "dropbox"
+}

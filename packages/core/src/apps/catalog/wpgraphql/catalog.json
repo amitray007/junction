@@ -1,0 +1,12 @@
+{
+  "id": "wpgraphql",
+  "displayName": "WPGraphQL",
+  "supportedKinds": ["graphql"],
+  "auth": [
+    {
+      "mode": "byo"
+    }
+  ],
+  "setupHints": ["Self-hosted WordPress site — the endpoint host is user-supplied."],
+  "iconSlug": "wordpress"
+}

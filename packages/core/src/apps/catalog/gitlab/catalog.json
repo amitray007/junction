@@ -1,0 +1,16 @@
+{
+  "id": "gitlab",
+  "displayName": "GitLab",
+  "supportedKinds": ["cli", "openapi", "graphql"],
+  "auth": [
+    {
+      "mode": "oauth2",
+      "providerId": "gitlab"
+    },
+    {
+      "mode": "token"
+    }
+  ],
+  "aliases": ["glab"],
+  "iconSlug": "gitlab"
+}

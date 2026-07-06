@@ -1,0 +1,11 @@
+{
+  "id": "contentful",
+  "displayName": "Contentful",
+  "supportedKinds": ["graphql"],
+  "auth": [
+    {
+      "mode": "token"
+    }
+  ],
+  "iconSlug": "contentful"
+}

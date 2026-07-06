@@ -1,0 +1,12 @@
+{
+  "id": "microsoft",
+  "displayName": "Microsoft",
+  "supportedKinds": ["openapi"],
+  "auth": [
+    {
+      "mode": "oauth2",
+      "providerId": "microsoft"
+    }
+  ],
+  "iconSlug": "microsoft"
+}
