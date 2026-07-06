@@ -306,8 +306,22 @@ function mapMcpSurface(surface, credentialsById) {
     }
   } else if (surface.command) {
     connection = { kind: "mcp", transport: "stdio", command: surface.command }
+  } else if (Array.isArray(surface.packages) && surface.packages.length > 0) {
+    // A packages[]-declared MCP server (e.g. npx/docker) with no explicit
+    // `command`: it IS a stdio surface, but the exact invocation (runner +
+    // args) isn't given — emit a REVIEW-sentinel command derived from the
+    // first package's identifier so the reviewer confirms the real command
+    // rather than the importer guessing a runner (never fabricate an argv).
+    const pkg = surface.packages[0]
+    connection = {
+      kind: "mcp",
+      transport: "stdio",
+      command: `REVIEW:command:${pkg.registryType ?? "package"}:${pkg.identifier ?? "unknown"}`,
+    }
   } else {
-    return { skip: "mcp surface has neither url nor command — cannot build a connection template" }
+    return {
+      skip: "mcp surface has no url, command, or packages[] — cannot build a connection template",
+    }
   }
 
   return {

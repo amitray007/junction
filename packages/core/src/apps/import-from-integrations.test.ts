@@ -287,7 +287,7 @@ describe("mapSurface — mechanics/basis union branching + no-fabrication (§2c)
     })
   })
 
-  it("an mcp surface with NEITHER url NOR command is skipped + flagged (never invents one)", () => {
+  it("an mcp surface with NEITHER url, command, NOR packages[] is skipped + flagged (never invents one)", () => {
     const result = mapSurface(
       {
         type: "mcp",
@@ -297,7 +297,25 @@ describe("mapSurface — mechanics/basis union branching + no-fabrication (§2c)
       },
       creds,
     )
-    expect(result.skip).toMatch(/neither url nor command/)
+    expect(result.skip).toMatch(/no url, command, or packages/)
+  })
+
+  it("an mcp surface with packages[] but no url/command -> stdio with a REVIEW: command (never guesses the runner)", () => {
+    const result = mapSurface(
+      {
+        type: "mcp",
+        name: "Packaged MCP",
+        packages: [{ registryType: "npm", identifier: "@acme/mcp-server" }],
+        basis: { via: "discovered", evidence: [] },
+        auth: { entries: [] },
+      },
+      creds,
+    )
+    expect(result.skip).toBeUndefined()
+    expect(result.surface.connection.transport).toBe("stdio")
+    // The exact invocation isn't given by integrations.sh — emit a REVIEW
+    // sentinel derived from the package, never a fabricated argv.
+    expect(result.surface.connection.command).toBe("REVIEW:command:npm:@acme/mcp-server")
   })
 
   it('a cli surface\'s mechanics branch on source:"cli" (command/env), not source:"http"', () => {
@@ -701,7 +719,10 @@ describe("buildDraft(stripe.com fixture) — collision + detected-surface + abse
 
   it("handles an api_key credential with no acquisition field without crashing or fabricating one", async () => {
     const payload = await loadFixture("stripe.com.surface.json")
-    expect(payload.credentials.stripe_api_key.acquisition).toBeUndefined()
+    // Narrow the `unknown`-typed fixture before reading nested fields (loadFixture
+    // returns Record<string, unknown> — chained access off `unknown` is unsafe).
+    const credentials = payload.credentials as Record<string, { acquisition?: unknown }>
+    expect(credentials.stripe_api_key.acquisition).toBeUndefined()
     const draft = buildDraft(payload)
     expect(draft.catalogEntry.auth.some((a: { mode: string }) => a.mode === "token")).toBe(true)
   })
