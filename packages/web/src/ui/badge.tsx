@@ -130,6 +130,13 @@ export function StatusBadge({
     | "disabled"
     | "active"
     | "revoked"
+    // Surface-aggregate states (increment 30.10, §2a truth table) — "serving"
+    // and "available" are distinct from the per-CONNECTION statuses above
+    // (those describe one credential; these describe a whole catalog
+    // surface's aggregate state). "connected" is reused as-is (a surface
+    // with ≥1 connection but none healthy yet).
+    | "serving"
+    | "available"
   readonly className?: string
 }) {
   const map = {
@@ -143,6 +150,12 @@ export function StatusBadge({
     // gets its own honest label rather than reusing "Connected".
     active: { variant: "ok" as const, label: "Active" },
     revoked: { variant: "off" as const, label: "Revoked" },
+    // Surface-aggregate states (increment 30.10): "serving" = ≥1 healthy
+    // connection AND the probe returned ≥1 tool (the strongest signal — a
+    // real, live capability). "available" = a catalog surface with zero
+    // connections yet ("junction can stand this up").
+    serving: { variant: "ok" as const, label: "Serving" },
+    available: { variant: "off" as const, label: "Available" },
   } as const
 
   const { variant, label } = map[status]

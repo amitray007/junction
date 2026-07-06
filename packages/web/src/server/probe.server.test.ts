@@ -24,6 +24,7 @@ import {
   createRepositories,
   getDatabase,
   getPaths,
+  newCredentialId,
   newPlatformId,
   newProfileId,
   ok,
@@ -31,12 +32,20 @@ import {
   ResultAsync,
 } from "@junction/core"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { callSourceTool, probeSource } from "./probe.server.js"
+import { callSourceTool, probeSource, probeSurface, summarizeParams } from "./probe.server.js"
 
 // ---------------------------------------------------------------------------
 // Mock @junction/mcp-client so the MCP-source tests never open a real transport.
 // Mocked by string path only — no type import of the module (web has no dep on it).
 // ---------------------------------------------------------------------------
+
+// Mock @junction/graphql-client for probeSurface's graphql-kind proof (increment
+// 30.10) — createGraphQlProvider is SYNCHRONOUS (unlike createMcpProvider), so
+// the mock returns a plain ToolProvider object, not a ResultAsync-wrapped one.
+const createGraphQlProviderMock = vi.fn()
+vi.mock("@junction/graphql-client", () => ({
+  createGraphQlProvider: createGraphQlProviderMock,
+}))
 
 const createMcpProviderMock = vi.fn()
 vi.mock("@junction/mcp-client", () => ({
@@ -78,6 +87,7 @@ describe("probe.server", () => {
     else process.env.JUNCTION_STORE = prevStore
     await rm(tmpHome, { recursive: true, force: true })
     createMcpProviderMock.mockReset()
+    createGraphQlProviderMock.mockReset()
   })
 
   async function makeRepos() {
@@ -464,6 +474,210 @@ describe("probe.server", () => {
       const serialized = JSON.stringify(result)
       expect(serialized).not.toContain(SECRET)
       expect(serialized).not.toMatch(/secretRef/)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // summarizeParams — pure inputSchema → short param-list formatter (§3c).
+  // ---------------------------------------------------------------------------
+
+  describe("summarizeParams", () => {
+    it("required params first (with * suffix), then optional, comma-joined", () => {
+      const schema = {
+        properties: { owner: {}, repo: {}, title: {}, body: {} },
+        required: ["owner", "repo"],
+      }
+      expect(summarizeParams(schema)).toBe("owner*, repo*, title, body")
+    })
+
+    it("caps at ~8 params and appends an overflow marker", () => {
+      const properties = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`p${i}`, {}]))
+      const schema = { properties, required: ["p0", "p1"] }
+      const result = summarizeParams(schema)
+      expect(result).toBeDefined()
+      // 8 shown + the overflow marker.
+      expect(result?.split(", ")).toHaveLength(9)
+      expect(result).toMatch(/…$/)
+      expect(result).toMatch(/^p0\*, p1\*/)
+    })
+
+    it("no properties → undefined", () => {
+      expect(summarizeParams({})).toBeUndefined()
+      expect(summarizeParams({ properties: {} })).toBeUndefined()
+    })
+
+    it("object/array-typed params are named only (no nested expansion)", () => {
+      const schema = {
+        properties: {
+          filters: { type: "object", properties: { a: {}, b: {} } },
+          tags: { type: "array", items: { type: "string" } },
+        },
+        required: ["filters"],
+      }
+      expect(summarizeParams(schema)).toBe("filters*, tags")
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // probeSurface — platform-scoped probe, buildProvider-direct (§3c). The
+  // load-bearing proof: a graphql-kind platform returns tools, proving this
+  // path is NOT the mcp/openapi-only makeResolveProvider restriction.
+  // ---------------------------------------------------------------------------
+
+  describe("probeSurface", () => {
+    it("platform not found → a clean error result, never a throw", async () => {
+      const result = await probeSurface({ platformId: "nonexistent-platform" })
+      expect(result.status).toBe("error")
+      if (result.status === "ok") throw new Error("expected error")
+      expect(result.reason).toBe("platform not found")
+    })
+
+    it("no credentialId (public/no-auth connection) — the no-credential graceful arm — still probes via buildProvider", async () => {
+      const closeMock = vi.fn().mockResolvedValue(undefined)
+      createGraphQlProviderMock.mockReturnValue({
+        listTools: () =>
+          new ResultAsync(
+            Promise.resolve(
+              ok([{ name: "search", description: "Search", inputSchema: { properties: {} } }]),
+            ),
+          ),
+        callTool: vi.fn(),
+        close: closeMock,
+      })
+
+      const repos = await makeRepos()
+      const platformId = newPlatformId()
+      await repos.platforms.create({
+        id: platformId,
+        kind: "graphql",
+        displayName: "GraphQL Source",
+        graphql: { endpoint: "https://example.com/graphql" },
+      })
+
+      const result = await probeSurface({ platformId: String(platformId) })
+      expect(result.status).toBe("ok")
+      if (result.status !== "ok") throw new Error("expected ok")
+      expect(result.tools).toEqual([{ namespaced: "search", raw: "search", description: "Search" }])
+      // close() called even on the happy path — the finally block always runs.
+      expect(closeMock).toHaveBeenCalledTimes(1)
+    })
+
+    it("a graphql-kind platform returns tools — proves this is NOT the mcp/openapi-only makeResolveProvider path", async () => {
+      const closeMock = vi.fn().mockResolvedValue(undefined)
+      createGraphQlProviderMock.mockReturnValue({
+        listTools: () =>
+          new ResultAsync(
+            Promise.resolve(
+              ok([
+                {
+                  name: "listRepos",
+                  description: "List repositories",
+                  inputSchema: { properties: { owner: {}, limit: {} }, required: ["owner"] },
+                },
+              ]),
+            ),
+          ),
+        callTool: vi.fn(),
+        close: closeMock,
+      })
+
+      const repos = await makeRepos()
+      const platformId = newPlatformId()
+      await repos.platforms.create({
+        id: platformId,
+        kind: "graphql",
+        displayName: "GraphQL Source",
+        graphql: { endpoint: "https://example.com/graphql" },
+      })
+
+      const credId = newCredentialId()
+      await repos.credentials.create({
+        id: credId,
+        platformId,
+        profileName: "work",
+        kind: "bearer",
+        secretRef: "FAKE_REF_NEVER_EXPOSE",
+      })
+
+      const result = await probeSurface({ platformId: String(platformId), credentialId: credId })
+      expect(result.status).toBe("ok")
+      if (result.status !== "ok") throw new Error("expected ok")
+      expect(result.tools).toEqual([
+        {
+          namespaced: "listRepos",
+          raw: "listRepos",
+          description: "List repositories",
+          params: "owner*, limit",
+        },
+      ])
+      expect(closeMock).toHaveBeenCalledTimes(1)
+      // Raw/un-namespaced: no profile namespace exists on this path.
+      expect(result.tools[0]?.namespaced).toBe(result.tools[0]?.raw)
+      // Secret discipline.
+      expect(JSON.stringify(result)).not.toContain("FAKE_REF_NEVER_EXPOSE")
+    })
+
+    it("db-error graceful arm (credential lookup fails) → an honest error result, never a throw", async () => {
+      const repos = await makeRepos()
+      const platformId = newPlatformId()
+      await repos.platforms.create({
+        id: platformId,
+        kind: "graphql",
+        displayName: "GraphQL Source",
+        graphql: { endpoint: "https://example.com/graphql" },
+      })
+
+      const result = await probeSurface({
+        platformId: String(platformId),
+        credentialId: "nonexistent-credential-id",
+      })
+      expect(result.status).toBe("error")
+    })
+
+    it("empty-but-ok tool list is the honest 'no tools available' case, NOT converted to an error", async () => {
+      const closeMock = vi.fn().mockResolvedValue(undefined)
+      createGraphQlProviderMock.mockReturnValue({
+        listTools: () => new ResultAsync(Promise.resolve(ok([]))),
+        callTool: vi.fn(),
+        close: closeMock,
+      })
+
+      const repos = await makeRepos()
+      const platformId = newPlatformId()
+      await repos.platforms.create({
+        id: platformId,
+        kind: "graphql",
+        displayName: "GraphQL Source",
+        graphql: { endpoint: "https://example.com/graphql" },
+      })
+
+      const result = await probeSurface({ platformId: String(platformId) })
+      expect(result).toEqual({ status: "ok", tools: [] })
+      expect(closeMock).toHaveBeenCalledTimes(1)
+    })
+
+    it("provider.close() is called even when listTools() errors — the finally-block discipline (inc-11 leak gotcha)", async () => {
+      const { err: errResult } = await import("@junction/core")
+      const closeMock = vi.fn().mockResolvedValue(undefined)
+      createGraphQlProviderMock.mockReturnValue({
+        listTools: () =>
+          new ResultAsync(Promise.resolve(errResult({ kind: "connect-failed", cause: "boom" }))),
+        callTool: vi.fn(),
+        close: closeMock,
+      })
+
+      const repos = await makeRepos()
+      const platformId = newPlatformId()
+      await repos.platforms.create({
+        id: platformId,
+        kind: "graphql",
+        displayName: "GraphQL Source",
+        graphql: { endpoint: "https://example.com/graphql" },
+      })
+
+      const result = await probeSurface({ platformId: String(platformId) })
+      expect(result.status).toBe("error")
+      expect(closeMock).toHaveBeenCalledTimes(1)
     })
   })
 })

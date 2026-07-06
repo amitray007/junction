@@ -8,6 +8,7 @@
 import { createServerFn } from "@tanstack/react-start"
 import { getRequest } from "@tanstack/react-start/server"
 import {
+  readAppDetail,
   readApps,
   readCredentials,
   readDashboard,
@@ -17,11 +18,12 @@ import {
   readSettings,
   readSystemInfo,
 } from "./data.server.js"
-import { assertLocalHost } from "./fn-guards.server.js"
+import { assertLocalHost, requireString } from "./fn-guards.server.js"
 
 // Re-export types so route files can annotate useLoaderData() without a
 // direct import from data.server.ts (which is server-only by convention).
 export type {
+  AppDetail,
   AppGroupMeta,
   AppMeta,
   AppsData,
@@ -33,6 +35,8 @@ export type {
   ProfileMeta,
   SettingsData,
   SourceMeta,
+  SurfaceConnection,
+  SurfaceView,
   SystemInfo,
 } from "./data.server.js"
 
@@ -61,6 +65,19 @@ export const getApps = createServerFn({ method: "GET" }).handler(async () => {
   assertLocalHost()
   return readApps()
 })
+
+// App detail (increment 30.10) — the surface-first /app/:id capability view.
+// GET-with-param, same convention as platform-mutations.functions.ts's
+// getPlatformDetailFn: a pure validator + assertLocalHost() + the server helper.
+export const getAppDetail = createServerFn({ method: "GET" })
+  .validator((raw: unknown) => {
+    const d = raw as Record<string, unknown>
+    return { id: requireString(d.id, "id") }
+  })
+  .handler(async ({ data }) => {
+    assertLocalHost()
+    return readAppDetail(data.id)
+  })
 
 // The catalog is pure data (no I/O) — readOAuthProviders is synchronous, but
 // the server-fn wrapper stays async for consistency with the rest of this file.

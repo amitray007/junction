@@ -35,6 +35,7 @@ const webDir = join(__dirname, "..", "packages", "web")
     "@junction/mcp-client",
     "@junction/openapi-client",
     "@junction/graphql-client",
+    "@junction/http-client",
   ]
   const probe = RUNTIME_LAZY_DEPS.map((d) => `await import(${JSON.stringify(d)})`).join(";")
   const res = spawnSync(process.execPath, ["--input-type=module", "-e", probe], {

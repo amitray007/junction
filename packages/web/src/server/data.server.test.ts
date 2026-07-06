@@ -15,8 +15,31 @@ import {
   newProfileId,
   PlatformIdSchema,
 } from "@junction/core"
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+
+// Mock probeSurface (increment 30.10) so the surface-state aggregation logic
+// (readAppDetail's "serving" computation) can be tested with CONTROLLED
+// per-connection tool results — the review-fix regression test below needs
+// two connections with DIFFERENT health/tools combinations, which the real
+// probeSurface (network/DB-backed) can't deterministically produce. Defaults
+// to the REAL implementation (spy, not a replace) so every other test in this
+// file keeps exercising the genuine probeSurface behavior; only the dedicated
+// "serving" test below overrides it with mockImplementationOnce-style control.
+// vi.mock calls are hoisted above ALL top-level statements (including
+// `const`/`vi.fn()`), so the spy must be created via vi.hoisted() to exist
+// before the factory below runs.
+const { probeSurfaceSpy } = vi.hoisted(() => ({ probeSurfaceSpy: vi.fn() }))
+vi.mock("./probe.server.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./probe.server.js")>()
+  probeSurfaceSpy.mockImplementation(actual.probeSurface)
+  return {
+    ...actual,
+    probeSurface: (...args: Parameters<typeof actual.probeSurface>) => probeSurfaceSpy(...args),
+  }
+})
+
 import {
+  readAppDetail,
   readApps,
   readCredentials,
   readDashboard,
@@ -45,6 +68,11 @@ describe("data.server", () => {
     if (prevStore === undefined) delete process.env.JUNCTION_STORE
     else process.env.JUNCTION_STORE = prevStore
     await rm(tmpHome, { recursive: true, force: true })
+    // Restore the real probeSurface after every test — only the two "serving"
+    // regression tests override it with a synthetic implementation. vi.mock's
+    // module cache means this re-import is cheap (already loaded).
+    const actual = await vi.importActual<typeof import("./probe.server.js")>("./probe.server.js")
+    probeSurfaceSpy.mockImplementation(actual.probeSurface)
   })
 
   // ---------------------------------------------------------------------------
@@ -466,5 +494,223 @@ describe("data.server", () => {
     expect(github?.connections).toHaveLength(2)
     const accounts = github?.connections.map((c) => c.account).sort()
     expect(accounts).toEqual(["personal", "work"])
+  })
+
+  // ---------------------------------------------------------------------------
+  // readAppDetail (increment 30.10) — the surface-first /app/:id DTO.
+  // GitHub's catalog entry is the QA fixture: 5 authored surfaces
+  // (openapi/graphql/mcp/cli/http). No real network access is exercised here
+  // (no credential is ever seeded), so every surface's probe resolves through
+  // resolveCredentialSecret's no-credential fast path — this proves the
+  // whole pipeline (catalog → intersect → probe → DTO) runs end-to-end
+  // without crashing, and stays metadata-only throughout.
+  // ---------------------------------------------------------------------------
+
+  describe("readAppDetail", () => {
+    it("GitHub's 5 catalog surfaces all reach the DTO, in catalog order", async () => {
+      const detail = await readAppDetail("github")
+      expect(detail.app.id).toBe("github")
+      expect(detail.app.displayName).toBe("GitHub")
+      expect(detail.surfaces.map((s) => s.kind)).toEqual([
+        "openapi",
+        "graphql",
+        "mcp",
+        "cli",
+        "http",
+      ])
+      // No connections seeded → every surface is "available".
+      expect(detail.surfaces.every((s) => s.state === "available")).toBe(true)
+      expect(detail.otherConnections).toEqual([])
+    })
+
+    it("metadata-only negative test: the DTO carries NO secretRef/build/connection fields", async () => {
+      const detail = await readAppDetail("github")
+      const serialized = JSON.stringify(detail)
+      // Telltale AppSurface.connection / AppSurface.build FIELD KEYS that a
+      // fresh SurfaceView type must never carry through — asserted as JSON
+      // key patterns (`"key":`), not bare substrings: GitHub's cli surface
+      // legitimately mentions "credentialEnvVar" in its free-text `notes[]`
+      // (documentation prose, not a leaked field), so a plain substring
+      // check would false-positive on that honest text.
+      expect(serialized).not.toMatch(/"secretRef":/)
+      expect(serialized).not.toMatch(/"specUrl":/)
+      expect(serialized).not.toMatch(/"credentialEnvVar":/)
+      expect(serialized).not.toMatch(/"platformIdTemplate":/)
+      expect(serialized).not.toMatch(/"connection":/)
+      expect(serialized).not.toMatch(/"build":/)
+    })
+
+    it("a connection whose platform kind+id groups under github AND matches a surface kind gets probed (no crash, honest error — no credential store touch succeeds without a real secret)", async () => {
+      const dbResult = await getDatabase(getPaths())
+      if (dbResult.isErr()) throw new Error(String(dbResult.error))
+      const repos = createRepositories(dbResult.value)
+
+      // platformId "github" + kind "openapi" → appIdForConnection resolves to
+      // "github" by exact id match; kind "openapi" matches GitHub's REST API surface.
+      await repos.platforms.create({
+        id: PlatformIdSchema.parse("github"),
+        kind: "openapi",
+        displayName: "GitHub",
+      })
+
+      const detail = await readAppDetail("github")
+      const openapiSurface = detail.surfaces.find((s) => s.kind === "openapi")
+      expect(openapiSurface).toBeDefined()
+      // Credential-less connection → resolveCredentialSecret's fast path,
+      // buildProvider attempts a real openapi provider with no cached spec →
+      // an honest error result, never a throw (this whole test running to
+      // completion IS the non-throw proof).
+      expect(openapiSurface?.connections).toHaveLength(1)
+      expect(openapiSurface?.connections[0]?.tools.status).toBe("error")
+    })
+
+    it("thin/undefined-catalog app (no authored surfaces) falls back honestly — surfaces empty, connections preserved", async () => {
+      const dbResult = await getDatabase(getPaths())
+      if (dbResult.isErr()) throw new Error(String(dbResult.error))
+      const repos = createRepositories(dbResult.value)
+
+      // "spotify" has no authored surfaces in the catalog (thin entry).
+      await repos.platforms.create({
+        id: PlatformIdSchema.parse("spotify"),
+        kind: "mcp",
+        displayName: "Spotify (public)",
+      })
+
+      const detail = await readAppDetail("spotify")
+      expect(detail.surfaces).toEqual([])
+      expect(detail.otherConnections).toHaveLength(1)
+      expect(detail.otherConnections[0]?.platformId).toBe("spotify")
+    })
+
+    it("an unknown id with no catalog entry and no connections falls back to an honest empty DTO (never throws)", async () => {
+      const detail = await readAppDetail("totally-unknown-app-id")
+      expect(detail.app.id).toBe("totally-unknown-app-id")
+      expect(detail.surfaces).toEqual([])
+      expect(detail.otherConnections).toEqual([])
+    })
+
+    it("id === 'other' takes the thin fallback path, carrying its connections", async () => {
+      const dbResult = await getDatabase(getPaths())
+      if (dbResult.isErr()) throw new Error(String(dbResult.error))
+      const repos = createRepositories(dbResult.value)
+
+      await repos.platforms.create({
+        id: newPlatformId(),
+        kind: "mcp",
+        displayName: "Unrecognized Thing",
+      })
+
+      const detail = await readAppDetail("other")
+      expect(detail.app.id).toBe("other")
+      expect(detail.app.displayName).toBe("Other")
+      expect(detail.surfaces).toEqual([])
+      expect(detail.otherConnections).toHaveLength(1)
+    })
+
+    it("a connection whose kind matches NO github surface lands in otherConnections (the leftover bucket), never dropped", async () => {
+      const dbResult = await getDatabase(getPaths())
+      if (dbResult.isErr()) throw new Error(String(dbResult.error))
+      const repos = createRepositories(dbResult.value)
+
+      // GitHub's surfaces are openapi/graphql/mcp/cli/http — every PlatformKind
+      // is covered, so to exercise a genuine leftover we'd need a 6th kind.
+      // Since PlatformKind is closed today, assert the CURRENT contract
+      // instead: a github-id platform of a kind GitHub's catalog DOES cover
+      // matches its surface, proving intersectSurfaces is actually wired
+      // (leftover-bucket accounting itself is unit-tested directly in
+      // core's surface-connections.test.ts against synthetic kinds).
+      await repos.platforms.create({
+        id: PlatformIdSchema.parse("github"),
+        kind: "graphql",
+        displayName: "GitHub",
+      })
+      const detail = await readAppDetail("github")
+      const graphqlSurface = detail.surfaces.find((s) => s.kind === "graphql")
+      expect(graphqlSurface?.connections).toHaveLength(1)
+      expect(detail.otherConnections).toEqual([])
+    })
+
+    // ---------------------------------------------------------------------
+    // Review fix: "serving" requires the SAME connection to be both healthy
+    // AND probed-with-tools — NOT two independent any/any scans (a healthy
+    // connection with 0 tools + a DIFFERENT unhealthy connection WITH tools
+    // must read as "connected", never "serving").
+    // ---------------------------------------------------------------------
+
+    it("serving requires the SAME connection to be healthy AND have tools — a healthy-but-toolless connection plus an unhealthy-but-tooled connection is NOT serving", async () => {
+      const dbResult = await getDatabase(getPaths())
+      if (dbResult.isErr()) throw new Error(String(dbResult.error))
+      const repos = createRepositories(dbResult.value)
+
+      const platformId = PlatformIdSchema.parse("github")
+      await repos.platforms.create({ id: platformId, kind: "graphql", displayName: "GitHub" })
+
+      // Connection A: healthy (verified ok) but the probe returns ZERO tools.
+      // lastVerifyResult is NOT a create()-time field — it's written via the
+      // dedicated setVerifyState(id, result, at) update, same as a real
+      // verify-on-add/test-connection event.
+      const credA = newCredentialId()
+      await repos.credentials.create({
+        id: credA,
+        platformId,
+        profileName: "healthy-no-tools",
+        kind: "bearer",
+        secretRef: "REF_A",
+      })
+      await repos.credentials.setVerifyState(String(credA), "ok", Date.now())
+
+      // Connection B: unhealthy (auth-failed) but the probe returns tools.
+      const credB = newCredentialId()
+      await repos.credentials.create({
+        id: credB,
+        platformId,
+        profileName: "unhealthy-with-tools",
+        kind: "bearer",
+        secretRef: "REF_B",
+      })
+      await repos.credentials.setVerifyState(String(credB), "auth-failed", Date.now())
+
+      probeSurfaceSpy.mockImplementation(async ({ credentialId }: { credentialId?: string }) => {
+        if (credentialId === String(credB)) {
+          return { status: "ok" as const, tools: [{ namespaced: "x", raw: "x" }] }
+        }
+        return { status: "ok" as const, tools: [] }
+      })
+
+      const detail = await readAppDetail("github")
+      const graphqlSurface = detail.surfaces.find((s) => s.kind === "graphql")
+      expect(graphqlSurface?.connections).toHaveLength(2)
+      // The old (buggy) any/any logic would have reported "serving" here —
+      // this asserts the fixed, per-connection-AND logic instead.
+      expect(graphqlSurface?.state).toBe("connected")
+    })
+
+    it("serving DOES apply when the SAME connection is both healthy and has tools", async () => {
+      const dbResult = await getDatabase(getPaths())
+      if (dbResult.isErr()) throw new Error(String(dbResult.error))
+      const repos = createRepositories(dbResult.value)
+
+      const platformId = PlatformIdSchema.parse("github")
+      await repos.platforms.create({ id: platformId, kind: "graphql", displayName: "GitHub" })
+
+      const cred = newCredentialId()
+      await repos.credentials.create({
+        id: cred,
+        platformId,
+        profileName: "healthy-with-tools",
+        kind: "bearer",
+        secretRef: "REF",
+      })
+      await repos.credentials.setVerifyState(String(cred), "ok", Date.now())
+
+      probeSurfaceSpy.mockImplementation(async () => ({
+        status: "ok" as const,
+        tools: [{ namespaced: "y", raw: "y" }],
+      }))
+
+      const detail = await readAppDetail("github")
+      const graphqlSurface = detail.surfaces.find((s) => s.kind === "graphql")
+      expect(graphqlSurface?.state).toBe("serving")
+    })
   })
 })

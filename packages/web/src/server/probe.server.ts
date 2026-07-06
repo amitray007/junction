@@ -21,11 +21,18 @@ import {
   createProfileProxy,
   createRepositories,
   getPaths,
+  type Platform,
   type Repositories,
   type SourceRef,
   splitNamespacedName,
 } from "@junction/core"
-import { formatUpstreamError, makeResolveProvider } from "@junction/source-runtime"
+import {
+  buildProvider,
+  formatUpstreamError,
+  makeResolveProvider,
+  resolveCredentialSecret,
+  toResolvedSecret,
+} from "@junction/source-runtime"
 
 import { getDb } from "./shared.server.js"
 
@@ -85,7 +92,19 @@ async function buildSingleSourceProxy(repos: Repositories, sourceRef: SourceRef)
 // (namespaced + toolFilter-applied, exactly as `mcp serve` would).
 // ---------------------------------------------------------------------------
 
-export type ProbeToolEntry = { namespaced: string; raw: string; description?: string }
+/**
+ * `params` (increment 30.10) is an optional short summary of a tool's
+ * inputSchema, derived server-side by summarizeParams — NEVER the raw
+ * inputSchema itself (which could carry upstream-authored implementation
+ * detail not meant as a public contract). Additive: absent on every
+ * pre-30.10 caller, present when the caller (probeSurface) computes it.
+ */
+export type ProbeToolEntry = {
+  namespaced: string
+  raw: string
+  description?: string
+  params?: string
+}
 
 export type ProbeSourceResult =
   | { ok: true; namespace: string; tools: ProbeToolEntry[] }
@@ -169,5 +188,139 @@ export async function callSourceTool(input: {
     ok: true,
     content: result.value.content as JsonValue,
     isError: result.value.isError ?? false,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// probeSurface — list a catalog surface's tools for ONE (platform, credential)
+// connection, PLATFORM-scoped (increment 30.10 — no profile/namespace exists
+// yet for a surface the user hasn't wired into a profile).
+//
+// DECIDED path (method file §3c, feasibility-confirmed): build the provider
+// via buildProvider DIRECTLY — NOT createProfileProxy/makeResolveProvider.
+// makeResolveProvider (resolve-provider.ts) hard-restricts to mcp/openapi and
+// silently skips graphql/http/cli — using it here would make 3 of GitHub's 5
+// surfaces return an empty tool list with no error, which is worse than an
+// honest "couldn't list tools". buildProvider handles all 5 kinds.
+//
+// Exact precedent: packages/cli/src/commands/debug.ts's runProbe (resolve
+// secret → buildProvider → listTools → close in finally). This mirrors that,
+// returning a value instead of writing to stdout/stderr.
+// ---------------------------------------------------------------------------
+
+export type ToolListResult =
+  | { status: "ok"; tools: ProbeToolEntry[] }
+  | { status: "error"; reason: string }
+
+/**
+ * Summarize a JSON-Schema-shaped inputSchema into a short param list for
+ * display — NEVER the raw schema (§3c format rule, doc-review M2).
+ * Required params first (each `*`-suffixed), then optional, comma-joined.
+ * Capped at ~8 total with a `…` overflow marker. Object/array-typed params
+ * are named only (no nested expansion). Returns undefined when the schema
+ * has no `properties` to summarize.
+ */
+export function summarizeParams(inputSchema: object): string | undefined {
+  const schema = inputSchema as { properties?: unknown; required?: unknown }
+  if (typeof schema.properties !== "object" || schema.properties === null) return undefined
+
+  const propertyNames = Object.keys(schema.properties as Record<string, unknown>)
+  if (propertyNames.length === 0) return undefined
+
+  const required = new Set(
+    Array.isArray(schema.required)
+      ? schema.required.filter((r): r is string => typeof r === "string")
+      : [],
+  )
+
+  const requiredNames = propertyNames.filter((n) => required.has(n))
+  const optionalNames = propertyNames.filter((n) => !required.has(n))
+  const ordered = [...requiredNames, ...optionalNames]
+
+  const CAP = 8
+  const shown = ordered.slice(0, CAP).map((n) => (required.has(n) ? `${n}*` : n))
+  if (ordered.length > CAP) shown.push("…")
+
+  return shown.join(", ")
+}
+
+/** Look up a platform row by id, or a clean ToolListResult error — never throws. */
+async function lookupPlatform(
+  repos: Repositories,
+  platformId: string,
+): Promise<{ ok: true; platform: Platform } | { ok: false; result: ToolListResult }> {
+  const platformResult = await repos.platforms.get(platformId)
+  if (platformResult.isErr()) {
+    return { ok: false, result: { status: "error", reason: "platform not found" } }
+  }
+  return { ok: true, platform: platformResult.value }
+}
+
+export async function probeSurface(input: {
+  platformId: string
+  credentialId?: string
+}): Promise<ToolListResult> {
+  const db = await getDb()
+  if (db === null) return { status: "error", reason: "database unavailable" }
+  const repos = createRepositories(db)
+
+  const platformLookup = await lookupPlatform(repos, input.platformId)
+  if (!platformLookup.ok) return platformLookup.result
+  const { platform } = platformLookup
+
+  const paths = getPaths()
+
+  // Two graceful arms (method file §3c): a lost/cleared secret resolves
+  // {secret: null} (no throw); a store/db failure resolves an Err — both map
+  // to an honest error result here, never a throw.
+  //
+  // DELIBERATE DIVERGENCE from §3c's literal text: a connection with NO
+  // credentialId (input.credentialId undefined) is NOT special-cased into an
+  // error/"not connected" here — it flows through resolveCredentialSecret's
+  // no-credential fast path (secret: null) and buildProvider is still
+  // attempted. This is correct, not an oversight: a credential-less
+  // connection represents a genuinely PUBLIC/no-auth surface (e.g. a public
+  // GraphQL API), which can have real, listable tools — reporting it as an
+  // error would be dishonest. Review-accepted (2026-07-06).
+  const secretResult = await resolveCredentialSecret(repos, paths, input.credentialId)
+  if (secretResult.isErr()) {
+    const reason =
+      secretResult.error.kind === "db"
+        ? "database unavailable"
+        : "credential store unavailable — couldn't resolve the secret"
+    return { status: "error", reason }
+  }
+  const { secret, kind } = secretResult.value
+
+  const providerResult = await buildProvider(platform, toResolvedSecret(secret, kind), paths)
+  if (providerResult.isErr()) {
+    return { status: "error", reason: formatUpstreamError(providerResult.error) }
+  }
+  const provider = providerResult.value
+
+  try {
+    const toolsResult = await provider.listTools()
+    if (toolsResult.isErr()) {
+      return { status: "error", reason: formatUpstreamError(toolsResult.error) }
+    }
+
+    // Raw, un-namespaced names — no profile namespace exists on this path.
+    const tools: ProbeToolEntry[] = toolsResult.value.map((t) => {
+      const params = summarizeParams(t.inputSchema)
+      return {
+        namespaced: t.name,
+        raw: t.name,
+        ...(t.description !== undefined ? { description: t.description } : {}),
+        ...(params !== undefined ? { params } : {}),
+      }
+    })
+
+    // An empty-but-ok tool list is the HONEST "no tools available" case (e.g.
+    // GitHub's http surface) — never converted into an error here.
+    return { status: "ok", tools }
+  } finally {
+    // Always close the provider — a leaked connection/timer is the inc-11
+    // hang gotcha (mandatory, mirrors cli debug.ts's runProbe).
+    await provider.close()
   }
 }

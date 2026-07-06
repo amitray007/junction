@@ -18,12 +18,14 @@ import { defineConfig } from "vite"
 // `@junction/platform-orchestration` depends on @junction/core (same native chain) plus
 // the openapi/graphql spec parsers — also server-only (reached only via *.server.ts).
 // `@junction/source-runtime` + the provider libs it lazy-imports (mcp-client / openapi-client /
-// graphql-client) are reached ONLY via probe.server.ts (the inc-28 probe/call surface) — they
-// pull the same native/parser chain, so they are server-only too. They MUST be direct web deps
-// (package.json) AND externalized here: buildProvider does `await import("@junction/openapi-client")`
-// at runtime, which under pnpm's isolated node_modules only resolves if web depends on them
-// directly (a transitive dep of source-runtime is NOT resolvable from web's context) — the bug
-// that made every OpenAPI/GraphQL probe silently return an empty tool list (inc 28 QA).
+// graphql-client / http-client) are reached ONLY via probe.server.ts (the inc-28 probe/call
+// surface, extended inc-30.10 to probeSurface) — they pull the same native/parser chain, so
+// they are server-only too. They MUST be direct web deps (package.json) AND externalized here:
+// buildProvider does `await import("@junction/openapi-client")` at runtime, which under pnpm's
+// isolated node_modules only resolves if web depends on them directly (a transitive dep of
+// source-runtime is NOT resolvable from web's context) — the bug that made every OpenAPI/GraphQL
+// probe silently return an empty tool list (inc 28 QA). `@junction/http-client` joined this list
+// in inc 30.10 once probeSurface's buildProvider-direct path made the http surface kind reachable.
 const SERVER_ONLY = [
   "better-sqlite3",
   "@napi-rs/keyring",
@@ -33,6 +35,7 @@ const SERVER_ONLY = [
   "@junction/mcp-client",
   "@junction/openapi-client",
   "@junction/graphql-client",
+  "@junction/http-client",
   "@scalar/openapi-parser",
   "graphql",
 ]

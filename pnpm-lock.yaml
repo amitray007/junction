@@ -279,6 +279,9 @@ importers:
       '@junction/graphql-client':
         specifier: workspace:*
         version: link:../graphql-client
+      '@junction/http-client':
+        specifier: workspace:*
+        version: link:../http-client
       '@junction/mcp-client':
         specifier: workspace:*
         version: link:../mcp/client

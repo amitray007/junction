@@ -120,7 +120,7 @@ vi.mock("../server/data.functions.js", () => ({
   getApps: vi.fn(),
 }))
 
-const { Route } = await import("./app.js")
+const { Route } = await import("./app.index.js")
 // biome-ignore lint/suspicious/noExplicitAny: test utility — internal options shape
 const AppsIndexPage = (Route as any).options.component as React.FC
 
