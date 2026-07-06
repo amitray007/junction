@@ -7,6 +7,7 @@ import {
   type AppAuth,
   type AppDefinition,
   type AppHelp,
+  type AppSurface,
   compatibleCredentialKinds,
   createCredentialStore,
   createRepositories,
@@ -498,6 +499,21 @@ export async function readApps(): Promise<AppsData> {
 
 export type SurfaceConnection = ConnectionMeta & { tools: ToolListResult }
 
+/**
+ * Metadata-only "can this be one-click-connected" facet (increment 30.11) —
+ * NEVER `build`/`connection` (the catalog recipe + secrets stay server-side;
+ * see build-recipe.ts's ConnectPlanPreview, which the connect dialog fetches
+ * separately once the user picks a mode). `authModes` mirrors `surface.auth`'s
+ * modes; `verifiable` mirrors build-recipe.ts's isVerifiable(surface) rule
+ * EXACTLY (duplicated here, not imported — that function is internal to
+ * build-recipe.ts / Slice A, which this slice must not modify; the rule is a
+ * one-line `surface.verify` check, low duplication risk).
+ */
+export type SurfaceConnectable = {
+  authModes: AppAuth["mode"][]
+  verifiable: boolean
+}
+
 export type SurfaceView = {
   kind: string
   displayName: string
@@ -507,6 +523,33 @@ export type SurfaceView = {
   notes?: string[]
   state: "available" | "connected" | "serving"
   connections: SurfaceConnection[]
+  /** Present only for a catalog-authored surface (never on the "other"/thin fallback). */
+  connectable?: SurfaceConnectable
+}
+
+/**
+ * Mirrors build-recipe.ts's isVerifiable(surface) — a surface is verifiable
+ * iff its declared VerifyHint resolves to a real verify primitive on its
+ * connection template. Kept in sync deliberately (see SurfaceConnectable's
+ * doc comment); if a 3rd call site appears, promote to a shared export.
+ */
+function surfaceIsVerifiable(surface: AppSurface): boolean {
+  const verify = surface.verify
+  if (verify === undefined) return false
+  switch (verify.kind) {
+    case "openapi":
+      return (
+        surface.connection.kind === "openapi" && surface.connection.verifyOperationId !== undefined
+      )
+    case "mcp":
+      return surface.connection.kind === "mcp"
+    case "graphql":
+      return surface.connection.kind === "graphql"
+    case "none":
+      return false
+    default:
+      return false
+  }
 }
 
 export type AppDetail = {
@@ -598,6 +641,18 @@ export async function readAppDetail(id: string): Promise<AppDetail> {
         ...(surface?.notes !== undefined ? { notes: surface.notes } : {}),
         state,
         connections: surfaceConnectionsWithTools,
+        // Metadata-only connect facet (increment 30.11) — undefined only if
+        // the catalog surface itself somehow can't be found (defensive; every
+        // `kind` here came FROM entry.surfaces, so this is always defined in
+        // practice), matching the optional field's contract.
+        ...(surface !== undefined
+          ? {
+              connectable: {
+                authModes: surface.auth.map((a) => a.mode),
+                verifiable: surfaceIsVerifiable(surface),
+              },
+            }
+          : {}),
       }
     }),
   )
