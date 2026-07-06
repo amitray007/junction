@@ -33,7 +33,8 @@ Numbered as **30.x sub-increments** (consistent with 30.5/30.7), landing before
 | # | Increment | Depends on | Rough scope | Backend? |
 |---|---|---|---|---|
 | **30.8** | **App catalog schema + one hand-authored app** | 30.7 | The catalog *shape* proven on ONE real app end-to-end | core (data) + web (render) |
-| **30.9** | **integrations.sh importer (dev-time)** | 30.8 | The authoring accelerator + apis.guru top-up | dev tooling only |
+| **30.9** | **integrations.sh importer (dev-time)** | 30.8 | The authoring accelerator (integrations.sh → draft); REST defaults to `http` | dev tooling only |
+| **30.9.5** | **apis.guru spec-URL top-up + Nango license review** | 30.9 | Upgrade importer `http` surfaces → `openapi` via apis.guru (CC0); Nango Elastic-2.0-vs-AGPL gate | dev tooling only |
 | **30.10** | **Surface-first `/app/:id` page** | 30.8 | Render surfaces + tools + catalog details; empty honest | web (read/display) |
 | **30.11** | **Catalog-driven one-click connect** | 30.8, 30.10 | Build recipe → Platform+Credential, verify-on-add gate | web + orchestration |
 | **30.12** | **Multi-surface connect / add-a-surface** | 30.11 | `<appId>-<kind>` grouping; "add a surface" (ex-"change method") | core + web |
@@ -83,8 +84,10 @@ Numbered as **30.x sub-increments** (consistent with 30.5/30.7), landing before
   `GET integrations.sh/api/{domain}/surface` → drafts a catalog entry (fields
   tagged `detected`/`discovered`) → writes a draft for human review. Off the
   runtime path; never shipped/imported at runtime.
-- **apis.guru top-up** for the OpenAPI spec URL the payload omits.
-- **Nango license review** (Elastic-2.0 vs AGPL) — decide before ANY Nango data use.
+- **apis.guru top-up + Nango license review → split to inc 30.9.5** (orchestrator
+  decision 2026-07-06 — keeps 30.9 focused on the integrations.sh→draft mapping;
+  spec-URL enrichment + the Nango legal gate are a separate follow-up). 30.9 defaults
+  a REST surface to `http` and never fabricates a specUrl.
 - **Proof:** re-derive the GitHub + Stripe drafts (matches the 2026-07-05 worked
   examples: 15/19 facts correct, 0 wrong); the human-review gate is documented.
 - **Reviewers:** `junction-package-boundary` (no runtime dep on integrations.sh),

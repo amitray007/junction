@@ -20,6 +20,7 @@
   "scripts": {
     "build": "tsdown && node --input-type=module -e \"import{cpSync}from'node:fs';cpSync('src/db/migrations','dist/migrations',{recursive:true})\"",
     "gen:catalog": "node scripts/gen-catalog.mjs",
+    "import:app": "node scripts/import-from-integrations.mjs",
     "catalog:check": "pnpm run build && node scripts/gen-catalog.mjs && git diff --exit-code -- src/apps/catalog/catalog.generated.ts"
   },
   "dependencies": {

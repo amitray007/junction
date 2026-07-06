@@ -1,0 +1,226 @@
+{
+  "version": 3,
+  "domain": "stripe.com",
+  "detect": {
+    "domain": "stripe.com",
+    "found": ["llms.txt"],
+    "probed": [
+      "integrations.json",
+      "llms.txt",
+      "api-catalog",
+      "openapi-schema",
+      "mcp-server-card",
+      "oauth-protected-resource",
+      "agent-card",
+      "agent-skills"
+    ],
+    "integrationsJson": null,
+    "mcp": [],
+    "llmsTxt": true,
+    "errors": []
+  },
+  "summary": "Stripe exposes a REST HTTP API at `https://api.stripe.com`, an OAuth-protected MCP server at `https://mcp.stripe.com`, and the `stripe` CLI.",
+  "description": "Stripe provides online payment processing, billing, payouts, and related financial infrastructure for internet businesses. Its platform also includes tools for developers to manage payments, subscriptions, connected accounts, and other commerce workflows.",
+  "discoveredAt": "2026-07-03T01:32:00.703Z",
+  "credentials": {
+    "stripe_api_key": {
+      "type": "api_key",
+      "label": "Stripe API key",
+      "generateUrl": "https://dashboard.stripe.com/test/apikeys",
+      "setup": "Create or sign in to your Stripe account, then open the [API keys page](https://dashboard.stripe.com/test/apikeys) in the Developers Dashboard to create, reveal, rotate, or delete keys. Stripe documents account-level secret keys (`sk_...`), restricted keys (`rk_...`), publishable keys (`pk_...`), and organization keys (`sk_org_...`) on the [API keys guide](https://docs.stripe.com/keys). For server-side integrations, use a restricted or secret key; for Connect requests on behalf of a connected account, also send the `Stripe-Account` header when needed."
+    },
+    "stripe_mcp_oauth": {
+      "type": "oauth2",
+      "label": "Stripe MCP OAuth consent",
+      "setup": "Configure your MCP client to connect to `https://mcp.stripe.com`. Per Stripe’s [MCP docs](https://docs.stripe.com/mcp), the server uses OAuth to connect MCP clients according to the MCP spec; the MCP client handles the OAuth flow and the user approves access in the browser. After installation, you can manage MCP client sessions in your Stripe Dashboard settings."
+    },
+    "stripe_cli_login": {
+      "type": "api_key",
+      "label": "Stripe CLI-generated API key",
+      "generateUrl": "https://docs.stripe.com/cli/login",
+      "setup": "Install the CLI, then run `stripe login`. Stripe redirects you to the Dashboard to approve CLI access, and after confirmation it creates a new API key for the CLI and stores the login credentials in `~/.config/stripe/config.toml`. As non-interactive fallbacks, Stripe also supports `stripe login --interactive`, `stripe config --set test_mode_api_key ...`, the global `--api-key` flag, and environment variables as described in the [CLI login](https://docs.stripe.com/cli/login) and [CLI API key](https://docs.stripe.com/cli/api_keys) docs."
+    }
+  },
+  "surfaces": [
+    {
+      "type": "mcp",
+      "url": "https://mcp.stripe.com",
+      "transports": ["streamable-http"],
+      "slug": "stripe-mcp-server",
+      "name": "Stripe MCP server",
+      "docs": "https://docs.stripe.com/mcp",
+      "basis": {
+        "via": "detected",
+        "signal": "mcp:initialize",
+        "verifiedAt": "2026-07-03T01:32:00.703Z"
+      },
+      "auth": {
+        "status": "required",
+        "entries": [
+          {
+            "use": [
+              {
+                "id": "stripe_mcp_oauth",
+                "mechanics": {
+                  "source": "well-known"
+                }
+              }
+            ],
+            "basis": {
+              "via": "discovered",
+              "evidence": ["https://docs.stripe.com/mcp"]
+            }
+          },
+          {
+            "use": [
+              {
+                "id": "stripe_api_key",
+                "mechanics": {
+                  "source": "http",
+                  "in": "header",
+                  "headerName": "Authorization",
+                  "scheme": "Bearer"
+                }
+              }
+            ],
+            "basis": {
+              "via": "discovered",
+              "evidence": ["https://docs.stripe.com/mcp"]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "cli",
+      "packages": [
+        {
+          "registryType": "homebrew",
+          "identifier": "stripe/stripe-cli/stripe"
+        },
+        {
+          "registryType": "npm",
+          "identifier": "@stripe/cli",
+          "runtimeHint": "node"
+        }
+      ],
+      "command": "stripe",
+      "slug": "stripe-cli",
+      "name": "Stripe CLI",
+      "docs": "https://docs.stripe.com/stripe-cli",
+      "basis": {
+        "via": "discovered",
+        "evidence": [
+          "https://docs.stripe.com/stripe-cli",
+          "https://docs.stripe.com/stripe-cli/install",
+          "https://docs.stripe.com/cli/login",
+          "https://docs.stripe.com/cli/api_keys",
+          "https://docs.stripe.com/stripe-cli/keys"
+        ]
+      },
+      "auth": {
+        "status": "required",
+        "entries": [
+          {
+            "use": [
+              {
+                "id": "stripe_cli_login",
+                "mechanics": {
+                  "source": "cli",
+                  "command": "stripe login"
+                }
+              }
+            ],
+            "basis": {
+              "via": "discovered",
+              "evidence": [
+                "https://docs.stripe.com/cli/login",
+                "https://docs.stripe.com/stripe-cli/install",
+                "https://docs.stripe.com/stripe-cli/keys"
+              ]
+            }
+          },
+          {
+            "use": [
+              {
+                "id": "stripe_api_key",
+                "mechanics": {
+                  "source": "cli",
+                  "command": "stripe login --interactive"
+                }
+              }
+            ],
+            "basis": {
+              "via": "discovered",
+              "evidence": [
+                "https://docs.stripe.com/cli/login",
+                "https://docs.stripe.com/stripe-cli/install"
+              ]
+            }
+          },
+          {
+            "use": [
+              {
+                "id": "stripe_api_key",
+                "mechanics": {
+                  "source": "cli",
+                  "command": "stripe login --api-key",
+                  "env": ["STRIPE_API_KEY"]
+                }
+              }
+            ],
+            "basis": {
+              "via": "discovered",
+              "evidence": [
+                "https://docs.stripe.com/stripe-cli/install",
+                "https://docs.stripe.com/cli/api_keys",
+                "https://docs.stripe.com/stripe-cli/keys"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "http",
+      "url": "https://api.stripe.com",
+      "slug": "stripe-api",
+      "name": "Stripe API",
+      "docs": "https://docs.stripe.com/api",
+      "basis": {
+        "via": "discovered",
+        "evidence": [
+          "https://docs.stripe.com/api",
+          "https://docs.stripe.com/keys",
+          "https://docs.stripe.com/keys/restricted-api-keys"
+        ]
+      },
+      "auth": {
+        "status": "required",
+        "entries": [
+          {
+            "use": [
+              {
+                "id": "stripe_api_key",
+                "mechanics": {
+                  "source": "http",
+                  "in": "header",
+                  "headerName": "Authorization",
+                  "scheme": "Bearer"
+                }
+              }
+            ],
+            "basis": {
+              "via": "discovered",
+              "evidence": [
+                "https://docs.stripe.com/keys",
+                "https://docs.stripe.com/keys/restricted-api-keys"
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "usedLlm": true
+}
