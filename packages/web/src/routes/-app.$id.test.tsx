@@ -10,7 +10,7 @@
 // menu's trigger presence/attributes are verified here; the full open→choose
 // path is covered by the junction-web-verify browser pass (real Chromium).
 
-import { cleanup, render, screen } from "@testing-library/react"
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import type React from "react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { AppDetail, ConnectionMeta, SurfaceView } from "../server/data.functions.js"
@@ -107,6 +107,38 @@ const cliSurfaceError: SurfaceView = {
   ],
 }
 
+// ── Connect (increment 30.11) fixtures — unconnected, connectable surfaces ──
+
+const connectableTokenSurface: SurfaceView = {
+  kind: "openapi",
+  displayName: "REST API",
+  auth: [{ mode: "oauth2", providerId: "github" }, { mode: "token" }],
+  state: "available",
+  connections: [],
+  connectable: { authModes: ["oauth2", "token"], verifiable: true },
+}
+
+const connectableHttpSurface: SurfaceView = {
+  kind: "http",
+  displayName: "Custom REST request",
+  auth: [{ mode: "token" }],
+  state: "available",
+  connections: [],
+  connectable: { authModes: ["token"], verifiable: false },
+}
+
+const connectableLoaderData: AppDetail = {
+  app: githubApp,
+  surfaces: [connectableTokenSurface],
+  otherConnections: [],
+}
+
+const connectableHttpLoaderData: AppDetail = {
+  app: githubApp,
+  surfaces: [connectableHttpSurface],
+  otherConnections: [],
+}
+
 const emptyLoaderData: AppDetail = { app: githubApp, surfaces: [], otherConnections: [] }
 const emptySpotifyLoaderData: AppDetail = { app: spotifyApp, surfaces: [], otherConnections: [] }
 const otherLoaderData: AppDetail = {
@@ -177,6 +209,11 @@ vi.mock("../server/oauth-connect.functions.js", () => ({
   startReconnectFn: (...args: unknown[]) => mockStartReconnectFn(...args),
 }))
 
+const mockConnectSurfaceFn = vi.fn()
+vi.mock("../server/connect.functions.js", () => ({
+  connectSurfaceFn: (...args: unknown[]) => mockConnectSurfaceFn(...args),
+}))
+
 const { Route } = await import("./app.$id.js")
 // biome-ignore lint/suspicious/noExplicitAny: test utility — internal options shape
 const AppDetailPage = (Route as any).options.component as React.FC
@@ -189,6 +226,7 @@ afterEach(() => {
   mockRenameCredentialFn.mockReset()
   mockRemoveCredentialFn.mockReset()
   mockStartReconnectFn.mockReset()
+  mockConnectSurfaceFn.mockReset()
   mockInvalidate.mockReset().mockResolvedValue(undefined)
 })
 
@@ -320,5 +358,130 @@ describe("AppDetailPage", () => {
     render(<AppDetailPage />)
     expect(screen.getByText("First HTTP Surface")).toBeInTheDocument()
     expect(screen.getByText("Second HTTP Surface")).toBeInTheDocument()
+  })
+
+  // ── Connect (increment 30.11) ───────────────────────────────────────────
+
+  describe("Connect surface dialog", () => {
+    it("renders the Connect button on an unconnected, connectable surface", () => {
+      mockUseLoaderData.mockReturnValue(connectableLoaderData)
+      render(<AppDetailPage />)
+      expect(screen.getByRole("button", { name: /connect github · rest api/i })).toBeInTheDocument()
+    })
+
+    it("does not render a Connect button once the surface has a connection", () => {
+      mockUseLoaderData.mockReturnValue(surfacesLoaderData) // openapiSurfaceServing has 1 connection
+      render(<AppDetailPage />)
+      expect(
+        screen.queryByRole("button", { name: /connect github · rest api/i }),
+      ).not.toBeInTheDocument()
+    })
+
+    it("shows an auth-mode select for a multi-mode surface, defaulting to the token (inline-writable) path", async () => {
+      mockUseLoaderData.mockReturnValue(connectableLoaderData)
+      const { getByRole, getByLabelText } = render(<AppDetailPage />)
+      fireEvent.click(getByRole("button", { name: /connect github · rest api/i }))
+      await waitFor(() => expect(getByRole("dialog")).toBeInTheDocument())
+
+      // Multi-mode surface (oauth2 + token) → the auth-mode Select renders.
+      expect(getByRole("combobox", { name: /auth mode/i })).toBeInTheDocument()
+      // Default mode is the first NON-oauth2 mode (token) so a verifiable
+      // surface opens ready to accept a credential — oauth2's deep-link is
+      // the deferred path, not the default (review fix). Account + secret
+      // fields show; the deep-link note does NOT.
+      expect(getByLabelText("Account")).toBeInTheDocument()
+      expect(getByLabelText("Secret")).toBeInTheDocument()
+      expect(
+        screen.queryByText(/github uses oauth — register an oauth app on the credentials page/i),
+      ).not.toBeInTheDocument()
+    })
+
+    it("shows the not-verifiable honesty note for a non-verifiable, single-mode surface (no auth-mode select)", async () => {
+      mockUseLoaderData.mockReturnValue(connectableHttpLoaderData)
+      const { getByRole, queryByLabelText } = render(<AppDetailPage />)
+      fireEvent.click(getByRole("button", { name: /connect github · custom rest request/i }))
+      await waitFor(() => expect(getByRole("dialog")).toBeInTheDocument())
+
+      // Single offered mode ("token") → no auth-mode Select rendered.
+      expect(queryByLabelText("Auth mode")).not.toBeInTheDocument()
+      expect(
+        screen.getByText(/junction can't automatically verify this surface/i),
+      ).toBeInTheDocument()
+    })
+
+    it("disables Confirm until the secret is non-empty", async () => {
+      mockUseLoaderData.mockReturnValue(connectableHttpLoaderData)
+      const { getByRole, getByLabelText } = render(<AppDetailPage />)
+      fireEvent.click(getByRole("button", { name: /connect github · custom rest request/i }))
+      await waitFor(() => expect(getByRole("dialog")).toBeInTheDocument())
+
+      const confirmBtn = getByRole("button", { name: /^connect$/i })
+      expect(confirmBtn).toBeDisabled()
+
+      fireEvent.change(getByLabelText("Secret"), { target: { value: "a-token" } })
+      expect(confirmBtn).not.toBeDisabled()
+    })
+
+    it("keeps the dialog open with the auth-failed copy on a verifyFailed:auth-failed result", async () => {
+      mockConnectSurfaceFn.mockResolvedValue({ verifyFailed: "auth-failed" })
+      mockUseLoaderData.mockReturnValue(connectableHttpLoaderData)
+      const { getByRole, getByLabelText } = render(<AppDetailPage />)
+      fireEvent.click(getByRole("button", { name: /connect github · custom rest request/i }))
+      await waitFor(() => expect(getByRole("dialog")).toBeInTheDocument())
+
+      fireEvent.change(getByLabelText("Secret"), { target: { value: "bad-token" } })
+      fireEvent.click(getByRole("button", { name: /^connect$/i }))
+
+      await waitFor(() => {
+        expect(
+          screen.getByText(/couldn't verify — authentication failed\. check the token\./i),
+        ).toBeInTheDocument()
+      })
+      expect(getByRole("dialog")).toBeInTheDocument()
+    })
+
+    it("keeps the dialog open with the unreachable copy on a verifyFailed:unreachable result", async () => {
+      mockConnectSurfaceFn.mockResolvedValue({ verifyFailed: "unreachable" })
+      mockUseLoaderData.mockReturnValue(connectableHttpLoaderData)
+      const { getByRole, getByLabelText } = render(<AppDetailPage />)
+      fireEvent.click(getByRole("button", { name: /connect github · custom rest request/i }))
+      await waitFor(() => expect(getByRole("dialog")).toBeInTheDocument())
+
+      fireEvent.change(getByLabelText("Secret"), { target: { value: "some-token" } })
+      fireEvent.click(getByRole("button", { name: /^connect$/i }))
+
+      await waitFor(() => {
+        expect(
+          screen.getByText(
+            /couldn't reach this surface — this may be a catalog\/base-url issue, not your token\./i,
+          ),
+        ).toBeInTheDocument()
+      })
+      expect(getByRole("dialog")).toBeInTheDocument()
+    })
+
+    it("surfaces the platform-kind-conflict message on a conflict result", async () => {
+      mockConnectSurfaceFn.mockResolvedValue({ conflict: { existingKind: "openapi" } })
+      mockUseLoaderData.mockReturnValue(connectableHttpLoaderData)
+      const { getByRole, getByLabelText } = render(<AppDetailPage />)
+      fireEvent.click(getByRole("button", { name: /connect github · custom rest request/i }))
+      await waitFor(() => expect(getByRole("dialog")).toBeInTheDocument())
+
+      fireEvent.change(getByLabelText("Secret"), { target: { value: "some-token" } })
+      fireEvent.click(getByRole("button", { name: /^connect$/i }))
+
+      await waitFor(() => {
+        expect(screen.getByText(/a openapi platform already uses this id/i)).toBeInTheDocument()
+      })
+      expect(getByRole("dialog")).toBeInTheDocument()
+    })
+  })
+
+  // ── Landmark (repeat, per web.md's per-route requirement) ────────────────
+
+  it("has a <main>-reachable heading landmark for the connectable-surface fixture too", () => {
+    mockUseLoaderData.mockReturnValue(connectableLoaderData)
+    render(<AppDetailPage />)
+    expect(screen.getByRole("heading", { level: 1, name: "GitHub" })).toBeInTheDocument()
   })
 })

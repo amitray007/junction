@@ -1,0 +1,37 @@
+[
+  {
+    "name": "get_authenticated_user",
+    "description": "Get the currently authenticated GitHub user (GET /user). A minimal, side-effect-free identity check — also GitHub's connect-time verify probe.",
+    "method": "GET",
+    "path": "/user",
+    "params": []
+  },
+  {
+    "name": "get_repo",
+    "description": "Get a repository by owner and name (GET /repos/{owner}/{repo}).",
+    "method": "GET",
+    "path": "/repos/{owner}/{repo}",
+    "params": [
+      { "name": "owner", "in": "path", "type": "string", "required": true },
+      { "name": "repo", "in": "path", "type": "string", "required": true }
+    ]
+  },
+  {
+    "name": "list_issues",
+    "description": "List issues for a repository (GET /repos/{owner}/{repo}/issues).",
+    "method": "GET",
+    "path": "/repos/{owner}/{repo}/issues",
+    "params": [
+      { "name": "owner", "in": "path", "type": "string", "required": true },
+      { "name": "repo", "in": "path", "type": "string", "required": true },
+      {
+        "name": "state",
+        "in": "query",
+        "type": "enum",
+        "required": false,
+        "enum": ["open", "closed", "all"],
+        "description": "Filter by issue state. Default: open."
+      }
+    ]
+  }
+]

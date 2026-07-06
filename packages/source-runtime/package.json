@@ -19,6 +19,7 @@
     "@junction/http-client": "workspace:*",
     "@junction/mcp-client": "workspace:*",
     "@junction/openapi-client": "workspace:*",
+    "@junction/platform-orchestration": "workspace:*",
     "arctic": "^3.7.0"
   },
   "devDependencies": {

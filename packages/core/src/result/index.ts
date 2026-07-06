@@ -7,4 +7,4 @@
  * neverthrow directly — one swap point if the underlying lib ever changes.
  */
 
-export { err, ok, type Result, ResultAsync } from "neverthrow"
+export { err, errAsync, ok, okAsync, type Result, ResultAsync } from "neverthrow"

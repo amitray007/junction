@@ -35,6 +35,7 @@ export type {
   ProfileMeta,
   SettingsData,
   SourceMeta,
+  SurfaceConnectable,
   SurfaceConnection,
   SurfaceView,
   SystemInfo,
