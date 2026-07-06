@@ -1,0 +1,11 @@
+{
+  "id": "doppler",
+  "displayName": "Doppler",
+  "supportedKinds": ["cli"],
+  "auth": [
+    {
+      "mode": "token"
+    }
+  ],
+  "setupHints": ["`doppler secrets` prints secret values — treat reads as sensitive."]
+}

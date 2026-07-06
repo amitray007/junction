@@ -1,0 +1,10 @@
+{
+  "id": "monday",
+  "displayName": "monday.com",
+  "supportedKinds": ["graphql"],
+  "auth": [
+    {
+      "mode": "token"
+    }
+  ]
+}

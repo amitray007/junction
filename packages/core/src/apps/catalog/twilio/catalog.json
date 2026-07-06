@@ -1,0 +1,12 @@
+{
+  "id": "twilio",
+  "displayName": "Twilio",
+  "supportedKinds": ["openapi"],
+  "auth": [
+    {
+      "mode": "token"
+    }
+  ],
+  "aliases": ["twilio-accounts"],
+  "iconSlug": "twilio"
+}

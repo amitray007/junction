@@ -1,0 +1,11 @@
+{
+  "id": "openai",
+  "displayName": "OpenAI",
+  "supportedKinds": ["openapi"],
+  "auth": [
+    {
+      "mode": "token"
+    }
+  ],
+  "iconSlug": "openai"
+}

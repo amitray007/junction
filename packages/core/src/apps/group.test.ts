@@ -210,6 +210,33 @@ describe("groupByApp", () => {
     expect(groups.some((g) => g.connections.some((c) => c.account === "orphan"))).toBe(false)
   })
 
+  it("SURFACE-LESS (30.8): Google (oauth2 + openapi, zero surfaces[]) still groups via its oauth2 providerId", () => {
+    // The design doc's motivating bug (§1) — Google ships oauth2 + supportedKinds
+    // ["openapi"] but no ready surface in THIS increment (surfaces are optional;
+    // only GitHub is fully authored). Proof-of-done: a surface-less catalog
+    // entry must still resolve through groupByApp exactly like a surfaced one —
+    // grouping reads app-level auth[] only, never `surfaces`.
+    const groups = groupByApp({
+      platforms: [{ id: "some-google-platform", kind: "openapi", displayName: "My Google" }],
+      credentials: [
+        { platformId: "some-google-platform", account: "work", oauthProviderId: "google" },
+      ],
+    })
+    const googleGroup = groups.find((g) => g.appId === "google")
+    expect(googleGroup).toBeDefined()
+    expect(googleGroup?.connections).toHaveLength(1)
+  })
+
+  it("SURFACE-LESS (30.8): the byo escape-hatch app (wpgraphql, zero surfaces[]) still groups by id", () => {
+    const groups = groupByApp({
+      platforms: [{ id: "wpgraphql", kind: "graphql", displayName: "WPGraphQL" }],
+      credentials: [{ platformId: "wpgraphql", account: "default" }],
+    })
+    const group = groups.find((g) => g.appId === "wpgraphql")
+    expect(group).toBeDefined()
+    expect(group?.connections).toHaveLength(1)
+  })
+
   it("does NOT emit a catalog app with zero connections", () => {
     const groups = groupByApp({
       platforms: [{ id: "totally-unrelated", kind: "cli", displayName: "Totally Unrelated" }],

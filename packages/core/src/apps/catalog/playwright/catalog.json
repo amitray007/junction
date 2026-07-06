@@ -1,0 +1,11 @@
+{
+  "id": "playwright",
+  "displayName": "Playwright",
+  "supportedKinds": ["mcp"],
+  "auth": [
+    {
+      "mode": "none"
+    }
+  ],
+  "iconSlug": "playwright"
+}

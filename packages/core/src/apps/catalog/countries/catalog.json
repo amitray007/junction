@@ -1,0 +1,10 @@
+{
+  "id": "countries",
+  "displayName": "Countries (trevorblades)",
+  "supportedKinds": ["graphql"],
+  "auth": [
+    {
+      "mode": "none"
+    }
+  ]
+}

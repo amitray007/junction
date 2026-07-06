@@ -1,0 +1,11 @@
+{
+  "id": "digitalocean",
+  "displayName": "DigitalOcean",
+  "supportedKinds": ["cli", "openapi"],
+  "auth": [
+    {
+      "mode": "token"
+    }
+  ],
+  "iconSlug": "digitalocean"
+}

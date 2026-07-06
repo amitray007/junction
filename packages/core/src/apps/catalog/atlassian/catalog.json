@@ -1,0 +1,16 @@
+{
+  "id": "atlassian",
+  "displayName": "Atlassian",
+  "supportedKinds": ["mcp"],
+  "auth": [
+    {
+      "mode": "oauth2",
+      "providerId": "atlassian"
+    },
+    {
+      "mode": "token"
+    }
+  ],
+  "setupHints": ["Covers Jira and Confluence Cloud sites via the shared Atlassian OAuth app."],
+  "iconSlug": "atlassian"
+}

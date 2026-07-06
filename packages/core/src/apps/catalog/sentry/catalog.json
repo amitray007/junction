@@ -1,0 +1,11 @@
+{
+  "id": "sentry",
+  "displayName": "Sentry",
+  "supportedKinds": ["mcp", "cli"],
+  "auth": [
+    {
+      "mode": "token"
+    }
+  ],
+  "iconSlug": "sentry"
+}

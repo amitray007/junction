@@ -1,0 +1,12 @@
+{
+  "id": "stripe",
+  "displayName": "Stripe",
+  "supportedKinds": ["mcp", "cli", "openapi"],
+  "auth": [
+    {
+      "mode": "token"
+    }
+  ],
+  "setupHints": ["Use a Restricted Key for the MCP/CLI path."],
+  "iconSlug": "stripe"
+}

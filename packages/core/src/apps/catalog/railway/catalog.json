@@ -1,0 +1,12 @@
+{
+  "id": "railway",
+  "displayName": "Railway",
+  "supportedKinds": ["cli"],
+  "auth": [
+    {
+      "mode": "token"
+    }
+  ],
+  "setupHints": ["RAILWAY_API_TOKEN is the account-scoped token; RAILWAY_TOKEN is project-scoped."],
+  "iconSlug": "railway"
+}

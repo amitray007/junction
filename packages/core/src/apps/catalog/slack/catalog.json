@@ -1,0 +1,20 @@
+{
+  "id": "slack",
+  "displayName": "Slack",
+  "supportedKinds": ["openapi"],
+  "auth": [
+    {
+      "mode": "oauth2",
+      "providerId": "slack"
+    },
+    {
+      "mode": "token"
+    }
+  ],
+  "iconSlug": "slack",
+  "help": {
+    "notes": [
+      "MCP variant omitted: the exact npm package (@slack/mcp-server) is not confirmed by fetching the package page — Slack ships here via OAuth + token only. If confirmed later, add \"mcp\" to supportedKinds."
+    ]
+  }
+}

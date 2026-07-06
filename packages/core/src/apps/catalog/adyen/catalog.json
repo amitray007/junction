@@ -1,0 +1,11 @@
+{
+  "id": "adyen",
+  "displayName": "Adyen",
+  "supportedKinds": ["openapi"],
+  "auth": [
+    {
+      "mode": "token"
+    }
+  ],
+  "iconSlug": "adyen"
+}

@@ -1,0 +1,11 @@
+{
+  "id": "braintree",
+  "displayName": "Braintree",
+  "supportedKinds": ["graphql"],
+  "auth": [
+    {
+      "mode": "token"
+    }
+  ],
+  "iconSlug": "braintree"
+}

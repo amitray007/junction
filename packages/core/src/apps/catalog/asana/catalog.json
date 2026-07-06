@@ -1,0 +1,11 @@
+{
+  "id": "asana",
+  "displayName": "Asana",
+  "supportedKinds": ["openapi"],
+  "auth": [
+    {
+      "mode": "token"
+    }
+  ],
+  "iconSlug": "asana"
+}

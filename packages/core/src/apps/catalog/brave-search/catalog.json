@@ -1,0 +1,11 @@
+{
+  "id": "brave-search",
+  "displayName": "Brave Search",
+  "supportedKinds": ["mcp"],
+  "auth": [
+    {
+      "mode": "token"
+    }
+  ],
+  "iconSlug": "brave"
+}

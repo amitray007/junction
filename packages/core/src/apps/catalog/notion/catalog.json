@@ -1,0 +1,18 @@
+{
+  "id": "notion",
+  "displayName": "Notion",
+  "supportedKinds": ["mcp"],
+  "auth": [
+    {
+      "mode": "oauth2",
+      "providerId": "notion"
+    },
+    {
+      "mode": "token"
+    }
+  ],
+  "iconSlug": "notion",
+  "help": {
+    "notes": ["No stable canonical raw OpenAPI spec URL (JS-rendered portal) — MCP + OAuth only."]
+  }
+}

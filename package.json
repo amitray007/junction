@@ -17,7 +17,7 @@
     "web:css-tokens": "node scripts/web-css-tokens.mjs",
     "web:smoke": "node scripts/web-smoke.mjs",
     "docs:check": "node scripts/check-state.mjs",
-    "quality": "pnpm depcruise && pnpm syncpack:check && pnpm dup && (pnpm audit --audit-level=high || true)",
+    "quality": "pnpm depcruise && pnpm syncpack:check && pnpm dup && pnpm --filter @junction/core catalog:check && (pnpm audit --audit-level=high || true)",
     "typecheck": "tsc -b tsconfig.typecheck.json",
     "build": "pnpm -r build",
     "lint": "biome check .",

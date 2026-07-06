@@ -1,0 +1,11 @@
+{
+  "id": "aws",
+  "displayName": "AWS",
+  "supportedKinds": ["cli"],
+  "auth": [
+    {
+      "mode": "token"
+    }
+  ],
+  "iconSlug": "aws"
+}

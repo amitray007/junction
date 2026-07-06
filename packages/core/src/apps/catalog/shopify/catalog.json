@@ -1,0 +1,12 @@
+{
+  "id": "shopify",
+  "displayName": "Shopify",
+  "supportedKinds": ["graphql"],
+  "auth": [
+    {
+      "mode": "token"
+    }
+  ],
+  "aliases": ["shopify-admin", "shopify-storefront"],
+  "iconSlug": "shopify"
+}

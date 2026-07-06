@@ -1,0 +1,12 @@
+{
+  "id": "spotify",
+  "displayName": "Spotify",
+  "supportedKinds": [],
+  "auth": [
+    {
+      "mode": "oauth2",
+      "providerId": "spotify"
+    }
+  ],
+  "iconSlug": "spotify"
+}
