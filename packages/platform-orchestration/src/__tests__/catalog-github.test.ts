@@ -20,17 +20,18 @@ import type { AddOpenApiPlatformInput } from "../openapi.js"
 describe("catalog GitHub entry — openapi surface structural mapping", () => {
   const entry = getCatalogEntry("github")
 
-  it("GitHub's catalog entry exists and carries all 5 surfaces (incl. http present-but-empty)", () => {
+  it("GitHub's catalog entry exists and carries all 5 surfaces (incl. http)", () => {
     expect(entry).toBeDefined()
     expect(entry?.surfaces).toHaveLength(5)
     const kinds = entry?.surfaces?.map((s) => s.kind).sort()
     expect(kinds).toEqual(["cli", "graphql", "http", "mcp", "openapi"])
   })
 
-  it("the http surface is PRESENT but ships no starterTools (gap-filler rule — OpenAPI covers REST)", () => {
+  it('the http surface ships starterTools as a DELIBERATE proof exception (increment 30.11 §2d/§4.7 — GitHub has a spec, so http is technically redundant, but it is the smallest real proof of the via:"descriptor" + starterTools connect path)', () => {
     const http = entry?.surfaces?.find((s) => s.kind === "http")
     expect(http).toBeDefined()
-    expect(http?.starterTools).toBeUndefined()
+    expect(http?.starterTools).toBeDefined()
+    expect(http?.starterTools?.length).toBeGreaterThan(0)
     expect(http?.verify).toEqual({ kind: "none" })
   })
 

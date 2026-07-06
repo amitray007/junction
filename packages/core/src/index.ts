@@ -28,7 +28,7 @@ export {
   type JunctionPaths,
   openapiSpecCacheFile,
 } from "./paths/index.js"
-export { err, ok, type Result, ResultAsync } from "./result/index.js"
+export { err, errAsync, ok, okAsync, type Result, ResultAsync } from "./result/index.js"
 export const VERSION = "0.0.0"
 
 export type {
@@ -58,6 +58,23 @@ export {
   sha256Hex,
   verifyApiKey,
 } from "./api-keys/index.js"
+// Catalog-driven connect (increment 30.11) — interprets a surface's
+// declarative build recipe into a concrete connect plan. Pure; no I/O.
+export type {
+  ConnectChoice,
+  ConnectCredentialKind,
+  ConnectPlan,
+  ConnectPlanPreview,
+  DescriptorPlatformInput,
+  FlattenedAuth,
+  FlattenedGraphQlInput,
+  FlattenedMcpInput,
+  FlattenedOpenApiInput,
+  FlattenedPlatformInput,
+  PlatformInput,
+  RecipeError,
+} from "./apps/build-recipe.js"
+export { planConnect, resolvePlatformId, toConnectPlanPreview } from "./apps/build-recipe.js"
 export { getCatalogEntry, listCatalogEntries } from "./apps/catalog/index.js"
 // ---------------------------------------------------------------------------
 // App catalog + grouping — pure data + pure functions (inc 30; no HTTP)

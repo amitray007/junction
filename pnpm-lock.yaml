@@ -263,6 +263,9 @@ importers:
       '@junction/openapi-client':
         specifier: workspace:*
         version: link:../openapi-client
+      '@junction/platform-orchestration':
+        specifier: workspace:*
+        version: link:../platform-orchestration
       arctic:
         specifier: ^3.7.0
         version: 3.7.0

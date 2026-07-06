@@ -42,12 +42,23 @@ import { callSourceTool, probeSource, probeSurface, summarizeParams } from "./pr
 // Mock @junction/graphql-client for probeSurface's graphql-kind proof (increment
 // 30.10) — createGraphQlProvider is SYNCHRONOUS (unlike createMcpProvider), so
 // the mock returns a plain ToolProvider object, not a ResultAsync-wrapped one.
-const createGraphQlProviderMock = vi.fn()
+//
+// vi.hoisted (not a plain top-level `const`): vi.mock factories are hoisted to
+// the top of the file by vitest's transform, ABOVE any ordinary `const`/`let` —
+// a factory that closes over a plain top-level const risks a
+// "Cannot access '...' before initialization" TDZ error depending on how the
+// module graph is bundled (this surfaced once @junction/source-runtime gained
+// a second, transitive import path to @junction/graphql-client via
+// @junction/platform-orchestration in increment 30.11 — same file, previously
+// hoisting-order-lucky). vi.hoisted's return value is ITSELF hoisted alongside
+// vi.mock, so this ordering dependency is structurally impossible.
+const { createGraphQlProviderMock, createMcpProviderMock } = vi.hoisted(() => ({
+  createGraphQlProviderMock: vi.fn(),
+  createMcpProviderMock: vi.fn(),
+}))
 vi.mock("@junction/graphql-client", () => ({
   createGraphQlProvider: createGraphQlProviderMock,
 }))
-
-const createMcpProviderMock = vi.fn()
 vi.mock("@junction/mcp-client", () => ({
   createMcpProvider: createMcpProviderMock,
 }))

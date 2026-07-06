@@ -405,8 +405,67 @@ export const CATALOG_ENTRIES: readonly AppCatalogEntry[] = [
         verify: {
           kind: "none",
         },
+        starterTools: [
+          {
+            name: "get_authenticated_user",
+            description:
+              "Get the currently authenticated GitHub user (GET /user). A minimal, side-effect-free identity check — also GitHub's connect-time verify probe.",
+            method: "GET",
+            path: "/user",
+            params: [],
+          },
+          {
+            name: "get_repo",
+            description: "Get a repository by owner and name (GET /repos/{owner}/{repo}).",
+            method: "GET",
+            path: "/repos/{owner}/{repo}",
+            params: [
+              {
+                name: "owner",
+                in: "path",
+                type: "string",
+                required: true,
+              },
+              {
+                name: "repo",
+                in: "path",
+                type: "string",
+                required: true,
+              },
+            ],
+          },
+          {
+            name: "list_issues",
+            description: "List issues for a repository (GET /repos/{owner}/{repo}/issues).",
+            method: "GET",
+            path: "/repos/{owner}/{repo}/issues",
+            params: [
+              {
+                name: "owner",
+                in: "path",
+                type: "string",
+                required: true,
+              },
+              {
+                name: "repo",
+                in: "path",
+                type: "string",
+                required: true,
+              },
+              {
+                name: "state",
+                in: "query",
+                type: "enum",
+                required: false,
+                description: "Filter by issue state. Default: open.",
+                enum: ["open", "closed", "all"],
+              },
+            ],
+          },
+        ],
         notes: [
           "GitHub's REST is covered by OpenAPI; add a custom request-tool only for an endpoint the spec doesn't expose.",
+          'DELIBERATE PROOF EXCEPTION (increment 30.11, §2d/§4.7): this surface ships tools/http.tools.json starter tools even though GitHub has a spec (making http technically redundant per the app-surface-model gap-filler rule) — it is the smallest real proof of the via:"descriptor" + starterTools connect path end-to-end. A genuinely spec-less app is where http starters truly belong; see docs/futures/revisit-when.md.',
         ],
       },
     ],

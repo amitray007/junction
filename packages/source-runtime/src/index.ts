@@ -12,6 +12,17 @@
 
 export type { ResolvedSecret } from "./build-provider.js"
 export { buildProvider, toResolvedSecret } from "./build-provider.js"
+// Catalog-driven one-click connect (increment 30.11) — the verify-gated
+// executor that runs a core build-recipe ConnectPlan through the SAME
+// validated add/verify/persist path the manual /credentials + /platforms
+// flows use, adding only a pre-write collision guard + verify-before-commit.
+export type {
+  ConfirmThenAddArgs,
+  ConnectError,
+  ConnectResult,
+  VerifyThenAddArgs,
+} from "./connect-from-catalog.js"
+export { confirmThenAdd, verifyThenAdd } from "./connect-from-catalog.js"
 export { formatUpstreamError } from "./format-error.js"
 // OAuth connect flows (increment 29, slice B) — the arctic/fetch-touching
 // composition the CLI (D) and web (C) build `junction connect` / "Connect" on.

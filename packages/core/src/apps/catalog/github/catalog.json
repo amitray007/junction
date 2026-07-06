@@ -99,7 +99,8 @@
       },
       "verify": { "kind": "none" },
       "notes": [
-        "GitHub's REST is covered by OpenAPI; add a custom request-tool only for an endpoint the spec doesn't expose."
+        "GitHub's REST is covered by OpenAPI; add a custom request-tool only for an endpoint the spec doesn't expose.",
+        "DELIBERATE PROOF EXCEPTION (increment 30.11, §2d/§4.7): this surface ships tools/http.tools.json starter tools even though GitHub has a spec (making http technically redundant per the app-surface-model gap-filler rule) — it is the smallest real proof of the via:\"descriptor\" + starterTools connect path end-to-end. A genuinely spec-less app is where http starters truly belong; see docs/futures/revisit-when.md."
       ]
     }
   ]
