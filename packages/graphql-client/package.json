@@ -15,10 +15,10 @@
   },
   "dependencies": {
     "@junction/core": "workspace:*",
-    "graphql": "^17.0.1",
+    "graphql": "^17.0.2",
     "neverthrow": "catalog:"
   },
   "devDependencies": {
-    "@types/node": "^26.0.1"
+    "@types/node": "^26.1.0"
   }
 }
