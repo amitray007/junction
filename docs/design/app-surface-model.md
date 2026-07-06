@@ -511,24 +511,29 @@ The **whole vision** is above; it ships in slices, smallest-visible-value-first.
   (authed, timed, size-capped). The REST twin of CLI; reused the OpenAPI client's
   param-binding. Done — the design's "spec-less REST" gap is closed.
 
-**Remaining, in order:**
-1. **App catalog + importer** *(the natural next build — user, 2026-07-06).* Build
-   the per-app catalog schema + **folder-per-app file layout** (§4.6:
-   `catalog.json` + `help.json` + `tools/`), seed it with the **dev-time
-   integrations.sh importer** (`/api/{domain}/surface` → draft → human/AI review →
-   commit), and wire one-click "Connect <app> <surface>" that pre-fills the
-   existing platform+credential setup, gated by verify-on-add. Include **starter
-   tools** for user-authored surfaces where recommended (§4.7 — HTTP gap-filler
-   rule). *(Do apis.guru spec-URL top-up + the Nango license review here.)*
-2. **App page: surfaces + tools (read-only).** Rebuild `/app/:id` surface-first,
-   rendering from the catalog (§4.6) + the inc-28 probe for a connected surface's
-   actual tools (extend probe to surface an `inputSchema` summary + be app-scoped).
-   All surfaces equal; empty surfaces shown honestly (§4.7). Pure read/display.
-3. **Multi-surface connect / change-method / composition groundwork.** Connecting
-   a second surface for the same app cleanly (the `<appId>-<kind>` groupability
-   rule from `30.5-app-lifecycle.md`, now in service of *accumulation* not
-   *swap*); re-frame "Change method" as *add a surface* rather than replace.
-4. *(Deferred, gated):* semantic composition — one namespace, dedup, precedence,
+**Remaining, in order** (each its own increment — do NOT bundle; the catalog
+schema, the importer, and connect wiring land in distinct increments):
+1. **inc 30.8 — App catalog SCHEMA** *(SHIPPED — PR #108).* The per-app catalog
+   schema + **folder-per-app file layout** (§4.6: `catalog.json` + `help.json` +
+   `tools/`) + GitHub authored as the proof. Pure `core` data; **no importer, no
+   connect wiring.**
+2. **inc 30.9 — integrations.sh importer** *(dev-time only).* The authoring
+   accelerator (`/api/{domain}/surface` → draft → human/AI review → commit). Off
+   the runtime path. *(Do apis.guru spec-URL top-up + the Nango license review here.)*
+3. **inc 30.10 — App page: surfaces + tools (read-only).** Rebuild `/app/:id`
+   surface-first, rendering from the catalog (§4.6) + the inc-28 probe for a
+   connected surface's actual tools (extend probe to surface an `inputSchema`
+   summary + be app-scoped). All surfaces equal; empty surfaces shown honestly
+   (§4.7). Pure read/display.
+4. **inc 30.11 — Catalog-driven one-click connect.** Wire "Connect <app>
+   <surface>" that pre-fills the existing platform+credential setup from the
+   catalog's build recipe, gated by verify-on-add. **First place the catalog
+   *writes*.** Includes starter tools for user-authored surfaces (§4.7).
+5. **inc 30.12 — Multi-surface connect / add-a-surface.** Connecting a second
+   surface for the same app cleanly (the `<appId>-<kind>` groupability rule from
+   `30.5-app-lifecycle.md`, now in service of *accumulation* not *swap*); re-frame
+   "Change method" as *add a surface* rather than replace.
+6. *(Deferred, gated):* semantic composition — one namespace, dedup, precedence,
    CLI-fills-gaps — once a capability-identity approach is chosen (§9).
 
 Also: the CLI generic-primitives rework (from per-command tools) slots where it
