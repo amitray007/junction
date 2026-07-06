@@ -11,3 +11,6 @@ coverage/
 # Session scratchpad — throwaway working files (briefs, mockups, seeds). Never committed;
 # also keeps Biome (vcs.useIgnoreFile) from linting throwaway HTML/JS in here.
 scratchpad/
+# integrations.sh importer (inc 30.9) staging output — draft catalog entries a
+# maintainer reviews before hand-moving into src/apps/catalog/. Never committed.
+packages/core/scripts/.import-staging/

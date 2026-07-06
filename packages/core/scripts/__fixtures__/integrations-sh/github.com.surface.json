@@ -1,0 +1,309 @@
+{
+  "version": 3,
+  "domain": "github.com",
+  "detect": {
+    "domain": "github.com",
+    "found": ["llms.txt"],
+    "probed": [
+      "integrations.json",
+      "llms.txt",
+      "api-catalog",
+      "openapi-schema",
+      "mcp-server-card",
+      "oauth-protected-resource",
+      "agent-card",
+      "agent-skills"
+    ],
+    "integrationsJson": null,
+    "mcp": [],
+    "llmsTxt": true,
+    "errors": []
+  },
+  "summary": "GitHub exposes a versioned REST API at api.github.com, a GraphQL API at api.github.com/graphql, and the `gh` CLI; authentication is primarily via personal access tokens, GitHub App tokens/JWTs, OAuth app tokens, or `gh auth login`.",
+  "description": "GitHub is a source code hosting and collaboration platform for Git repositories, issues, pull requests, automation, and related developer workflows. It also provides APIs and tooling for integrating repository, organization, and application operations.",
+  "discoveredAt": "2026-07-03T13:57:01.842Z",
+  "credentials": {
+    "github_pat": {
+      "type": "bearer",
+      "label": "GitHub personal access token",
+      "generateUrl": "https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens",
+      "setup": "Create a personal access token from your GitHub account settings as described in [Managing your personal access tokens](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens). Choose fine-grained permissions or classic scopes that match the API operations you need; GitHub notes that fine-grained PATs include read access to public repositories.",
+      "acquisition": "manual"
+    },
+    "github_app_jwt": {
+      "type": "jwt",
+      "label": "GitHub App JWT",
+      "generateUrl": "https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app",
+      "setup": "Register a GitHub App using [Register a GitHub App](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app), then generate a private key for the app and create a JWT as described under GitHub App authentication in [About authentication with a GitHub App](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/about-authentication-with-a-github-app). Use this when an endpoint specifically requires authenticating as the app itself.",
+      "acquisition": "manual"
+    },
+    "github_app_installation_token": {
+      "type": "bearer",
+      "label": "GitHub App installation access token",
+      "generateUrl": "https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app",
+      "setup": "First [register a GitHub App](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app). Install it on the target account or organization, then generate an installation access token as described in [Authenticating as a GitHub App installation](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation). GitHub states this token works with both the REST API and the GraphQL API.",
+      "acquisition": "manual"
+    },
+    "github_oauth_app": {
+      "type": "oauth2",
+      "label": "GitHub OAuth app access token",
+      "generateUrl": "https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app",
+      "setup": "Create an OAuth app following [Creating an OAuth app](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app), configure its callback URL, then send users through the OAuth flow described in [Authorizing OAuth apps](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps) to obtain access tokens for API calls.",
+      "acquisition": "manual"
+    },
+    "gh_cli_login": {
+      "type": "bearer",
+      "label": "GitHub CLI authenticated session/token",
+      "generateUrl": "https://cli.github.com/manual/gh_auth_login",
+      "setup": "Install GitHub CLI and run `gh auth login` as documented in [gh auth login](https://cli.github.com/manual/gh_auth_login). For non-interactive use, GitHub CLI also accepts a token via environment variables documented in [gh help environment](https://cli.github.com/manual/gh_help_environment), with `GH_TOKEN` preferred over `GITHUB_TOKEN` for `github.com` targets.",
+      "acquisition": "manual"
+    }
+  },
+  "surfaces": [
+    {
+      "type": "graphql",
+      "url": "https://api.github.com/graphql",
+      "spec": "https://docs.github.com/public/fpt/schema.docs.graphql",
+      "slug": "github-graphql-api",
+      "name": "GitHub GraphQL API",
+      "docs": "https://docs.github.com/en/graphql",
+      "basis": {
+        "via": "discovered",
+        "evidence": [
+          "https://docs.github.com/en/graphql/guides/forming-calls-with-graphql",
+          "https://docs.github.com/en/graphql/guides/using-graphql-clients",
+          "https://docs.github.com/en/graphql/overview/public-schema"
+        ]
+      },
+      "auth": {
+        "status": "required",
+        "entries": [
+          {
+            "use": [
+              {
+                "id": "github_pat",
+                "mechanics": {
+                  "source": "http",
+                  "in": "header",
+                  "headerName": "Authorization",
+                  "scheme": "Bearer"
+                }
+              }
+            ],
+            "basis": {
+              "via": "discovered",
+              "evidence": [
+                "https://docs.github.com/en/graphql/guides/forming-calls-with-graphql",
+                "https://docs.github.com/en/graphql/guides/using-graphql-clients"
+              ]
+            }
+          },
+          {
+            "use": [
+              {
+                "id": "github_app_installation_token",
+                "mechanics": {
+                  "source": "http",
+                  "in": "header",
+                  "headerName": "Authorization",
+                  "scheme": "Bearer"
+                }
+              }
+            ],
+            "basis": {
+              "via": "discovered",
+              "evidence": [
+                "https://docs.github.com/en/graphql/guides/forming-calls-with-graphql",
+                "https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation"
+              ]
+            }
+          },
+          {
+            "use": [
+              {
+                "id": "github_oauth_app",
+                "mechanics": {
+                  "source": "http",
+                  "in": "header",
+                  "headerName": "Authorization",
+                  "scheme": "Bearer"
+                }
+              }
+            ],
+            "basis": {
+              "via": "discovered",
+              "evidence": ["https://docs.github.com/en/graphql/guides/forming-calls-with-graphql"]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "cli",
+      "packages": [
+        {
+          "registryType": "homebrew",
+          "identifier": "gh"
+        },
+        {
+          "registryType": "apt",
+          "identifier": "gh"
+        },
+        {
+          "registryType": "yum",
+          "identifier": "gh"
+        }
+      ],
+      "command": "gh",
+      "slug": "github-cli",
+      "name": "GitHub CLI",
+      "docs": "https://cli.github.com/manual/",
+      "basis": {
+        "via": "discovered",
+        "evidence": [
+          "https://cli.github.com/",
+          "https://cli.github.com/manual/gh_auth_login",
+          "https://cli.github.com/manual/gh_help_environment"
+        ]
+      },
+      "auth": {
+        "status": "required",
+        "entries": [
+          {
+            "use": [
+              {
+                "id": "gh_cli_login",
+                "mechanics": {
+                  "source": "cli",
+                  "command": "gh auth login"
+                }
+              }
+            ],
+            "basis": {
+              "via": "discovered",
+              "evidence": ["https://cli.github.com/manual/gh_auth_login"]
+            }
+          },
+          {
+            "use": [
+              {
+                "id": "gh_cli_login",
+                "mechanics": {
+                  "source": "cli",
+                  "env": ["GH_TOKEN", "GITHUB_TOKEN"]
+                }
+              }
+            ],
+            "basis": {
+              "via": "discovered",
+              "evidence": [
+                "https://cli.github.com/manual/gh_auth_login",
+                "https://cli.github.com/manual/gh_help_environment"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "http",
+      "url": "https://api.github.com",
+      "slug": "github-rest-api",
+      "name": "GitHub REST API",
+      "docs": "https://docs.github.com/en/rest",
+      "basis": {
+        "via": "discovered",
+        "evidence": [
+          "https://docs.github.com/en/rest/about-the-rest-api/about-the-rest-api",
+          "https://docs.github.com/en/rest/about-the-rest-api/about-the-openapi-description-for-the-rest-api",
+          "https://docs.github.com/en/rest/authentication/authenticating-to-the-rest-api"
+        ]
+      },
+      "auth": {
+        "status": "required",
+        "entries": [
+          {
+            "use": [
+              {
+                "id": "github_pat",
+                "mechanics": {
+                  "source": "http",
+                  "in": "header",
+                  "headerName": "Authorization",
+                  "scheme": "Bearer"
+                }
+              }
+            ],
+            "basis": {
+              "via": "discovered",
+              "evidence": [
+                "https://docs.github.com/en/rest/authentication/authenticating-to-the-rest-api"
+              ]
+            }
+          },
+          {
+            "use": [
+              {
+                "id": "github_app_installation_token",
+                "mechanics": {
+                  "source": "http",
+                  "in": "header",
+                  "headerName": "Authorization",
+                  "scheme": "Bearer"
+                }
+              }
+            ],
+            "basis": {
+              "via": "discovered",
+              "evidence": [
+                "https://docs.github.com/en/rest/authentication/authenticating-to-the-rest-api",
+                "https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation"
+              ]
+            }
+          },
+          {
+            "use": [
+              {
+                "id": "github_app_jwt",
+                "mechanics": {
+                  "source": "http",
+                  "in": "header",
+                  "headerName": "Authorization",
+                  "scheme": "Bearer"
+                }
+              }
+            ],
+            "basis": {
+              "via": "discovered",
+              "evidence": [
+                "https://docs.github.com/en/rest/authentication/authenticating-to-the-rest-api",
+                "https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/about-authentication-with-a-github-app"
+              ]
+            }
+          },
+          {
+            "use": [
+              {
+                "id": "github_oauth_app",
+                "mechanics": {
+                  "source": "http",
+                  "in": "header",
+                  "headerName": "Authorization",
+                  "scheme": "Bearer"
+                }
+              }
+            ],
+            "basis": {
+              "via": "discovered",
+              "evidence": [
+                "https://docs.github.com/en/rest/authentication/authenticating-to-the-rest-api",
+                "https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps"
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "usedLlm": true
+}

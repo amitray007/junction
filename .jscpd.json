@@ -16,6 +16,7 @@
     "**/web/src/server/data.server.ts",
     "**/apps/catalog/catalog.generated.ts",
     "**/apps/__fixtures__/**",
-    "**/apps/catalog/**/*.json"
+    "**/apps/catalog/**/*.json",
+    "**/scripts/__fixtures__/**"
   ]
 }
