@@ -8,12 +8,12 @@
 // never echoed back in any return value (mirrors mutations.functions.ts).
 
 import { createServerFn } from "@tanstack/react-start"
-import { connectSurface, getConnectPlan } from "./connect.server.js"
+import { connectSurface } from "./connect.server.js"
 import { assertLocalHost, requireString } from "./fn-guards.server.js"
 
 // Re-export types so route files can annotate without a direct import from
 // connect.server.ts (server-only by convention).
-export type { ConnectFnResult, ConnectPlanPreview, GetConnectPlanResult } from "./connect.server.js"
+export type { ConnectFnResult } from "./connect.server.js"
 
 const AUTH_MODES = ["oauth2", "token", "byo", "none"] as const
 type AuthMode = (typeof AUTH_MODES)[number]
@@ -27,13 +27,7 @@ function requireAuthMode(value: unknown): AuthMode {
   })
 }
 
-/**
- * Shared, PURE validator piece for the {appId, surfaceKind, authMode} triple
- * both getConnectPlanFn and connectSurfaceFn require — jscpd flagged the
- * duplicated triple; extracted per docs/rules (no shared handler factory,
- * just the pure field-parsing, per the inc-27 gotcha about not pulling
- * server-only logic into a shared factory).
- */
+/** PURE validator for the {appId, surfaceKind, authMode} triple connectSurfaceFn requires. */
 function requireConnectTarget(d: Record<string, unknown>): {
   appId: string
   surfaceKind: string
@@ -45,17 +39,6 @@ function requireConnectTarget(d: Record<string, unknown>): {
     authMode: requireAuthMode(d.authMode),
   }
 }
-
-// ---------------------------------------------------------------------------
-// getConnectPlanFn — GET, metadata-only plan preview
-// ---------------------------------------------------------------------------
-
-export const getConnectPlanFn = createServerFn({ method: "GET" })
-  .validator((raw: unknown) => requireConnectTarget(raw as Record<string, unknown>))
-  .handler(async ({ data }) => {
-    assertLocalHost()
-    return getConnectPlan(data)
-  })
 
 // ---------------------------------------------------------------------------
 // connectSurfaceFn — POST, the write path

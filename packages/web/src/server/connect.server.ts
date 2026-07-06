@@ -6,31 +6,20 @@
 //
 // SECURITY: the plaintext secret is a plain string, consumed ONLY inside
 // connectSurface() (passed to verifyThenAdd/confirmThenAdd) — never returned,
-// logged, or included in any error. getConnectPlan returns ONLY
-// ConnectPlanPreview (metadata-only — see build-recipe.ts) — never the raw
-// recipe/connection, never a secret. Mirrors mutations.server.ts's discipline.
+// logged, or included in any error/result. Mirrors mutations.server.ts's
+// discipline.
 
-import type {
-  AppCatalogEntry,
-  AppSurface,
-  ConnectChoice,
-  ConnectPlanPreview,
-  RecipeError,
-} from "@junction/core"
+import type { AppCatalogEntry, AppSurface, ConnectChoice, RecipeError } from "@junction/core"
 import {
   createCredentialStore,
   createRepositories,
   getCatalogEntry,
   getPaths,
   planConnect,
-  toConnectPlanPreview,
 } from "@junction/core"
 import type { ConnectError } from "@junction/source-runtime"
 import { confirmThenAdd, verifyThenAdd } from "@junction/source-runtime"
 import { getDb } from "./shared.server.js"
-
-// Re-exported alongside the function signatures that use it.
-export type { ConnectPlanPreview } from "@junction/core"
 
 // ---------------------------------------------------------------------------
 // Shared: resolve {entry, surface} for an appId/surfaceKind pair, or a typed miss.
@@ -59,33 +48,6 @@ function isLookupError(
   value: { entry: AppCatalogEntry; surface: AppSurface } | CatalogLookupError,
 ): value is CatalogLookupError {
   return "kind" in value
-}
-
-// ---------------------------------------------------------------------------
-// getConnectPlan — GET, metadata-only preview
-// ---------------------------------------------------------------------------
-
-export type GetConnectPlanResult =
-  | { ok: true; preview: ConnectPlanPreview }
-  | { ok: false; error: string }
-
-export async function getConnectPlan(input: {
-  appId: string
-  surfaceKind: string
-  authMode: ConnectChoice["authMode"]
-}): Promise<GetConnectPlanResult> {
-  const looked = lookupSurface(input.appId, input.surfaceKind)
-  if (isLookupError(looked)) {
-    return { ok: false, error: catalogLookupErrorMessage(looked) }
-  }
-  const { entry, surface } = looked
-
-  const plan = planConnect(entry, surface, { authMode: input.authMode })
-  if (!("path" in plan)) {
-    return { ok: false, error: recipeErrorMessage(plan) }
-  }
-
-  return { ok: true, preview: toConnectPlanPreview(entry, surface, plan) }
 }
 
 function catalogLookupErrorMessage(error: CatalogLookupError): string {

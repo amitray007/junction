@@ -430,6 +430,19 @@ function sortAuthModes(modes: SurfaceConnectable["authModes"]): SurfaceConnectab
   return [...modes].sort((a, b) => AUTH_MODE_ORDER.indexOf(a) - AUTH_MODE_ORDER.indexOf(b))
 }
 
+/**
+ * The mode the dialog OPENS in. Prefer the first *inline-writable* mode (token /
+ * byo / none) over oauth2 — oauth2 is a deferred deep-link hand-off (§0), so
+ * defaulting to it would open a verifiable surface on the one path that does
+ * nothing inline and hide the working token flow behind a Select change (3
+ * reviewers flagged this). oauth2 stays selectable; it just isn't the default.
+ */
+function defaultAuthMode(
+  modes: SurfaceConnectable["authModes"],
+): SurfaceConnectable["authModes"][number] {
+  return modes.find((m) => m !== "oauth2") ?? modes[0] ?? "token"
+}
+
 /** Per-outcome copy for a failed verify (§2a) — never a generic "failed" string. */
 function verifyFailedMessage(outcome: "auth-failed" | "unreachable"): string {
   if (outcome === "auth-failed") {
@@ -457,7 +470,7 @@ function ConnectSurfaceDialog({
 }) {
   const modes = useMemo(() => sortAuthModes(connectable.authModes), [connectable.authModes])
   const [authMode, setAuthMode] = useState<SurfaceConnectable["authModes"][number]>(
-    modes[0] ?? "token",
+    defaultAuthMode(modes),
   )
   const [account, setAccount] = useState("default")
   const [secret, setSecret] = useState("")
@@ -467,7 +480,7 @@ function ConnectSurfaceDialog({
   const isOAuth = authMode === "oauth2"
 
   function reset() {
-    setAuthMode(modes[0] ?? "token")
+    setAuthMode(defaultAuthMode(modes))
     setAccount("default")
     setSecret("")
     setSubmitting(false)

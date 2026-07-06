@@ -377,21 +377,23 @@ describe("AppDetailPage", () => {
       ).not.toBeInTheDocument()
     })
 
-    it("shows an auth-mode select for a multi-mode surface, defaulting to the oauth2 deep-link note", async () => {
+    it("shows an auth-mode select for a multi-mode surface, defaulting to the token (inline-writable) path", async () => {
       mockUseLoaderData.mockReturnValue(connectableLoaderData)
-      const { getByRole, queryByLabelText } = render(<AppDetailPage />)
+      const { getByRole, getByLabelText } = render(<AppDetailPage />)
       fireEvent.click(getByRole("button", { name: /connect github · rest api/i }))
       await waitFor(() => expect(getByRole("dialog")).toBeInTheDocument())
 
       // Multi-mode surface (oauth2 + token) → the auth-mode Select renders.
       expect(getByRole("combobox", { name: /auth mode/i })).toBeInTheDocument()
-      // Default mode is oauth2 (the surface's authored preference, auth[0]) →
-      // the deep-link note shows, NOT the account/secret fields (§2c).
+      // Default mode is the first NON-oauth2 mode (token) so a verifiable
+      // surface opens ready to accept a credential — oauth2's deep-link is
+      // the deferred path, not the default (review fix). Account + secret
+      // fields show; the deep-link note does NOT.
+      expect(getByLabelText("Account")).toBeInTheDocument()
+      expect(getByLabelText("Secret")).toBeInTheDocument()
       expect(
-        screen.getByText(/github uses oauth — register an oauth app on the credentials page/i),
-      ).toBeInTheDocument()
-      expect(queryByLabelText("Account")).not.toBeInTheDocument()
-      expect(queryByLabelText("Secret")).not.toBeInTheDocument()
+        screen.queryByText(/github uses oauth — register an oauth app on the credentials page/i),
+      ).not.toBeInTheDocument()
     })
 
     it("shows the not-verifiable honesty note for a non-verifiable, single-mode surface (no auth-mode select)", async () => {
