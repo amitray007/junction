@@ -175,7 +175,22 @@ const serveCommand = defineCommand({
     })
 
     // ── Build the profile proxy (core) ────────────────────────────────────
-    const proxy = createProfileProxy(profile.sources, resolveProvider)
+    // Tool-poisoning mitigation (increment 32.5): sanitize is always applied inside
+    // createProfileProxy; onDescriptionDrift only SURFACES it. stdout IS the MCP
+    // channel here (file-level note above) — the drift warn goes to stderr ONLY,
+    // via process.stderr.write (never consola, which writes to stdout). Metadata
+    // only — never the (possibly-injected) description text.
+    const proxy = createProfileProxy(profile.sources, resolveProvider, (info) => {
+      process.stderr.write(
+        `${JSON.stringify({
+          event: "description_sanitized",
+          namespace: info.namespace,
+          tool: info.tool,
+          strippedSuspicious: info.strippedSuspicious,
+          truncated: info.truncated,
+        })}\n`,
+      )
+    })
 
     // ── Audit sink (increment 31 Slice B) ─────────────────────────────────
     // One pino-backed file sink per process. stdio is always single-profile
