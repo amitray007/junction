@@ -25,6 +25,10 @@
 
 ### 1a. Dogfooding finds — real UX gaps (found 2026-07-07 by using the web UI)
 
+> **Method files authored + doc-reviewed 2026-07-07** as the **32.6 web-fixes wave** (parallel-safe,
+> disjoint `touches`): `32.6a-app-authmodes.md` · `32.6b-audit-web-page.md` · `32.6c-surfaces-backfill.md`.
+> Ready to build in isolated worktrees → staging branch → merge to main. Not yet started.
+
 - [ ] **App-detail pages are near-empty for 44 of 45 apps** (e.g. `/app/gitlab`). Root cause: only
       GitHub has an authored `surfaces[]`; the other 44 fall into `readAppDetail`'s *thin fallback*,
       which hardcodes `authModes={[]}` (`app.$id.tsx:883`) → strips the Connect / Add-Credential
