@@ -4,9 +4,23 @@
 // docs/methods/32.4-vault-backup-recovery.md §1.
 
 import { z } from "zod"
+import type { DbError } from "../errors/index.js"
 import { CredentialKind, CredentialVerifyResult } from "../schema/credential.js"
 import { PlatformSchema } from "../schema/platform.js"
 import { ProfileSchema } from "../schema/profile.js"
+
+/** Render any DbError kind to a short string — "cause" isn't present on every variant.
+ *  Shared by export-vault + import-vault so the mapping never drifts (and never leaks a secret). */
+export function describeDbError(e: DbError): string {
+  switch (e.kind) {
+    case "not-found":
+      return `not found: ${e.entity} ${e.id}`
+    case "duplicate-namespace":
+      return `duplicate namespace: ${e.namespace}`
+    default:
+      return String(e.cause)
+  }
+}
 
 /** `"JVLT"` — the 4-byte archive magic. */
 export const VAULT_MAGIC = Buffer.from([0x4a, 0x56, 0x4c, 0x54])

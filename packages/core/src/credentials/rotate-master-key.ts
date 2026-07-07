@@ -55,6 +55,29 @@ function isNodeError(value: unknown): value is NodeJS.ErrnoException {
   return value instanceof Error && "code" in value
 }
 
+/**
+ * env-raw tier gate: junction cannot rewrite the operator's environment, so a raw-env
+ * master key can only be rotated with the explicit `--print-new-key --i-understand`
+ * escape hatch. Returns a `rotate-refused` Err when the gate is NOT satisfied, else null
+ * (proceed). Shared by both the empty-vault and the main rotate paths so the refusal text
+ * never drifts.
+ */
+function envRawPrintGate(
+  tier: MasterKeyTier,
+  opts: RotateMasterKeyOptions,
+): Result<RotateResult, CredentialError> | null {
+  if (tier.kind !== "env-raw") return null
+  const wantsPrint = opts.printNewKey === true && opts.iUnderstand === true
+  if (wantsPrint) return null
+  return err<RotateResult, CredentialError>({
+    kind: "rotate-refused",
+    reason:
+      "master key is supplied via JUNCTION_MASTER_KEY (env); junction cannot rewrite your environment. " +
+      "To rotate: (1) vault export --out backup.jvlt  (2) set a new JUNCTION_MASTER_KEY  (3) vault import backup.jvlt. " +
+      "Refused — nothing changed.",
+  })
+}
+
 async function exists(p: string): Promise<boolean> {
   try {
     await stat(p)
@@ -277,18 +300,8 @@ async function runRekeySequence(
     })
   }
 
-  if (tier.kind === "env-raw") {
-    const wantsPrint = opts.printNewKey === true && opts.iUnderstand === true
-    if (!wantsPrint) {
-      return err<RotateResult, CredentialError>({
-        kind: "rotate-refused",
-        reason:
-          "master key is supplied via JUNCTION_MASTER_KEY (env); junction cannot rewrite your environment. " +
-          "To rotate: (1) vault export --out backup.jvlt  (2) set a new JUNCTION_MASTER_KEY  (3) vault import backup.jvlt. " +
-          "Refused — nothing changed.",
-      })
-    }
-  }
+  const envRawRefusal = envRawPrintGate(tier, opts)
+  if (envRawRefusal !== null) return envRawRefusal
 
   if (tier.kind === "env-passphrase" && !opts.newPassphrase) {
     return err<RotateResult, CredentialError>({
@@ -449,17 +462,9 @@ async function installNewKeyInPlace(
   tier: MasterKeyTier,
   opts: RotateMasterKeyOptions,
 ): Promise<Result<RotateResult, CredentialError>> {
+  const envRawRefusal = envRawPrintGate(tier, opts)
+  if (envRawRefusal !== null) return envRawRefusal
   if (tier.kind === "env-raw") {
-    const wantsPrint = opts.printNewKey === true && opts.iUnderstand === true
-    if (!wantsPrint) {
-      return err<RotateResult, CredentialError>({
-        kind: "rotate-refused",
-        reason:
-          "master key is supplied via JUNCTION_MASTER_KEY (env); junction cannot rewrite your environment. " +
-          "To rotate: (1) vault export --out backup.jvlt  (2) set a new JUNCTION_MASTER_KEY  (3) vault import backup.jvlt. " +
-          "Refused — nothing changed.",
-      })
-    }
     const newKey = randomBytes(32)
     return ok<RotateResult, CredentialError>({
       tier: tier.kind,

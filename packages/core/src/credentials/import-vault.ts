@@ -5,7 +5,7 @@
 // See docs/methods/32.4-vault-backup-recovery.md §0b/§0c/§3.
 
 import { err, errAsync, ok, okAsync, type Result, ResultAsync } from "neverthrow"
-import type { CredentialError, DbError } from "../errors/index.js"
+import type { CredentialError } from "../errors/index.js"
 import { newCredentialId, newProfileId } from "../ids/index.js"
 import type { Repositories } from "../repositories/index.js"
 import { type Credential, CredentialSchema } from "../schema/credential.js"
@@ -15,24 +15,13 @@ import { removeCredential } from "./remove-credential.js"
 import type { CredentialStore } from "./store.js"
 import { deriveKeyFromPassphrase, gcmDecrypt } from "./vault-crypto.js"
 import {
+  describeDbError,
   VAULT_KDF,
   VAULT_MAGIC,
   VAULT_VERSION,
   type VaultManifest,
   VaultManifestSchema,
 } from "./vault-manifest.js"
-
-/** Render any DbError kind to a short string — "cause" isn't present on every variant. */
-function describeDbError(e: DbError): string {
-  switch (e.kind) {
-    case "not-found":
-      return `not found: ${e.entity} ${e.id}`
-    case "duplicate-namespace":
-      return `duplicate namespace: ${e.namespace}`
-    default:
-      return String(e.cause)
-  }
-}
 
 /** Render any CredentialError kind to a short string — "cause"/"reason" vary by variant. */
 function describeCredentialError(e: CredentialError): string {
@@ -287,32 +276,14 @@ async function runImport(
         })
         continue
       }
-      const added = await addImportedCredential(mc, platform, store, repos)
-      if (added.isErr()) {
-        summary.credentials.failed.push({
-          platformId: mc.platformId,
-          account: mc.account,
-          reason: added.error.reason,
-        })
-        continue
-      }
-      idMap.set(mc._srcId, added.value.id)
-      summary.credentials.overwritten++
+      const newId = await addAndRecord(mc, platform, store, repos, summary, idMap)
+      if (newId !== null) summary.credentials.overwritten++
       continue
     }
 
     // no collision → add
-    const added = await addImportedCredential(mc, platform, store, repos)
-    if (added.isErr()) {
-      summary.credentials.failed.push({
-        platformId: mc.platformId,
-        account: mc.account,
-        reason: added.error.reason,
-      })
-      continue
-    }
-    idMap.set(mc._srcId, added.value.id)
-    summary.credentials.added++
+    const newId = await addAndRecord(mc, platform, store, repos, summary, idMap)
+    if (newId !== null) summary.credentials.added++
   }
 
   // ---- 3. profiles LAST (idMap is complete) ----
@@ -409,6 +380,33 @@ async function addImportedCredential(
     return ok(added.value)
   }
   return addOAuthImportedCredential(mc, store, repos)
+}
+
+/**
+ * Add an imported credential and record the outcome into `summary`/`idMap`. On success
+ * returns the new credential id (caller bumps the appropriate counter: added vs
+ * overwritten); on failure pushes to `summary.credentials.failed` and returns null.
+ * Shared by the overwrite and no-collision paths so the add+record logic never drifts.
+ */
+async function addAndRecord(
+  mc: ManifestCredential,
+  platform: import("../schema/platform.js").Platform,
+  store: CredentialStore,
+  repos: Pick<Repositories, "credentials">,
+  summary: ImportSummary,
+  idMap: Map<string, string>,
+): Promise<string | null> {
+  const added = await addImportedCredential(mc, platform, store, repos)
+  if (added.isErr()) {
+    summary.credentials.failed.push({
+      platformId: mc.platformId,
+      account: mc.account,
+      reason: added.error.reason,
+    })
+    return null
+  }
+  idMap.set(mc._srcId, added.value.id)
+  return added.value.id
 }
 
 function describeAddError(e: { kind: string } & Record<string, unknown>): string {

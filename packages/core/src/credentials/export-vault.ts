@@ -6,25 +6,19 @@
 
 import { randomBytes } from "node:crypto"
 import { err, errAsync, ok, okAsync, type Result, ResultAsync } from "neverthrow"
-import type { CredentialError, DbError } from "../errors/index.js"
+import type { CredentialError } from "../errors/index.js"
 import type { Repositories } from "../repositories/index.js"
 import type { Credential } from "../schema/credential.js"
 import type { Platform } from "../schema/platform.js"
 import type { CredentialStore } from "./store.js"
 import { deriveKeyFromPassphrase, gcmEncrypt } from "./vault-crypto.js"
-import { VAULT_KDF, VAULT_MAGIC, VAULT_VERSION, type VaultManifest } from "./vault-manifest.js"
-
-/** Render any DbError kind to a short string — "cause" isn't present on every variant. */
-function describeDbError(e: DbError): string {
-  switch (e.kind) {
-    case "not-found":
-      return `not found: ${e.entity} ${e.id}`
-    case "duplicate-namespace":
-      return `duplicate namespace: ${e.namespace}`
-    default:
-      return String(e.cause)
-  }
-}
+import {
+  describeDbError,
+  VAULT_KDF,
+  VAULT_MAGIC,
+  VAULT_VERSION,
+  type VaultManifest,
+} from "./vault-manifest.js"
 
 export interface ExportVaultInput {
   repos: Pick<Repositories, "credentials" | "platforms" | "profiles">
