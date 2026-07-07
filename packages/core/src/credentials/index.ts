@@ -13,6 +13,13 @@ import { recoverInterruptedRekey } from "./rotate-master-key.js"
 import type { CredentialStore } from "./store.js"
 
 export { type AddCredentialInput, addCredential } from "./add-credential.js"
+export { type ExportVaultInput, type ExportVaultResult, exportVault } from "./export-vault.js"
+export {
+  type ImportSummary,
+  type ImportVaultInput,
+  importVault,
+  type OnCollision,
+} from "./import-vault.js"
 export { compatibleCredentialKinds, isKindAccepted } from "./kind-compat.js"
 export { type MasterKeyTier, resolveMasterKeyWithTier } from "./master-key.js"
 export { removeCredential } from "./remove-credential.js"
@@ -33,6 +40,7 @@ export {
   gcmEncrypt,
   writeFile0600,
 } from "./vault-crypto.js"
+export { type VaultManifest, VaultManifestSchema } from "./vault-manifest.js"
 export type { CredentialStore }
 
 /** Probe whether the OS keyring is accessible. Result is cached for the lifetime of the process. */
