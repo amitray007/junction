@@ -94,11 +94,13 @@ export interface RotateMasterKeyOptions {
   /** env-passphrase tier only: the new passphrase to re-derive the key under. */
   newPassphrase?: string
   /**
-   * Test seam: invoked after each numbered step of the sequence (before the NEXT
-   * step runs). Crash-injection tests throw from this hook to simulate a kill at
-   * that exact boundary. NEVER set in production code paths.
+   * Test seam: invoked (and AWAITED) after each numbered step of the sequence
+   * (before the NEXT step runs). Crash-injection tests throw from this hook to
+   * simulate a kill at that exact boundary; an async hook (e.g. corrupting the tmp
+   * file) is awaited so its effect deterministically lands before the next step —
+   * no race with the following read. NEVER set in production code paths.
    */
-  afterStep?: (label: string) => void
+  afterStep?: (label: string) => void | Promise<void>
 }
 
 export interface RotateResult {
@@ -229,7 +231,7 @@ export function rotateMasterKey(
       // Step 0: heal first — never stack two sidecars (HIGH-2).
       const healResult = await recoverInterruptedRekey(paths, env)
       if (healResult.isErr()) return err<RotateResult, CredentialError>(healResult.error)
-      afterStep("0-heal")
+      await afterStep("0-heal")
 
       // Step 1: acquire the lock (released in `finally` below).
       const releaseLock = await acquireLock(paths)
@@ -296,14 +298,14 @@ async function runRekeySequence(
         "passphrase. Re-run with --new-passphrase-stdin.",
     })
   }
-  afterStep("2-resolve-old-key")
+  await afterStep("2-resolve-old-key")
 
   // Step 3: EMPTY-VAULT branch — no credentials.enc.json means nothing to
   // re-encrypt; the first rename (8c) would ENOENT-throw. Rotate the key
   // IN PLACE, no file dance, no pre-rekey/sidecar.
   if (!(await exists(paths.credentialsFile))) {
     const installResult = await installNewKeyInPlace(paths, tier, opts)
-    afterStep("3-empty-vault-in-place")
+    await afterStep("3-empty-vault-in-place")
     return installResult
   }
 
@@ -319,7 +321,7 @@ async function runRekeySequence(
       return err<RotateResult, CredentialError>({ kind: "rotate-failed", cause })
     }
   }
-  afterStep("4-decrypt-all")
+  await afterStep("4-decrypt-all")
 
   // Step 5: generate the NEW key (or derive from new passphrase + fresh salt).
   let newKey: Buffer
@@ -333,7 +335,7 @@ async function runRekeySequence(
   } else {
     newKey = randomBytes(32)
   }
-  afterStep("5-generate-new-key")
+  await afterStep("5-generate-new-key")
 
   // Step 6: re-encrypt all entries under the NEW key into the tmp file.
   const newEntries: EncFile["entries"] = {}
@@ -343,7 +345,7 @@ async function runRekeySequence(
   const tmpFile = rekeyTmpFile(paths)
   const newFileContents: EncFile = { v: 1, entries: newEntries }
   await writeFile0600(tmpFile, Buffer.from(JSON.stringify(newFileContents), "utf-8"))
-  afterStep("6-write-tmp")
+  await afterStep("6-write-tmp")
 
   // Step 7: verify-BEFORE-swap — re-read the tmp, and for every secretRef in
   // step 4's map, decrypt under the NEW key and compare. secretRef-keyed
@@ -368,26 +370,26 @@ async function runRekeySequence(
     await unlinkBestEffort(tmpFile)
     return err<RotateResult, CredentialError>({ kind: "rotate-failed", cause })
   }
-  afterStep("7-verify-before-swap")
+  await afterStep("7-verify-before-swap")
 
   // Step 8: write the in-flight artifacts, THEN swap.
   // 8a. Persist OLD key to the sidecar. From here, sidecar-present ⇒ recovery rolls back.
   await writeFile0600(oldKeySidecar(paths), Buffer.from(oldKey.toString("base64"), "utf-8"))
-  afterStep("8a-write-sidecar")
+  await afterStep("8a-write-sidecar")
 
   // 8b. env-passphrase only: back up the OLD salt BEFORE step 9 overwrites it (CRITICAL-3).
   if (tier.kind === "env-passphrase") {
     await rename(saltFile(paths), preRekeySaltFile(paths))
   }
-  afterStep("8b-backup-salt")
+  await afterStep("8b-backup-salt")
 
   // 8c. rename live -> pre-rekey.
   await rename(paths.credentialsFile, preRekeyFile(paths))
-  afterStep("8c-rename-live-to-pre-rekey")
+  await afterStep("8c-rename-live-to-pre-rekey")
 
   // 8d. rename tmp -> live.
   await rename(tmpFile, paths.credentialsFile)
-  afterStep("8d-rename-tmp-to-live")
+  await afterStep("8d-rename-tmp-to-live")
 
   // Step 9: install the NEW key at the SAME tier.
   let newKeyForOperator: string | undefined
@@ -400,7 +402,7 @@ async function runRekeySequence(
     // Cannot install — operator installs it into their env.
     newKeyForOperator = newKey.toString("base64")
   }
-  afterStep("9-install-new-key")
+  await afterStep("9-install-new-key")
 
   // Step 10: verify the live vault opens under the NEW key (smoke test).
   try {
@@ -416,7 +418,7 @@ async function runRekeySequence(
     // On failure: do NOT delete the sidecar; let recovery roll back.
     return err<RotateResult, CredentialError>({ kind: "rotate-failed", cause })
   }
-  afterStep("10-verify-new-key")
+  await afterStep("10-verify-new-key")
 
   // Step 11: SUCCESS — delete the sidecar (the atomic "committed" signal).
   await unlinkBestEffort(oldKeySidecar(paths))
@@ -424,7 +426,7 @@ async function runRekeySequence(
     await unlinkBestEffort(preRekeySaltFile(paths))
   }
   // KEEP the pre-rekey backup — the operator's safety net.
-  afterStep("11-delete-sidecar")
+  await afterStep("11-delete-sidecar")
 
   const pendingEnvUpdate: true | undefined =
     tier.kind === "env-raw" || tier.kind === "env-passphrase" ? true : undefined

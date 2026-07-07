@@ -322,6 +322,8 @@ describe("rotateMasterKey — crash injection (the mandatory adversarial set)", 
 
       const tmpFile = `${paths.credentialsFile}.rekey.tmp`
       const result = await rotateMasterKey(paths, env, {
+        // afterStep is AWAITED in production, so this async corruption deterministically
+        // lands before step 7's verify read — no race with that read.
         afterStep: async (label) => {
           if (label === "6-write-tmp") {
             // Corrupt the freshly-written tmp file before step 7's verify runs.
