@@ -61,6 +61,14 @@ jobs:
         with:
           node-version: 22
       - run: pnpm install --frozen-lockfile
+      # Build first: without dist, cross-package `@junction/*` imports resolve to
+      # nothing and collapse to `any` in every importer (web especially), so
+      # type-coverage measures a FALSE-LOW number (CI 98.29% vs a real ~99.5%).
+      # And `tsr generate` writes web's gitignored routeTree.gen.ts (absent in a
+      # fresh checkout) so web's route files type-resolve. Both must run so the
+      # gate measures the SAME resolved types the real `tsc` typecheck sees.
+      - run: pnpm build
+      - run: pnpm --filter @junction/web exec tsr generate
       - run: pnpm run type-coverage:check
 
   spdx-header-guard:
