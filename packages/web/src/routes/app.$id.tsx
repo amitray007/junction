@@ -433,7 +433,9 @@ function ConnectSurfaceButton({
         surface={surface}
         connectable={connectable}
         hasConnections={hasConnections}
-        existingAccounts={surface.connections.map((c) => c.account).filter((a) => a !== "—")}
+        existingAccounts={surface.connections
+          .map((c) => c.account.trim())
+          .filter((a) => a !== "" && a !== "—")}
         onConnected={onConnected}
       />
     </>

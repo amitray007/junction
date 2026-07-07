@@ -534,10 +534,16 @@ schema, the importer, and connect wiring land in distinct increments):
    <surface>" that pre-fills the existing platform+credential setup from the
    catalog's build recipe, gated by verify-on-add. **First place the catalog
    *writes*.** Includes starter tools for user-authored surfaces (§4.7).
-5. **inc 30.12 — Multi-surface connect / add-a-surface.** Connecting a second
-   surface for the same app cleanly (the `<appId>-<kind>` groupability rule from
-   `30.5-app-lifecycle.md`, now in service of *accumulation* not *swap*); re-frame
-   "Change method" as *add a surface* rather than replace.
+5. ✅ **inc 30.12 — Multi-surface connect / add-a-surface — SHIPPED.** Surfaces now
+   ACCUMULATE: GitHub's 5 surfaces use `platformIdTemplate: "{app}-{kind}"` → distinct
+   platform ids (`github-graphql`, `github-mcp`, …); `appIdForConnection` gained a
+   `<appId>-<kind>` suffix-strip so they group back under one `/app/:id`. The App-page
+   Connect button now also renders on a CONNECTED surface (relabeled "Add account") — the
+   multi-account wedge reachable from the app page — with an app-level `duplicate-account`
+   guard (root fix, all edges) + a per-outcome UI message. Also fixed a latent bug where
+   `github-http` already vanished to "Other". Proven end-to-end vs the real GitHub API +
+   real running web server. (DB unique-index on `(platform,account)` deferred — see
+   `revisit-when.md`.)
 6. *(Deferred, gated):* semantic composition — one namespace, dedup, precedence,
    CLI-fills-gaps — once a capability-identity approach is chosen (§9).
 
