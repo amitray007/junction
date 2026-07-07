@@ -125,12 +125,34 @@ export {
   type CredentialStore,
   compatibleCredentialKinds,
   createCredentialStore,
+  deriveKeyFromPassphrase,
+  type EncFile,
+  EncFileSchema,
+  type EncRecord,
+  type ExportVaultInput,
+  type ExportVaultResult,
+  exportVault,
+  gcmDecrypt,
+  gcmEncrypt,
+  type ImportSummary,
+  type ImportVaultInput,
+  importVault,
   isKindAccepted,
+  type MasterKeyTier,
+  type OnCollision,
   type RenameCredentialInput,
   type RotateCredentialInput,
+  type RotateMasterKeyOptions,
+  type RotateResult,
+  recoverInterruptedRekey,
   removeCredential,
   renameCredential,
+  resolveMasterKeyWithTier,
   rotateCredential,
+  rotateMasterKey,
+  type VaultManifest,
+  VaultManifestSchema,
+  writeFile0600,
 } from "./credentials/index.js"
 // Database + repositories
 export { type Db, getDatabase } from "./db/index.js"
@@ -255,7 +277,11 @@ export { rejectControlCharacters } from "./sources/arg-validation.js"
 export { createCliProvider } from "./sources/cli/provider.js"
 export { namespaceToolName, splitNamespacedName } from "./sources/naming.js"
 export type { ProviderTool, ToolProvider, ToolResult } from "./sources/provider.js"
-export type { ProfileProxy, ResolveProviderFn } from "./sources/proxy.js"
+export type { OnDescriptionDriftFn, ProfileProxy, ResolveProviderFn } from "./sources/proxy.js"
 export { createProfileProxy } from "./sources/proxy.js"
+export type { SanitizedDescription } from "./sources/sanitize-description.js"
+// Tool-poisoning mitigation (inc 32.5) — pure description sanitizer, the ONE
+// chokepoint enforcement (proxy.ts listTools) exports it for direct testing.
+export { DESCRIPTION_MAX_CHARS, sanitizeDescription } from "./sources/sanitize-description.js"
 export type { ScopedProxy, ScopedProxyEntry } from "./sources/scoped-proxy.js"
 export { createScopedProxy } from "./sources/scoped-proxy.js"

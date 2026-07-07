@@ -9,13 +9,38 @@ import type { JunctionPaths } from "../paths/index.js"
 import { createEncryptedFileStore } from "./encrypted-file-store.js"
 import { createKeyringStore } from "./keyring-store.js"
 import { resolveMasterKey } from "./master-key.js"
+import { recoverInterruptedRekey } from "./rotate-master-key.js"
 import type { CredentialStore } from "./store.js"
 
 export { type AddCredentialInput, addCredential } from "./add-credential.js"
+export { type ExportVaultInput, type ExportVaultResult, exportVault } from "./export-vault.js"
+export {
+  type ImportSummary,
+  type ImportVaultInput,
+  importVault,
+  type OnCollision,
+} from "./import-vault.js"
 export { compatibleCredentialKinds, isKindAccepted } from "./kind-compat.js"
+export { type MasterKeyTier, resolveMasterKeyWithTier } from "./master-key.js"
 export { removeCredential } from "./remove-credential.js"
 export { type RenameCredentialInput, renameCredential } from "./rename-credential.js"
 export { type RotateCredentialInput, rotateCredential } from "./rotate-credential.js"
+export {
+  type RotateMasterKeyOptions,
+  type RotateResult,
+  recoverInterruptedRekey,
+  rotateMasterKey,
+} from "./rotate-master-key.js"
+export {
+  deriveKeyFromPassphrase,
+  type EncFile,
+  EncFileSchema,
+  type EncRecord,
+  gcmDecrypt,
+  gcmEncrypt,
+  writeFile0600,
+} from "./vault-crypto.js"
+export { type VaultManifest, VaultManifestSchema } from "./vault-manifest.js"
 export type { CredentialStore }
 
 /** Probe whether the OS keyring is accessible. Result is cached for the lifetime of the process. */
@@ -46,6 +71,14 @@ async function selectStore(
   paths: JunctionPaths,
   env: NodeJS.ProcessEnv,
 ): Promise<Result<CredentialStore, CredentialError>> {
+  // CRITICAL-1 (32.3 §0b): heal an interrupted master-key rotation BEFORE the
+  // keyring/file branch below — auto-select can pick keyring even when a FILE
+  // vault has a half-rotated .master.key.old sidecar sitting on disk. The hook
+  // is gated on a single stat (fast-path returns immediately when absent), so
+  // this costs nothing on the overwhelmingly common no-rotation-in-flight path.
+  const recovered = await recoverInterruptedRekey(paths, env)
+  if (recovered.isErr()) return err<CredentialStore, CredentialError>(recovered.error)
+
   const storeOverride = env.JUNCTION_STORE?.trim()
 
   if (storeOverride === "keyring") {
