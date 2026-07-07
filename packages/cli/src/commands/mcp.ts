@@ -28,6 +28,7 @@
 //   Future kinds (graphql) plug in there without touching the proxy or this file.
 
 import {
+  type AuditPrincipal,
   createCredentialStore,
   createProfileProxy,
   createRepositories,
@@ -38,6 +39,7 @@ import {
 } from "@junction/core"
 import { makeResolveProvider } from "@junction/source-runtime"
 import { defineCommand } from "citty"
+import { createFileAuditSink } from "../audit-sink.js"
 import { adaptToMcpHandlers } from "../providers.js"
 
 // ---------------------------------------------------------------------------
@@ -158,12 +160,41 @@ const serveCommand = defineCommand({
     // ── Build the profile proxy (core) ────────────────────────────────────
     const proxy = createProfileProxy(profile.sources, resolveProvider)
 
+    // ── Audit sink (increment 31 Slice B) ─────────────────────────────────
+    // One pino-backed file sink per process. stdio is always single-profile
+    // passthrough — unprefixed wire names, principal.profiles is just this
+    // one profile.
+    const auditSink = createFileAuditSink(paths)
+    const principal: AuditPrincipal = {
+      kind: "stdio",
+      keyId: null,
+      label: null,
+      profiles: [profile.name],
+    }
+
+    // A raw Ctrl-C (SIGINT/SIGTERM) sends no stdin EOF, so serveStdio's
+    // Promise below never resolves on that path — without this handler the
+    // last buffered audit line would be dropped. process "exit" below is the
+    // belt-and-suspenders backstop for any other clean-exit path.
+    process.once("SIGINT", () => {
+      auditSink.flushSync()
+      process.exit(0)
+    })
+    process.once("SIGTERM", () => {
+      auditSink.flushSync()
+      process.exit(0)
+    })
+    process.on("exit", () => auditSink.flushSync())
+
     // ── Adapt proxy ResultAsync → Promise handlers for mcp/server ─────────
     // Shared with `junction serve` (commands/serve.ts) via providers.ts.
-    const handlers = adaptToMcpHandlers(proxy)
+    const handlers = adaptToMcpHandlers(proxy, { principal, sink: auditSink, prefixed: false })
 
     // ── Serve ─────────────────────────────────────────────────────────────
+    // serveStdio resolves on the CLEAN shutdown path (transport onclose /
+    // stdin EOF) — flush right after it returns, the natural clean-exit point.
     await serveStdio(profile, handlers)
+    auditSink.flush()
   },
 })
 

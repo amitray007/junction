@@ -22,6 +22,7 @@
 // — a slow/failing write must never delay or fail auth (§2.1 / repo doc).
 
 import {
+  type AuditPrincipal,
   createCredentialStore,
   createProfileProxy,
   createRepositories,
@@ -37,6 +38,7 @@ import type { AuthedKey, AuthedKeyResult, McpServerHandlers } from "@junction/mc
 import { makeResolveProvider } from "@junction/source-runtime"
 import { defineCommand } from "citty"
 import { consola } from "consola"
+import { createFileAuditSink } from "../audit-sink.js"
 import { adaptToMcpHandlers } from "../providers.js"
 
 // ---------------------------------------------------------------------------
@@ -103,6 +105,10 @@ export const serveCommand = defineCommand({
       log: (msg: string) => consola.warn(msg),
     })
 
+    // Audit sink (increment 31 Slice B): one pino-backed file sink per
+    // process, injected into every buildHandlers() call this session.
+    const auditSink = createFileAuditSink(paths)
+
     // ── authenticate: verifyApiKey, RE-RESOLVED on every request ───────────
     const authenticate = async (token: string): Promise<AuthedKeyResult> => {
       const result = await verifyApiKey(token, repos.apiKeys)
@@ -126,6 +132,8 @@ export const serveCommand = defineCommand({
       // pure DB read (no secret involved) — fetch by keyId directly.
       const recordResult = await repos.apiKeys.getByKeyId(authedKey.keyId)
       if (recordResult.isErr()) {
+        // No attribution possible (the key row itself didn't resolve) — keep
+        // audit OFF rather than emit a line with no label/scope to attribute.
         return adaptToMcpHandlers(createScopedProxy([], false))
       }
       const record = recordResult.value
@@ -161,7 +169,14 @@ export const serveCommand = defineCommand({
 
       const prefixed = record.scope !== "profile"
       const scoped = createScopedProxy(entries, prefixed)
-      return adaptToMcpHandlers(scoped)
+
+      const principal: AuditPrincipal = {
+        kind: "api-key",
+        keyId: authedKey.keyId,
+        label: record.label,
+        profiles: entries.map((e) => e.profileName),
+      }
+      return adaptToMcpHandlers(scoped, { principal, sink: auditSink, prefixed })
     }
 
     // ── Start the HTTP endpoint ──────────────────────────────────────────
@@ -191,8 +206,12 @@ export const serveCommand = defineCommand({
     consola.success(`junction serve: listening on http://127.0.0.1:${port}/mcp`)
 
     // ── Graceful shutdown ────────────────────────────────────────────────
+    // Flush the audit sink on every clean-shutdown signal; process "exit" is
+    // the belt-and-suspenders backstop for any other clean-exit path.
+    process.on("exit", () => auditSink.flushSync())
     await new Promise<void>((resolve) => {
       const shutdown = () => {
+        auditSink.flush()
         void handle.close().then(() => resolve())
       }
       process.once("SIGINT", shutdown)
