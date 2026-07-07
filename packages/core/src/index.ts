@@ -2,6 +2,17 @@
 
 /** Junction core — public API. */
 
+export { argKeys, hashArgs } from "./audit/redact.js"
+// ---------------------------------------------------------------------------
+// Audit — structured tool-call log schema + sink interface (increment 31)
+// ---------------------------------------------------------------------------
+export type { AuditEntry, AuditPrincipal, AuditTarget } from "./audit/schema.js"
+export {
+  AuditEntrySchema,
+  AuditPrincipalSchema,
+  AuditTargetSchema,
+} from "./audit/schema.js"
+export { type AuditSink, NoopAuditSink } from "./audit/sink.js"
 export {
   type Config,
   ConfigSchema,

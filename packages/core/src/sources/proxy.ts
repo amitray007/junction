@@ -79,8 +79,11 @@ export interface ProfileProxy {
    * Splits on the FIRST "__", finds the enabled source whose toolNamespace matches
    * the prefix, then proxies the call through a fresh provider with the raw name.
    *
-   * Returns Err(tool-not-found) if no source matches the namespace, or if the
-   * tool is filtered out by the source's toolFilter (does not reveal it exists).
+   * Returns Err(tool-not-found) if no source matches the namespace (genuinely unknown).
+   * Returns Err(tool-denied) if the tool is filtered out by the source's toolFilter —
+   * distinct internally for audit purposes, but the agent-facing message (mcp-server's
+   * safeUpstreamMessage) collapses it to the same opaque text as tool-not-found so a
+   * filtered tool's existence is never revealed.
    * Returns Err(<upstream error>) if resolution, connection, or the call itself fails.
    */
   callTool(name: string, args: Record<string, unknown>): ResultAsync<ToolResult, UpstreamError>
@@ -216,9 +219,12 @@ export function createProfileProxy(
         // FILTER BEFORE CONNECT (leak-free order): check toolFilter on the SourceRef BEFORE
         // calling resolveProvider. resolveProvider eagerly connects (spawns child / opens session),
         // so a denied tool must be rejected here — before any connection is made.
-        // Security semantics are unchanged: denied → tool-not-found (does not reveal existence).
+        // AUDIT vs AGENT-FACING split (increment 31 §0 decision 6): internally this is a
+        // distinct "tool-denied" kind (so audit can tell deny from unknown), but
+        // safeUpstreamMessage (mcp-server) collapses it to the SAME opaque text as
+        // "tool-not-found" — the agent must never learn a filtered tool exists.
         if (!isToolAllowed(rawName, sourceRef.toolFilter)) {
-          return err({ kind: "tool-not-found", name } satisfies UpstreamError)
+          return err({ kind: "tool-denied", name } satisfies UpstreamError)
         }
 
         // LIST/CALL ≤64 AGREEMENT: if the namespaced name would be skipped at list time

@@ -236,6 +236,23 @@ describe("createProfileProxy — per-source resilience", () => {
     expect(result.isErr()).toBe(true)
     expect(result._unsafeUnwrapErr().kind).toBe("tool-not-found")
   })
+
+  it("DISTINCT KINDS (increment 31 §0 dec 6): unknown namespace is tool-not-found, filter-block is tool-denied", async () => {
+    // A single proxy where "src" has a deny filter — proves the two branches
+    // yield genuinely different internal kinds for the SAME proxy instance.
+    const { provider } = makeFakeProvider(["list_issues", "delete_repo"])
+    const filter: ToolFilter = { deny: ["delete_repo"] }
+    const proxy = createProfileProxy(
+      [makeSourceRef("src", filter)],
+      resolveOk("src", provider, filter),
+    )
+
+    const unknownResult = await proxy.callTool("nonexistent__tool", {})
+    expect(unknownResult._unsafeUnwrapErr().kind).toBe("tool-not-found")
+
+    const deniedResult = await proxy.callTool("src__delete_repo", {})
+    expect(deniedResult._unsafeUnwrapErr().kind).toBe("tool-denied")
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -314,7 +331,7 @@ describe("createProfileProxy — toolFilter", () => {
 // ---------------------------------------------------------------------------
 
 describe("createProfileProxy — toolFilter enforced on callTool", () => {
-  it("deny filter: denied tool returns tool-not-found even when called directly", async () => {
+  it("deny filter: denied tool returns tool-denied even when called directly", async () => {
     const { provider } = makeFakeProvider(["list_issues", "delete_repo"])
 
     const filter: ToolFilter = { deny: ["delete_repo"] }
@@ -326,10 +343,10 @@ describe("createProfileProxy — toolFilter enforced on callTool", () => {
     // Agent bypasses listTools and tries to call the denied tool directly — must be blocked.
     const result = await proxy.callTool("src__delete_repo", {})
     expect(result.isErr()).toBe(true)
-    expect(result._unsafeUnwrapErr().kind).toBe("tool-not-found")
+    expect(result._unsafeUnwrapErr().kind).toBe("tool-denied")
   })
 
-  it("allow filter: tool not in the allow list returns tool-not-found from callTool", async () => {
+  it("allow filter: tool not in the allow list returns tool-denied from callTool", async () => {
     const { provider } = makeFakeProvider(["list_issues", "delete_repo"])
 
     const filter: ToolFilter = { allow: ["list_issues"] }
@@ -341,7 +358,7 @@ describe("createProfileProxy — toolFilter enforced on callTool", () => {
     // "delete_repo" is not in the allow list — must be blocked at callTool.
     const result = await proxy.callTool("src__delete_repo", {})
     expect(result.isErr()).toBe(true)
-    expect(result._unsafeUnwrapErr().kind).toBe("tool-not-found")
+    expect(result._unsafeUnwrapErr().kind).toBe("tool-denied")
   })
 
   it("allowed tool still routes to upstream via callTool", async () => {
@@ -373,7 +390,7 @@ describe("createProfileProxy — toolFilter enforced on callTool", () => {
 
     const result = await proxy.callTool("src__list_issues", {})
     expect(result.isErr()).toBe(true)
-    expect(result._unsafeUnwrapErr().kind).toBe("tool-not-found")
+    expect(result._unsafeUnwrapErr().kind).toBe("tool-denied")
   })
 })
 
@@ -408,7 +425,7 @@ describe("createProfileProxy — denied callTool never connects (leak-free)", ()
 
     const result = await proxy.callTool("src__delete_repo", {})
     expect(result.isErr()).toBe(true)
-    expect(result._unsafeUnwrapErr().kind).toBe("tool-not-found")
+    expect(result._unsafeUnwrapErr().kind).toBe("tool-denied")
     // Key assertion: no connection was opened (resolveProvider never called)
     expect(callCount()).toBe(0)
   })
@@ -422,7 +439,7 @@ describe("createProfileProxy — denied callTool never connects (leak-free)", ()
 
     const result = await proxy.callTool("src__delete_repo", {})
     expect(result.isErr()).toBe(true)
-    expect(result._unsafeUnwrapErr().kind).toBe("tool-not-found")
+    expect(result._unsafeUnwrapErr().kind).toBe("tool-denied")
     expect(callCount()).toBe(0)
   })
 
@@ -435,7 +452,7 @@ describe("createProfileProxy — denied callTool never connects (leak-free)", ()
 
     const result = await proxy.callTool("src__list_issues", {})
     expect(result.isErr()).toBe(true)
-    expect(result._unsafeUnwrapErr().kind).toBe("tool-not-found")
+    expect(result._unsafeUnwrapErr().kind).toBe("tool-denied")
     expect(callCount()).toBe(0)
   })
 

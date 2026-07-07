@@ -235,6 +235,6 @@ describe("behavior-identical guard — McpToolProvider + createProfileProxy", ()
     // Denied tool must be blocked at callTool too
     const callResult = await proxy.callTool("src__delete_repo", {})
     expect(callResult.isErr()).toBe(true)
-    expect(callResult._unsafeUnwrapErr().kind).toBe("tool-not-found")
+    expect(callResult._unsafeUnwrapErr().kind).toBe("tool-denied")
   })
 })
