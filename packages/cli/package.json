@@ -11,7 +11,7 @@
     "build": "tsdown"
   },
   "dependencies": {
-    "@clack/prompts": "^1.0.0",
+    "@clack/prompts": "^1.7.0",
     "@junction/core": "workspace:*",
     "@junction/graphql-client": "workspace:*",
     "@junction/mcp-client": "workspace:*",
@@ -28,7 +28,7 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@types/node": "^26.0.1",
+    "@types/node": "^26.1.0",
     "@types/react": "^19.2.17",
     "ink-testing-library": "^4.0.0"
   }

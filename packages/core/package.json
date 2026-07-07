@@ -35,7 +35,7 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.0",
-    "@types/node": "^26.0.1",
+    "@types/node": "^26.1.0",
     "@types/proper-lockfile": "^4.1.4",
     "drizzle-kit": "^0.31.0"
   }
