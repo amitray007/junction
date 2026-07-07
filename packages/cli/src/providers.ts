@@ -51,7 +51,9 @@ import type { McpServerHandlers } from "@junction/mcp-server"
  *     names carry no `_`, namespaces carry no `__` — scoped-proxy.ts), THEN
  *     `splitNamespacedName` the remainder for `{namespace, tool}`.
  */
-function parseWireName(name: string, prefixed: boolean, singleProfile: string): AuditTarget {
+// Exported for the arity-split unit test (audit-only pure helper; the arity
+// split was a doc-review blocker — locked by a table test in providers.test.ts).
+export function parseWireName(name: string, prefixed: boolean, singleProfile: string): AuditTarget {
   if (!prefixed) {
     const { namespace, tool } = splitNamespacedName(name)
     return { profile: singleProfile, namespace, tool }

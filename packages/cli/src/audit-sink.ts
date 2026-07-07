@@ -36,7 +36,14 @@ export interface FileAuditSink extends AuditSink {
  * delay the tool call it is recording.
  */
 export function createFileAuditSink(paths: JunctionPaths): FileAuditSink {
-  const dest = pino.destination({ dest: paths.auditLogFile, sync: false, mkdir: true })
+  // mode 0o600 (owner-only) matches the credential-file convention
+  // (encrypted-file-store.ts, master-key.ts) — audit.log is metadata-only, but
+  // it still records profiles/namespaces/tools/keyIds/argKeys/hashes that must
+  // not be world-readable on a multi-user host. The 0700 home is NOT a reliable
+  // backstop: the serve paths never call ensureHome(), so a serve-first home's
+  // dir can be 0755 (getDatabase mkdir has no mode). Set the file mode explicitly
+  // (credential-security review, inc 31) — sonic-boom passes `mode` to the open().
+  const dest = pino.destination({ dest: paths.auditLogFile, sync: false, mkdir: true, mode: 0o600 })
   const logger = pino(dest)
 
   return {
@@ -48,10 +55,20 @@ export function createFileAuditSink(paths: JunctionPaths): FileAuditSink {
       }
     },
     flush(): void {
-      dest.flush()
+      try {
+        dest.flush()
+      } catch {
+        // best-effort shutdown flush — swallow (e.g. sonic-boom not-ready).
+      }
     },
     flushSync(): void {
-      dest.flushSync()
+      try {
+        dest.flushSync()
+      } catch {
+        // flushSync throws "sonic boom is not ready yet" if the async open()
+        // hasn't landed (emit → immediate exit). It's a best-effort backstop in
+        // an exit/signal handler — a throw here must NOT crash the shutdown path.
+      }
     },
   }
 }
