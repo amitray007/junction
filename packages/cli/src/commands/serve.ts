@@ -27,6 +27,7 @@ import {
   createProfileProxy,
   createRepositories,
   createScopedProxy,
+  ensureHome,
   getDatabase,
   getMcpPort,
   getPaths,
@@ -80,6 +81,17 @@ export const serveCommand = defineCommand({
         return
       }
       port = portResult.value
+    }
+
+    // ── Ensure the home dir exists at 0700 (defense-in-depth, increment 32.1) ─
+    // `init` is the only other caller of ensureHome(); a serve-first home
+    // (no prior `junction init`) would otherwise get its dir mkdir'd with no
+    // mode by getDatabase, landing at the umask default (often 0755).
+    const homeResult = await ensureHome()
+    if (homeResult.isErr()) {
+      consola.error(`junction serve: failed to create home dir (${homeResult.error.kind})`)
+      process.exitCode = 1
+      return
     }
 
     // ── Open the DB (required — keys/profiles both live there) ─────────────

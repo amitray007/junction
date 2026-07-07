@@ -11,6 +11,7 @@
 // smoke tests always test the built output, not the TypeScript source).
 
 import { spawn } from "node:child_process"
+import { chmod, stat } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { withTempHome } from "@junction/core/testing"
@@ -147,6 +148,23 @@ describe("junction mcp serve", () => {
       // runMcpHandshake already asserts every stdout line is valid JSON.
       // If it resolves, the assertion holds. If any stray line exists, it rejects.
       await expect(runMcpHandshake(home)).resolves.toBeDefined()
+    })
+  })
+
+  it("creates the home dir at mode 0700, even if it pre-existed at a looser mode (increment 32.1)", async () => {
+    if (process.platform === "win32") return
+    await withTempHome(async (home) => {
+      // withTempHome's mkdtemp already creates `home`; loosen it first so
+      // this test actually proves ensureHome()'s chmod runs on serve — not
+      // just that mkdtemp happened to produce 0700 on this platform.
+      await chmod(home, 0o755)
+      const before = await stat(home)
+      expect(before.mode & 0o777).toBe(0o755)
+
+      await runMcpHandshake(home)
+
+      const after = await stat(home)
+      expect(after.mode & 0o777).toBe(0o700)
     })
   })
 })

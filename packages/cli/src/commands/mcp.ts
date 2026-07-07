@@ -32,6 +32,7 @@ import {
   createCredentialStore,
   createProfileProxy,
   createRepositories,
+  ensureHome,
   getDatabase,
   getPaths,
   type Profile,
@@ -93,6 +94,22 @@ const serveCommand = defineCommand({
     const { serveStdio } = await import("@junction/mcp-server")
 
     const profileName = args.profile
+
+    // ── Ensure the home dir exists at 0700 (defense-in-depth, increment 32.1) ─
+    // Placed at the TOP of run(), before the synthetic-default early-return,
+    // so ANY `mcp serve` invocation — named profile or not — creates the home
+    // at 0700. `init` is the only other ensureHome() caller; without this, a
+    // serve-first home's dir would get mkdir'd with no mode (getDatabase),
+    // landing at the umask default. Error path uses process.stderr.write, NOT
+    // consola — this file's stdout IS the MCP channel (see file-level note).
+    const homeResult = await ensureHome()
+    if (homeResult.isErr()) {
+      process.stderr.write(
+        `junction mcp serve: failed to create home dir (${homeResult.error.kind})\n`,
+      )
+      process.exitCode = 1
+      return
+    }
 
     // ── No profile name given: serve synthetic default immediately ──────────
     if (!profileName) {

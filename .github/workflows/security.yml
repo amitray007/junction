@@ -42,3 +42,153 @@ jobs:
             fail=1
           fi
           exit $fail
+
+  type-coverage:
+    # Increment 32.1 — locks the type-coverage floor so `any` can't silently
+    # creep into a credential broker. tsconfig.typecoverage.json is a
+    # dedicated, explicit-include config (root tsconfig's project references
+    # make type-coverage report a false 0/0 success — see the config's
+    # doc-review note); measured source-only aggregate is ~99.4%, so the
+    # gate is set at the honest floor of 99, not weakened.
+    name: type-coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          cache: true
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: pnpm install --frozen-lockfile
+      # Build first: without dist, cross-package `@junction/*` imports resolve to
+      # nothing and collapse to `any` in every importer (web especially), so
+      # type-coverage measures a FALSE-LOW number (CI 98.29% vs a real ~99.5%).
+      # And `tsr generate` writes web's gitignored routeTree.gen.ts (absent in a
+      # fresh checkout) so web's route files type-resolve. Both must run so the
+      # gate measures the SAME resolved types the real `tsc` typecheck sees.
+      - run: pnpm build
+      - run: pnpm --filter @junction/web exec tsr generate
+      - run: pnpm run type-coverage:check
+
+  spdx-header-guard:
+    # Increment 32.1 — locks in the SPDX-header-on-every-source-file
+    # invariant (docs/futures/revisit-when.md). Mirrors the no-publish-guard
+    # bash-gate idiom above: a plain grep gate, zero new config/dependency.
+    name: spdx-header-guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Assert every tracked source file carries an SPDX header
+        shell: bash
+        run: |
+          fail=0
+          missing=()
+          while IFS= read -r f; do
+            case "$f" in
+              */dist/*|*/dist-tsc/*) continue ;;
+            esac
+            # -a: force text mode — a legitimate NUL byte inside a source
+            # string literal can make grep mis-detect a UTF-8 file as binary
+            # and silently skip it otherwise (found during this gate's own
+            # authoring: packages/web/src/server/data.server.ts).
+            if ! grep -aq "SPDX-License-Identifier" "$f"; then
+              missing+=("$f")
+              fail=1
+            fi
+          done < <(git ls-files '*.ts' '*.tsx')
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::Tracked source file(s) missing SPDX-License-Identifier:"
+            printf '  %s\n' "${missing[@]}"
+            exit 1
+          fi
+          echo "All tracked *.ts/*.tsx files carry an SPDX header."
+
+  osv-scanner:
+    # Increment 32.1 — dependency CVE scan, complements the existing
+    # non-blocking `pnpm audit` in the `quality` npm script (package.json;
+    # left untouched). Pinned to the osv-scanner-action release commit SHA
+    # per the repo's third-party-action pinning policy (see denoland/gitleaks
+    # above). The action's own exit code reflects "any vuln found" (osv-scanner
+    # has no built-in severity-threshold flag); continue-on-error lets a
+    # follow-up step read the JSON report and gate on high/critical only,
+    # matching the gitleaks/no-publish-guard blocking posture without failing
+    # on low/medium noise.
+    name: osv-scanner
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run osv-scanner (report-only step — severity gate follows)
+        id: scan
+        continue-on-error: true
+        uses: google/osv-scanner-action/osv-scanner-action@9a498708959aeaef5ef730655706c5a1df1edbc2 # v2.3.8
+        with:
+          scan-args: |-
+            --recursive
+            --format=json
+            --output-file=osv-results.json
+            ./
+      - name: Gate on high/critical severity only
+        shell: bash
+        run: |
+          # SCAN_OUTCOME is the report-only step's result ("success" = no vulns
+          # found, "failure" = the action exited non-zero because it found vulns
+          # OR itself errored). A missing report file is only benign when the
+          # scan SUCCEEDED (clean run, no report written for zero findings). A
+          # missing file after a FAILED scan means the scanner crashed → we must
+          # NOT treat that as clean (fail-closed on scanner-infra failure).
+          SCAN_OUTCOME="${{ steps.scan.outcome }}" python3 - <<'PYEOF'
+          import json, os, sys
+
+          scan_outcome = os.environ.get("SCAN_OUTCOME", "")
+
+          try:
+              with open("osv-results.json") as f:
+                  data = json.load(f)
+          except FileNotFoundError:
+              if scan_outcome == "success":
+                  print("No osv-results.json + scan succeeded — no findings.")
+                  sys.exit(0)
+              print("::error::osv-scanner produced no report and did not succeed "
+                    f"(outcome={scan_outcome!r}) — failing closed (scan may have crashed).")
+              sys.exit(1)
+          # A malformed report is also fail-closed: json.load raises → uncaught → step fails.
+
+          HIGH_THRESHOLD = 7.0  # CVSS >= 7.0 == High/Critical (matches gitleaks blocking posture)
+          high_or_critical = []
+          unknown_severity = []
+
+          for result in data.get("results", []):
+              source = result.get("source", {}).get("path", "?")
+              for pkg in result.get("packages", []):
+                  name = pkg.get("package", {}).get("name", "?")
+                  for group in pkg.get("groups", []):
+                      ids = group.get("ids")
+                      max_sev = group.get("max_severity", "")
+                      try:
+                          score = float(max_sev)
+                      except (TypeError, ValueError):
+                          score = None
+                      if score is None or max_sev == "":
+                          # A real advisory group with NO numeric CVSS (e.g. a
+                          # GHSA that carries only a qualitative "HIGH" label).
+                          # Do NOT assume 0.0 — that would silently pass a real
+                          # high-severity advisory. Flag it as unknown → fail.
+                          unknown_severity.append(f"{source}: {name} (no numeric CVSS, ids={ids})")
+                      elif score >= HIGH_THRESHOLD:
+                          high_or_critical.append(f"{source}: {name} (CVSS {max_sev}, ids={ids})")
+
+          if high_or_critical or unknown_severity:
+              if high_or_critical:
+                  print("::error::High/critical severity vulnerabilities found:")
+                  for line in high_or_critical:
+                      print(f"  {line}")
+              if unknown_severity:
+                  print("::error::Advisories with no numeric CVSS (treated as "
+                        "high-severity until triaged — do not assume benign):")
+                  for line in unknown_severity:
+                      print(f"  {line}")
+              sys.exit(1)
+
+          print("No high/critical (or unknown-severity) vulnerabilities found.")
+          PYEOF
