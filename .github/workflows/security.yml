@@ -123,37 +123,64 @@ jobs:
       - name: Gate on high/critical severity only
         shell: bash
         run: |
-          python3 - <<'PYEOF'
-          import json, sys
+          # SCAN_OUTCOME is the report-only step's result ("success" = no vulns
+          # found, "failure" = the action exited non-zero because it found vulns
+          # OR itself errored). A missing report file is only benign when the
+          # scan SUCCEEDED (clean run, no report written for zero findings). A
+          # missing file after a FAILED scan means the scanner crashed → we must
+          # NOT treat that as clean (fail-closed on scanner-infra failure).
+          SCAN_OUTCOME="${{ steps.scan.outcome }}" python3 - <<'PYEOF'
+          import json, os, sys
+
+          scan_outcome = os.environ.get("SCAN_OUTCOME", "")
 
           try:
               with open("osv-results.json") as f:
                   data = json.load(f)
           except FileNotFoundError:
-              print("No osv-results.json produced — treating as no findings.")
-              sys.exit(0)
+              if scan_outcome == "success":
+                  print("No osv-results.json + scan succeeded — no findings.")
+                  sys.exit(0)
+              print("::error::osv-scanner produced no report and did not succeed "
+                    f"(outcome={scan_outcome!r}) — failing closed (scan may have crashed).")
+              sys.exit(1)
+          # A malformed report is also fail-closed: json.load raises → uncaught → step fails.
 
           HIGH_THRESHOLD = 7.0  # CVSS >= 7.0 == High/Critical (matches gitleaks blocking posture)
           high_or_critical = []
+          unknown_severity = []
 
           for result in data.get("results", []):
               source = result.get("source", {}).get("path", "?")
               for pkg in result.get("packages", []):
                   name = pkg.get("package", {}).get("name", "?")
                   for group in pkg.get("groups", []):
+                      ids = group.get("ids")
                       max_sev = group.get("max_severity", "")
                       try:
                           score = float(max_sev)
                       except (TypeError, ValueError):
-                          score = 0.0
-                      if score >= HIGH_THRESHOLD:
-                          high_or_critical.append(f"{source}: {name} (CVSS {max_sev}, ids={group.get('ids')})")
+                          score = None
+                      if score is None or max_sev == "":
+                          # A real advisory group with NO numeric CVSS (e.g. a
+                          # GHSA that carries only a qualitative "HIGH" label).
+                          # Do NOT assume 0.0 — that would silently pass a real
+                          # high-severity advisory. Flag it as unknown → fail.
+                          unknown_severity.append(f"{source}: {name} (no numeric CVSS, ids={ids})")
+                      elif score >= HIGH_THRESHOLD:
+                          high_or_critical.append(f"{source}: {name} (CVSS {max_sev}, ids={ids})")
 
-          if high_or_critical:
-              print("::error::High/critical severity vulnerabilities found:")
-              for line in high_or_critical:
-                  print(f"  {line}")
+          if high_or_critical or unknown_severity:
+              if high_or_critical:
+                  print("::error::High/critical severity vulnerabilities found:")
+                  for line in high_or_critical:
+                      print(f"  {line}")
+              if unknown_severity:
+                  print("::error::Advisories with no numeric CVSS (treated as "
+                        "high-severity until triaged — do not assume benign):")
+                  for line in unknown_severity:
+                      print(f"  {line}")
               sys.exit(1)
 
-          print("No high/critical severity vulnerabilities found.")
+          print("No high/critical (or unknown-severity) vulnerabilities found.")
           PYEOF
