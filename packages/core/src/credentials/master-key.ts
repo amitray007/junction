@@ -9,11 +9,27 @@
 // (b) Backup/partial exposure (log, screenshot, git add) of the DB alone leaks nothing.
 // For real at-rest protection, supply Tier 1 (systemd LoadCredential / passphrase not on disk).
 
-import { randomBytes, scrypt } from "node:crypto"
-import { chmod, readFile, rename, writeFile } from "node:fs/promises"
+import { randomBytes } from "node:crypto"
+import { readFile } from "node:fs/promises"
 import { err, ok, ResultAsync } from "neverthrow"
 import type { CredentialError } from "../errors/index.js"
 import type { JunctionPaths } from "../paths/index.js"
+import { deriveKeyFromPassphrase, writeFile0600 } from "./vault-crypto.js"
+
+/**
+ * Discriminates the 4-tier master-key resolution ladder more finely than "env/keyring/file"
+ * because rotation policy (increment 32.3) differs *within* env:
+ *   - env-raw: JUNCTION_MASTER_KEY = a raw 32B key → CANNOT reinstall (env is read-only to us)
+ *   - env-passphrase: JUNCTION_MASTER_KEY/_FILE = a passphrase → scrypt; reinstall = re-derive
+ *     with a fresh salt
+ *   - keyring: OS keyring Entry("junction","__master_key__")
+ *   - file: auto-generated ~/.junction/master.key (Tier 3)
+ */
+export type MasterKeyTier =
+  | { kind: "env-raw" }
+  | { kind: "env-passphrase" }
+  | { kind: "keyring" }
+  | { kind: "file" }
 
 function isNodeError(value: unknown): value is NodeJS.ErrnoException {
   return value instanceof Error && "code" in value
@@ -48,31 +64,6 @@ function tryDecodeKey(
   return null
 }
 
-/** Derive a 32-byte key from a passphrase with scrypt (real production params + mandatory maxmem). */
-function deriveKeyFromPassphrase(
-  passphrase: string,
-  salt: Buffer,
-): ResultAsync<Buffer, CredentialError> {
-  return new ResultAsync<Buffer, CredentialError>(
-    new Promise((resolve) => {
-      scrypt(
-        passphrase,
-        salt,
-        32,
-        // maxmem MUST be 256 MiB — Node's default 32 MiB throws at N=2^17
-        { N: 131072, r: 8, p: 1, maxmem: 256 * 1024 * 1024 },
-        (error, derivedKey) => {
-          if (error !== null) {
-            resolve(err<Buffer, CredentialError>({ kind: "key-unavailable", cause: error }))
-          } else {
-            resolve(ok<Buffer, CredentialError>(derivedKey))
-          }
-        },
-      )
-    }),
-  )
-}
-
 /**
  * Resolve from JUNCTION_MASTER_KEY_FILE or JUNCTION_MASTER_KEY env var.
  *
@@ -105,23 +96,6 @@ async function resolveFromEnv(
     return { key: decoded.value }
   }
   return null
-}
-
-/**
- * Write a buffer atomically at mode 0600.
- *
- * Security: the tmp file is created at 0600 immediately (not at the umask default 0644)
- * so the raw key material is NEVER briefly world-readable between writeFile and chmod.
- * The post-rename chmod is kept as belt-and-suspenders (handles cross-device rename edge
- * cases where the destination inherits different umask behavior on some Linux kernels).
- */
-async function writeFile0600(target: string, data: Buffer): Promise<void> {
-  const tmp = `${target}.${randomBytes(8).toString("hex")}.tmp`
-  // FIX 1: mode 0o600 here closes the world-readable window that existed between writeFile
-  // and chmod. POSIX honors the mode under umask for newly created files.
-  await writeFile(tmp, data, { mode: 0o600 })
-  await chmod(tmp, 0o600)
-  await rename(tmp, target)
 }
 
 /** Auto-generate a 32-byte key, write atomically to masterKeyFile at mode 0600. */
@@ -163,34 +137,46 @@ async function resolveFromFile(masterKeyFile: string): Promise<Buffer> {
 }
 
 /**
- * Resolves the 32-byte master key using the 4-tier priority ladder:
+ * Resolves the 32-byte master key AND the tier it was resolved from, using the 4-tier
+ * priority ladder:
  * 1. JUNCTION_MASTER_KEY / JUNCTION_MASTER_KEY_FILE (32B base64/hex or passphrase→scrypt)
  * 2. OS keyring Entry("junction","__master_key__")
  * 3. Auto-generated key at ~/.junction/master.key (mode 0600) — zero-config default
  * 4. Passphrase prompt (stub — not implemented for unattended boot)
+ *
+ * The tier lets callers (increment 32.3 rotation) reinstall a new key at the SAME posture
+ * and refuse rotation for env-raw (env is read-only to us — see `MasterKeyTier`).
  */
-export function resolveMasterKey(
+export function resolveMasterKeyWithTier(
   paths: JunctionPaths,
   env: NodeJS.ProcessEnv = process.env,
-): ResultAsync<Buffer, CredentialError> {
-  return new ResultAsync<Buffer, CredentialError>(
+): ResultAsync<{ key: Buffer; tier: MasterKeyTier }, CredentialError> {
+  return new ResultAsync<{ key: Buffer; tier: MasterKeyTier }, CredentialError>(
     (async () => {
       // Tier 1: env key
       let envResult: { key: Buffer } | { passphrase: string } | { nearMiss: true } | null = null
       try {
         envResult = await resolveFromEnv(env)
       } catch (cause) {
-        return err<Buffer, CredentialError>({ kind: "key-unavailable", cause })
+        return err<{ key: Buffer; tier: MasterKeyTier }, CredentialError>({
+          kind: "key-unavailable",
+          cause,
+        })
       }
 
       if (envResult !== null) {
-        if ("key" in envResult) return ok<Buffer, CredentialError>(envResult.key)
+        if ("key" in envResult) {
+          return ok<{ key: Buffer; tier: MasterKeyTier }, CredentialError>({
+            key: envResult.key,
+            tier: { kind: "env-raw" },
+          })
+        }
         // FIX 3: value matched a raw-key shape (base64/hex length) but decoded to ≠32 bytes.
         // The operator clearly intended a raw key — do NOT silently downgrade to scrypt, which
         // would derive a different key and persist a salt to disk, silently weakening their
         // intended Tier-1 at-rest posture. Fail explicitly so the misconfiguration is visible.
         if ("nearMiss" in envResult) {
-          return err<Buffer, CredentialError>({
+          return err<{ key: Buffer; tier: MasterKeyTier }, CredentialError>({
             kind: "key-unavailable",
             cause: new Error(
               "JUNCTION_MASTER_KEY/_FILE matches a raw-key shape (base64/hex) but does not decode to exactly 32 bytes. " +
@@ -203,9 +189,13 @@ export function resolveMasterKey(
         try {
           salt = await loadOrCreateSalt(paths.masterKeyFile)
         } catch (cause) {
-          return err<Buffer, CredentialError>({ kind: "key-unavailable", cause })
+          return err<{ key: Buffer; tier: MasterKeyTier }, CredentialError>({
+            kind: "key-unavailable",
+            cause,
+          })
         }
-        return deriveKeyFromPassphrase(envResult.passphrase, salt)
+        const derived = await deriveKeyFromPassphrase(envResult.passphrase, salt)
+        return derived.map((key) => ({ key, tier: { kind: "env-passphrase" as const } }))
       }
 
       // Tier 2: OS keyring (lazy-import; skip gracefully if unavailable)
@@ -220,7 +210,7 @@ export function resolveMasterKey(
           // keyring key, bricking all previously-stored secrets.
           // Absent keyring entry (stored === null) still falls through to Tier 3 normally.
           if (decoded.length !== 32) {
-            return err<Buffer, CredentialError>({
+            return err<{ key: Buffer; tier: MasterKeyTier }, CredentialError>({
               kind: "key-unavailable",
               cause: new Error(
                 `OS keyring master key decodes to ${decoded.length} bytes, expected 32. ` +
@@ -228,7 +218,10 @@ export function resolveMasterKey(
               ),
             })
           }
-          return ok<Buffer, CredentialError>(decoded)
+          return ok<{ key: Buffer; tier: MasterKeyTier }, CredentialError>({
+            key: decoded,
+            tier: { kind: "keyring" },
+          })
         }
       } catch {
         // Keyring unavailable — fall through to Tier 3
@@ -237,10 +230,28 @@ export function resolveMasterKey(
       // Tier 3: auto-generated file key
       try {
         const key = await resolveFromFile(paths.masterKeyFile)
-        return ok<Buffer, CredentialError>(key)
+        return ok<{ key: Buffer; tier: MasterKeyTier }, CredentialError>({
+          key,
+          tier: { kind: "file" },
+        })
       } catch (cause) {
-        return err<Buffer, CredentialError>({ kind: "key-unavailable", cause })
+        return err<{ key: Buffer; tier: MasterKeyTier }, CredentialError>({
+          kind: "key-unavailable",
+          cause,
+        })
       }
     })(),
   )
+}
+
+/**
+ * Resolves the 32-byte master key using the 4-tier priority ladder (see
+ * `resolveMasterKeyWithTier` for the ladder detail). Delegates to the tier-aware resolver —
+ * ONE resolution ladder, not two copies.
+ */
+export function resolveMasterKey(
+  paths: JunctionPaths,
+  env: NodeJS.ProcessEnv = process.env,
+): ResultAsync<Buffer, CredentialError> {
+  return resolveMasterKeyWithTier(paths, env).map((r) => r.key)
 }

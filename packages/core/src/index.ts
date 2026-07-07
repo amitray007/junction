@@ -125,12 +125,21 @@ export {
   type CredentialStore,
   compatibleCredentialKinds,
   createCredentialStore,
+  deriveKeyFromPassphrase,
+  type EncFile,
+  EncFileSchema,
+  type EncRecord,
+  gcmDecrypt,
+  gcmEncrypt,
   isKindAccepted,
+  type MasterKeyTier,
   type RenameCredentialInput,
   type RotateCredentialInput,
   removeCredential,
   renameCredential,
+  resolveMasterKeyWithTier,
   rotateCredential,
+  writeFile0600,
 } from "./credentials/index.js"
 // Database + repositories
 export { type Db, getDatabase } from "./db/index.js"
