@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 const getMock = vi.fn()
 const credentialsGetMock = vi.fn()
+const forPlatformMock = vi.fn()
 const setVerifyStateMock = vi.fn()
 const storeGetMock = vi.fn()
 const storeSetMock = vi.fn()
@@ -50,6 +51,7 @@ vi.mock("@junction/core", async (importOriginal) => {
           platforms: { get: getMock },
           credentials: {
             get: credentialsGetMock,
+            forPlatform: forPlatformMock,
             setVerifyState: setVerifyStateMock,
             create: credentialsCreateMock,
           },
@@ -75,6 +77,7 @@ const { mutateAddCredential, testCredential } = await import("./mutations.server
 afterEach(() => {
   getMock.mockReset()
   credentialsGetMock.mockReset()
+  forPlatformMock.mockReset()
   setVerifyStateMock.mockReset()
   storeGetMock.mockReset()
   storeSetMock.mockReset()
@@ -134,6 +137,7 @@ const verifyOnAddPlatform = {
 describe("mutateAddCredential — verify-on-add secret discipline", () => {
   it("never leaks the plaintext secret or secretRef through the verify=true success result (stringify guard)", async () => {
     getMock.mockReturnValue(okAsync(verifyOnAddPlatform))
+    forPlatformMock.mockReturnValue(okAsync([]))
     storeSetMock.mockReturnValue(okAsync(undefined))
     credentialsCreateMock.mockImplementation((c: { id: string }) => okAsync(c))
     verifyCredentialMock.mockReturnValue(okAsync({ status: "ok" }))

@@ -39,14 +39,34 @@ export interface AppGroup {
 // ---------------------------------------------------------------------------
 
 /**
+ * Closed set of the 5 build-recipe kinds a catalog surface's
+ * `platformIdTemplate` may append as a `-<kind>` suffix (increment 30.12,
+ * `{app}-{kind}` groupability rule). Deliberately NOT derived from
+ * `PlatformKind` — that type also includes `"custom"`, which must NEVER be
+ * stripped (a manually-added platform id ending in `-custom` is a real,
+ * unrelated id, not a structurally-generated suffix).
+ */
+const BUILD_KIND_SUFFIXES = ["mcp", "openapi", "graphql", "http", "cli"] as const
+
+/**
  * Resolve ONE connection's app id. Attribution order (NO fuzzy/substring
  * matching — that rots into false positives over time):
  *   1. authoritative: `oauthProviderId` (from `oauthMeta.providerId`), if
  *      present → the app whose `auth[]` contains {mode:"oauth2", providerId}.
  *   2. exact, case-insensitive match of platform.id against AppDefinition.id.
  *   3. exact, case-insensitive match of platform.id against AppDefinition.aliases[].
- *   4. exact, case-insensitive match of platform.displayName against id/displayName.
- *   5. else → "other".
+ *   4. (NEW, 30.12) if platformId ends in `-<kind>` for kind in
+ *      BUILD_KIND_SUFFIXES, strip that trailing suffix ONCE and retry the
+ *      exact-id match (step 2's logic) against the stripped base. Match →
+ *      return that app id. No recursion, no second strip, and does NOT fall
+ *      through to alias/displayName on the stripped base. This step runs
+ *      AFTER exact-id (2) and alias (3) — those are authoritative
+ *      zero-ambiguity matches and must win first, so a real id like
+ *      "brave-search" is never mis-stripped — and BEFORE displayName (5)
+ *      because a structurally-generated `<appId>-<kind>` id is a stronger
+ *      signal than a displayName coincidence.
+ *   5. exact, case-insensitive match of platform.displayName against id/displayName.
+ *   6. else → "other".
  *
  * Never returns undefined — unmatched connections land in "other" so every
  * connection is always groupable (proof-of-done: negative control).
@@ -82,7 +102,21 @@ export function appIdForConnection(
   )
   if (byAlias) return byAlias.id
 
-  // 4. Exact, case-insensitive displayName match (against the app's id or displayName).
+  // 4. (NEW, 30.12) Structurally-generated `<appId>-<kind>` suffix strip.
+  // Anchored to the TRAILING suffix only, stripped once — no recursion, and
+  // the stripped base is retried ONLY against the exact-id match (step 2's
+  // logic), never against alias/displayName.
+  for (const kind of BUILD_KIND_SUFFIXES) {
+    const suffix = `-${kind}`
+    if (platformId.endsWith(suffix)) {
+      const base = platformId.slice(0, -suffix.length)
+      const byStrippedId = apps.find((app) => app.id.toLowerCase() === base)
+      if (byStrippedId) return byStrippedId.id
+      break
+    }
+  }
+
+  // 5. Exact, case-insensitive displayName match (against the app's id or displayName).
   const byDisplayName = apps.find(
     (app) =>
       app.id.toLowerCase() === platformDisplayName ||
@@ -90,7 +124,7 @@ export function appIdForConnection(
   )
   if (byDisplayName) return byDisplayName.id
 
-  // 5. Unmatched — honest bucket, not a guess.
+  // 6. Unmatched — honest bucket, not a guess.
   return "other"
 }
 

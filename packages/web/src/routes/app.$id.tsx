@@ -560,6 +560,17 @@ function ConnectSurfaceDialog({
       setSubmitting(false)
       return
     }
+    if ("duplicateAccount" in result) {
+      // TODO(30.12 Slice B / B6): surface this on the account field specifically
+      // (mirroring verifyFailedMessage's per-outcome discipline), not a generic
+      // dialog-level error. This is the minimal type-safe wiring for Slice A's
+      // A6 plumbing; Slice B owns the account-field UX.
+      setError(
+        `"${result.duplicateAccount}" is already connected here — pick a different account name.`,
+      )
+      setSubmitting(false)
+      return
+    }
     setError(result.error)
     setSubmitting(false)
   }

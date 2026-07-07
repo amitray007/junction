@@ -55,6 +55,14 @@ export type ConnectError =
   | { kind: "assemble-failed"; cause: PlatformOrchestrationError }
   | { kind: "persist-failed"; cause: DbError }
   | { kind: "credential-failed"; cause: CredentialError | DbError }
+  /**
+   * addCredential's `duplicate-account` guard fired (increment 30.12) — a
+   * credential with this `account` label already exists on this platform.
+   * Mapped OUT of the generic `credential-failed` wrapper (not nested inside
+   * it) so the web layer can distinguish it and surface a per-outcome message
+   * on the account field, instead of the generic "Failed to connect".
+   */
+  | { kind: "duplicate-account"; account: string }
 
 export type ConnectResult =
   | { verified: true; checkedAt: number }
@@ -214,7 +222,12 @@ function writeCredential(
     args.repos.credentials,
   )
     .map(() => undefined)
-    .mapErr((cause): ConnectError => ({ kind: "credential-failed", cause }))
+    .mapErr((cause): ConnectError => {
+      if (cause.kind === "duplicate-account") {
+        return { kind: "duplicate-account", account: cause.account }
+      }
+      return { kind: "credential-failed", cause }
+    })
 }
 
 // ---------------------------------------------------------------------------

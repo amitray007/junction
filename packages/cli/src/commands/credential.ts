@@ -867,7 +867,8 @@ function reportCredentialOpError(
     e.kind === "key-unavailable" ||
     e.kind === "io-failed" ||
     e.kind === "invalid-input" ||
-    e.kind === "kind-incompatible"
+    e.kind === "kind-incompatible" ||
+    e.kind === "duplicate-account"
   ) {
     reportCredentialError(e as Parameters<typeof reportCredentialError>[0], json)
   } else {

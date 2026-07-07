@@ -49,7 +49,9 @@ describe("planConnect — openapi surface (oauth2 + token)", () => {
     const credentialPlan = plan as Extract<ConnectPlan, { path: "credential" }>
     expect(credentialPlan.credentialKind).toBe("bearer")
     expect(openapi.build.credential.kind).toBe("oauth2") // the recipe's own default — proves precedence overrides it
-    expect(credentialPlan.platformId).toBe("github")
+    // 30.12: github's platformIdTemplate is now "{app}-{kind}" (multi-surface
+    // groupability) — every surface resolves to a DISTINCT platformId.
+    expect(credentialPlan.platformId).toBe("github-openapi")
     expect(credentialPlan.kind).toBe("openapi")
     expect(credentialPlan.verifiable).toBe(true)
     if (credentialPlan.platformInput.kind === "openapi") {
@@ -86,7 +88,8 @@ describe("planConnect — graphql surface (oauth2 + token)", () => {
     const credentialPlan = plan as Extract<ConnectPlan, { path: "credential" }>
     expect(credentialPlan.path).toBe("credential")
     expect(credentialPlan.credentialKind).toBe("bearer")
-    expect(credentialPlan.platformId).toBe("github")
+    // 30.12: distinct platformId per surface.
+    expect(credentialPlan.platformId).toBe("github-graphql")
     expect(credentialPlan.kind).toBe("graphql")
     // graphql's verify hint is typenameProbe — a real primitive → verifiable.
     expect(credentialPlan.verifiable).toBe(true)
@@ -111,6 +114,8 @@ describe("planConnect — mcp surface (oauth2 + token)", () => {
     const credentialPlan = plan as Extract<ConnectPlan, { path: "credential" }>
     expect(credentialPlan.path).toBe("credential")
     expect(credentialPlan.credentialKind).toBe("bearer")
+    // 30.12: distinct platformId per surface.
+    expect(credentialPlan.platformId).toBe("github-mcp")
     expect(credentialPlan.kind).toBe("mcp")
     expect(credentialPlan.verifiable).toBe(true)
   })
@@ -142,7 +147,7 @@ describe("planConnect — cli surface (single mode: token; descriptor, no starte
 describe("planConnect — http surface (single mode: token; descriptor WITH starterTools)", () => {
   const http = surface("http")
 
-  it("{app}-http platformIdTemplate resolves distinctly from the flattened surfaces' {app}", () => {
+  it("{app}-{kind} platformIdTemplate resolves distinctly from the other surfaces (30.12: every surface now uses {app}-{kind}, http included)", () => {
     const platformId = resolvePlatformId(http.build.platformIdTemplate, entry.id, http.kind)
     expect(platformId).toBe("github-http")
   })
@@ -180,7 +185,8 @@ describe("toConnectPlanPreview", () => {
     if (plan.path !== "credential") throw new Error("expected credential plan")
     const preview = toConnectPlanPreview(entry, openapi, plan)
     expect(preview).toEqual({
-      platformId: "github",
+      // 30.12: distinct platformId per surface.
+      platformId: "github-openapi",
       kind: "openapi",
       connectionSummary: expect.stringContaining("GitHub"),
       authModes: ["oauth2", "token"],
@@ -199,6 +205,8 @@ describe("toConnectPlanPreview", () => {
     const preview = toConnectPlanPreview(entry, openapi, plan)
     expect(preview.kind).toBe("oauth2-handoff")
     expect(preview.verifiable).toBe(false)
-    expect(preview.platformId).toBe("github")
+    // 30.12: distinct platformId per surface (oauth-handoff preview also
+    // resolves through the surface's platformIdTemplate).
+    expect(preview.platformId).toBe("github-openapi")
   })
 })

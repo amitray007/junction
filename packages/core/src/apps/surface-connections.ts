@@ -20,14 +20,19 @@
  * -added platform, or an app-level kind mismatch). Every input connection
  * lands in exactly one place: a `matched[].connections` bucket, or `leftover`.
  *
- * ⚠️ LIMITATION (same-kind ambiguity, deferred to increment 30.12): matching
- * is by `kind` alone. If a catalog entry ever authored TWO surfaces of the
- * same kind, a connection of that kind would be ambiguous between them —
- * this function has no way to disambiguate further. No current catalog entry
- * has this collision (e.g. GitHub's 5 surfaces are 5 distinct kinds), so
- * 30.10 assumes one surface per kind. This is DISTINCT from multiple
- * connections (accounts) on one surface, which IS supported — `connections`
- * is an array precisely for that multi-account wedge.
+ * ⚠️ LIMITATION (same-kind ambiguity, RE-DEFERRED past increment 30.12):
+ * matching is by `kind` alone. If a catalog entry ever authored TWO surfaces
+ * of the same kind, a connection of that kind would be ambiguous between
+ * them — this function has no way to disambiguate further. 30.12 gives every
+ * surface a distinct `<appId>-<kind>` platformId (multi-surface groupability
+ * + multi-account), but does NOT introduce same-kind surfaces, so this
+ * limitation is untouched by that work. No current catalog entry has this
+ * collision (e.g. GitHub's 5 surfaces are 5 distinct kinds), so one-surface-
+ * per-kind remains a safe assumption. Revisit only if/when a catalog entry
+ * needs genuine same-kind surface composition (see
+ * docs/futures/revisit-when.md). This is DISTINCT from multiple connections
+ * (accounts) on one surface, which IS supported — `connections` is an array
+ * precisely for that multi-account wedge.
  */
 export function intersectSurfaces<C extends { kind: string }>(
   surfaces: { kind: string }[],

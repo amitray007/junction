@@ -4,7 +4,38 @@
 // Method file §2a / §3 proof-of-done.
 
 import { describe, expect, it } from "vitest"
+import { listApps } from "./catalog.js"
 import { appIdForConnection, groupByApp } from "./group.js"
+
+const BUILD_KIND_SUFFIXES = ["mcp", "openapi", "graphql", "http", "cli"] as const
+
+describe("catalog invariant (30.12 A5): no app id or alias ends in a build-kind suffix", () => {
+  // The <appId>-<kind> suffix-strip rule in appIdForConnection is only
+  // unambiguously reversible as long as no REAL app id (or alias) happens to
+  // end in one of the 5 build-recipe kind suffixes — otherwise the strip
+  // would mis-resolve a genuine id to the wrong (or a nonexistent) app. This
+  // test fails LOUDLY the moment a future catalog entry would break that
+  // invariant, rather than silently mis-grouping in production.
+  it("no listApps() id ends in a build-kind suffix", () => {
+    const apps = listApps()
+    for (const app of apps) {
+      for (const kind of BUILD_KIND_SUFFIXES) {
+        expect(app.id.toLowerCase().endsWith(`-${kind}`)).toBe(false)
+      }
+    }
+  })
+
+  it("no alias ends in a build-kind suffix", () => {
+    const apps = listApps()
+    for (const app of apps) {
+      for (const alias of app.aliases ?? []) {
+        for (const kind of BUILD_KIND_SUFFIXES) {
+          expect(alias.toLowerCase().endsWith(`-${kind}`)).toBe(false)
+        }
+      }
+    }
+  })
+})
 
 describe("appIdForConnection", () => {
   it("POSITIVE: oauthProviderId is authoritative — resolves via the auth[] providerId link", () => {
@@ -79,6 +110,35 @@ describe("appIdForConnection", () => {
     })
     expect(appId).toBe("other")
     expect(appId).not.toBeUndefined()
+  })
+
+  it("SUFFIX-STRIP (30.12): github-mcp/openapi/graphql/http/cli all resolve to 'github'", () => {
+    for (const kind of ["mcp", "openapi", "graphql", "http", "cli"] as const) {
+      const appId = appIdForConnection({
+        platformId: `github-${kind}`,
+        platformDisplayName: "irrelevant",
+        kind,
+      })
+      expect(appId).toBe("github")
+    }
+  })
+
+  it("SUFFIX-STRIP negative control: 'brave-search' (the only hyphenated app id) resolves via exact-id, NOT mis-stripped as 'brave' + '-search'", () => {
+    const appId = appIdForConnection({
+      platformId: "brave-search",
+      platformDisplayName: "irrelevant",
+      kind: "openapi",
+    })
+    expect(appId).toBe("brave-search")
+  })
+
+  it("SUFFIX-STRIP: a made-up 'foo-custom' is NOT stripped ('custom' is not in the closed build-kind suffix set) — lands in 'other'", () => {
+    const appId = appIdForConnection({
+      platformId: "foo-custom",
+      platformDisplayName: "irrelevant",
+      kind: "custom",
+    })
+    expect(appId).toBe("other")
   })
 
   it("PRECEDENCE: an oauthProviderId that NO app declares FALLS THROUGH to id-matching (not early 'other')", () => {

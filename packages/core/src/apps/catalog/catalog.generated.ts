@@ -272,7 +272,7 @@ export const CATALOG_ENTRIES: readonly AppCatalogEntry[] = [
           },
         ],
         build: {
-          platformIdTemplate: "{app}",
+          platformIdTemplate: "{app}-{kind}",
           via: "flattened",
           credential: {
             kind: "oauth2",
@@ -304,7 +304,7 @@ export const CATALOG_ENTRIES: readonly AppCatalogEntry[] = [
           },
         ],
         build: {
-          platformIdTemplate: "{app}",
+          platformIdTemplate: "{app}-{kind}",
           via: "flattened",
           credential: {
             kind: "oauth2",
@@ -337,7 +337,7 @@ export const CATALOG_ENTRIES: readonly AppCatalogEntry[] = [
           },
         ],
         build: {
-          platformIdTemplate: "{app}",
+          platformIdTemplate: "{app}-{kind}",
           via: "flattened",
           credential: {
             kind: "oauth2",
@@ -365,7 +365,7 @@ export const CATALOG_ENTRIES: readonly AppCatalogEntry[] = [
           },
         ],
         build: {
-          platformIdTemplate: "{app}",
+          platformIdTemplate: "{app}-{kind}",
           via: "descriptor",
           credential: {
             kind: "bearer",
@@ -395,7 +395,7 @@ export const CATALOG_ENTRIES: readonly AppCatalogEntry[] = [
           },
         ],
         build: {
-          platformIdTemplate: "{app}-http",
+          platformIdTemplate: "{app}-{kind}",
           via: "descriptor",
           credential: {
             kind: "bearer",

@@ -24,6 +24,14 @@ export type CredentialError =
   | { kind: "io-failed"; cause: unknown }
   | { kind: "invalid-input"; reason: string }
   | { kind: "kind-incompatible"; requested: string; allowed: string[] }
+  /**
+   * A credential with the same `{platformId, account}` already exists
+   * (increment 30.12 — the app-level duplicate-account guard; see
+   * `addCredential`). No DB migration: this is an application-level check,
+   * not a unique constraint — see docs/futures/gotchas.md for the deferred
+   * DB-level hardening.
+   */
+  | { kind: "duplicate-account"; platformId: string; account: string }
 
 /**
  * Errors from minting/verifying/revoking junction API keys (increment 27).
