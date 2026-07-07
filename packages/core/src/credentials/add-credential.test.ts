@@ -12,7 +12,7 @@
 import { errAsync, okAsync, type ResultAsync } from "neverthrow"
 import { describe, expect, it } from "vitest"
 import type { DbError } from "../errors/index.js"
-import { newPlatformId } from "../ids/index.js"
+import { newCredentialId, newPlatformId } from "../ids/index.js"
 import type { CredentialsRepo } from "../repositories/credentials.js"
 import type { Credential } from "../schema/credential.js"
 import type { Platform } from "../schema/platform.js"
@@ -79,6 +79,32 @@ function makeStubRepo(): CredentialsRepo {
     delete: () => okAsync(undefined),
     setVerifyState: () => okAsync(undefined),
   } as unknown as CredentialsRepo
+}
+
+/**
+ * A CredentialsRepo stub whose `forPlatform` returns a fixed set of existing
+ * credentials, and whose `create` records every call in `createCalls` so
+ * tests can assert nothing was written on a duplicate-account rejection.
+ */
+function makeRecordingRepo(existing: Credential[]): {
+  repo: CredentialsRepo
+  createCalls: Credential[]
+} {
+  const createCalls: Credential[] = []
+  const repo = {
+    create: (input: Credential): ResultAsync<Credential, DbError> => {
+      createCalls.push(input)
+      return okAsync(input)
+    },
+    get: () => errAsync({ kind: "not-found", entity: "credential", id: "unused" } as DbError),
+    forPlatform: () => okAsync(existing),
+    list: () => okAsync(existing),
+    setSecretRef: (): ResultAsync<Credential, DbError> =>
+      errAsync({ kind: "not-found", entity: "credential", id: "unused" } as DbError),
+    delete: () => okAsync(undefined),
+    setVerifyState: () => okAsync(undefined),
+  } as unknown as CredentialsRepo
+  return { repo, createCalls }
 }
 
 const FILE_SECRET_MAX_BYTES = 32 * 1024
@@ -188,5 +214,107 @@ describe("addCredential — 32 KiB file-content cap (increment 28.9 slice D)", (
 
     expect(result.isOk()).toBe(true)
     expect(setCalls).toHaveLength(1)
+  })
+})
+
+describe("addCredential — duplicate-account guard (increment 30.12)", () => {
+  it("duplicate {platformId, account} -> duplicate-account Err, NOTHING written (store.set + repo.create never called)", async () => {
+    const platform = cliPlatform()
+    const { store, setCalls } = makeSpyStore()
+    const { repo, createCalls } = makeRecordingRepo([
+      {
+        id: newCredentialId(),
+        platformId: String(platform.id),
+        profileName: "work",
+        kind: "bearer",
+        secretRef: "existing-ref",
+      },
+    ])
+
+    const result = await addCredential(
+      { platformId: String(platform.id), account: "work", kind: "bearer", secret: "tok" },
+      platform,
+      store,
+      repo,
+    )
+
+    expect(result.isErr()).toBe(true)
+    if (result.isErr()) {
+      expect(result.error.kind).toBe("duplicate-account")
+      if (result.error.kind === "duplicate-account") {
+        expect(result.error.platformId).toBe(String(platform.id))
+        expect(result.error.account).toBe("work")
+      }
+    }
+    expect(setCalls).toHaveLength(0)
+    expect(createCalls).toHaveLength(0)
+  })
+
+  it("duplicate check is case-SENSITIVE — 'Work' does not collide with an existing 'work'", async () => {
+    const platform = cliPlatform()
+    const { store, setCalls } = makeSpyStore()
+    const { repo, createCalls } = makeRecordingRepo([
+      {
+        id: newCredentialId(),
+        platformId: String(platform.id),
+        profileName: "work",
+        kind: "bearer",
+        secretRef: "existing-ref",
+      },
+    ])
+
+    const result = await addCredential(
+      { platformId: String(platform.id), account: "Work", kind: "bearer", secret: "tok" },
+      platform,
+      store,
+      repo,
+    )
+
+    expect(result.isOk()).toBe(true)
+    expect(setCalls).toHaveLength(1)
+    expect(createCalls).toHaveLength(1)
+  })
+
+  it("a distinct account label on the same platform succeeds — 2 credentials, no collision", async () => {
+    const platform = cliPlatform()
+    const { store, setCalls } = makeSpyStore()
+    const { repo, createCalls } = makeRecordingRepo([
+      {
+        id: newCredentialId(),
+        platformId: String(platform.id),
+        profileName: "work",
+        kind: "bearer",
+        secretRef: "existing-ref",
+      },
+    ])
+
+    const result = await addCredential(
+      { platformId: String(platform.id), account: "personal", kind: "bearer", secret: "tok" },
+      platform,
+      store,
+      repo,
+    )
+
+    expect(result.isOk()).toBe(true)
+    expect(setCalls).toHaveLength(1)
+    expect(createCalls).toHaveLength(1)
+    expect(createCalls[0]?.profileName).toBe("personal")
+  })
+
+  it("no existing credentials on the platform -> succeeds (first account)", async () => {
+    const platform = cliPlatform()
+    const { store, setCalls } = makeSpyStore()
+    const { repo, createCalls } = makeRecordingRepo([])
+
+    const result = await addCredential(
+      { platformId: String(platform.id), account: "default", kind: "bearer", secret: "tok" },
+      platform,
+      store,
+      repo,
+    )
+
+    expect(result.isOk()).toBe(true)
+    expect(setCalls).toHaveLength(1)
+    expect(createCalls).toHaveLength(1)
   })
 })

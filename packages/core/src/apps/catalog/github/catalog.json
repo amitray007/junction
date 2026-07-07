@@ -21,7 +21,7 @@
       },
       "auth": [{ "mode": "oauth2", "providerId": "github" }, { "mode": "token" }],
       "build": {
-        "platformIdTemplate": "{app}",
+        "platformIdTemplate": "{app}-{kind}",
         "via": "flattened",
         "credential": { "kind": "oauth2", "from": "auth" }
       },
@@ -38,7 +38,7 @@
       },
       "auth": [{ "mode": "oauth2", "providerId": "github" }, { "mode": "token" }],
       "build": {
-        "platformIdTemplate": "{app}",
+        "platformIdTemplate": "{app}-{kind}",
         "via": "flattened",
         "credential": { "kind": "oauth2", "from": "auth" }
       },
@@ -56,7 +56,7 @@
       },
       "auth": [{ "mode": "oauth2", "providerId": "github" }, { "mode": "token" }],
       "build": {
-        "platformIdTemplate": "{app}",
+        "platformIdTemplate": "{app}-{kind}",
         "via": "flattened",
         "credential": { "kind": "oauth2", "from": "auth" }
       },
@@ -73,7 +73,7 @@
       },
       "auth": [{ "mode": "token" }],
       "build": {
-        "platformIdTemplate": "{app}",
+        "platformIdTemplate": "{app}-{kind}",
         "via": "descriptor",
         "credential": { "kind": "bearer", "from": "auth" }
       },
@@ -93,7 +93,7 @@
       },
       "auth": [{ "mode": "token" }],
       "build": {
-        "platformIdTemplate": "{app}-http",
+        "platformIdTemplate": "{app}-{kind}",
         "via": "descriptor",
         "credential": { "kind": "bearer", "from": "auth" }
       },

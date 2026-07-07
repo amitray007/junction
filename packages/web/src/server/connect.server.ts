@@ -80,6 +80,7 @@ export type ConnectFnResult =
   | { ok: true; unverified: true }
   | { verifyFailed: "auth-failed" | "unreachable"; detail?: string }
   | { conflict: { existingKind: string } }
+  | { duplicateAccount: string }
   | { error: string }
 
 export async function connectSurface(input: {
@@ -180,6 +181,9 @@ function mapConfirmThenAddResult(
 function mapConnectError(error: ConnectError): ConnectFnResult {
   if (error.kind === "platform-kind-conflict") {
     return { conflict: { existingKind: error.existingKind } }
+  }
+  if (error.kind === "duplicate-account") {
+    return { duplicateAccount: error.account }
   }
   return { error: "Failed to connect this surface" }
 }

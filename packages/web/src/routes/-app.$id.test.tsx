@@ -139,6 +139,56 @@ const connectableHttpLoaderData: AppDetail = {
   otherConnections: [],
 }
 
+// ── Add-account (increment 30.12 B1-B4) fixtures — a surface that already
+// has ≥1 connection AND is still `connectable` (multi-account-via-Connect). ──
+
+const connectedMultiModeSurface: SurfaceView = {
+  kind: "openapi",
+  displayName: "REST API",
+  auth: [{ mode: "oauth2", providerId: "github" }, { mode: "token" }],
+  state: "connected",
+  connections: [
+    {
+      ...bearerConnection,
+      account: "work",
+      tools: { status: "ok", tools: [] },
+    },
+  ],
+  connectable: { authModes: ["oauth2", "token"], verifiable: true },
+}
+
+const addAccountLoaderData: AppDetail = {
+  app: githubApp,
+  surfaces: [connectedMultiModeSurface],
+  otherConnections: [],
+}
+
+// oauth2-ONLY connected+connectable surface — `defaultAuthMode` has no
+// non-oauth2 mode to prefer, so the dialog necessarily opens in oauth2 mode.
+// Used to prove B4 (hide the account field under oauth2) without depending on
+// driving the Radix Select through happy-dom's Portal (documented limitation,
+// file header) — the affordance itself is what's under test, not the Select.
+const connectedOAuthOnlySurface: SurfaceView = {
+  kind: "openapi",
+  displayName: "REST API",
+  auth: [{ mode: "oauth2", providerId: "github" }],
+  state: "connected",
+  connections: [
+    {
+      ...oauthConnection,
+      account: "work",
+      tools: { status: "ok", tools: [] },
+    },
+  ],
+  connectable: { authModes: ["oauth2"], verifiable: true },
+}
+
+const addAccountOAuthOnlyLoaderData: AppDetail = {
+  app: githubApp,
+  surfaces: [connectedOAuthOnlySurface],
+  otherConnections: [],
+}
+
 const emptyLoaderData: AppDetail = { app: githubApp, surfaces: [], otherConnections: [] }
 const emptySpotifyLoaderData: AppDetail = { app: spotifyApp, surfaces: [], otherConnections: [] }
 const otherLoaderData: AppDetail = {
@@ -474,6 +524,99 @@ describe("AppDetailPage", () => {
         expect(screen.getByText(/a openapi platform already uses this id/i)).toBeInTheDocument()
       })
       expect(getByRole("dialog")).toBeInTheDocument()
+    })
+  })
+
+  // ── Add-account / multi-account (increment 30.12 B1-B6) ────────────────
+
+  describe("Add-account (multi-account) connect dialog", () => {
+    it("relabels the connect affordance to 'Add account' once the surface has a connection", () => {
+      mockUseLoaderData.mockReturnValue(addAccountLoaderData)
+      render(<AppDetailPage />)
+      expect(screen.getByRole("button", { name: /^add account$/i })).toBeInTheDocument()
+      expect(
+        screen.queryByRole("button", { name: /connect github · rest api/i }),
+      ).not.toBeInTheDocument()
+    })
+
+    it("defaults the account field to empty and disables Connect until it's filled (B3)", async () => {
+      mockUseLoaderData.mockReturnValue(addAccountLoaderData)
+      const { getByRole, getByLabelText } = render(<AppDetailPage />)
+      fireEvent.click(getByRole("button", { name: /^add account$/i }))
+      await waitFor(() => expect(getByRole("dialog")).toBeInTheDocument())
+
+      // token is the default (inline-writable) auth mode — account + secret show.
+      const accountInput = getByLabelText("Account") as HTMLInputElement
+      expect(accountInput.value).toBe("")
+
+      const confirmBtn = getByRole("button", { name: /^connect$/i })
+      expect(confirmBtn).toBeDisabled()
+
+      fireEvent.change(getByLabelText("Secret"), { target: { value: "a-token" } })
+      expect(confirmBtn).toBeDisabled() // account still empty
+
+      fireEvent.change(accountInput, { target: { value: "personal" } })
+      expect(confirmBtn).not.toBeDisabled()
+    })
+
+    it("blocks a duplicate account label client-side with a per-outcome account-field error (B2)", async () => {
+      mockUseLoaderData.mockReturnValue(addAccountLoaderData)
+      const { getByRole, getByLabelText } = render(<AppDetailPage />)
+      fireEvent.click(getByRole("button", { name: /^add account$/i }))
+      await waitFor(() => expect(getByRole("dialog")).toBeInTheDocument())
+
+      fireEvent.change(getByLabelText("Account"), { target: { value: "work" } })
+      fireEvent.change(getByLabelText("Secret"), { target: { value: "a-token" } })
+      fireEvent.click(getByRole("button", { name: /^connect$/i }))
+
+      await waitFor(() => {
+        expect(
+          screen.getByText(/'work' is already connected here — pick a different account name\./i),
+        ).toBeInTheDocument()
+      })
+      // Blocked client-side — no server round-trip.
+      expect(mockConnectSurfaceFn).not.toHaveBeenCalled()
+      expect(getByRole("dialog")).toBeInTheDocument()
+    })
+
+    it("surfaces the server's duplicateAccount result on the account field, not a generic error (B6)", async () => {
+      mockConnectSurfaceFn.mockResolvedValue({ duplicateAccount: "personal" })
+      mockUseLoaderData.mockReturnValue(addAccountLoaderData)
+      const { getByRole, getByLabelText } = render(<AppDetailPage />)
+      fireEvent.click(getByRole("button", { name: /^add account$/i }))
+      await waitFor(() => expect(getByRole("dialog")).toBeInTheDocument())
+
+      // A distinct label client-side (so the client guard doesn't intercept) —
+      // proves the SERVER-authoritative branch (A3+A6) sets the account error.
+      fireEvent.change(getByLabelText("Account"), { target: { value: "personal" } })
+      fireEvent.change(getByLabelText("Secret"), { target: { value: "a-token" } })
+      fireEvent.click(getByRole("button", { name: /^connect$/i }))
+
+      await waitFor(() => {
+        expect(
+          screen.getByText(
+            /'personal' is already connected here — pick a different account name\./i,
+          ),
+        ).toBeInTheDocument()
+      })
+      expect(screen.queryByText(/^failed to connect this surface\.?$/i)).not.toBeInTheDocument()
+      expect(getByRole("dialog")).toBeInTheDocument()
+    })
+
+    it("hides the account field under oauth2 in add-account mode, avoiding the label-discard (B4)", async () => {
+      // oauth2-only surface: `defaultAuthMode` has no non-oauth2 mode to
+      // prefer, so the dialog necessarily opens in oauth2 mode — proving the
+      // account field + dup-guard are hidden (not merely defaulted away from)
+      // without needing to drive Radix's Select through happy-dom's Portal.
+      mockUseLoaderData.mockReturnValue(addAccountOAuthOnlyLoaderData)
+      const { getByRole, queryByLabelText } = render(<AppDetailPage />)
+      fireEvent.click(getByRole("button", { name: /^add account$/i }))
+      await waitFor(() => expect(getByRole("dialog")).toBeInTheDocument())
+
+      expect(queryByLabelText("Account")).not.toBeInTheDocument()
+      expect(
+        screen.getByText(/github uses oauth — register an oauth app on the credentials page/i),
+      ).toBeInTheDocument()
     })
   })
 

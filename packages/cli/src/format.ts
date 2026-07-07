@@ -166,6 +166,8 @@ export function formatCredentialError(e: CredentialError): string {
       return `invalid input: ${e.reason}`
     case "kind-incompatible":
       return `credential kind "${e.requested}" not accepted for this platform; allowed: ${e.allowed.join(", ")}`
+    case "duplicate-account":
+      return `an account named "${e.account}" is already connected to this platform`
   }
 }
 

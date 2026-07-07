@@ -141,6 +141,12 @@ export async function mutateAddCredential(input: {
           error: `Credential kind "${e.requested}" not accepted for this platform; allowed: ${e.allowed.join(", ")}`,
         }
       }
+      if (e.kind === "duplicate-account") {
+        return {
+          ok: false as const,
+          error: `an account named "${e.account}" is already connected to this platform`,
+        }
+      }
       return { ok: false as const, error: e.kind }
     }
 

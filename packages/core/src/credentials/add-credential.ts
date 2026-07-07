@@ -133,7 +133,37 @@ export function addCredential(
 
   const credential = credentialParse.data
 
-  return store.set(credential.secretRef, input.secret).andThen(() =>
+  // Duplicate-account guard (increment 30.12) — BEFORE the secret ever
+  // touches the store. Compares the EXACT stored `profileName` against the
+  // EXACT `input.account` as this call will store it (credential.profileName,
+  // post-Zod-parse but otherwise untrimmed) — addCredential does NOT trim
+  // `account` today, so the guard must not trim either; trimming here while
+  // the write doesn't would let a trailing-space label slip past the guard
+  // and then store a DIFFERENT string than what was checked. Case-SENSITIVE
+  // by deliberate decision: profileName is case-preserving with no case rule
+  // at the store, so "Work" and "work" are legitimately distinct accounts.
+  return credentialsRepo
+    .forPlatform(platformParse.data)
+    .andThen((existing): ResultAsync<Credential, CredentialError | DbError> => {
+      const duplicate = existing.some((c) => c.profileName === credential.profileName)
+      if (duplicate) {
+        return errAsync({
+          kind: "duplicate-account" as const,
+          platformId: platformParse.data,
+          account: credential.profileName,
+        })
+      }
+      return writeCredential(credential, input.secret, store, credentialsRepo)
+    })
+}
+
+function writeCredential(
+  credential: Credential,
+  secret: string,
+  store: CredentialStore,
+  credentialsRepo: CredentialsRepo,
+): ResultAsync<Credential, CredentialError | DbError> {
+  return store.set(credential.secretRef, secret).andThen(() =>
     credentialsRepo
       .create(credential)
       .orElse((dbErr): ResultAsync<Credential, CredentialError | DbError> => {

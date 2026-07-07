@@ -1,14 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// /app/:id route (increment 30.10 + 30.11) — the surface-first per-app
-// capability view: for each catalog surface (MCP/OpenAPI/GraphQL/HTTP/CLI),
-// show whether it's connected, its live tools (via the platform-scoped
-// probe), and its catalog details. Increment 30.11 adds the one-click
-// **Connect** affordance for an unconnected surface (ConnectSurfaceDialog,
-// below) — token/byo modes write through the verify-gated
-// connectSurfaceFn; oauth2 mode is a deep-link hand-off to /credentials
-// (no inline write; see the method file's scope decision, §0).
+// /app/:id route (increment 30.10 + 30.11 + 30.12) — the surface-first
+// per-app capability view: for each catalog surface (MCP/OpenAPI/GraphQL/
+// HTTP/CLI), show whether it's connected, its live tools (via the
+// platform-scoped probe), and its catalog details. Increment 30.11 adds the
+// one-click **Connect** affordance for an unconnected surface
+// (ConnectSurfaceDialog, below) — token/byo modes write through the
+// verify-gated connectSurfaceFn; oauth2 mode is a deep-link hand-off to
+// /credentials (no inline write; see the method file's scope decision, §0).
+// Increment 30.12 (Slice B) turns the SAME affordance into "Add account"
+// once a surface already has ≥1 connection — the backend's same-kind branch
+// (source-runtime's checkCollision) already supports a 2nd credential on one
+// platform; this slice only relabels the button, defaults the account field
+// to empty, adds a pre-submit + server-authoritative duplicate-account
+// guard on the account field, and keeps the oauth2 deep-link label-discard
+// impossible-by-construction (hide the account field under oauth2).
 // See docs/methods/30.10-surface-first-app-page.md,
-// docs/methods/30.11-catalog-driven-connect.md + design doc §7/§4.7.
+// docs/methods/30.11-catalog-driven-connect.md,
+// docs/methods/30.12-multi-surface-connect.md + design doc §7/§4.7.
 //
 // Thin/undefined-catalog apps (incl. id==="other") fall back to the
 // pre-30.10 flat-connections-list + EmptyAppState — surface-first is
@@ -377,14 +385,15 @@ function ToolsPanel({ tools }: { readonly tools: SurfaceConnection["tools"] }) {
 }
 
 // ---------------------------------------------------------------------------
-// Connect (increment 30.11) — the one-click catalog-driven connect
-// affordance for an unconnected surface. token/byo modes write through the
-// verify-gated connectSurfaceFn (core's build recipe → source-runtime's
-// verifyThenAdd/confirmThenAdd); oauth2 mode is a deep-link hand-off to
-// /credentials — NO inline write (method file §0 scope decision). The button
-// only renders in the `connections.length === 0` branch (SurfaceCard, above)
-// — once a surface has ≥1 connection this affordance disappears by design
-// (multi-account-via-Connect is deferred, §2e).
+// Connect (increment 30.11 + 30.12 B1) — the one-click catalog-driven connect
+// affordance. token/byo modes write through the verify-gated connectSurfaceFn
+// (core's build recipe → source-runtime's verifyThenAdd/confirmThenAdd);
+// oauth2 mode is a deep-link hand-off to /credentials — NO inline write
+// (method file §0 scope decision). The button renders whenever
+// `surface.connectable !== undefined` (SurfaceCard, below) — on an
+// unconnected surface it reads "Connect {app} · {surface}"; once the surface
+// already has ≥1 connection it relabels to "Add account" (multi-account via
+// the same same-kind backend branch, increment 30.12).
 // ---------------------------------------------------------------------------
 
 const AUTH_MODE_ORDER = ["oauth2", "token", "byo", "none"] as const
@@ -394,12 +403,16 @@ function ConnectSurfaceButton({
   appDisplayName,
   surface,
   connectable,
+  hasConnections,
   onConnected,
 }: {
   readonly appId: string
   readonly appDisplayName: string
   readonly surface: SurfaceView
   readonly connectable: SurfaceConnectable
+  /** True once the surface already has ≥1 connection — relabels the affordance
+   *  to "Add account" (increment 30.12 B1) instead of the first-connect copy. */
+  readonly hasConnections: boolean
   readonly onConnected: () => void
 }) {
   const [open, setOpen] = useState(false)
@@ -409,7 +422,7 @@ function ConnectSurfaceButton({
       <div>
         <Button type="button" variant="primary" onClick={() => setOpen(true)}>
           <Plug className="h-4 w-4" aria-hidden="true" />
-          Connect {appDisplayName} · {surface.displayName}
+          {hasConnections ? "Add account" : `Connect ${appDisplayName} · ${surface.displayName}`}
         </Button>
       </div>
       <ConnectSurfaceDialog
@@ -419,6 +432,10 @@ function ConnectSurfaceButton({
         appDisplayName={appDisplayName}
         surface={surface}
         connectable={connectable}
+        hasConnections={hasConnections}
+        existingAccounts={surface.connections
+          .map((c) => c.account.trim())
+          .filter((a) => a !== "" && a !== "—")}
         onConnected={onConnected}
       />
     </>
@@ -451,6 +468,11 @@ function verifyFailedMessage(outcome: "auth-failed" | "unreachable"): string {
   return "Couldn't reach this surface — this may be a catalog/base-URL issue, not your token."
 }
 
+/** Per-outcome copy for the duplicate-account guard (§2 B2/B6) — never a generic "failed" string. */
+function duplicateAccountMessage(account: string): string {
+  return `'${account}' is already connected here — pick a different account name.`
+}
+
 function ConnectSurfaceDialog({
   open,
   onOpenChange,
@@ -458,6 +480,8 @@ function ConnectSurfaceDialog({
   appDisplayName,
   surface,
   connectable,
+  hasConnections,
+  existingAccounts,
   onConnected,
 }: {
   readonly open: boolean
@@ -466,25 +490,41 @@ function ConnectSurfaceDialog({
   readonly appDisplayName: string
   readonly surface: SurfaceView
   readonly connectable: SurfaceConnectable
+  /** True in "add account" mode (the surface already has ≥1 connection) — drives
+   *  the empty-by-default account field (B3) and the multi-mode oauth2 account-field
+   *  hide (B4). */
+  readonly hasConnections: boolean
+  /** Existing account labels on this surface, "—" sentinel already filtered (B2). */
+  readonly existingAccounts: string[]
   readonly onConnected: () => void
 }) {
   const modes = useMemo(() => sortAuthModes(connectable.authModes), [connectable.authModes])
   const [authMode, setAuthMode] = useState<SurfaceConnectable["authModes"][number]>(
     defaultAuthMode(modes),
   )
-  const [account, setAccount] = useState("default")
+  // First-connect mode defaults to "default"; add-account mode defaults to ""
+  // so the user must type a distinct label rather than junction guessing one
+  // (guessing can itself collide) — B3.
+  const [account, setAccount] = useState(hasConnections ? "" : "default")
   const [secret, setSecret] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | undefined>(undefined)
+  const [accountError, setAccountError] = useState<string | undefined>(undefined)
 
+  // In add-account mode, oauth2 is a deep-link hand-off that discards any
+  // typed account label (the label is chosen on /credentials instead) — the
+  // `isOAuth` branch in the JSX below hides the account field + dup-guard
+  // under oauth2 for BOTH first-connect and add-account modes, so the
+  // discard can't happen silently (B4).
   const isOAuth = authMode === "oauth2"
 
   function reset() {
     setAuthMode(defaultAuthMode(modes))
-    setAccount("default")
+    setAccount(hasConnections ? "" : "default")
     setSecret("")
     setSubmitting(false)
     setError(undefined)
+    setAccountError(undefined)
   }
 
   function handleOpenChange(next: boolean) {
@@ -495,6 +535,12 @@ function ConnectSurfaceDialog({
   function handleAuthModeChange(mode: string) {
     setAuthMode(mode as SurfaceConnectable["authModes"][number])
     setError(undefined)
+    setAccountError(undefined)
+  }
+
+  function handleAccountChange(value: string) {
+    setAccount(value)
+    if (accountError !== undefined) setAccountError(undefined)
   }
 
   async function handleConfirm() {
@@ -512,15 +558,27 @@ function ConnectSurfaceDialog({
       return
     }
 
+    const submittedAccount = account.trim() || "default"
+    // Pre-submit dup-account convenience guard (B2) — the authoritative check
+    // is the server's addCredential guard (A3) via the `duplicateAccount`
+    // branch below (B6); this is a client mirror to avoid an unnecessary
+    // round-trip in the common case. Case-sensitive, exact match — mirrors
+    // the trim/case contract A3 pins.
+    if (existingAccounts.includes(submittedAccount)) {
+      setAccountError(duplicateAccountMessage(submittedAccount))
+      return
+    }
+
     setSubmitting(true)
     setError(undefined)
+    setAccountError(undefined)
     try {
       const result: ConnectFnResult = await connectSurfaceFn({
         data: {
           appId,
           surfaceKind: surface.kind,
           authMode,
-          account: account.trim() || "default",
+          account: submittedAccount,
           secret,
         },
       })
@@ -557,6 +615,15 @@ function ConnectSurfaceDialog({
       setError(
         `A ${result.conflict.existingKind} platform already uses this id; connecting this surface would overwrite it. (Multi-surface-per-app is coming in a later step.)`,
       )
+      setSubmitting(false)
+      return
+    }
+    if ("duplicateAccount" in result) {
+      // The AUTHORITATIVE guard (A3 + A6) — surfaced on the account field
+      // specifically (mirroring verifyFailedMessage's per-outcome discipline),
+      // not a generic dialog-level error. Reachable even when B2's pre-submit
+      // check is bypassed (e.g. two tabs racing to add the same label) — B6.
+      setAccountError(duplicateAccountMessage(result.duplicateAccount))
       setSubmitting(false)
       return
     }
@@ -601,11 +668,12 @@ function ConnectSurfaceDialog({
             </p>
           ) : (
             <>
-              <Field id="connect-account" label="Account">
+              <Field id="connect-account" label="Account" error={accountError}>
                 <Input
                   id="connect-account"
                   value={account}
-                  onChange={(e) => setAccount(e.target.value)}
+                  onChange={(e) => handleAccountChange(e.target.value)}
+                  hasError={accountError !== undefined}
                 />
               </Field>
               <Field id="connect-secret" label="Secret" error={error}>
@@ -633,7 +701,7 @@ function ConnectSurfaceDialog({
           <Button
             type="button"
             variant="primary"
-            disabled={submitting || (!isOAuth && secret.trim() === "")}
+            disabled={submitting || (!isOAuth && (secret.trim() === "" || account.trim() === ""))}
             onClick={() => void handleConfirm()}
           >
             {submitting ? "Connecting…" : isOAuth ? "Continue to Credentials" : "Connect"}
@@ -668,7 +736,7 @@ function SurfaceCard({
   readonly onConnected: () => void
 }) {
   const primaryAuth = surface.auth[0]
-  const isUnconnected = surface.connections.length === 0
+  const hasConnections = surface.connections.length > 0
 
   return (
     <section
@@ -706,12 +774,13 @@ function SurfaceCard({
         </p>
       )}
 
-      {isUnconnected && surface.connectable !== undefined && (
+      {surface.connectable !== undefined && (
         <ConnectSurfaceButton
           appId={appId}
           appDisplayName={appDisplayName}
           surface={surface}
           connectable={surface.connectable}
+          hasConnections={hasConnections}
           onConnected={onConnected}
         />
       )}
