@@ -2,11 +2,18 @@
 # Junction — Backlog
 
 > Snapshot: **2026-07-07**, after the inc-32 vault wave (32.2–32.5) merged (PR #120/#121).
-> Two lists, kept deliberately separate:
+> Reconciled against the canonical registers 2026-07-07 (corrected 30.5 status — Slices 1+2 shipped;
+> added the migration-journal distribution pre-req, the denylist/serve.mjs test debts, and the §2i/§2j deferrals).
+> **Completeness-audited 2026-07-07** (2nd pass): added the now-actionable `removeCredential` warn +
+> `cred-*` reaper debts (§1d), the per-profile-HOME + sandbox-overhead isolation deferrals (§2b), and a
+> new **§3 Deprecations / EOL-risk** bucket (Seatbelt→microVM is the load-bearing one).
+> Three lists, kept deliberately separate:
 > - **§1 PENDING** — actionable *now*: unfinished work, real bugs/gaps found by dogfooding, and
 >   the two remaining Tier-1 increments. No external trigger needed — we could pick any of these up today.
 > - **§2 FUTURE (trigger-gated)** — deliberately deferred; each wakes only when its recorded **trigger**
 >   fires. Parked forward-memory, NOT a to-do list. Source of truth stays `docs/futures/revisit-when.md`.
+> - **§3 DEPRECATIONS / EOL-risk** — dependencies/OS APIs we consciously depend on that are deprecated,
+>   each with its forward path. Source of truth: `docs/futures/deprecations.md`.
 >
 > This file is an **index for planning**. The authoritative per-item detail lives in
 > `docs/methods/README.md` (the increment map) and `docs/futures/{revisit-when,gotchas,deprecations}.md`.
@@ -41,17 +48,18 @@
 
 ### 1b. Unfinished increment carried forward
 
-- [ ] **30.5 — App lifecycle + polish** (status `planned`, never shipped). Three parts:
-  - [ ] **(a) Test-Connection auto-refresh BUG** — a valid OAuth credential shows a false "Auth Failed"
-        because Test verifies the *expired* access token without refreshing first (affects Credentials
-        + Apps). Fix = `refreshIfExpired` before verify. **A real bug, small fix.**
-  - [ ] **(b) Change method** — swap a connection's vertical (e.g. REST→MCP) as an additive
-        reconnect-first flow (connect new + verify + THEN remove old — no stranding) + a client-cred
-        reuse helper + a security pass. Slice-3 spec fully written (`30.5-app-lifecycle.md §5`).
-  - [ ] **(c) Per-app icons/logos** in the Apps surface (offline SVG source; `iconSlug` already on
-        `AppDefinition` — gitlab has `"iconSlug":"gitlab"`; needs the render + letter-tile fallback).
-        *(Note: inc 30.5 Slices 1+2 partially shipped earlier — reconcile before starting; the marker
-        is still 30 for 30.5. Re-check what actually landed.)*
+- [ ] **30.5 — App lifecycle + polish** (status `planned` in the map, but 2 of 3 parts ALREADY SHIPPED —
+      **reconciled 2026-07-07**; the map row is stale). Actual state:
+  - [x] **(a) Test-Connection auto-refresh BUG** — **DONE, merged PR #101** (`5a9e8fe`): `testCredential`
+        now `refreshIfExpired`s before verifying. *(Was listed here as open — it is fixed.)*
+  - [x] **(c) Per-app icons/logos** — **DONE, merged PR #102**: full-color `@thesvg/icons` via a build-time
+        codegen (`gen-brand-icons.mjs` → committed `brand-icons.generated.tsx`) + letter-tile fallback.
+        *(Was listed here as open — it shipped.)*
+  - [ ] **(b) Change method** — the ONLY unbuilt part, and **superseded by inc 30.12's "add a surface"**
+        (surfaces now accumulate via `{app}-{kind}` instead of swapping). The reconnect-first *swap* flow
+        (spec: `30.5-app-lifecycle.md §5`) is deferred unless a real swap-not-add need appears. **Decision
+        needed:** mark 30.5 `superseded`/`done` in `docs/methods/README.md` rather than leave it `planned`
+        (the two shipped slices + the 30.12 supersession mean nothing here is actionable). Low urgency.
 
 ### 1c. Remaining Tier-1 increments (the roadmap tail)
 
@@ -64,6 +72,13 @@
       **Gated (user decision):** do NOT publish until the full connect-once → use → audit flow is
       dogfooded end-to-end against the real running product. Irreversible-ish (npm name) — earned, not
       scheduled.
+  - [ ] **PRE-REQ before publishing — migration journal 0003 non-monotonic `when` fix.** `0003_add_openapi_column`'s
+        journal timestamp (`1782600000000`) is > 0004/0005/0006, poisoning drizzle's high-water mark so
+        later migrations are silently skipped on a DB created in the inc 15–20 window. Harmless today
+        (no distributed users; fresh installs are fine), but **must be fixed before real users exist**:
+        lower 0003's `when` to between 0002 and 0004 + add a monotonicity regression test + an
+        old-DB-upgrade test (every existing test uses a FRESH DB, which never trips the high-water — the
+        gap that hid it). See `revisit-when.md` + `gotchas.md`. *(This is a distribution blocker, not optional.)*
 
 ### 1d. Small correctness/ops debts (low-risk, pick up anytime)
 
@@ -77,6 +92,26 @@
       description/schema silently CHANGING between calls (rug-pull detection), beyond sanitizing.
 - [ ] **32.4 strict all-or-nothing import** — a transactional (temp-DB-swap) import vs today's
       additive-resumable one. Only if an operator needs full rollback on a mid-import failure.
+- [ ] **`removeCredential` warn-on-orphan** — the gotcha (`gotchas.md`, inc 6/13) said "emit a `warn`
+      from `removeCredential` on store-delete failure once pino lands, so the reverse-orphan is
+      observable in the audit log." **Pino shipped inc 31 → the trigger has FIRED**; the code still
+      silently swallows (`repositories/credentials.ts` orphan path). Now actionable, not deferred. (small)
+- [ ] **File-cred `cred-*` orphan reaper** — a hard kill between the per-call `writeFile` and the
+      `finally`-rm strands a 0600 `~/.junction/run/cred-XXXX` dir (`gotchas.md`, inc 28.9). A best-effort
+      startup sweep of stale `cred-*` dirs was flagged as future hardening and never built. Real
+      unfinished hardening, no external trigger needed. (small)
+- [ ] **Stale "inc 29" ComingSoon comments** — `audit.tsx:3` AND `index.tsx:65` (dashboard Recent
+      Activity) both say the audit backend "lands in inc 29"; it shipped inc 31. Trivial comment fix
+      (fold into the `/audit` work above). (trivial)
+- [ ] **`credentialEnvVar` denylist lock-step (invariant guard).** The schema `.refine` in
+      `cli-connection.ts` and `SECRET_DENYLIST_RE` in `sandbox.ts` (`validatePolicy`) both reject
+      `_TOKEN/_SECRET/_KEY` and MUST stay in sync — if one drifts, a name passes `platform add` schema
+      validation but is rejected at run time (a confusing "schema-valid but runtime-rejected" error).
+      No test currently pins them together. Cheap: a unit test asserting the two lists match. *(security-adjacent)*
+- [ ] **`serve.mjs` static-serve regression tests** — the `resolveStaticFile` path-traversal guard
+      (blocks `../` + sibling-prefix `dist/client-evil`) is verified by manual fuzzing but has NO automated
+      test; and the CI leak-grep's negative path is unverified (nothing asserts the build FAILS when a
+      server-only identifier is planted in a client chunk). Add before the next `serve.mjs`/leak-grep edit.
 
 ---
 
@@ -94,9 +129,11 @@
 
 ### 2b. Sandbox / execution isolation
 - [ ] **Sandbox for third-party stdio MCP binaries** — trigger: junction spawns an untrusted MCP binary.
-- [ ] **microsandbox / libkrun microVM** (escalation tier) — trigger: running hostile code / arbitrary npm.
+- [ ] **microsandbox / libkrun microVM** (escalation tier — AND the Seatbelt-replacement path, see §3) — trigger: running hostile code / arbitrary npm, OR Apple removes `sandbox-exec`.
 - [ ] **Egress sandboxing for untrusted OpenAPI/HTTP hosts** — trigger: calling arbitrary user `baseUrl` targets.
 - [ ] **OS-level egress control for the CLI command tier** — trigger: untrusted operators / multi-tenant / compliance.
+- [ ] **Per-profile HOME/config isolation for the `cli` source** (+ env-vs-file light-isolation split) — trigger: a `cli` source needs its own provisioned per-`(profile,credential)` HOME/config dir, or the ~25ms sandbox cost on env-cred tools is worth a ~5ms light-isolation fast path. (`revisit-when.md`)
+- [ ] **Seatbelt/bwrap per-call overhead (~25ms) → warm-pool or light-isolation mode** — trigger: sandbox spawn latency becomes measurable on a real workload (levers: code-mode fast path / light-isolation mode / warm-pool of sandboxed processes). Related to §2f warm-pool.
 
 ### 2c. Catalog / connect
 - [ ] **Large-spec catalog connect** (>10 MB openapi; GitHub's is 12.6 MB) — trigger: a user needs such a surface.
@@ -131,9 +168,47 @@
 - [ ] **OpenTUI (Node FFI)** — trigger: OpenTUI ships a Node-compatible native renderer.
 
 ### 2h. Packaging / publishing
-- [ ] **publint + attw packaging gates** — trigger: a package first publishes (pairs with inc 34).
-- [ ] **Changesets publishing** — trigger: a package is actually published.
-- [ ] **`credentialEnvVar` denylist refinement** — trigger: a new dynamic-linker/interpreter env var class appears.
+> These are the FUTURE/trigger-gated view of the packaging work that inc 34 (Distribution, §1c) will
+> actually perform. Same forward work, listed here for the trigger; §1c-34 is where it gets built.
+- [ ] **publint + attw packaging gates** — trigger: a package first publishes (this IS part of inc 34).
+- [ ] **Changesets publishing** — trigger: a package is actually published (part of inc 34).
+- [ ] **`credentialEnvVar` denylist refinement** — trigger: a new dynamic-linker/interpreter env var class appears. *(distinct from the §1d lock-step test — this is expanding the denylist itself.)*
+
+### 2i. Web UX polish / probe depth (minor, demand-gated)
+- [ ] **Schema-driven tool-arg form** (probe/call) — trigger: the raw-JSON args textarea proves error-prone.
+- [ ] **Whole-profile probe + platform-scoped probe** — trigger: a user wants to probe a whole profile at once, or a source in isolation like CLI `debug`.
+- [ ] **Cmd+K command palette** — trigger: sidebar destinations > 8, or a deep-link/jump-to-entity need.
+- [ ] **Full breadcrumb navigation** (section > entity > detail) — trigger: row-detail pages are added.
+- [ ] **StatusRail live pulse** / **Patch-bay source-toggle UI** — trigger: a real-time channel (SSE/WS) from the serve process lands.
+
+### 2j. Credential / OAuth depth (demand-gated)
+- [ ] **HTTP Basic auth credential kind + per-account username** — trigger: an operator needs Basic auth, or >1 account with different usernames (username must move platform→credential for the multi-account wedge).
+- [ ] **In-place OAuth `client_id` editing** — trigger: a lighter standalone client_id edit is wanted (must force `needsReauth`; today "swap OAuth app" = reconnect handles it).
+- [ ] **Profile rename + multi-profile key tool-name drift** — trigger: a profile-rename feature is added (would silently change every multi-profile key's tool names → breaks agent prompts; pin name at mint or forbid renaming referenced profiles).
+- [ ] **Concurrent-boot-during-rotation availability** — trigger: master-key rotation gets long enough (very large vault) that a concurrent boot failing during rotation is a real UX wrinkle. (Safe fail-closed today.)
+
+---
+
+## §3 — DEPRECATIONS / EOL-risk (consciously accepted; forward path recorded)
+
+> Dependencies / OS APIs junction uses **today** that are deprecated or EOL-risk. Accepted knowingly —
+> the entry exists so the acceptance is revisitable, not silent. Canonical: `docs/futures/deprecations.md`.
+> These overlap §2 (the forward path is often a §2 item) — cross-referenced below.
+
+- [ ] **macOS Seatbelt (`sandbox-exec`)** — Apple marks it **DEPRECATED** with **no supported replacement**
+      for confining an arbitrary child process (App Sandbox only sandboxes your own signed bundle). In use
+      since inc 8; the whole ecosystem (Claude Code, Codex, Chromium) still ships it because nothing better
+      exists on macOS without kernel extensions. **Forward path = microVMs** (Apple Containerization /
+      libkrun / microsandbox) dropping in behind the `Sandbox` interface — the SAME work as the §2b microVM
+      item, but this is its *forced-migration* driver (not just the hostile-code escalation tier). Trigger:
+      Apple actually removes `sandbox-exec`, or the escalation tier is built first. **Load-bearing** — the
+      one deprecation that will genuinely come due. (Linux `bubblewrap` has no equivalent pressure.)
+- [ ] **isolated-vm** — maintenance-mode upstream; junction does NOT use it (JS/TS isolation goes through
+      the Deno subprocess boundary). Recorded so the "why not isolated-vm" answer stays durable; revisit
+      only if Deno+bubblewrap ever become impractical (pairs with the code-mode / microVM work). Informational.
+- [ ] *(Reference — permanently banned, never adopt: `node:vm`/`vm2`, `keytar`, `ts-prune`, `tsup`, Jest,
+      oclif, Lucia, `conf`-as-store, Effect-TS-as-error-model, Million.js. Full list in `deprecations.md`.
+      Not backlog work — listed so they're never reconsidered.)*
 
 ---
 
