@@ -15,6 +15,12 @@ export type JunctionPaths = {
   credentialsFile: string
   masterKeyFile: string
   /**
+   * Append-only JSONL audit log (increment 31) — one structured line per
+   * `tool_call`. Never a secret/arg-value artifact; safe to keep indefinitely
+   * (rotation/retention deferred, see docs/futures/revisit-when.md).
+   */
+  auditLogFile: string
+  /**
    * Junction-private runtime scratch dir (`<home>/run`) for ephemeral,
    * per-call artifacts that must NEVER live in the shared OS tmpdir —
    * e.g. kind "file" credential materialization (increment 28.9 slice D).
@@ -42,6 +48,7 @@ export function getPaths(): JunctionPaths {
     dbFile: path.join(home, "junction.db"),
     credentialsFile: path.join(home, "credentials.enc.json"),
     masterKeyFile: path.join(home, "master.key"),
+    auditLogFile: path.join(home, "audit.log"),
     runtimeDir: path.join(home, "run"),
   }
 }

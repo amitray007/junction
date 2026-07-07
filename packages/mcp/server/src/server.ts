@@ -64,6 +64,13 @@ export function safeUpstreamMessage(e: UpstreamError): string {
   switch (e.kind) {
     case "tool-not-found":
       return `tool not found: ${e.name}`
+    // EXISTENCE-HIDING (increment 31 §0 decision 6, load-bearing): a toolFilter-denied
+    // call must read IDENTICALLY to an unknown tool to the calling agent — otherwise the
+    // response itself would disclose that a filtered tool exists. The distinct "tool-denied"
+    // kind exists ONLY so the audit log (which sees the raw error.kind, not this string)
+    // can tell deny from unknown; this mapping must stay collapsed to match tool-not-found.
+    case "tool-denied":
+      return `tool not found: ${e.name}`
     case "auth-failed":
       return "upstream source: authentication failed"
     case "timed-out":

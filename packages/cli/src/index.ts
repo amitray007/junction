@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { VERSION } from "@junction/core"
 import { defineCommand, runMain } from "citty"
+import { auditCommand } from "./commands/audit.js"
 import { connectCommand } from "./commands/connect.js"
 import { credentialCommand } from "./commands/credential.js"
 import { debugCommand } from "./commands/debug.js"
@@ -32,6 +33,7 @@ const main = defineCommand({
     web: webCommand,
     serve: serveCommand,
     keys: keysCommand,
+    audit: auditCommand,
   },
 })
 

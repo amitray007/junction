@@ -54,6 +54,13 @@ describe("paths", () => {
     })
   })
 
+  it("auditLogFile is audit.log inside home", async () => {
+    await withTempHome(async (home) => {
+      const p = getPaths()
+      expect(p.auditLogFile).toBe(path.join(home, "audit.log"))
+    })
+  })
+
   it("cacheDir resolves to a non-empty string", async () => {
     await withTempHome(async () => {
       const p = getPaths()

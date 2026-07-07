@@ -42,6 +42,10 @@ export function formatUpstreamError(
       return `upstream unavailable: ${String(e.cause)}`
     case "tool-not-found":
       return opts?.toolNotFoundMessage?.(e.name) ?? `tool not found: "${e.name}"`
+    // Existence-hiding (increment 31): reuses the SAME message/opts path as tool-not-found
+    // — a filtered tool must not read differently from a genuinely unknown one here either.
+    case "tool-denied":
+      return opts?.toolNotFoundMessage?.(e.name) ?? `tool not found: "${e.name}"`
     case "call-failed":
       return `tool call failed: ${String(e.cause)}`
     case "namespace-too-long":

@@ -17,7 +17,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import type { McpServerHandlers } from "./server.js"
-import { createMcpServer } from "./server.js"
+import { createMcpServer, safeUpstreamMessage } from "./server.js"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -187,5 +187,21 @@ describe("createMcpServer", () => {
 
     await clientA.close()
     await clientB.close()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// safeUpstreamMessage — existence-hiding (increment 31 §0 decision 6)
+// ---------------------------------------------------------------------------
+
+describe("safeUpstreamMessage — existence-hiding", () => {
+  it("tool-denied collapses to the SAME opaque message as tool-not-found", () => {
+    // Regression guard: a toolFilter-denied call must be indistinguishable, to the
+    // calling agent, from a genuinely unknown tool — otherwise the response itself
+    // would disclose that a filtered tool exists.
+    const name = "github__delete_repo"
+    const notFoundMsg = safeUpstreamMessage({ kind: "tool-not-found", name })
+    const deniedMsg = safeUpstreamMessage({ kind: "tool-denied", name })
+    expect(deniedMsg).toBe(notFoundMsg)
   })
 })

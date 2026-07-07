@@ -65,6 +65,14 @@ export type UpstreamError =
   | { kind: "auth-failed"; cause?: unknown }
   | { kind: "upstream-unavailable"; cause: unknown }
   | { kind: "tool-not-found"; name: string }
+  /**
+   * A toolFilter (allow/deny) blocked this call (increment 31 §0 decision 6).
+   * Distinct from "tool-not-found" for AUDIT purposes only — the AGENT-FACING
+   * message (mcp-server's safeUpstreamMessage) MUST collapse this to the SAME
+   * opaque text as "tool-not-found" (existence-hiding: a filtered tool's
+   * existence must never be disclosed to the calling agent).
+   */
+  | { kind: "tool-denied"; name: string }
   | { kind: "call-failed"; cause: unknown }
   | { kind: "namespace-too-long"; name: string }
   | { kind: "invalid-tool-name"; name: string }
