@@ -84,7 +84,18 @@ async function buildSingleSourceProxy(repos: Repositories, sourceRef: SourceRef)
   const storeResult = await createCredentialStore(paths)
   const store = storeResult.isOk() ? storeResult.value : null
   const resolveProvider = makeResolveProvider(repos, store, paths, { logPrefix: "probe" })
-  return createProfileProxy([sourceRef], resolveProvider)
+  // Tool-poisoning mitigation (increment 32.5): sanitize is always applied inside
+  // createProfileProxy; onDescriptionDrift only SURFACES it as a structured warn —
+  // metadata only, never the (possibly-injected) description text.
+  return createProfileProxy([sourceRef], resolveProvider, (info) => {
+    console.warn({
+      event: "description_sanitized",
+      namespace: info.namespace,
+      tool: info.tool,
+      strippedSuspicious: info.strippedSuspicious,
+      truncated: info.truncated,
+    })
+  })
 }
 
 // ---------------------------------------------------------------------------

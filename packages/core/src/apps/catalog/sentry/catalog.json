@@ -7,5 +7,104 @@
       "mode": "token"
     }
   ],
-  "iconSlug": "sentry"
+  "iconSlug": "sentry",
+  "surfaces": [
+    {
+      "kind": "openapi",
+      "displayName": "REST API",
+      "connection": {
+        "kind": "openapi",
+        "specUrl": "https://raw.githubusercontent.com/getsentry/sentry-api-schema/main/openapi-derefed.json",
+        "baseUrl": "https://us.sentry.io"
+      },
+      "auth": [
+        {
+          "mode": "token"
+        }
+      ],
+      "build": {
+        "platformIdTemplate": "{app}-{kind}",
+        "via": "flattened",
+        "credential": {
+          "kind": "bearer",
+          "from": "auth"
+        }
+      },
+      "verify": {
+        "kind": "openapi",
+        "operationId": "listOrganizations"
+      },
+      "docs": "https://docs.sentry.io/api/",
+      "agentGuidance": "Sentry's REST surface \u2014 issues, events, projects, organizations \u2014 generated from Sentry's own dereferenced OpenAPI schema.",
+      "notes": [
+        "specUrl fetched and confirmed 3,793,038 bytes (~3.79 MB, well under the 10 MB SPEC_BYTE_CAP) as of 2026-07-10. Source: https://github.com/getsentry/sentry-api-schema (official getsentry org repo, synced from getsentry/sentry, openapi-derefed.json).",
+        "baseUrl: the spec's own `servers[0].url` is a region template \"https://{region}.sentry.io\" (region enum [\"us\",\"de\"], default \"us\") \u2014 baseUrl pins the \"us\" default (https://us.sentry.io); a self-hosted/de-region user would need a different baseUrl (later increment concern, same class as GitHub's gh-enterprise gap).",
+        "verifyOperationId \"listOrganizations\" confirmed present in the parsed spec (GET /api/0/organizations/, parameterless) \u2014 a lightweight authenticated probe."
+      ]
+    },
+    {
+      "kind": "mcp",
+      "displayName": "Sentry MCP Server",
+      "connection": {
+        "kind": "mcp",
+        "transport": "http",
+        "url": "https://mcp.sentry.dev/mcp"
+      },
+      "auth": [
+        {
+          "mode": "token"
+        }
+      ],
+      "build": {
+        "platformIdTemplate": "{app}-{kind}",
+        "via": "flattened",
+        "credential": {
+          "kind": "bearer",
+          "from": "auth"
+        }
+      },
+      "verify": {
+        "kind": "mcp",
+        "listTools": true
+      },
+      "docs": "https://github.com/getsentry/sentry-mcp",
+      "agentGuidance": "Sentry's own hosted MCP server \u2014 issues, events, and root-cause context for SaaS Sentry instances.",
+      "notes": [
+        "url confirmed via https://mcp.sentry.dev/ and https://github.com/getsentry/sentry-mcp (official getsentry org repo): hosted endpoint https://mcp.sentry.dev/mcp, the recommended endpoint for SaaS Sentry. Self-hosted Sentry uses a local stdio server instead (not authored here)."
+      ]
+    },
+    {
+      "kind": "cli",
+      "displayName": "sentry-cli",
+      "connection": {
+        "kind": "cli",
+        "credentialEnvVar": "SENTRY_API_PAT"
+      },
+      "auth": [
+        {
+          "mode": "token"
+        }
+      ],
+      "build": {
+        "platformIdTemplate": "{app}-{kind}",
+        "via": "descriptor",
+        "credential": {
+          "kind": "bearer",
+          "from": "auth"
+        }
+      },
+      "verify": {
+        "kind": "none"
+      },
+      "docs": "https://docs.sentry.io/cli/",
+      "agentGuidance": "Sentry's official CLI \u2014 best for release/source-map management and quick project inspection outside the REST/MCP surfaces.",
+      "notes": [
+        "credentialEnvVar is \"SENTRY_API_PAT\" (not sentry-cli's real \"SENTRY_AUTH_TOKEN\") \u2014 CliConnectionSchema rejects any *_TOKEN/_SECRET/_KEY suffix. Source for the real env var: https://docs.sentry.io/cli/configuration/ (official Sentry CLI docs). Same mapping-deferred pattern as GitHub's GH_PAT.",
+        "Binary name \"sentry-cli\" confirmed via https://docs.sentry.io/cli/."
+      ]
+    }
+  ],
+  "help": {
+    "category": ["Observability"]
+  }
 }

@@ -8,5 +8,44 @@
     }
   ],
   "aliases": ["twilio-accounts"],
-  "iconSlug": "twilio"
+  "iconSlug": "twilio",
+  "surfaces": [
+    {
+      "kind": "openapi",
+      "displayName": "REST API (Accounts/Messages/Calls)",
+      "connection": {
+        "kind": "openapi",
+        "specUrl": "https://raw.githubusercontent.com/twilio/twilio-oai/main/spec/json/twilio_api_v2010.json",
+        "baseUrl": "https://api.twilio.com",
+        "verifyOperationId": "ListAccount"
+      },
+      "auth": [
+        {
+          "mode": "token"
+        }
+      ],
+      "build": {
+        "platformIdTemplate": "{app}-{kind}",
+        "via": "flattened",
+        "credential": {
+          "kind": "bearer",
+          "from": "auth"
+        }
+      },
+      "verify": {
+        "kind": "openapi",
+        "operationId": "ListAccount"
+      },
+      "docs": "https://www.twilio.com/docs/usage/api",
+      "agentGuidance": "Twilio's core 2010-04-01 REST API \u2014 Accounts, Messages, Calls, Conferences, Recordings, and more.",
+      "notes": [
+        "specUrl verified 2026-07-10: downloaded https://raw.githubusercontent.com/twilio/twilio-oai/main/spec/json/twilio_api_v2010.json \u2014 1,869,905 bytes (matches the method file's cited size exactly; well under the 10,485,760 SPEC_BYTE_CAP). baseUrl https://api.twilio.com matches the spec's own real host. Repo hosts 61 per-product specs; this (twilio_api_v2010) is the core/primary one covering Accounts/Messages/Calls.",
+        "verifyOperationId \"ListAccount\" (GET /2010-04-01/Accounts.json) verified present in the downloaded spec, with ZERO required parameters (only optional query filters: FriendlyName, Status, PageSize, Page, PageToken) \u2014 satisfies OpenApiConnectionSchema.verifyOperationId's 'GET operation with no required parameters' contract. Chosen over FetchAccount (requires a Sid path param) for that reason.",
+        "AUTH CAVEAT (honest, not fabricated): Twilio's real wire auth is HTTP Basic (Account SID as username, Auth Token as password) \u2014 OpenApiAuthSchema (packages/core/src/schema/openapi-connection.ts) DOES model scheme:\"basic\", but the catalog-level BuildRecipeSchema.credential.kind enum (api-key|bearer|oauth2|file|env) has no \"basic\" member, and build-recipe.ts's planConnect ALWAYS mints {scheme:\"bearer\"} for a token-mode credential plan (never basic) \u2014 there is no build-recipe path to a real Basic auth connection today. Authoring credential.kind:\"bearer\" here is the closest honest fit per the method file's instruction (\"use api-key or bearer per what's supported... note it if basic isn't available\"); a follow-up increment adding a \"basic\" CredentialKindForBuild member + build-recipe support is the correct fix, not fabricating a bearer scheme Twilio doesn't actually accept for this API."
+      ]
+    }
+  ],
+  "help": {
+    "category": ["Communication"]
+  }
 }

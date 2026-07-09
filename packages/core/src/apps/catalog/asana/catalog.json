@@ -7,5 +7,11 @@
       "mode": "token"
     }
   ],
-  "iconSlug": "asana"
+  "iconSlug": "asana",
+  "help": {
+    "category": ["Productivity"],
+    "notes": [
+      "Increment 30.13: the Asana MCP server (v2, https://mcp.asana.com/v2/mcp) was researched as a candidate surface but is OMITTED here — confirmed live (curl -> HTTP 401) but Asana's own docs (developers.asana.com/docs/using-asanas-model-context-protocol-mcp-server, developers.asana.com/docs/connecting-mcp-clients-to-asanas-v2-server) require full OAuth 2.0 with a registered client id/secret; tokens minted for the MCP app are MCP-scoped and NOT interchangeable with a plain Asana PAT, so no token-mode path exists. No `asana` oauth2 provider exists yet in oauth/catalog.ts, and this increment's rule is token-first / no new providers without approval — so the surface is deferred rather than fabricated. Forward path: add an `asana` OAuth2 provider (authorize https://app.asana.com/-/oauth_authorize, token https://app.asana.com/-/oauth_token) in a future increment, then author this surface for real."
+    ]
+  }
 }

@@ -168,6 +168,15 @@ export function formatCredentialError(e: CredentialError): string {
       return `credential kind "${e.requested}" not accepted for this platform; allowed: ${e.allowed.join(", ")}`
     case "duplicate-account":
       return `an account named "${e.account}" is already connected to this platform`
+    case "rotate-refused":
+      return e.reason
+    case "rotate-failed":
+      // Opaque by design — never surface `cause` detail here (could carry key/secret bytes).
+      return "master-key rotation failed"
+    case "export-failed":
+      return e.reason
+    case "import-failed":
+      return e.reason
   }
 }
 

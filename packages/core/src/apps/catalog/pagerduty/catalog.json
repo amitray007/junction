@@ -7,5 +7,46 @@
       "mode": "token"
     }
   ],
-  "iconSlug": "pagerduty"
+  "iconSlug": "pagerduty",
+  "surfaces": [
+    {
+      "kind": "openapi",
+      "displayName": "REST API v2",
+      "connection": {
+        "kind": "openapi",
+        "specUrl": "https://raw.githubusercontent.com/PagerDuty/api-schema/main/reference/REST/openapiv3.json",
+        "baseUrl": "https://api.pagerduty.com",
+        "verifyOperationId": "getCurrentUser"
+      },
+      "auth": [
+        {
+          "mode": "token"
+        }
+      ],
+      "build": {
+        "platformIdTemplate": "{app}-{kind}",
+        "via": "flattened",
+        "credential": {
+          "kind": "bearer",
+          "from": "auth"
+        }
+      },
+      "verify": {
+        "kind": "openapi",
+        "operationId": "getCurrentUser"
+      },
+      "docs": "https://developer.pagerduty.com/api-reference/",
+      "agentGuidance": "PagerDuty's REST API v2 \u2014 incidents, services, schedules, escalation policies, on-calls \u2014 generated from PagerDuty's own OpenAPI schema.",
+      "notes": [
+        "specUrl fetched and confirmed 2,765,958 bytes (~2.77 MB, well under the 10 MB SPEC_BYTE_CAP) as of 2026-07-10. Source: https://github.com/PagerDuty/api-schema (official PagerDuty org repo, path reference/REST/openapiv3.json \u2014 the bot-generated REST v2 schema; the repo also has per-integration schemas (Jira, Slack, MS Teams, SCIM) and a separate reference/mcp/openapiv3.json that documents PagerDuty's MCP surface, not consumed here).",
+        "baseUrl \"https://api.pagerduty.com\" confirmed via the spec's own servers[0].url (\"PagerDuty V2 API.\").",
+        "auth: PagerDuty's real scheme is a custom Token scheme, not Bearer \u2014 confirmed via the spec's components.securitySchemes.api_key: {type: apiKey, in: header, name: Authorization, description: \"The API Key with format `Token token=<API_KEY>`\"}. junction's BuildRecipeSchema only models bearer/api-key/oauth2/file/env kinds (no literal-prefix 'Token token=' scheme), so this is authored as the closest real fit (credential.kind: bearer per this increment's build-recipe vocabulary) \u2014 the runtime Authorization header value itself still needs the 'Token token=' prefix applied at connect time, a known gap shared with any non-Bearer custom scheme (same class of note as GitHub's GH_PAT rename).",
+        "verifyOperationId \"getCurrentUser\" confirmed present in the parsed spec (GET /users/me, zero required parameters) \u2014 a lightweight authenticated probe, same shape as GitHub's users/get-authenticated.",
+        "PagerDuty also publishes a real hosted MCP server (https://mcp.pagerduty.com, github.com/PagerDuty/pagerduty-mcp-server, Streamable HTTP) \u2014 out of scope for this increment (supportedKinds stays [openapi] per the method file); a future increment could add it as a second surface."
+      ]
+    }
+  ],
+  "help": {
+    "category": ["Observability"]
+  }
 }

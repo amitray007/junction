@@ -7,5 +7,35 @@
       "mode": "token"
     }
   ],
-  "iconSlug": "box"
+  "iconSlug": "box",
+  "help": {
+    "category": ["Productivity"]
+  },
+  "surfaces": [
+    {
+      "kind": "openapi",
+      "displayName": "Box Platform API",
+      "connection": {
+        "kind": "openapi",
+        "specUrl": "https://raw.githubusercontent.com/box/box-openapi/main/openapi.json",
+        "baseUrl": "https://api.box.com/2.0",
+        "verifyOperationId": "get_users_me"
+      },
+      "auth": [{ "mode": "token" }],
+      "build": {
+        "platformIdTemplate": "{app}-{kind}",
+        "via": "flattened",
+        "credential": { "kind": "bearer", "from": "auth" }
+      },
+      "verify": { "kind": "openapi", "operationId": "get_users_me" },
+      "docs": "https://developer.box.com/reference/",
+      "agentGuidance": "Box's full Platform REST API — files, folders, collaborations, and search, generated from Box's own OpenAPI spec. NO `box` OAuth provider exists in this catalog, so token (developer/access token) is the only auth path.",
+      "notes": [
+        "specUrl fetched and confirmed 1,761,086 bytes as of 2026-07-10 (well under the 10 MB SPEC_BYTE_CAP). Source: https://developer.box.com/reference/ (official Box developer docs) -> https://github.com/box/box-openapi (main/openapi.json).",
+        "baseUrl \"https://api.box.com/2.0\" confirmed from the fetched spec's own `servers[0].url` (\"Box Platform API server.\").",
+        "verifyOperationId \"get_users_me\" confirmed present in the fetched spec (GET /users/me, \"Get current user\" — only an optional `fields` query param, no required path params) via direct parse of the downloaded openapi.json — a lightweight authenticated probe.",
+        "auth is Bearer token only — no `box` OAuth2 provider exists in oauth/catalog.ts, so this surface stays token-mode (no new provider added)."
+      ]
+    }
+  ]
 }
