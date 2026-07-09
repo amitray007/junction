@@ -389,11 +389,12 @@ export async function readProfiles(): Promise<ProfileMeta[]> {
 // ---------------------------------------------------------------------------
 
 /**
- * Web DTO for a catalog app on the /app index — mirrors the AppDefinition
- * fields the index actually renders (routes never see a core type directly;
- * same convention as audit.server.ts), plus `category`: the curated
- * help.category labels (inc 30.13) that the legacy listApps() projection
- * drops (see core/src/apps/catalog.ts's toAppDefinition). Metadata-only —
+ * Web DTO for a catalog app on the /app index — an explicit field list (same
+ * convention as audit.server.ts) so client-bound fields are opt-in, plus
+ * `category`: the curated help.category labels (inc 30.13) that the legacy
+ * listApps() projection drops (see core/src/apps/catalog.ts's
+ * toAppDefinition). `auth` deliberately reuses core's AppAuth shape (a small,
+ * public discriminated union) rather than redeclaring it. Metadata-only —
  * every field is public catalog data.
  */
 export type AppMeta = {
@@ -501,12 +502,22 @@ export async function readApps(): Promise<AppsData> {
   const groupMetas = await readAppGroups()
   // Left-join help.category from the rich catalog: listApps()'s legacy
   // AppDefinition projection drops `help` entirely (see core catalog.ts),
-  // so the Category facet would never see it otherwise.
+  // so the Category facet would never see it otherwise. EXPLICIT field
+  // mapping (no spread) so client-bound fields stay opt-in — a future core
+  // AppDefinition field never rides along into the payload unreviewed.
   const categoryById = new Map(listCatalogEntries().map((e) => [e.id, e.help?.category]))
-  const catalog: AppMeta[] = listApps().map((app) => ({
-    ...app,
-    category: categoryById.get(app.id),
-  }))
+  const catalog: AppMeta[] = listApps().map((app) => {
+    const category = categoryById.get(app.id)
+    return {
+      id: app.id,
+      displayName: app.displayName,
+      supportedKinds: app.supportedKinds,
+      auth: app.auth,
+      ...(app.aliases !== undefined ? { aliases: app.aliases } : {}),
+      ...(app.iconSlug !== undefined ? { iconSlug: app.iconSlug } : {}),
+      ...(category !== undefined ? { category } : {}),
+    }
+  })
   return { catalog, groups: groupMetas }
 }
 

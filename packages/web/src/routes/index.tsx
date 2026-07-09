@@ -69,7 +69,7 @@ function DashboardPage() {
         </SectionLabel>
         <Link
           to="/audit"
-          className="no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue-700)] focus-visible:ring-offset-1 rounded-[var(--radius-12)]"
+          className="block no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue-700)] focus-visible:ring-offset-1 rounded-[var(--radius-12)]"
         >
           <Card className="transition-colors duration-[var(--motion-fast)] hover:bg-[var(--gray-100)]">
             <CardContent

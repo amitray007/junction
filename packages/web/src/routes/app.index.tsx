@@ -107,7 +107,7 @@ function AppCard({ app }: { readonly app: AppCardData }) {
     <Link
       to="/app/$id"
       params={{ id: app.id }}
-      className="no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue-700)] focus-visible:ring-offset-1 rounded-[var(--radius-12)]"
+      className="block no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue-700)] focus-visible:ring-offset-1 rounded-[var(--radius-12)]"
     >
       <Card className="h-full transition-colors duration-[var(--motion-fast)] hover:bg-[var(--gray-100)]">
         <CardHeader className="flex flex-row items-start justify-between gap-2">
@@ -181,7 +181,14 @@ function AppsIndexPage() {
   const categoryOptions = useMemo(() => {
     const values = new Set<string>()
     for (const app of cards) {
-      for (const c of app.category ?? []) values.add(c)
+      for (const c of app.category ?? []) {
+        // Guard the sentinel namespace: core's schema allows any non-empty
+        // string, so a curated category literally named "Uncategorized"/"All"
+        // must not collide with the synthetic all/uncategorized options.
+        const lower = c.toLowerCase()
+        if (lower === UNCATEGORIZED_FILTER || lower === ALL_FILTER) continue
+        values.add(c)
+      }
     }
     return [
       ...[...values].sort((a, b) => a.localeCompare(b)).map((v) => ({ value: v, label: v })),
