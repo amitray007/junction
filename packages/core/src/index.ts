@@ -46,6 +46,7 @@ export {
   type JunctionPaths,
   openapiSpecCacheFile,
 } from "./paths/index.js"
+export { sweepStaleCredDirs } from "./paths/sweep-cred-dirs.js"
 export { err, errAsync, ok, okAsync, type Result, ResultAsync } from "./result/index.js"
 export const VERSION = "0.0.0"
 

@@ -33,6 +33,7 @@ import {
   getPaths,
   isValidMcpPort,
   type ScopedProxyEntry,
+  sweepStaleCredDirs,
   verifyApiKey,
 } from "@junction/core"
 import type { AuthedKey, AuthedKeyResult, McpServerHandlers } from "@junction/mcp-server"
@@ -93,6 +94,11 @@ export const serveCommand = defineCommand({
       process.exitCode = 1
       return
     }
+
+    // Fire-and-forget: sweep any stale (>1h) cred-* temp dirs stranded by a
+    // hard kill mid-materialization (increment 32.7 item 2). Never awaited
+    // into the startup path, never fails it.
+    void sweepStaleCredDirs(paths).catch(() => {})
 
     // ── Open the DB (required — keys/profiles both live there) ─────────────
     const dbResult = await getDatabase(paths)
