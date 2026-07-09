@@ -2,6 +2,13 @@
 
 /** Junction core — public API. */
 
+export {
+  type AuditFilters,
+  filterAuditEntries,
+  parseSinceUtc,
+  readAuditLog,
+  readAuditLogTail,
+} from "./audit/read.js"
 export { argKeys, hashArgs } from "./audit/redact.js"
 // ---------------------------------------------------------------------------
 // Audit — structured tool-call log schema + sink interface (increment 31)
