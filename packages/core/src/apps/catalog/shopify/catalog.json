@@ -1,13 +1,19 @@
 {
   "id": "shopify",
   "displayName": "Shopify",
-  "supportedKinds": ["graphql"],
+  "supportedKinds": [
+    "graphql",
+    "mcp"
+  ],
   "auth": [
     {
       "mode": "token"
     }
   ],
-  "aliases": ["shopify-admin", "shopify-storefront"],
+  "aliases": [
+    "shopify-admin",
+    "shopify-storefront"
+  ],
   "iconSlug": "shopify",
   "surfaces": [
     {
@@ -17,7 +23,10 @@
         "kind": "mcp",
         "transport": "stdio",
         "command": "npx",
-        "args": ["-y", "@shopify/dev-mcp@latest"]
+        "args": [
+          "-y",
+          "@shopify/dev-mcp@latest"
+        ]
       },
       "auth": [
         {
@@ -47,6 +56,8 @@
     "notes": [
       "The Admin GraphQL API has no single fixed endpoint \u2014 every request is per-store (\"https://{store_name}.myshopify.com/admin/api/{version}/graphql.json\", confirmed via https://shopify.dev/docs/api/admin-graphql). AppSurfaceConnectionSchema's graphql variant requires a single pinned `endpoint` URL with no path substitution, so a real, honest graphql surface can't be authored without a concrete store hostname \u2014 deferred until per-connection store-hostname templating exists (or the hostname is captured at connect-time). The Dev MCP surface above is the credential-less docs/schema tool, distinct from per-store data access."
     ],
-    "category": ["Developer"]
+    "category": [
+      "Developer"
+    ]
   }
 }

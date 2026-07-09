@@ -1463,7 +1463,6 @@ export const CATALOG_ENTRIES: readonly AppCatalogEntry[] = [
           kind: "openapi",
           specUrl: "https://raw.githubusercontent.com/outline/openapi/main/spec3.json",
           baseUrl: "https://app.getoutline.com/api",
-          verifyOperationId: "authInfo",
         },
         auth: [
           {
@@ -1479,8 +1478,7 @@ export const CATALOG_ENTRIES: readonly AppCatalogEntry[] = [
           },
         },
         verify: {
-          kind: "openapi",
-          operationId: "authInfo",
+          kind: "none",
         },
         docs: "https://www.getoutline.com/developers",
         agentGuidance:
@@ -1490,6 +1488,7 @@ export const CATALOG_ENTRIES: readonly AppCatalogEntry[] = [
           'baseUrl "https://app.getoutline.com/api" confirmed from the fetched spec\'s own `servers[0].url` ("Cloud hosted"); the spec\'s second server entry ("https://{domain}/api", self-hosted) is deliberately NOT authored — no fixed catalog URL, per the self-hosted-omission rule.',
           'verifyOperationId "authInfo" confirmed present in the fetched spec (POST /auth.info, "Retrieve authentication details for the current API key") via direct parse of the downloaded spec3.json — a lightweight, no-param authenticated probe.',
           "auth is Bearer token per Outline's docs (API keys, Authorization: Bearer <token>).",
+          "verify:none — Outline's OpenAPI has ZERO GET operations (authInfo is POST /auth.info); verifyOperationId requires a GET with no required params, so no compliant probe exists. Honest omission (matches sendgrid in this increment). (no-fabrication review, 30.13)",
         ],
       },
     ],
@@ -1875,7 +1874,7 @@ export const CATALOG_ENTRIES: readonly AppCatalogEntry[] = [
   {
     id: "shopify",
     displayName: "Shopify",
-    supportedKinds: ["graphql"],
+    supportedKinds: ["graphql", "mcp"],
     auth: [
       {
         mode: "token",
