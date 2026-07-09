@@ -1,6 +1,7 @@
 {
   "id": "slack",
   "displayName": "Slack",
+  "category": ["Communication"],
   "supportedKinds": ["openapi"],
   "auth": [
     {

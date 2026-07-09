@@ -1,6 +1,7 @@
 {
   "id": "openai",
   "displayName": "OpenAI",
+  "category": ["Search"],
   "supportedKinds": ["openapi"],
   "auth": [
     {

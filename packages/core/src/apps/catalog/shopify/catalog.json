@@ -1,6 +1,7 @@
 {
   "id": "shopify",
   "displayName": "Shopify",
+  "category": ["Developer"],
   "supportedKinds": ["graphql"],
   "auth": [
     {
@@ -9,9 +10,43 @@
   ],
   "aliases": ["shopify-admin", "shopify-storefront"],
   "iconSlug": "shopify",
+  "surfaces": [
+    {
+      "kind": "mcp",
+      "displayName": "Shopify Dev MCP",
+      "connection": {
+        "kind": "mcp",
+        "transport": "stdio",
+        "command": "npx",
+        "args": ["-y", "@shopify/dev-mcp@latest"]
+      },
+      "auth": [
+        {
+          "mode": "none"
+        }
+      ],
+      "build": {
+        "platformIdTemplate": "{app}-{kind}",
+        "via": "flattened",
+        "credential": {
+          "kind": "bearer",
+          "from": "auth"
+        }
+      },
+      "verify": {
+        "kind": "mcp",
+        "listTools": true
+      },
+      "docs": "https://shopify.dev/docs/apps/build/devmcp",
+      "agentGuidance": "Shopify's official local Dev MCP server (credential-less): search Shopify docs and introspect the Admin/Storefront GraphQL schemas. Runs via `npx -y @shopify/dev-mcp@latest`. Distinct from the per-store Admin GraphQL API (see help.notes) — this is documentation + schema tooling, not store data.",
+      "notes": [
+        "Real, verified source: https://shopify.dev/docs/apps/build/devmcp + npm @shopify/dev-mcp (invocation `npx -y @shopify/dev-mcp@latest`, verified 2026-07-10). Credential-less (mode: none) — the FIRST stdio-transport MCP surface + the FIRST no-auth surface in the committed catalog (inc 30.13 base slice)."
+      ]
+    }
+  ],
   "help": {
     "notes": [
-      "No surfaces[] authored (32.6c batch): Shopify's Admin GraphQL API has no single fixed endpoint — every request is per-store (\"https://{store_name}.myshopify.com/admin/api/{version}/graphql.json\", confirmed via https://shopify.dev/docs/api/admin-graphql and https://community.shopify.com/t/is-there-a-publicly-available-schema-for-the-admin-graphql-api/350472). AppSurfaceConnectionSchema's graphql variant requires a single pinned `endpoint` URL with no path substitution (graphql-connection.ts: 'single pinned endpoint — no path substitution'), so a real, honest surface can't be authored without a concrete store hostname. Authoring a placeholder store name would be a fabricated value. Revisit when either (a) a per-connection store-hostname templating mechanism exists, or (b) the app is connected for the first time and its store hostname is captured at connect-time (later-increment concern)."
+      "The Admin GraphQL API has no single fixed endpoint — every request is per-store (\"https://{store_name}.myshopify.com/admin/api/{version}/graphql.json\", confirmed via https://shopify.dev/docs/api/admin-graphql). AppSurfaceConnectionSchema's graphql variant requires a single pinned `endpoint` URL with no path substitution, so a real, honest graphql surface can't be authored without a concrete store hostname — deferred until per-connection store-hostname templating exists (or the hostname is captured at connect-time). The Dev MCP surface above is the credential-less docs/schema tool, distinct from per-store data access."
     ]
   }
 }

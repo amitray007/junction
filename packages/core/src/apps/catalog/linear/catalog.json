@@ -1,6 +1,7 @@
 {
   "id": "linear",
   "displayName": "Linear",
+  "category": ["Productivity"],
   "supportedKinds": ["mcp", "graphql"],
   "auth": [
     {

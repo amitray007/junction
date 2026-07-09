@@ -1,6 +1,7 @@
 {
   "id": "notion",
   "displayName": "Notion",
+  "category": ["Productivity"],
   "supportedKinds": ["mcp"],
   "auth": [
     {

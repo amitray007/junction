@@ -1,6 +1,7 @@
 {
   "id": "github",
   "displayName": "GitHub",
+  "category": ["Developer"],
   "supportedKinds": ["mcp", "cli", "openapi", "graphql"],
   "auth": [
     { "mode": "oauth2", "providerId": "github" },

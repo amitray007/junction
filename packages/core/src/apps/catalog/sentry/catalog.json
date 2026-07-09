@@ -1,6 +1,7 @@
 {
   "id": "sentry",
   "displayName": "Sentry",
+  "category": ["Observability"],
   "supportedKinds": ["mcp", "cli"],
   "auth": [
     {
