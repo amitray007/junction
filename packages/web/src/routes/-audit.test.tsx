@@ -104,18 +104,20 @@ describe("AuditPage — populated table", () => {
     expect(table.textContent).toContain("42ms")
   })
 
-  it("shows an ok badge for a successful call", () => {
+  it("shows an OK outcome badge for a successful call", () => {
     mockUseLoaderData.mockReturnValue(populatedData)
     const { getByRole } = render(<AuditPage />)
-    expect(getByRole("table").textContent).toContain("Connected")
+    // Outcome badge is "OK"/"Error" — NOT connection-status labels (a tool call
+    // isn't a "connection"). The errorKind caption carries the specific reason.
+    expect(getByRole("table").textContent).toContain("OK")
   })
 
-  it("shows an error badge + errorKind for a failed call", () => {
+  it("shows an Error outcome badge + errorKind for a failed call", () => {
     mockUseLoaderData.mockReturnValue(populatedData)
     const { getByRole } = render(<AuditPage />)
     const table = getByRole("table")
-    expect(table.textContent).toContain("Auth Failed")
-    expect(table.textContent).toContain("auth-failed")
+    expect(table.textContent).toContain("Error")
+    expect(table.textContent).toContain("auth-failed") // the errorKind tag, beside the badge
   })
 
   it("shows a truncated note when the log exceeded the tail cap", () => {

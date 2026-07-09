@@ -20,12 +20,12 @@ import type { AuditEntryDTO } from "../server/audit.functions.js"
 import { getAudit } from "../server/audit.functions.js"
 import { MonoCode } from "../ui/code.js"
 import {
+  Badge,
   EmptyTableRow,
   FacetSelect,
   Input,
   PageHeader,
   RefreshButton,
-  StatusBadge,
   Table,
   TableBody,
   TableCell,
@@ -279,12 +279,17 @@ export function AuditTable({ entries, pageSize = PAGE_SIZE }: AuditTableProps) {
                   <TableCellMono>{e.durationMs}ms</TableCellMono>
                   <TableCell>
                     <span title={e.outcome === "error" ? (e.errorKind ?? undefined) : undefined}>
-                      <StatusBadge status={e.outcome === "ok" ? "connected" : "auth-failed"} />
+                      {/* Outcome-specific labels (not connection-status): a tool call
+                          is "OK"/"Error", never "Connected"/"Auth Failed" — the errorKind
+                          beside it (timeout/rate-limited/…) is frequently not auth-related. */}
+                      <Badge variant={e.outcome === "ok" ? "ok" : "error"}>
+                        {e.outcome === "ok" ? "OK" : "Error"}
+                      </Badge>
                     </span>
                     {e.outcome === "error" && e.errorKind !== null && (
                       <span
                         style={{
-                          marginLeft: "8px",
+                          marginLeft: "var(--space-2)",
                           fontSize: "var(--text-caption)",
                           color: "var(--gray-700)",
                         }}
@@ -309,7 +314,7 @@ function AuditPage() {
   const { entries, truncated } = Route.useLoaderData()
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
       <PageHeader
         title="Audit"
         subtitle="A record of tool calls and credential use across your agents."
