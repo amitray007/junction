@@ -27,6 +27,15 @@ describe("migration correctness — new catalog vs. the frozen pre-migration sna
       expect(migrated, `app "${old.id}" missing from the new catalog`).toBeDefined()
       if (!migrated) continue
       expect(migrated.displayName).toBe(old.displayName)
+      // NOTE (inc 32.6c): `supportedKinds` is the FROZEN legacy AppDefinition capability
+      // list — this invariant deliberately pins it to the pre-30.8 snapshot to prove the
+      // migration didn't silently change it. It is NOT kept in sync with the newer
+      // authored `surfaces[]` (which is the authoritative capability source): e.g. sentry
+      // authored an `openapi` surface + vercel an `mcp` surface in 32.6c, but their
+      // `supportedKinds` stay as-migrated. Surface resolution (web app page /
+      // connect.server.ts) goes via `surfaces`, never `supportedKinds`, so this drift is
+      // cosmetic-legacy, not a connect bug. Do NOT "fix" it by editing the snapshot —
+      // that would defeat the migration-correctness guarantee.
       expect(migrated.supportedKinds).toEqual(old.supportedKinds)
       expect(migrated.auth).toEqual(old.auth)
       expect(migrated.aliases).toEqual(old.aliases)

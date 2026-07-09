@@ -12,5 +12,70 @@
     }
   ],
   "aliases": ["glab"],
-  "iconSlug": "gitlab"
+  "iconSlug": "gitlab",
+  "surfaces": [
+    {
+      "kind": "openapi",
+      "displayName": "REST API",
+      "connection": {
+        "kind": "openapi",
+        "specUrl": "https://gitlab.com/gitlab-org/gitlab/-/raw/master/doc/api/openapi/openapi_v3.yaml",
+        "baseUrl": "https://gitlab.com"
+      },
+      "auth": [{ "mode": "oauth2", "providerId": "gitlab" }, { "mode": "token" }],
+      "build": {
+        "platformIdTemplate": "{app}-{kind}",
+        "via": "flattened",
+        "credential": { "kind": "oauth2", "from": "auth" }
+      },
+      "verify": { "kind": "openapi", "operationId": "getApiV4User" },
+      "docs": "https://docs.gitlab.com/api/rest/",
+      "agentGuidance": "GitLab's REST v4 surface — projects, merge requests, issues, pipelines — generated from GitLab's own OpenAPI 3 spec.",
+      "notes": [
+        "specUrl fetched and confirmed 3,351,824 bytes (~3.35 MB, well under the 10 MB SPEC_BYTE_CAP) as of 2026-07-10. Source: https://docs.gitlab.com/api/openapi/ (GitLab docs — 'OpenAPI 3.0 specification' section names doc/api/openapi/openapi_v3.yaml in the gitlab-org/gitlab monorepo).",
+        "verifyOperationId \"getApiV4User\" confirmed present in the fetched spec (GET /api/v4/user, the current-authenticated-user endpoint) via direct grep of the downloaded openapi_v3.yaml.",
+        "baseUrl \"https://gitlab.com\" (not \".../api/v4\") because the spec's own `servers[0].url` is \"https://{hostname}\" and all paths already carry the \"/api/v4/...\" prefix (e.g. \"/api/v4/user\") — confirmed by inspecting the downloaded spec directly."
+      ]
+    },
+    {
+      "kind": "graphql",
+      "displayName": "GraphQL API",
+      "connection": {
+        "kind": "graphql",
+        "endpoint": "https://gitlab.com/api/graphql"
+      },
+      "auth": [{ "mode": "oauth2", "providerId": "gitlab" }, { "mode": "token" }],
+      "build": {
+        "platformIdTemplate": "{app}-{kind}",
+        "via": "flattened",
+        "credential": { "kind": "oauth2", "from": "auth" }
+      },
+      "verify": { "kind": "graphql", "typenameProbe": true },
+      "docs": "https://docs.gitlab.com/api/graphql/",
+      "agentGuidance": "GitLab's GraphQL API — best for fetching nested/related data (e.g. a project's issues + labels + assignees) in one call.",
+      "notes": [
+        "endpoint confirmed via https://docs.gitlab.com/api/graphql/ (official GitLab docs): '/api/graphql', which for gitlab.com resolves to https://gitlab.com/api/graphql."
+      ]
+    },
+    {
+      "kind": "cli",
+      "displayName": "glab CLI",
+      "connection": {
+        "kind": "cli",
+        "credentialEnvVar": "GITLAB_PAT"
+      },
+      "auth": [{ "mode": "token" }],
+      "build": {
+        "platformIdTemplate": "{app}-{kind}",
+        "via": "descriptor",
+        "credential": { "kind": "bearer", "from": "auth" }
+      },
+      "verify": { "kind": "none" },
+      "docs": "https://docs.gitlab.com/cli/",
+      "agentGuidance": "GitLab's official glab CLI — best for git-adjacent workflows (MR checkout, pipeline tailing) the API surfaces don't model as directly.",
+      "notes": [
+        "credentialEnvVar is \"GITLAB_PAT\" (not glab's real \"GITLAB_TOKEN\") — CliConnectionSchema rejects any *_TOKEN/_SECRET/_KEY suffix. Source for the real env var: https://docs.gitlab.com/cli/ (glab CLI docs, GITLAB_TOKEN). Same mapping-deferred pattern as GitHub's GH_PAT."
+      ]
+    }
+  ]
 }

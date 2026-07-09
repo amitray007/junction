@@ -523,6 +523,38 @@ describe("data.server", () => {
       expect(detail.otherConnections).toEqual([])
     })
 
+    // App-detail Connect CTAs for surfaceless apps (increment 32.6a) — the
+    // catalog entry's top-level auth[] now rides through app.authModes on
+    // BOTH construction sites (thin fallback AND the full surface-first
+    // return), so the route's EmptyAppState always gets real modes instead
+    // of a hardcoded [].
+    it("a surface-authored app (github) also carries its catalog auth modes on app.authModes", async () => {
+      const detail = await readAppDetail("github")
+      // GitHub's catalog auth[] is [oauth2 (github), oauth2 (github-app), token].
+      expect(detail.app.authModes).toEqual(["oauth2", "oauth2", "token"])
+    })
+
+    // NOTE: use a still-surfaceless app here. gitlab/stripe/slack/… gained authored
+    // surfaces[] in inc 32.6c, so they no longer hit the thin fallback. `atlassian` is a
+    // stable surfaceless oauth2+token app (exercises BOTH the Connect-OAuth and
+    // Add-Credential CTAs). If atlassian is ever backfilled, swap for another still-thin
+    // oauth2+token app (discord).
+    it("a surfaceless (thin) app (atlassian) carries its catalog auth modes on app.authModes, surfaces empty", async () => {
+      const detail = await readAppDetail("atlassian")
+      expect(detail.app.authModes).toEqual(["oauth2", "token"])
+      expect(detail.surfaces).toEqual([])
+    })
+
+    it("a none-only auth app (anilist) carries authModes: ['none']", async () => {
+      const detail = await readAppDetail("anilist")
+      expect(detail.app.authModes).toEqual(["none"])
+    })
+
+    it("an unknown id with no catalog entry falls back to authModes: []", async () => {
+      const detail = await readAppDetail("totally-unknown-app-id")
+      expect(detail.app.authModes).toEqual([])
+    })
+
     it("metadata-only negative test: the DTO carries NO secretRef/build/connection fields", async () => {
       const detail = await readAppDetail("github")
       const serialized = JSON.stringify(detail)

@@ -17,9 +17,19 @@ import type { AppDetail, ConnectionMeta, SurfaceView } from "../server/data.func
 
 // ---- Fixtures ---------------------------------------------------------------
 
-const githubApp = { id: "github", displayName: "GitHub" }
-const spotifyApp = { id: "spotify", displayName: "Spotify" }
-const otherAppDisplay = { id: "other", displayName: "Other" }
+const githubApp: AppDetail["app"] = { id: "github", displayName: "GitHub", authModes: ["oauth2"] }
+const spotifyApp: AppDetail["app"] = { id: "spotify", displayName: "Spotify", authModes: [] }
+const otherAppDisplay: AppDetail["app"] = { id: "other", displayName: "Other", authModes: [] }
+// A surfaceless (thin) app whose catalog auth has BOTH oauth2 and token modes
+// (mirrors gitlab) — the fixture that proves the 32.6a Connect-CTA fix.
+const gitlabApp: AppDetail["app"] = {
+  id: "gitlab",
+  displayName: "GitLab",
+  authModes: ["oauth2", "token"],
+}
+// A surfaceless app whose catalog auth is none-only (mirrors anilist) — chip,
+// no button.
+const noneOnlyApp: AppDetail["app"] = { id: "anilist", displayName: "AniList", authModes: ["none"] }
 
 const oauthConnection: ConnectionMeta = {
   credentialId: "cred-1",
@@ -191,6 +201,8 @@ const addAccountOAuthOnlyLoaderData: AppDetail = {
 
 const emptyLoaderData: AppDetail = { app: githubApp, surfaces: [], otherConnections: [] }
 const emptySpotifyLoaderData: AppDetail = { app: spotifyApp, surfaces: [], otherConnections: [] }
+const emptyGitlabLoaderData: AppDetail = { app: gitlabApp, surfaces: [], otherConnections: [] }
+const emptyNoneOnlyLoaderData: AppDetail = { app: noneOnlyApp, surfaces: [], otherConnections: [] }
 const otherLoaderData: AppDetail = {
   app: otherAppDisplay,
   surfaces: [],
@@ -302,6 +314,31 @@ describe("AppDetailPage", () => {
     render(<AppDetailPage />)
     expect(screen.getByRole("heading", { level: 1, name: "Spotify" })).toBeInTheDocument()
     expect(screen.getByText(/no connections to spotify yet/i)).toBeInTheDocument()
+  })
+
+  // ── Connect CTAs for surfaceless apps (increment 32.6a — the 44-empty-apps
+  // fix). Before this fix, EmptyAppState always received authModes={[]}, so
+  // the CTA block below never rendered for any surfaceless app. ──
+
+  it("a surfaceless app with oauth2+token auth modes renders BOTH the Connect (OAuth) and Add Credential CTAs, not just the bare empty line", () => {
+    mockUseLoaderData.mockReturnValue(emptyGitlabLoaderData)
+    render(<AppDetailPage />)
+    expect(screen.getByText(/no connections to gitlab yet/i)).toBeInTheDocument()
+    const links = screen.getAllByRole("link", { name: /connect \(oauth\)|add credential/i })
+    expect(links).toHaveLength(2)
+    for (const link of links) {
+      expect(link).toHaveAttribute("href", "/credentials")
+    }
+    expect(screen.getByRole("link", { name: /connect \(oauth\)/i })).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: /add credential/i })).toBeInTheDocument()
+  })
+
+  it("a none-only auth app renders the auth-mode chip but no Connect/Add-Credential button", () => {
+    mockUseLoaderData.mockReturnValue(emptyNoneOnlyLoaderData)
+    render(<AppDetailPage />)
+    expect(screen.getByText(/no connections to anilist yet/i)).toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: /connect \(oauth\)/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: /add credential/i })).not.toBeInTheDocument()
   })
 
   it("renders the 'Other' synthetic group with its fixed label", () => {

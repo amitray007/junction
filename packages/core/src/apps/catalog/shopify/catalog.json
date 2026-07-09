@@ -8,5 +8,10 @@
     }
   ],
   "aliases": ["shopify-admin", "shopify-storefront"],
-  "iconSlug": "shopify"
+  "iconSlug": "shopify",
+  "help": {
+    "notes": [
+      "No surfaces[] authored (32.6c batch): Shopify's Admin GraphQL API has no single fixed endpoint — every request is per-store (\"https://{store_name}.myshopify.com/admin/api/{version}/graphql.json\", confirmed via https://shopify.dev/docs/api/admin-graphql and https://community.shopify.com/t/is-there-a-publicly-available-schema-for-the-admin-graphql-api/350472). AppSurfaceConnectionSchema's graphql variant requires a single pinned `endpoint` URL with no path substitution (graphql-connection.ts: 'single pinned endpoint — no path substitution'), so a real, honest surface can't be authored without a concrete store hostname. Authoring a placeholder store name would be a fabricated value. Revisit when either (a) a per-connection store-hostname templating mechanism exists, or (b) the app is connected for the first time and its store hostname is captured at connect-time (later-increment concern)."
+    ]
+  }
 }

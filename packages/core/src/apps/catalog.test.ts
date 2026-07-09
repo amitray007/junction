@@ -4,6 +4,7 @@
 
 import { describe, expect, it } from "vitest"
 import { getProvider, listProviders } from "../oauth/catalog.js"
+import { getCatalogEntry } from "./catalog/index.js"
 import { getApp, listApps } from "./catalog.js"
 
 describe("getApp / listApps", () => {
@@ -127,5 +128,84 @@ describe("catalog integrity", () => {
   it("app ids are unique", () => {
     const ids = listApps().map((a) => a.id)
     expect(new Set(ids).size).toBe(ids.length)
+  })
+})
+
+describe("32.6c surfaces backfill — the 10 batch apps now render surface-first", () => {
+  // gitlab/stripe/slack/notion/linear/sentry/vercel/openai/cloudflare all got a
+  // real, cited surfaces[] backfill. shopify was deliberately left surface-less
+  // (Admin GraphQL has no single fixed endpoint — see its help.notes) — it stays
+  // on the thin/CTA fallback, so it's excluded from the "surfaces present" list
+  // below and asserted separately as an honest omission.
+  const backfilledWithSurfaces = [
+    "gitlab",
+    "stripe",
+    "slack",
+    "notion",
+    "linear",
+    "sentry",
+    "vercel",
+    "openai",
+    "cloudflare",
+  ]
+
+  it.each(backfilledWithSurfaces)("%s has a non-empty, well-formed surfaces[]", (id) => {
+    const entry = getCatalogEntry(id)
+    expect(entry, `catalog entry "${id}" not found`).toBeDefined()
+    if (!entry) return
+    expect(entry.surfaces?.length ?? 0, `${id}: expected surfaces.length > 0`).toBeGreaterThan(0)
+    for (const surface of entry.surfaces ?? []) {
+      expect(
+        surface.auth.length,
+        `${id}/${surface.kind}: surface auth must be non-empty`,
+      ).toBeGreaterThan(0)
+      expect(
+        surface.build.platformIdTemplate,
+        `${id}/${surface.kind}: build.platformIdTemplate required`,
+      ).toBe("{app}-{kind}")
+      expect(
+        surface.connection.kind,
+        `${id}/${surface.kind}: connection.kind must match surface.kind`,
+      ).toBe(surface.kind)
+    }
+  })
+
+  it("shopify was deliberately left surface-less (no single fixed GraphQL endpoint — honest omission, not an oversight)", () => {
+    const shopify = getCatalogEntry("shopify")
+    expect(shopify).toBeDefined()
+    expect(shopify?.surfaces ?? []).toHaveLength(0)
+    expect(shopify?.help?.notes?.some((n) => n.includes("No surfaces[] authored"))).toBe(true)
+  })
+
+  it("gitlab: default auth mode is oauth2 (first entry), mirroring the app-level auth", () => {
+    const gitlab = getCatalogEntry("gitlab")
+    const openapi = gitlab?.surfaces?.find((s) => s.kind === "openapi")
+    expect(openapi?.auth[0]).toEqual({ mode: "oauth2", providerId: "gitlab" })
+  })
+
+  it("notion: MCP surface is OAuth-only (no token fallback) per Notion's own docs", () => {
+    const notion = getCatalogEntry("notion")
+    const mcp = notion?.surfaces?.find((s) => s.kind === "mcp")
+    expect(mcp?.auth).toEqual([{ mode: "oauth2", providerId: "notion" }])
+  })
+
+  it("cloudflare: no openapi surface authored (spec measured over the 10 MB cap)", () => {
+    const cloudflare = getCatalogEntry("cloudflare")
+    expect(cloudflare?.surfaces?.some((s) => s.kind === "openapi")).toBe(false)
+    expect(cloudflare?.help?.notes?.some((n) => n.includes("SKIPPED"))).toBe(true)
+  })
+
+  it("no cli surface's credentialEnvVar ends in _TOKEN/_SECRET/_KEY (the CliConnectionSchema denylist)", () => {
+    for (const id of backfilledWithSurfaces) {
+      const entry = getCatalogEntry(id)
+      for (const surface of entry?.surfaces ?? []) {
+        if (surface.connection.kind !== "cli") continue
+        const envVar = surface.connection.credentialEnvVar
+        if (!envVar) continue
+        expect(envVar, `${id}/cli: credentialEnvVar "${envVar}"`).not.toMatch(
+          /_TOKEN$|_SECRET$|_KEY$/,
+        )
+      }
+    }
   })
 })

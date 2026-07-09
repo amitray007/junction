@@ -116,6 +116,76 @@ export const CATALOG_ENTRIES: readonly AppCatalogEntry[] = [
       },
     ],
     iconSlug: "cloudflare",
+    surfaces: [
+      {
+        kind: "mcp",
+        displayName: "Cloudflare API MCP Server",
+        connection: {
+          kind: "mcp",
+          transport: "http",
+          url: "https://mcp.cloudflare.com/mcp",
+        },
+        auth: [
+          {
+            mode: "token",
+          },
+        ],
+        build: {
+          platformIdTemplate: "{app}-{kind}",
+          via: "flattened",
+          credential: {
+            kind: "bearer",
+            from: "auth",
+          },
+        },
+        verify: {
+          kind: "mcp",
+          listTools: true,
+        },
+        docs: "https://developers.cloudflare.com/agents/model-context-protocol/mcp-servers-for-cloudflare/",
+        agentGuidance:
+          "Cloudflare's own hosted MCP server — exposes the entire Cloudflare API (DNS, Workers, R2, Zero Trust, and more) through search()/execute() tools.",
+        notes: [
+          "url confirmed via https://developers.cloudflare.com/agents/model-context-protocol/mcp-servers-for-cloudflare/ (official Cloudflare docs): hosted endpoint https://mcp.cloudflare.com/mcp (Streamable HTTP; a deprecated /sse transport also exists).",
+        ],
+      },
+      {
+        kind: "cli",
+        displayName: "Wrangler CLI",
+        connection: {
+          kind: "cli",
+          credentialEnvVar: "CF_API_PAT",
+        },
+        auth: [
+          {
+            mode: "token",
+          },
+        ],
+        build: {
+          platformIdTemplate: "{app}-{kind}",
+          via: "descriptor",
+          credential: {
+            kind: "bearer",
+            from: "auth",
+          },
+        },
+        verify: {
+          kind: "none",
+        },
+        docs: "https://developers.cloudflare.com/workers/wrangler/",
+        agentGuidance:
+          "Cloudflare's official CLI (Wrangler) — best for Workers/Pages deploy workflows the MCP surface doesn't model as directly.",
+        notes: [
+          'credentialEnvVar is "CF_API_PAT" (not Wrangler\'s real "CLOUDFLARE_API_TOKEN") — CliConnectionSchema rejects any *_TOKEN/_SECRET/_KEY suffix. Source for the real env var: https://developers.cloudflare.com/workers/wrangler/system-environment-variables/ (official Cloudflare docs). Same mapping-deferred pattern as GitHub\'s GH_PAT.',
+          'Binary name "wrangler" confirmed via https://www.npmjs.com/package/wrangler and https://developers.cloudflare.com/workers/wrangler/install-and-update/.',
+        ],
+      },
+    ],
+    help: {
+      notes: [
+        "openapi surface deliberately SKIPPED (32.6c batch): Cloudflare's official OpenAPI spec (https://github.com/cloudflare/api-schemas, raw openapi.json) was fetched and measured at 10,773,086 bytes (~10.27 MB) as of 2026-07-10 — over the 10 MB SPEC_BYTE_CAP (packages/openapi-client/src/parse.ts:22), which fires during the streaming fetch BEFORE any `select` can narrow it. Authoring it would fail connect at assembly every time. Cloudflare's MCP surface (below) is authored instead.",
+      ],
+    },
   },
   {
     id: "contentful",
@@ -522,6 +592,112 @@ export const CATALOG_ENTRIES: readonly AppCatalogEntry[] = [
     ],
     aliases: ["glab"],
     iconSlug: "gitlab",
+    surfaces: [
+      {
+        kind: "openapi",
+        displayName: "REST API",
+        connection: {
+          kind: "openapi",
+          specUrl:
+            "https://gitlab.com/gitlab-org/gitlab/-/raw/master/doc/api/openapi/openapi_v3.yaml",
+          baseUrl: "https://gitlab.com",
+        },
+        auth: [
+          {
+            mode: "oauth2",
+            providerId: "gitlab",
+          },
+          {
+            mode: "token",
+          },
+        ],
+        build: {
+          platformIdTemplate: "{app}-{kind}",
+          via: "flattened",
+          credential: {
+            kind: "oauth2",
+            from: "auth",
+          },
+        },
+        verify: {
+          kind: "openapi",
+          operationId: "getApiV4User",
+        },
+        docs: "https://docs.gitlab.com/api/rest/",
+        agentGuidance:
+          "GitLab's REST v4 surface — projects, merge requests, issues, pipelines — generated from GitLab's own OpenAPI 3 spec.",
+        notes: [
+          "specUrl fetched and confirmed 3,351,824 bytes (~3.35 MB, well under the 10 MB SPEC_BYTE_CAP) as of 2026-07-10. Source: https://docs.gitlab.com/api/openapi/ (GitLab docs — 'OpenAPI 3.0 specification' section names doc/api/openapi/openapi_v3.yaml in the gitlab-org/gitlab monorepo).",
+          'verifyOperationId "getApiV4User" confirmed present in the fetched spec (GET /api/v4/user, the current-authenticated-user endpoint) via direct grep of the downloaded openapi_v3.yaml.',
+          'baseUrl "https://gitlab.com" (not ".../api/v4") because the spec\'s own `servers[0].url` is "https://{hostname}" and all paths already carry the "/api/v4/..." prefix (e.g. "/api/v4/user") — confirmed by inspecting the downloaded spec directly.',
+        ],
+      },
+      {
+        kind: "graphql",
+        displayName: "GraphQL API",
+        connection: {
+          kind: "graphql",
+          endpoint: "https://gitlab.com/api/graphql",
+        },
+        auth: [
+          {
+            mode: "oauth2",
+            providerId: "gitlab",
+          },
+          {
+            mode: "token",
+          },
+        ],
+        build: {
+          platformIdTemplate: "{app}-{kind}",
+          via: "flattened",
+          credential: {
+            kind: "oauth2",
+            from: "auth",
+          },
+        },
+        verify: {
+          kind: "graphql",
+          typenameProbe: true,
+        },
+        docs: "https://docs.gitlab.com/api/graphql/",
+        agentGuidance:
+          "GitLab's GraphQL API — best for fetching nested/related data (e.g. a project's issues + labels + assignees) in one call.",
+        notes: [
+          "endpoint confirmed via https://docs.gitlab.com/api/graphql/ (official GitLab docs): '/api/graphql', which for gitlab.com resolves to https://gitlab.com/api/graphql.",
+        ],
+      },
+      {
+        kind: "cli",
+        displayName: "glab CLI",
+        connection: {
+          kind: "cli",
+          credentialEnvVar: "GITLAB_PAT",
+        },
+        auth: [
+          {
+            mode: "token",
+          },
+        ],
+        build: {
+          platformIdTemplate: "{app}-{kind}",
+          via: "descriptor",
+          credential: {
+            kind: "bearer",
+            from: "auth",
+          },
+        },
+        verify: {
+          kind: "none",
+        },
+        docs: "https://docs.gitlab.com/cli/",
+        agentGuidance:
+          "GitLab's official glab CLI — best for git-adjacent workflows (MR checkout, pipeline tailing) the API surfaces don't model as directly.",
+        notes: [
+          'credentialEnvVar is "GITLAB_PAT" (not glab\'s real "GITLAB_TOKEN") — CliConnectionSchema rejects any *_TOKEN/_SECRET/_KEY suffix. Source for the real env var: https://docs.gitlab.com/cli/ (glab CLI docs, GITLAB_TOKEN). Same mapping-deferred pattern as GitHub\'s GH_PAT.',
+        ],
+      },
+    ],
   },
   {
     id: "google",
@@ -561,6 +737,79 @@ export const CATALOG_ENTRIES: readonly AppCatalogEntry[] = [
       },
     ],
     iconSlug: "linear",
+    surfaces: [
+      {
+        kind: "graphql",
+        displayName: "GraphQL API",
+        connection: {
+          kind: "graphql",
+          endpoint: "https://api.linear.app/graphql",
+        },
+        auth: [
+          {
+            mode: "oauth2",
+            providerId: "linear",
+          },
+          {
+            mode: "token",
+          },
+        ],
+        build: {
+          platformIdTemplate: "{app}-{kind}",
+          via: "flattened",
+          credential: {
+            kind: "oauth2",
+            from: "auth",
+          },
+        },
+        verify: {
+          kind: "graphql",
+          typenameProbe: true,
+        },
+        docs: "https://linear.app/developers/graphql",
+        agentGuidance:
+          "Linear's GraphQL API — issues, projects, cycles, teams — the same API Linear's own apps use internally.",
+        notes: [
+          "endpoint confirmed via https://linear.app/developers/graphql (official Linear developer docs): https://api.linear.app/graphql, supports introspection.",
+        ],
+      },
+      {
+        kind: "mcp",
+        displayName: "Linear MCP Server",
+        connection: {
+          kind: "mcp",
+          transport: "http",
+          url: "https://mcp.linear.app/mcp",
+        },
+        auth: [
+          {
+            mode: "oauth2",
+            providerId: "linear",
+          },
+          {
+            mode: "token",
+          },
+        ],
+        build: {
+          platformIdTemplate: "{app}-{kind}",
+          via: "flattened",
+          credential: {
+            kind: "oauth2",
+            from: "auth",
+          },
+        },
+        verify: {
+          kind: "mcp",
+          listTools: true,
+        },
+        docs: "https://linear.app/docs/mcp",
+        agentGuidance:
+          "Linear's own hosted MCP server, built with Cloudflare/Anthropic — curated tools for issues, projects, and cycles.",
+        notes: [
+          "url confirmed via https://linear.app/docs/mcp (official Linear docs): hosted endpoint https://mcp.linear.app/mcp (Streamable HTTP). Supports both OAuth 2.1 and API keys passed as an Authorization: Bearer header.",
+        ],
+      },
+    ],
   },
   {
     id: "microsoft",
@@ -598,6 +847,42 @@ export const CATALOG_ENTRIES: readonly AppCatalogEntry[] = [
       },
     ],
     iconSlug: "notion",
+    surfaces: [
+      {
+        kind: "mcp",
+        displayName: "Notion MCP Server",
+        connection: {
+          kind: "mcp",
+          transport: "http",
+          url: "https://mcp.notion.com/mcp",
+        },
+        auth: [
+          {
+            mode: "oauth2",
+            providerId: "notion",
+          },
+        ],
+        build: {
+          platformIdTemplate: "{app}-{kind}",
+          via: "flattened",
+          credential: {
+            kind: "oauth2",
+            from: "auth",
+          },
+        },
+        verify: {
+          kind: "mcp",
+          listTools: true,
+        },
+        docs: "https://developers.notion.com/guides/mcp/get-started-with-mcp",
+        agentGuidance:
+          "Notion's own hosted MCP server — pages, databases, comments, search — OAuth-only (no token/bearer path).",
+        notes: [
+          "url confirmed via https://developers.notion.com/guides/mcp/get-started-with-mcp (official Notion developer docs): hosted endpoint https://mcp.notion.com/mcp (Streamable HTTP, the recommended transport; a legacy /sse endpoint also exists).",
+          "auth is OAuth-only by design: the same docs state Notion MCP 'requires user-based OAuth authentication and does not support bearer token authentication' — so this surface's auth array omits the app-level token mode.",
+        ],
+      },
+    ],
     help: {
       notes: ["No stable canonical raw OpenAPI spec URL (JS-rendered portal) — MCP + OAuth only."],
     },
@@ -612,6 +897,42 @@ export const CATALOG_ENTRIES: readonly AppCatalogEntry[] = [
       },
     ],
     iconSlug: "openai",
+    surfaces: [
+      {
+        kind: "openapi",
+        displayName: "REST API",
+        connection: {
+          kind: "openapi",
+          specUrl: "https://raw.githubusercontent.com/openai/openai-openapi/master/openapi.yaml",
+          baseUrl: "https://api.openai.com/v1",
+        },
+        auth: [
+          {
+            mode: "token",
+          },
+        ],
+        build: {
+          platformIdTemplate: "{app}-{kind}",
+          via: "flattened",
+          credential: {
+            kind: "bearer",
+            from: "auth",
+          },
+        },
+        verify: {
+          kind: "openapi",
+          operationId: "listModels",
+        },
+        docs: "https://platform.openai.com/docs/api-reference",
+        agentGuidance:
+          "OpenAI's REST surface — chat completions, responses, models, files, fine-tuning — from OpenAI's own published OpenAPI spec (a public mirror of their internal spec).",
+        notes: [
+          "specUrl fetched and confirmed 2,827,153 bytes (~2.7 MB, well under the 10 MB SPEC_BYTE_CAP) as of 2026-07-10. Source: https://github.com/openai/openai-openapi (official openai org repo, openapi.yaml).",
+          'baseUrl confirmed from the spec\'s own `servers[0].url`: "https://api.openai.com/v1".',
+          'verifyOperationId "listModels" confirmed present in the parsed spec (GET /models) — a lightweight authenticated probe.',
+        ],
+      },
+    ],
   },
   {
     id: "pagerduty",
@@ -704,6 +1025,106 @@ export const CATALOG_ENTRIES: readonly AppCatalogEntry[] = [
       },
     ],
     iconSlug: "sentry",
+    surfaces: [
+      {
+        kind: "openapi",
+        displayName: "REST API",
+        connection: {
+          kind: "openapi",
+          specUrl:
+            "https://raw.githubusercontent.com/getsentry/sentry-api-schema/main/openapi-derefed.json",
+          baseUrl: "https://us.sentry.io",
+        },
+        auth: [
+          {
+            mode: "token",
+          },
+        ],
+        build: {
+          platformIdTemplate: "{app}-{kind}",
+          via: "flattened",
+          credential: {
+            kind: "bearer",
+            from: "auth",
+          },
+        },
+        verify: {
+          kind: "openapi",
+          operationId: "listOrganizations",
+        },
+        docs: "https://docs.sentry.io/api/",
+        agentGuidance:
+          "Sentry's REST surface — issues, events, projects, organizations — generated from Sentry's own dereferenced OpenAPI schema.",
+        notes: [
+          "specUrl fetched and confirmed 3,793,038 bytes (~3.79 MB, well under the 10 MB SPEC_BYTE_CAP) as of 2026-07-10. Source: https://github.com/getsentry/sentry-api-schema (official getsentry org repo, synced from getsentry/sentry, openapi-derefed.json).",
+          'baseUrl: the spec\'s own `servers[0].url` is a region template "https://{region}.sentry.io" (region enum ["us","de"], default "us") — baseUrl pins the "us" default (https://us.sentry.io); a self-hosted/de-region user would need a different baseUrl (later increment concern, same class as GitHub\'s gh-enterprise gap).',
+          'verifyOperationId "listOrganizations" confirmed present in the parsed spec (GET /api/0/organizations/, parameterless) — a lightweight authenticated probe.',
+        ],
+      },
+      {
+        kind: "mcp",
+        displayName: "Sentry MCP Server",
+        connection: {
+          kind: "mcp",
+          transport: "http",
+          url: "https://mcp.sentry.dev/mcp",
+        },
+        auth: [
+          {
+            mode: "token",
+          },
+        ],
+        build: {
+          platformIdTemplate: "{app}-{kind}",
+          via: "flattened",
+          credential: {
+            kind: "bearer",
+            from: "auth",
+          },
+        },
+        verify: {
+          kind: "mcp",
+          listTools: true,
+        },
+        docs: "https://github.com/getsentry/sentry-mcp",
+        agentGuidance:
+          "Sentry's own hosted MCP server — issues, events, and root-cause context for SaaS Sentry instances.",
+        notes: [
+          "url confirmed via https://mcp.sentry.dev/ and https://github.com/getsentry/sentry-mcp (official getsentry org repo): hosted endpoint https://mcp.sentry.dev/mcp, the recommended endpoint for SaaS Sentry. Self-hosted Sentry uses a local stdio server instead (not authored here).",
+        ],
+      },
+      {
+        kind: "cli",
+        displayName: "sentry-cli",
+        connection: {
+          kind: "cli",
+          credentialEnvVar: "SENTRY_API_PAT",
+        },
+        auth: [
+          {
+            mode: "token",
+          },
+        ],
+        build: {
+          platformIdTemplate: "{app}-{kind}",
+          via: "descriptor",
+          credential: {
+            kind: "bearer",
+            from: "auth",
+          },
+        },
+        verify: {
+          kind: "none",
+        },
+        docs: "https://docs.sentry.io/cli/",
+        agentGuidance:
+          "Sentry's official CLI — best for release/source-map management and quick project inspection outside the REST/MCP surfaces.",
+        notes: [
+          'credentialEnvVar is "SENTRY_API_PAT" (not sentry-cli\'s real "SENTRY_AUTH_TOKEN") — CliConnectionSchema rejects any *_TOKEN/_SECRET/_KEY suffix. Source for the real env var: https://docs.sentry.io/cli/configuration/ (official Sentry CLI docs). Same mapping-deferred pattern as GitHub\'s GH_PAT.',
+          'Binary name "sentry-cli" confirmed via https://docs.sentry.io/cli/.',
+        ],
+      },
+    ],
   },
   {
     id: "shopify",
@@ -716,6 +1137,11 @@ export const CATALOG_ENTRIES: readonly AppCatalogEntry[] = [
     ],
     aliases: ["shopify-admin", "shopify-storefront"],
     iconSlug: "shopify",
+    help: {
+      notes: [
+        "No surfaces[] authored (32.6c batch): Shopify's Admin GraphQL API has no single fixed endpoint — every request is per-store (\"https://{store_name}.myshopify.com/admin/api/{version}/graphql.json\", confirmed via https://shopify.dev/docs/api/admin-graphql and https://community.shopify.com/t/is-there-a-publicly-available-schema-for-the-admin-graphql-api/350472). AppSurfaceConnectionSchema's graphql variant requires a single pinned `endpoint` URL with no path substitution (graphql-connection.ts: 'single pinned endpoint — no path substitution'), so a real, honest surface can't be authored without a concrete store hostname. Authoring a placeholder store name would be a fabricated value. Revisit when either (a) a per-connection store-hostname templating mechanism exists, or (b) the app is connected for the first time and its store hostname is captured at connect-time (later-increment concern).",
+      ],
+    },
   },
   {
     id: "slack",
@@ -731,6 +1157,47 @@ export const CATALOG_ENTRIES: readonly AppCatalogEntry[] = [
       },
     ],
     iconSlug: "slack",
+    surfaces: [
+      {
+        kind: "openapi",
+        displayName: "Web API",
+        connection: {
+          kind: "openapi",
+          specUrl:
+            "https://raw.githubusercontent.com/slackapi/slack-api-specs/master/web-api/slack_web_openapi_v2.json",
+          baseUrl: "https://slack.com/api",
+        },
+        auth: [
+          {
+            mode: "oauth2",
+            providerId: "slack",
+          },
+          {
+            mode: "token",
+          },
+        ],
+        build: {
+          platformIdTemplate: "{app}-{kind}",
+          via: "flattened",
+          credential: {
+            kind: "oauth2",
+            from: "auth",
+          },
+        },
+        verify: {
+          kind: "openapi",
+          operationId: "auth_test",
+        },
+        docs: "https://api.slack.com/web",
+        agentGuidance:
+          "Slack's Web API — channels, messages, users — generated from Slack's own (archived but still-served) OpenAPI 2.0 spec.",
+        notes: [
+          "specUrl fetched and confirmed 1,237,332 bytes (~1.18 MB, well under the 10 MB SPEC_BYTE_CAP) as of 2026-07-10. Source: https://github.com/slackapi/slack-api-specs (official slackapi GitHub org repo, web-api/slack_web_openapi_v2.json). The repo was archived 2024-03-27 (read-only) but the file is still served and reflects the real, current Web API method shapes.",
+          'host/basePath confirmed from the spec itself: host "slack.com", basePath "/api", schemes ["https"] -> baseUrl "https://slack.com/api".',
+          'verifyOperationId "auth_test" confirmed present in the parsed spec (GET /auth.test, "Checks authentication & identity") — the canonical lightweight auth probe.',
+        ],
+      },
+    ],
     help: {
       notes: [
         'MCP variant omitted: the exact npm package (@slack/mcp-server) is not confirmed by fetching the package page — Slack ships here via OAuth + token only. If confirmed later, add "mcp" to supportedKinds.',
@@ -760,6 +1227,105 @@ export const CATALOG_ENTRIES: readonly AppCatalogEntry[] = [
     ],
     setupHints: ["Use a Restricted Key for the MCP/CLI path."],
     iconSlug: "stripe",
+    surfaces: [
+      {
+        kind: "openapi",
+        displayName: "REST API",
+        connection: {
+          kind: "openapi",
+          specUrl: "https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json",
+          baseUrl: "https://api.stripe.com",
+        },
+        auth: [
+          {
+            mode: "token",
+          },
+        ],
+        build: {
+          platformIdTemplate: "{app}-{kind}",
+          via: "flattened",
+          credential: {
+            kind: "bearer",
+            from: "auth",
+          },
+        },
+        verify: {
+          kind: "openapi",
+          operationId: "GetBalance",
+        },
+        docs: "https://docs.stripe.com/api",
+        agentGuidance:
+          "Stripe's full REST surface — customers, charges, subscriptions, invoices — generated from Stripe's own OpenAPI spec (stripe/openapi).",
+        notes: [
+          "specUrl fetched and confirmed 7,866,866 bytes (~7.5 MB, under the 10 MB SPEC_BYTE_CAP) as of 2026-07-10. Source: https://github.com/stripe/openapi (official stripe org repo, openapi/spec3.json).",
+          'baseUrl confirmed from the spec\'s own `servers[0].url`: "https://api.stripe.com/".',
+          'verifyOperationId "GetBalance" confirmed present in the parsed spec (GET /v1/balance) — a lightweight authenticated probe.',
+        ],
+      },
+      {
+        kind: "mcp",
+        displayName: "Stripe MCP Server",
+        connection: {
+          kind: "mcp",
+          transport: "http",
+          url: "https://mcp.stripe.com",
+        },
+        auth: [
+          {
+            mode: "token",
+          },
+        ],
+        build: {
+          platformIdTemplate: "{app}-{kind}",
+          via: "flattened",
+          credential: {
+            kind: "bearer",
+            from: "auth",
+          },
+        },
+        verify: {
+          kind: "mcp",
+          listTools: true,
+        },
+        docs: "https://docs.stripe.com/mcp",
+        agentGuidance:
+          "Stripe's own hosted MCP server — curated tools for customers, payments, and subscriptions, plus Stripe knowledge-base search.",
+        notes: [
+          "url confirmed via https://docs.stripe.com/mcp (official Stripe docs) — hosted endpoint https://mcp.stripe.com, authenticated with a Bearer restricted-key token.",
+        ],
+      },
+      {
+        kind: "cli",
+        displayName: "Stripe CLI",
+        connection: {
+          kind: "cli",
+          credentialEnvVar: "STRIPE_API_PAT",
+        },
+        auth: [
+          {
+            mode: "token",
+          },
+        ],
+        build: {
+          platformIdTemplate: "{app}-{kind}",
+          via: "descriptor",
+          credential: {
+            kind: "bearer",
+            from: "auth",
+          },
+        },
+        verify: {
+          kind: "none",
+        },
+        docs: "https://docs.stripe.com/stripe-cli",
+        agentGuidance:
+          "Stripe's official CLI — best for webhook forwarding/testing and quick resource inspection outside the REST/MCP surfaces.",
+        notes: [
+          'credentialEnvVar is "STRIPE_API_PAT" (not the CLI\'s real "--api-key" flag / STRIPE_API_KEY-style env) — CliConnectionSchema rejects any *_TOKEN/_SECRET/_KEY suffix. Mapping to the CLI\'s actual invocation is a later-increment concern (generic CLI primitives rework), same as GitHub\'s GH_PAT precedent.',
+          'Binary name "stripe" confirmed via https://github.com/stripe/stripe-cli (official stripe org repo) and https://docs.stripe.com/stripe-cli.',
+        ],
+      },
+    ],
   },
   {
     id: "supabase",
@@ -795,6 +1361,105 @@ export const CATALOG_ENTRIES: readonly AppCatalogEntry[] = [
       },
     ],
     iconSlug: "vercel",
+    surfaces: [
+      {
+        kind: "openapi",
+        displayName: "REST API",
+        connection: {
+          kind: "openapi",
+          specUrl: "https://openapi.vercel.sh/",
+          baseUrl: "https://api.vercel.com",
+        },
+        auth: [
+          {
+            mode: "token",
+          },
+        ],
+        build: {
+          platformIdTemplate: "{app}-{kind}",
+          via: "flattened",
+          credential: {
+            kind: "bearer",
+            from: "auth",
+          },
+        },
+        verify: {
+          kind: "openapi",
+          operationId: "getAuthUser",
+        },
+        docs: "https://vercel.com/docs/rest-api",
+        agentGuidance:
+          "Vercel's REST surface — projects, deployments, domains, env vars — from Vercel's own published OpenAPI spec.",
+        notes: [
+          "specUrl fetched and confirmed 9,060,073 bytes (~8.64 MB, under the 10 MB SPEC_BYTE_CAP) as of 2026-07-10. Source: https://vercel.com/docs/rest-api (official Vercel docs reference the openapi.vercel.sh spec); confirmed by direct fetch of https://openapi.vercel.sh/.",
+          'baseUrl confirmed from the spec\'s own `servers[0].url`: "https://api.vercel.com" (description "Production API").',
+          'verifyOperationId "getAuthUser" confirmed present in the parsed spec (GET /v2/user) — a lightweight authenticated probe.',
+        ],
+      },
+      {
+        kind: "mcp",
+        displayName: "Vercel MCP Server",
+        connection: {
+          kind: "mcp",
+          transport: "http",
+          url: "https://mcp.vercel.com",
+        },
+        auth: [
+          {
+            mode: "token",
+          },
+        ],
+        build: {
+          platformIdTemplate: "{app}-{kind}",
+          via: "flattened",
+          credential: {
+            kind: "bearer",
+            from: "auth",
+          },
+        },
+        verify: {
+          kind: "mcp",
+          listTools: true,
+        },
+        docs: "https://vercel.com/docs/agent-resources/vercel-mcp",
+        agentGuidance:
+          "Vercel's own hosted, OAuth-protected MCP server — search docs, manage projects/deployments, analyze deployment logs.",
+        notes: [
+          "url confirmed via https://vercel.com/docs/agent-resources/vercel-mcp (official Vercel docs): hosted endpoint https://mcp.vercel.com, Streamable HTTP, remote MCP with OAuth.",
+        ],
+      },
+      {
+        kind: "cli",
+        displayName: "Vercel CLI",
+        connection: {
+          kind: "cli",
+          credentialEnvVar: "VERCEL_API_PAT",
+        },
+        auth: [
+          {
+            mode: "token",
+          },
+        ],
+        build: {
+          platformIdTemplate: "{app}-{kind}",
+          via: "descriptor",
+          credential: {
+            kind: "bearer",
+            from: "auth",
+          },
+        },
+        verify: {
+          kind: "none",
+        },
+        docs: "https://vercel.com/docs/cli",
+        agentGuidance:
+          "Vercel's official CLI — best for deploy/build workflows the REST/MCP surfaces don't model as directly.",
+        notes: [
+          'credentialEnvVar is "VERCEL_API_PAT" (not the CLI\'s real "VERCEL_TOKEN") — CliConnectionSchema rejects any *_TOKEN/_SECRET/_KEY suffix. Source for the real env var: https://vercel.com/docs/cli/tokens (official Vercel docs). Same mapping-deferred pattern as GitHub\'s GH_PAT.',
+          'Binary name "vercel" confirmed via https://vercel.com/docs/cli.',
+        ],
+      },
+    ],
   },
   {
     id: "wpgraphql",
