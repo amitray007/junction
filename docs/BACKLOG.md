@@ -7,6 +7,13 @@
 > **Completeness-audited 2026-07-07** (2nd pass): added the now-actionable `removeCredential` warn +
 > `cred-*` reaper debts (§1d), the per-profile-HOME + sandbox-overhead isolation deferrals (§2b), and a
 > new **§3 Deprecations / EOL-risk** bucket (Seatbelt→microVM is the load-bearing one).
+> **Reconciled 2026-07-10** (post-32.6 + post-30.13): the 32.6 web-fixes wave (PR #123) + the 30.13
+> curated catalog expansion (PR #125, 18 apps by category → 54 total) both SHIPPED — surfaces-backfill
+> DONE for the curated set (un-curated tail stays thin by design). NEW **§1a-UI** gaps found by
+> real-server QA: the Apps page has no **Category facet** (30.13's taxonomy is data-only) + the dashboard
+> "Recent Activity" is still ComingSoon despite `/audit` shipping. Re-verified against code:
+> `removeCredential` warn / `cred-*` reaper / denylist-lock-step-test / serve.mjs-tests all still UNDONE;
+> 30.5 still `planned` in the map (just needs the flip to `superseded`).
 > Three lists, kept deliberately separate:
 > - **§1 PENDING** — actionable *now*: unfinished work, real bugs/gaps found by dogfooding, and
 >   the two remaining Tier-1 increments. No external trigger needed — we could pick any of these up today.
@@ -31,13 +38,28 @@
 
 - [x] **App-detail pages are near-empty for 44 of 45 apps** (e.g. `/app/gitlab`). — **DONE 32.6a (PR #123).**
   - [x] **Cheap high-leverage fix:** catalog `auth[]` → thin DTO `authModes` → `EmptyAppState` CTAs. Shipped 32.6a.
-  - [~] **Full fix (per-app surfaces[]):** **10 apps done in 32.6c** (gitlab/stripe/slack/notion/linear/sentry/
-        vercel/openai/cloudflare; shopify omitted). **FOLLOW-UP: 34 more apps** to backfill (same flow;
-        no-fabrication discipline; the inc-30.9 importer can accelerate). Still §1 actionable.
+  - [x] **Full fix (per-app surfaces[]):** 10 apps in 32.6c + **18 more in 30.13 (PR #125 — curated by
+        category)**. **DONE for the curated top set** (54 total catalog apps now surfaced-or-thin-with-CTAs).
+        The un-curated tail (dropbox/figma/spotify/zoom/aws/adyen/… ~30 apps) stays intentionally thin —
+        still connectable via the 32.6a CTAs; not worth surfacing until demand (user call: "better ones only").
 - [x] **Web `/audit` page is a ComingSoon stub** — **DONE 32.6b (PR #123).**
   - [x] Extracted the reader/filter into `core/src/audit/read.ts` (+ bounded `readAuditLogTail`); CLI rewired.
   - [x] Server-only `audit.server.ts` + `audit.functions.ts` + filterable table; metadata-only DTO (secret-swept clean); tail-not-slurp.
   - [x] Stale "inc 29" comments fixed (`audit.tsx` + `index.tsx`).
+
+#### 1a-UI. UI completion — the taxonomy/audit surfaces shipped in DATA but not yet in the UI (found 2026-07-10)
+
+> After 30.13 (categories) + 32.6b (`/audit`), the DATA exists but the web UI doesn't fully surface it.
+> Real-server-QA-confirmed gaps:
+
+- [ ] **Category facet on the Apps page** — 30.13 set `help.category` on every app (Productivity/
+      Communication/Developer/CRM/Observability/Search/Social), but `app.index.tsx` has only **Status +
+      Method** facets — **no Category filter**, and no grouping/labeling by category. The whole
+      categorization payoff is invisible. Add a Category `FacetSelect` (+ optionally category section
+      headers) mirroring the existing facet pattern. **(the completion of 30.13; small web)**
+- [ ] **Dashboard "Recent Activity" → link to `/audit`** — `index.tsx:65` is still a ComingSoon stub
+      ("Per-agent usage and audit log coming in a later update") even though `/audit` shipped (32.6b).
+      Link it to the real page (+ optionally a small recent-activity summary). **(small web)**
 
 ### 1b. Unfinished increment carried forward
 
