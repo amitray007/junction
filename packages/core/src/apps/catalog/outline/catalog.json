@@ -1,9 +1,7 @@
 {
   "id": "outline",
   "displayName": "Outline",
-  "supportedKinds": [
-    "openapi"
-  ],
+  "supportedKinds": ["openapi"],
   "auth": [
     {
       "mode": "token"
@@ -11,9 +9,7 @@
   ],
   "iconSlug": "outline",
   "help": {
-    "category": [
-      "Productivity"
-    ],
+    "category": ["Productivity"],
     "homepage": "https://www.getoutline.com",
     "provenance": {
       "authoredBy": "junction",
