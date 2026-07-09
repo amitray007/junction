@@ -1,7 +1,6 @@
 {
   "id": "brave-search",
   "displayName": "Brave Search",
-  "category": ["Search"],
   "supportedKinds": ["mcp"],
   "auth": [
     {
@@ -20,20 +19,33 @@
         "args": ["-y", "@brave/brave-search-mcp-server", "--transport", "stdio"],
         "tokenEnvVar": "BRAVE_API_KEY"
       },
-      "auth": [{ "mode": "token" }],
+      "auth": [
+        {
+          "mode": "token"
+        }
+      ],
       "build": {
         "platformIdTemplate": "{app}-{kind}",
         "via": "flattened",
-        "credential": { "kind": "api-key", "from": "auth" }
+        "credential": {
+          "kind": "api-key",
+          "from": "auth"
+        }
       },
-      "verify": { "kind": "mcp", "listTools": true },
+      "verify": {
+        "kind": "mcp",
+        "listTools": true
+      },
       "docs": "https://github.com/brave/brave-search-mcp-server",
-      "agentGuidance": "Brave's own official MCP server — web/image/video/news search, rich results, and AI summaries backed by the Brave Search API. Runs locally via `npx -y @brave/brave-search-mcp-server --transport stdio`.",
+      "agentGuidance": "Brave's own official MCP server \u2014 web/image/video/news search, rich results, and AI summaries backed by the Brave Search API. Runs locally via `npx -y @brave/brave-search-mcp-server --transport stdio`.",
       "notes": [
         "Package name verified LIVE 2026-07-10: `npm view @brave/brave-search-mcp-server` resolves (current version 2.0.85, bin `brave-search-mcp-server`, official repo https://github.com/brave/brave-search-mcp-server). The invocation + env var were confirmed against the README's own \"STDIO Configuration\" example: `{\"command\":\"npx\",\"args\":[\"-y\",\"@brave/brave-search-mcp-server\",\"--transport\",\"stdio\"],\"env\":{\"BRAVE_API_KEY\":\"YOUR_API_KEY_HERE\"}}`. STDIO is the server's default transport as of v2.x.",
-        "The older `@modelcontextprotocol/server-brave-search` package is CONFIRMED DEPRECATED on npm (`npm view` shows: \"DEPRECATED - Package no longer supported\") — deliberately NOT used here in favor of the maintained `@brave/brave-search-mcp-server`.",
-        "tokenEnvVar \"BRAVE_API_KEY\" has no `_TOKEN`/`_SECRET`/`_KEY` suffix guard on stdio-MCP (unlike cli's credentialEnvVar) — confirmed fine per method file §0a."
+        "The older `@modelcontextprotocol/server-brave-search` package is CONFIRMED DEPRECATED on npm (`npm view` shows: \"DEPRECATED - Package no longer supported\") \u2014 deliberately NOT used here in favor of the maintained `@brave/brave-search-mcp-server`.",
+        "tokenEnvVar \"BRAVE_API_KEY\" has no `_TOKEN`/`_SECRET`/`_KEY` suffix guard on stdio-MCP (unlike cli's credentialEnvVar) \u2014 confirmed fine per method file \u00a70a."
       ]
     }
-  ]
+  ],
+  "help": {
+    "category": ["Search"]
+  }
 }

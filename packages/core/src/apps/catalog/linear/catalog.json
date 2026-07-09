@@ -1,7 +1,6 @@
 {
   "id": "linear",
   "displayName": "Linear",
-  "category": ["Productivity"],
   "supportedKinds": ["mcp", "graphql"],
   "auth": [
     {
@@ -21,15 +20,29 @@
         "kind": "graphql",
         "endpoint": "https://api.linear.app/graphql"
       },
-      "auth": [{ "mode": "oauth2", "providerId": "linear" }, { "mode": "token" }],
+      "auth": [
+        {
+          "mode": "oauth2",
+          "providerId": "linear"
+        },
+        {
+          "mode": "token"
+        }
+      ],
       "build": {
         "platformIdTemplate": "{app}-{kind}",
         "via": "flattened",
-        "credential": { "kind": "oauth2", "from": "auth" }
+        "credential": {
+          "kind": "oauth2",
+          "from": "auth"
+        }
       },
-      "verify": { "kind": "graphql", "typenameProbe": true },
+      "verify": {
+        "kind": "graphql",
+        "typenameProbe": true
+      },
       "docs": "https://linear.app/developers/graphql",
-      "agentGuidance": "Linear's GraphQL API — issues, projects, cycles, teams — the same API Linear's own apps use internally.",
+      "agentGuidance": "Linear's GraphQL API \u2014 issues, projects, cycles, teams \u2014 the same API Linear's own apps use internally.",
       "notes": [
         "endpoint confirmed via https://linear.app/developers/graphql (official Linear developer docs): https://api.linear.app/graphql, supports introspection."
       ]
@@ -42,18 +55,35 @@
         "transport": "http",
         "url": "https://mcp.linear.app/mcp"
       },
-      "auth": [{ "mode": "oauth2", "providerId": "linear" }, { "mode": "token" }],
+      "auth": [
+        {
+          "mode": "oauth2",
+          "providerId": "linear"
+        },
+        {
+          "mode": "token"
+        }
+      ],
       "build": {
         "platformIdTemplate": "{app}-{kind}",
         "via": "flattened",
-        "credential": { "kind": "oauth2", "from": "auth" }
+        "credential": {
+          "kind": "oauth2",
+          "from": "auth"
+        }
       },
-      "verify": { "kind": "mcp", "listTools": true },
+      "verify": {
+        "kind": "mcp",
+        "listTools": true
+      },
       "docs": "https://linear.app/docs/mcp",
-      "agentGuidance": "Linear's own hosted MCP server, built with Cloudflare/Anthropic — curated tools for issues, projects, and cycles.",
+      "agentGuidance": "Linear's own hosted MCP server, built with Cloudflare/Anthropic \u2014 curated tools for issues, projects, and cycles.",
       "notes": [
         "url confirmed via https://linear.app/docs/mcp (official Linear docs): hosted endpoint https://mcp.linear.app/mcp (Streamable HTTP). Supports both OAuth 2.1 and API keys passed as an Authorization: Bearer header."
       ]
     }
-  ]
+  ],
+  "help": {
+    "category": ["Productivity"]
+  }
 }

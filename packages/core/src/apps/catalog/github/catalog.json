@@ -1,12 +1,19 @@
 {
   "id": "github",
   "displayName": "GitHub",
-  "category": ["Developer"],
   "supportedKinds": ["mcp", "cli", "openapi", "graphql"],
   "auth": [
-    { "mode": "oauth2", "providerId": "github" },
-    { "mode": "oauth2", "providerId": "github-app" },
-    { "mode": "token" }
+    {
+      "mode": "oauth2",
+      "providerId": "github"
+    },
+    {
+      "mode": "oauth2",
+      "providerId": "github-app"
+    },
+    {
+      "mode": "token"
+    }
   ],
   "aliases": ["gh"],
   "iconSlug": "github",
@@ -20,15 +27,29 @@
         "baseUrl": "https://api.github.com",
         "verifyOperationId": "users/get-authenticated"
       },
-      "auth": [{ "mode": "oauth2", "providerId": "github" }, { "mode": "token" }],
+      "auth": [
+        {
+          "mode": "oauth2",
+          "providerId": "github"
+        },
+        {
+          "mode": "token"
+        }
+      ],
       "build": {
         "platformIdTemplate": "{app}-{kind}",
         "via": "flattened",
-        "credential": { "kind": "oauth2", "from": "auth" }
+        "credential": {
+          "kind": "oauth2",
+          "from": "auth"
+        }
       },
-      "verify": { "kind": "openapi", "operationId": "users/get-authenticated" },
+      "verify": {
+        "kind": "openapi",
+        "operationId": "users/get-authenticated"
+      },
       "docs": "https://docs.github.com/en/rest",
-      "agentGuidance": "The full REST surface — repos, issues, PRs, Actions, and more, generated from GitHub's own OpenAPI spec."
+      "agentGuidance": "The full REST surface \u2014 repos, issues, PRs, Actions, and more, generated from GitHub's own OpenAPI spec."
     },
     {
       "kind": "graphql",
@@ -37,15 +58,29 @@
         "kind": "graphql",
         "endpoint": "https://api.github.com/graphql"
       },
-      "auth": [{ "mode": "oauth2", "providerId": "github" }, { "mode": "token" }],
+      "auth": [
+        {
+          "mode": "oauth2",
+          "providerId": "github"
+        },
+        {
+          "mode": "token"
+        }
+      ],
       "build": {
         "platformIdTemplate": "{app}-{kind}",
         "via": "flattened",
-        "credential": { "kind": "oauth2", "from": "auth" }
+        "credential": {
+          "kind": "oauth2",
+          "from": "auth"
+        }
       },
-      "verify": { "kind": "graphql", "typenameProbe": true },
+      "verify": {
+        "kind": "graphql",
+        "typenameProbe": true
+      },
       "docs": "https://docs.github.com/en/graphql",
-      "agentGuidance": "GitHub's GraphQL v4 API — best for fetching nested/related data (e.g. a repo's issues + labels + assignees) in one call."
+      "agentGuidance": "GitHub's GraphQL v4 API \u2014 best for fetching nested/related data (e.g. a repo's issues + labels + assignees) in one call."
     },
     {
       "kind": "mcp",
@@ -55,15 +90,29 @@
         "transport": "http",
         "url": "https://api.githubcopilot.com/mcp/"
       },
-      "auth": [{ "mode": "oauth2", "providerId": "github" }, { "mode": "token" }],
+      "auth": [
+        {
+          "mode": "oauth2",
+          "providerId": "github"
+        },
+        {
+          "mode": "token"
+        }
+      ],
       "build": {
         "platformIdTemplate": "{app}-{kind}",
         "via": "flattened",
-        "credential": { "kind": "oauth2", "from": "auth" }
+        "credential": {
+          "kind": "oauth2",
+          "from": "auth"
+        }
       },
-      "verify": { "kind": "mcp", "listTools": true },
+      "verify": {
+        "kind": "mcp",
+        "listTools": true
+      },
       "docs": "https://github.com/github/github-mcp-server",
-      "agentGuidance": "GitHub's own hosted MCP server — named, curated tools for repos, issues, PRs, and Actions."
+      "agentGuidance": "GitHub's own hosted MCP server \u2014 named, curated tools for repos, issues, PRs, and Actions."
     },
     {
       "kind": "cli",
@@ -72,17 +121,26 @@
         "kind": "cli",
         "credentialEnvVar": "GH_PAT"
       },
-      "auth": [{ "mode": "token" }],
+      "auth": [
+        {
+          "mode": "token"
+        }
+      ],
       "build": {
         "platformIdTemplate": "{app}-{kind}",
         "via": "descriptor",
-        "credential": { "kind": "bearer", "from": "auth" }
+        "credential": {
+          "kind": "bearer",
+          "from": "auth"
+        }
       },
-      "verify": { "kind": "none" },
+      "verify": {
+        "kind": "none"
+      },
       "docs": "https://cli.github.com/manual",
-      "agentGuidance": "The gh CLI — best for git-adjacent workflows (PR checkout, release upload) the API surfaces don't model as directly.",
+      "agentGuidance": "The gh CLI \u2014 best for git-adjacent workflows (PR checkout, release upload) the API surfaces don't model as directly.",
       "notes": [
-        "credentialEnvVar is \"GH_PAT\" (not gh's real \"GH_TOKEN\") — CliConnectionSchema rejects any *_TOKEN/_SECRET/_KEY suffix. Mapping GH_PAT back to gh's actual GH_TOKEN env is a later-increment concern (generic CLI primitives rework)."
+        "credentialEnvVar is \"GH_PAT\" (not gh's real \"GH_TOKEN\") \u2014 CliConnectionSchema rejects any *_TOKEN/_SECRET/_KEY suffix. Mapping GH_PAT back to gh's actual GH_TOKEN env is a later-increment concern (generic CLI primitives rework)."
       ]
     },
     {
@@ -92,17 +150,29 @@
         "kind": "http",
         "baseUrl": "https://api.github.com"
       },
-      "auth": [{ "mode": "token" }],
+      "auth": [
+        {
+          "mode": "token"
+        }
+      ],
       "build": {
         "platformIdTemplate": "{app}-{kind}",
         "via": "descriptor",
-        "credential": { "kind": "bearer", "from": "auth" }
+        "credential": {
+          "kind": "bearer",
+          "from": "auth"
+        }
       },
-      "verify": { "kind": "none" },
+      "verify": {
+        "kind": "none"
+      },
       "notes": [
         "GitHub's REST is covered by OpenAPI; add a custom request-tool only for an endpoint the spec doesn't expose.",
-        "DELIBERATE PROOF EXCEPTION (increment 30.11, §2d/§4.7): this surface ships tools/http.tools.json starter tools even though GitHub has a spec (making http technically redundant per the app-surface-model gap-filler rule) — it is the smallest real proof of the via:\"descriptor\" + starterTools connect path end-to-end. A genuinely spec-less app is where http starters truly belong; see docs/futures/revisit-when.md."
+        "DELIBERATE PROOF EXCEPTION (increment 30.11, \u00a72d/\u00a74.7): this surface ships tools/http.tools.json starter tools even though GitHub has a spec (making http technically redundant per the app-surface-model gap-filler rule) \u2014 it is the smallest real proof of the via:\"descriptor\" + starterTools connect path end-to-end. A genuinely spec-less app is where http starters truly belong; see docs/futures/revisit-when.md."
       ]
     }
-  ]
+  ],
+  "help": {
+    "category": ["Developer"]
+  }
 }

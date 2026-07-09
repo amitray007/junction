@@ -1,7 +1,6 @@
 {
   "id": "twitter",
   "displayName": "X (Twitter)",
-  "category": ["Social"],
   "supportedKinds": ["openapi"],
   "auth": [
     {
@@ -20,22 +19,35 @@
         "baseUrl": "https://api.x.com",
         "verifyOperationId": "getUsersMe"
       },
-      "auth": [{ "mode": "token" }],
+      "auth": [
+        {
+          "mode": "token"
+        }
+      ],
       "build": {
         "platformIdTemplate": "{app}-{kind}",
         "via": "flattened",
-        "credential": { "kind": "bearer", "from": "auth" }
+        "credential": {
+          "kind": "bearer",
+          "from": "auth"
+        }
       },
-      "verify": { "kind": "openapi", "operationId": "getUsersMe" },
+      "verify": {
+        "kind": "openapi",
+        "operationId": "getUsersMe"
+      },
       "docs": "https://docs.x.com/x-api/introduction",
-      "agentGuidance": "The X (Twitter) API v2 — posts, users, direct messages, spaces, and streaming/search. Token-first (app bearer token or user access token) — no OAuth2 provider is registered yet, so connect via mode:\"token\".",
+      "agentGuidance": "The X (Twitter) API v2 \u2014 posts, users, direct messages, spaces, and streaming/search. Token-first (app bearer token or user access token) \u2014 no OAuth2 provider is registered yet, so connect via mode:\"token\".",
       "notes": [
-        "specUrl verified 2026-07-10: downloaded https://api.x.com/2/openapi.json — 814,833 bytes (matches the method file's cited size exactly; well under the 10,485,760 SPEC_BYTE_CAP). Spec title \"X API v2\" version 2.166.",
-        "BASE URL CORRECTION (verified, not the method file's literal string): the downloaded spec's own `servers[].url` is https://api.x.com (no /2 suffix), and every path in the spec already carries the /2 prefix (e.g. /2/users/me, /2/tweets/search/stream — confirmed by parsing the spec's `paths` object). Authoring baseUrl as https://api.x.com/2 (the method file's literal value) would double the prefix to /2/2/... at request time. Using the spec-verified host-only https://api.x.com here instead (same correction pattern as sendgrid's surface, this increment).",
-        "verifyOperationId \"getUsersMe\" (GET /2/users/me) verified present in the downloaded spec, with ZERO required parameters (only optional query params: user.fields, expansions, tweet.fields) — satisfies OpenApiConnectionSchema.verifyOperationId's 'GET with no required params' contract. Its declared security is OAuth2UserToken or UserToken (user-context bearer), which is honestly what mode:\"token\" resolves to at build time.",
-        "AUTH (token-first, per method file §2/§1): app-bearer or user-access-token via mode:\"token\" only — NO oauth2 providerId is registered (the method file's §0a net-new-app rule requires any oauth2 auth mode to have a matching provider added in oauth/catalog.ts in the SAME commit; no `twitter` provider exists there, and none is added here — deliberately deferred to a v2 per the method file §1/§2, \"start token/bearer-only\"). The spec itself also declares a top-level BearerToken httpAuth scheme (app-only bearer), consistent with token-mode auth.",
-        "iconSlug \"x\" verified to resolve: @thesvg/icons ships a real \"x\" module (node_modules/@thesvg/icons/dist/x.js + x.d.ts, confirmed present in this worktree's installed devDependency tree) — gen-brand-icons.mjs's `import(\"@thesvg/icons/x\")` will succeed. Not run here (gen:icons is a @junction/web script, out of this catalog-only increment's build step), but the module's on-disk presence was directly verified."
+        "specUrl verified 2026-07-10: downloaded https://api.x.com/2/openapi.json \u2014 814,833 bytes (matches the method file's cited size exactly; well under the 10,485,760 SPEC_BYTE_CAP). Spec title \"X API v2\" version 2.166.",
+        "BASE URL CORRECTION (verified, not the method file's literal string): the downloaded spec's own `servers[].url` is https://api.x.com (no /2 suffix), and every path in the spec already carries the /2 prefix (e.g. /2/users/me, /2/tweets/search/stream \u2014 confirmed by parsing the spec's `paths` object). Authoring baseUrl as https://api.x.com/2 (the method file's literal value) would double the prefix to /2/2/... at request time. Using the spec-verified host-only https://api.x.com here instead (same correction pattern as sendgrid's surface, this increment).",
+        "verifyOperationId \"getUsersMe\" (GET /2/users/me) verified present in the downloaded spec, with ZERO required parameters (only optional query params: user.fields, expansions, tweet.fields) \u2014 satisfies OpenApiConnectionSchema.verifyOperationId's 'GET with no required params' contract. Its declared security is OAuth2UserToken or UserToken (user-context bearer), which is honestly what mode:\"token\" resolves to at build time.",
+        "AUTH (token-first, per method file \u00a72/\u00a71): app-bearer or user-access-token via mode:\"token\" only \u2014 NO oauth2 providerId is registered (the method file's \u00a70a net-new-app rule requires any oauth2 auth mode to have a matching provider added in oauth/catalog.ts in the SAME commit; no `twitter` provider exists there, and none is added here \u2014 deliberately deferred to a v2 per the method file \u00a71/\u00a72, \"start token/bearer-only\"). The spec itself also declares a top-level BearerToken httpAuth scheme (app-only bearer), consistent with token-mode auth.",
+        "iconSlug \"x\" verified to resolve: @thesvg/icons ships a real \"x\" module (node_modules/@thesvg/icons/dist/x.js + x.d.ts, confirmed present in this worktree's installed devDependency tree) \u2014 gen-brand-icons.mjs's `import(\"@thesvg/icons/x\")` will succeed. Not run here (gen:icons is a @junction/web script, out of this catalog-only increment's build step), but the module's on-disk presence was directly verified."
       ]
     }
-  ]
+  ],
+  "help": {
+    "category": ["Social"]
+  }
 }

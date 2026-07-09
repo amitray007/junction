@@ -1,7 +1,6 @@
 {
   "id": "sonarqube",
   "displayName": "SonarQube",
-  "category": ["Developer"],
   "supportedKinds": ["mcp"],
   "auth": [
     {
@@ -49,17 +48,18 @@
         "listTools": true
       },
       "docs": "https://github.com/SonarSource/sonarqube-mcp-server",
-      "agentGuidance": "SonarSource's official MCP server for SonarQube Cloud (SonarCloud) — code quality/security issues, quality gate status, and hotspots for your projects. Runs via Docker; needs a SonarCloud token and organization key.",
+      "agentGuidance": "SonarSource's official MCP server for SonarQube Cloud (SonarCloud) \u2014 code quality/security issues, quality gate status, and hotspots for your projects. Runs via Docker; needs a SonarCloud token and organization key.",
       "notes": [
-        "Real, verified source: https://github.com/SonarSource/sonarqube-mcp-server (README, verified 2026-07-10). Docker image `sonarsource/sonarqube-mcp` confirmed. For SonarQube Cloud the invocation is `docker run --init --pull=always -i --rm -e SONARQUBE_TOKEN -e SONARQUBE_ORG sonarsource/sonarqube-mcp` — SONARQUBE_TOKEN is the Cloud token, SONARQUBE_ORG the organization key. (SonarQube Cloud US region additionally needs `-e SONARQUBE_URL=https://sonarqube.us`, not authored here — the default EU-hosted Cloud is the primary target.)",
-        "tokenEnvVar \"SONARQUBE_TOKEN\" is fine — stdio-MCP's tokenEnvVar has NO *_TOKEN/_SECRET/_KEY suffix guard (only the cli surface's credentialEnvVar does).",
-        "This is the FIRST-of-kind stdio-MCP surface authored outside the 30.13 base slice (shopify) — mirrors its shape (transport:\"stdio\", command/args, build.via:\"flattened\", credential.kind:\"bearer\")."
+        "Real, verified source: https://github.com/SonarSource/sonarqube-mcp-server (README, verified 2026-07-10). Docker image `sonarsource/sonarqube-mcp` confirmed. For SonarQube Cloud the invocation is `docker run --init --pull=always -i --rm -e SONARQUBE_TOKEN -e SONARQUBE_ORG sonarsource/sonarqube-mcp` \u2014 SONARQUBE_TOKEN is the Cloud token, SONARQUBE_ORG the organization key. (SonarQube Cloud US region additionally needs `-e SONARQUBE_URL=https://sonarqube.us`, not authored here \u2014 the default EU-hosted Cloud is the primary target.)",
+        "tokenEnvVar \"SONARQUBE_TOKEN\" is fine \u2014 stdio-MCP's tokenEnvVar has NO *_TOKEN/_SECRET/_KEY suffix guard (only the cli surface's credentialEnvVar does).",
+        "This is the FIRST-of-kind stdio-MCP surface authored outside the 30.13 base slice (shopify) \u2014 mirrors its shape (transport:\"stdio\", command/args, build.via:\"flattened\", credential.kind:\"bearer\")."
       ]
     }
   ],
   "help": {
     "notes": [
-      "SonarQube Server (self-hosted) is DELIBERATELY OMITTED: it has no fixed catalog URL — the same docker image instead takes `-e SONARQUBE_URL` (the operator's own server URL) in place of SONARQUBE_ORG, which is an operator-supplied value junction can't pin at catalog-authoring time without fabricating a placeholder host. Only the fixed-host SonarCloud variant is authorable here (source: https://github.com/SonarSource/sonarqube-mcp-server README, 'To connect with SonarQube Server' vs 'To connect with SonarQube Cloud' sections, verified 2026-07-10)."
-    ]
+      "SonarQube Server (self-hosted) is DELIBERATELY OMITTED: it has no fixed catalog URL \u2014 the same docker image instead takes `-e SONARQUBE_URL` (the operator's own server URL) in place of SONARQUBE_ORG, which is an operator-supplied value junction can't pin at catalog-authoring time without fabricating a placeholder host. Only the fixed-host SonarCloud variant is authorable here (source: https://github.com/SonarSource/sonarqube-mcp-server README, 'To connect with SonarQube Server' vs 'To connect with SonarQube Cloud' sections, verified 2026-07-10)."
+    ],
+    "category": ["Developer"]
   }
 }

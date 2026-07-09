@@ -1,7 +1,6 @@
 {
   "id": "discord",
   "displayName": "Discord",
-  "category": ["Communication", "Social"],
   "supportedKinds": ["openapi", "http"],
   "auth": [
     {
@@ -21,18 +20,34 @@
         "kind": "http",
         "baseUrl": "https://discord.com/api/v10"
       },
-      "auth": [{ "mode": "oauth2", "providerId": "discord" }, { "mode": "token" }],
+      "auth": [
+        {
+          "mode": "oauth2",
+          "providerId": "discord"
+        },
+        {
+          "mode": "token"
+        }
+      ],
       "build": {
         "platformIdTemplate": "{app}-{kind}",
         "via": "descriptor",
-        "credential": { "kind": "bearer", "from": "auth" }
+        "credential": {
+          "kind": "bearer",
+          "from": "auth"
+        }
       },
-      "verify": { "kind": "none" },
+      "verify": {
+        "kind": "none"
+      },
       "docs": "https://discord.com/developers/docs/reference",
-      "agentGuidance": "Discord's REST API v10 — guilds, channels, messages, members, and bot/webhook operations.",
+      "agentGuidance": "Discord's REST API v10 \u2014 guilds, channels, messages, members, and bot/webhook operations.",
       "notes": [
-        "base https://discord.com/api/v10 (verified 2026-07-10, method file docs/methods/30.13-curated-catalog-expansion.md §0b) — prefer the stable, versioned http surface over Discord's own OpenAPI doc, which self-labels \"(Preview)\" upstream. via:\"descriptor\" (http surface convention, mirrors github's http surface) with credential.kind:\"bearer\" — the existing discord oauth2 provider (packages/core/src/oauth/catalog.ts) mints an OAuth2 bearer token; a bot token is also accepted via mode:\"token\"."
+        "base https://discord.com/api/v10 (verified 2026-07-10, method file docs/methods/30.13-curated-catalog-expansion.md \u00a70b) \u2014 prefer the stable, versioned http surface over Discord's own OpenAPI doc, which self-labels \"(Preview)\" upstream. via:\"descriptor\" (http surface convention, mirrors github's http surface) with credential.kind:\"bearer\" \u2014 the existing discord oauth2 provider (packages/core/src/oauth/catalog.ts) mints an OAuth2 bearer token; a bot token is also accepted via mode:\"token\"."
       ]
     }
-  ]
+  ],
+  "help": {
+    "category": ["Communication", "Social"]
+  }
 }
