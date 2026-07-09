@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-only
-import { VERSION } from "@junction/core"
+import { setLogger, VERSION } from "@junction/core"
 import { defineCommand, runMain } from "citty"
 import { auditCommand } from "./commands/audit.js"
 import { connectCommand } from "./commands/connect.js"
@@ -15,6 +15,11 @@ import { serveCommand } from "./commands/serve.js"
 import { runStatus, statusCommand } from "./commands/status.js"
 import { vaultCommand } from "./commands/vault.js"
 import { webCommand } from "./commands/web.js"
+import { stderrLogger } from "./stderr-logger.js"
+
+// stderr-only, always — `junction mcp serve` carries the MCP protocol on
+// stdout; any core-level log line must never land there.
+setLogger(stderrLogger)
 
 const main = defineCommand({
   meta: {

@@ -8,14 +8,16 @@
 //        The credential still exists and is referenced by a source_ref.
 //      - On not-found: return the typed not-found error; nothing to clean up.
 //   3. Only on a successful DB delete: delete the secret from the store (best-effort).
-//      A store-delete failure is ignored — the DB row is already gone and is the
-//      authority; a stranded store entry is preferable to a broken operation.
+//      A store-delete failure is logged + ignored — the DB row is already gone and is
+//      the authority; a stranded store entry is preferable to a broken operation, but
+//      the orphan is surfaced via a warn log (id + secretRef HANDLE only — never a value).
 //
 // SECRET DISCIPLINE: secretRef is captured internally and passed to store.delete.
 // It never appears in any error cause, log, or return value.
 
 import { okAsync, type ResultAsync } from "neverthrow"
 import type { DbError } from "../errors/index.js"
+import { getLogger } from "../logging/index.js"
 import type { CredentialsRepo } from "../repositories/credentials.js"
 import type { CredentialStore } from "./store.js"
 
@@ -29,7 +31,8 @@ import type { CredentialStore } from "./store.js"
  *                 the secret is NOT deleted
  *   - query-failed → unexpected DB error (DbError)
  *
- * Store-delete failures are best-effort ignored (the DB row is authoritative).
+ * Store-delete failures are logged (warn) + best-effort ignored (the DB row
+ * is authoritative).
  */
 export function removeCredential(
   id: string,
@@ -43,9 +46,14 @@ export function removeCredential(
     // On in-use or not-found error → chain short-circuits; store NOT touched.
     return credentialsRepo.delete(id).andThen(() => {
       // Step 3: DB row gone → delete the secret from the store (best-effort).
-      return store
-        .delete(secretRef)
-        .orElse((_cleanupErr): ResultAsync<void, never> => okAsync(undefined))
+      return store.delete(secretRef).orElse((cleanupErr): ResultAsync<void, never> => {
+        getLogger().warn("credential removed but store cleanup failed — secret orphaned in store", {
+          credentialId: id,
+          secretRef,
+          cause: cleanupErr.kind,
+        })
+        return okAsync(undefined)
+      })
     })
   })
 }
