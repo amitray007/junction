@@ -534,8 +534,13 @@ describe("data.server", () => {
       expect(detail.app.authModes).toEqual(["oauth2", "oauth2", "token"])
     })
 
-    it("a surfaceless (thin) app (gitlab) carries its catalog auth modes on app.authModes, surfaces empty", async () => {
-      const detail = await readAppDetail("gitlab")
+    // NOTE: use a still-surfaceless app here. gitlab/stripe/slack/… gained authored
+    // surfaces[] in inc 32.6c, so they no longer hit the thin fallback. `atlassian` is a
+    // stable surfaceless oauth2+token app (exercises BOTH the Connect-OAuth and
+    // Add-Credential CTAs). If atlassian is ever backfilled, swap for another still-thin
+    // oauth2+token app (discord).
+    it("a surfaceless (thin) app (atlassian) carries its catalog auth modes on app.authModes, surfaces empty", async () => {
+      const detail = await readAppDetail("atlassian")
       expect(detail.app.authModes).toEqual(["oauth2", "token"])
       expect(detail.surfaces).toEqual([])
     })
