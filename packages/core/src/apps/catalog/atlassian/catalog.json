@@ -12,5 +12,32 @@
     }
   ],
   "setupHints": ["Covers Jira and Confluence Cloud sites via the shared Atlassian OAuth app."],
-  "iconSlug": "atlassian"
+  "iconSlug": "atlassian",
+  "help": {
+    "category": ["Productivity"]
+  },
+  "surfaces": [
+    {
+      "kind": "mcp",
+      "displayName": "Atlassian Rovo MCP Server",
+      "connection": {
+        "kind": "mcp",
+        "transport": "http",
+        "url": "https://mcp.atlassian.com/v1/mcp"
+      },
+      "auth": [{ "mode": "oauth2", "providerId": "atlassian" }, { "mode": "token" }],
+      "build": {
+        "platformIdTemplate": "{app}-{kind}",
+        "via": "flattened",
+        "credential": { "kind": "oauth2", "from": "auth" }
+      },
+      "verify": { "kind": "mcp", "listTools": true },
+      "docs": "https://support.atlassian.com/atlassian-rovo-mcp-server/docs/getting-started-with-the-atlassian-remote-mcp-server/",
+      "agentGuidance": "Atlassian's own hosted Rovo MCP server — Jira and Confluence Cloud tools over the shared Atlassian OAuth app, respecting the connected user's existing permissions.",
+      "notes": [
+        "url \"https://mcp.atlassian.com/v1/mcp\" confirmed live 2026-07-10 (curl -> HTTP 401, auth-gated not 404). Streamable HTTP transport, the current recommended endpoint per Atlassian Community (\"HTTP+SSE Deprecation Notice for Atlassian Rovo MCP server\"): the older https://mcp.atlassian.com/v1/sse (HTTP+SSE) is deprecated, staying available for backward compatibility only until 2026-06-30 — do not author it.",
+        "Auth: OAuth 2.1 is primary (secure, respects existing Jira/Confluence permissions); API-token auth is documented as an optional alternative, so token-mode is also offered here alongside the existing atlassian oauth2 provider."
+      ]
+    }
+  ]
 }

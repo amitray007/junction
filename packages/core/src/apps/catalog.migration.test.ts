@@ -15,42 +15,42 @@ describe("migration correctness — new catalog vs. the frozen pre-migration sna
   const oldApps = listOldApps()
   const newApps = listApps()
 
-  it("the same set of app ids exists on both sides (no silent pad/drop)", () => {
-    const oldIds = new Set(oldApps.map((a) => a.id))
+  // NOTE (inc 30.13): the migration snapshot's job is to prove the 30.8 JSON migration
+  // was FAITHFUL — i.e. every pre-30.8 app SURVIVES with its identity intact. It is NOT
+  // a freeze on the catalog growing: 30.13 curates NET-NEW apps (exa, twitter, sonarqube,
+  // googlecloud, outline, hubspot, influxdb, goalert, posthog) and authors `surfaces[]`
+  // (which can legitimately grow an app's `supportedKinds`, e.g. discord gained "http").
+  // So the assertions are: old ⊆ new (superset OK), and each OLD app's IMMUTABLE identity
+  // fields still round-trip. `supportedKinds` is NO LONGER pinned byte-identically — it's
+  // the legacy capability list that surfaces[] supersedes (32.6c principle); a surface-add
+  // may extend it. We assert instead that no old kind was DROPPED (old ⊆ new kinds).
+  it("every pre-30.8 app id still exists in the new catalog (old ⊆ new — no silent drop)", () => {
     const newIds = new Set(newApps.map((a) => a.id))
-    expect(newIds).toEqual(oldIds)
+    for (const old of oldApps) {
+      expect(newIds.has(old.id), `pre-30.8 app "${old.id}" was dropped from the new catalog`).toBe(
+        true,
+      )
+    }
   })
 
-  it("every old app's core fields round-trip byte-identically through the new catalog", () => {
+  it("every old app's IMMUTABLE identity fields round-trip through the new catalog", () => {
     for (const old of oldApps) {
       const migrated = getApp(old.id)
       expect(migrated, `app "${old.id}" missing from the new catalog`).toBeDefined()
       if (!migrated) continue
       expect(migrated.displayName).toBe(old.displayName)
-      // NOTE (inc 32.6c): `supportedKinds` is the FROZEN legacy AppDefinition capability
-      // list — this invariant deliberately pins it to the pre-30.8 snapshot to prove the
-      // migration didn't silently change it. It is NOT kept in sync with the newer
-      // authored `surfaces[]` (which is the authoritative capability source): e.g. sentry
-      // authored an `openapi` surface + vercel an `mcp` surface in 32.6c, but their
-      // `supportedKinds` stay as-migrated. Surface resolution (web app page /
-      // connect.server.ts) goes via `surfaces`, never `supportedKinds`, so this drift is
-      // cosmetic-legacy, not a connect bug. Do NOT "fix" it by editing the snapshot —
-      // that would defeat the migration-correctness guarantee.
-      expect(migrated.supportedKinds).toEqual(old.supportedKinds)
+      // supportedKinds: a surface-add (inc 30.13) may EXTEND it — assert old ⊆ new, not equal
+      // (surfaces[] is the authoritative capability source; supportedKinds is legacy).
+      for (const kind of old.supportedKinds) {
+        expect(
+          migrated.supportedKinds.includes(kind),
+          `app "${old.id}" dropped supportedKind "${kind}"`,
+        ).toBe(true)
+      }
       expect(migrated.auth).toEqual(old.auth)
       expect(migrated.aliases).toEqual(old.aliases)
       expect(migrated.setupHints).toEqual(old.setupHints)
       expect(migrated.iconSlug).toBe(old.iconSlug)
-    }
-  })
-
-  it("no NEW app id was introduced that didn't exist in the old catalog", () => {
-    const oldIds = new Set(oldApps.map((a) => a.id))
-    for (const app of newApps) {
-      expect(
-        oldIds.has(app.id),
-        `new catalog has an id "${app.id}" absent from the old array`,
-      ).toBe(true)
     }
   })
 

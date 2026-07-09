@@ -1,0 +1,50 @@
+{
+  "id": "hubspot",
+  "displayName": "HubSpot",
+  "supportedKinds": ["http"],
+  "auth": [
+    {
+      "mode": "token"
+    }
+  ],
+  "iconSlug": "hubspot",
+  "surfaces": [
+    {
+      "kind": "http",
+      "displayName": "Custom REST request",
+      "connection": {
+        "kind": "http",
+        "baseUrl": "https://api.hubapi.com"
+      },
+      "auth": [
+        {
+          "mode": "token"
+        }
+      ],
+      "build": {
+        "platformIdTemplate": "{app}-{kind}",
+        "via": "descriptor",
+        "credential": {
+          "kind": "bearer",
+          "from": "auth"
+        }
+      },
+      "verify": {
+        "kind": "none"
+      },
+      "docs": "https://developers.hubspot.com/docs/api/private-apps",
+      "agentGuidance": "HubSpot's REST API (CRM objects, engagements, etc.) authenticated with a private-app access token. Use a standard `Authorization: Bearer <token>` header.",
+      "notes": [
+        "DELIBERATE FALLBACK FROM THE HOSTED MCP (not fabricated as an MCP surface): live-probed 2026-07-10 \u2014 `https://mcp.hubspot.com` returns HTTP 401 with `www-authenticate: Bearer resource_metadata=\"https://mcp.hubspot.com/.well-known/oauth-protected-resource\"`, and that metadata document (`{\"resource\":\"https://mcp.hubspot.com\",\"authorization_servers\":[\"https://mcp.hubspot.com\"],...}`) confirms the endpoint is a genuine RFC 9728 OAuth2-protected resource, NOT a private-app-bearer-token endpoint. HubSpot's own docs (developers.hubspot.com/mcp) state \"HubSpot MCP server supports OAuth 2.0\" with no private-app-token path documented. Per the method file's token-first rule (no new oauth2 providers in v1), the mcp surface is OMITTED rather than authored as token-mode against an OAuth-only endpoint \u2014 that would be fabrication.",
+        "The http surface above is the verified, honest fallback: `https://api.hubapi.com` is live (confirmed via `curl` -> HTTP 401 unauthorized, i.e. real + auth-gated, not 404), and HubSpot's private-app-token docs (developers.hubspot.com/docs/api/private-apps) confirm the standard `Authorization: Bearer <token>` header \u2014 matching this surface's `credential.kind: \"bearer\"` exactly.",
+        "REVISIT: if/when a hubspot oauth2 provider is added (authorize https://app.hubspot.com/oauth/authorize, token https://api.hubapi.com/oauth/v1/token), the mcp surface at https://mcp.hubspot.com can be authored with `auth: [{mode:\"oauth2\",providerId:\"hubspot\"}]` \u2014 see docs/futures/revisit-when.md."
+      ]
+    }
+  ],
+  "help": {
+    "category": ["CRM"],
+    "notes": [
+      "No hosted-MCP surface authored in this increment \u2014 see the http surface's notes for the live-verified reason (OAuth2-only endpoint, token-first v1 policy)."
+    ]
+  }
+}

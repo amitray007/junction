@@ -170,11 +170,17 @@ describe("32.6c surfaces backfill — the 10 batch apps now render surface-first
     }
   })
 
-  it("shopify was deliberately left surface-less (no single fixed GraphQL endpoint — honest omission, not an oversight)", () => {
+  it("shopify: the Dev MCP surface is authored (inc 30.13); Admin GraphQL stays deferred (per-store endpoint)", () => {
     const shopify = getCatalogEntry("shopify")
     expect(shopify).toBeDefined()
-    expect(shopify?.surfaces ?? []).toHaveLength(0)
-    expect(shopify?.help?.notes?.some((n) => n.includes("No surfaces[] authored"))).toBe(true)
+    // inc 30.13 base slice added the credential-less Shopify Dev MCP (stdio) surface —
+    // the FIRST stdio-transport + first no-auth surface in the catalog.
+    const devMcp = shopify?.surfaces?.find((s) => s.kind === "mcp")
+    expect(devMcp).toBeDefined()
+    expect(devMcp?.connection).toMatchObject({ kind: "mcp", transport: "stdio", command: "npx" })
+    expect(devMcp?.auth?.[0]?.mode).toBe("none")
+    // The per-store Admin GraphQL remains an honest omission (no single fixed endpoint).
+    expect(shopify?.help?.notes?.some((n) => n.includes("per-store"))).toBe(true)
   })
 
   it("gitlab: default auth mode is oauth2 (first entry), mirroring the app-level auth", () => {
