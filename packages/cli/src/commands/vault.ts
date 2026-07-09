@@ -357,6 +357,13 @@ const importCommand = defineCommand({
       description: "Also import profiles (routes remapped through the archive's credential ids).",
       default: false,
     },
+    strict: {
+      type: "boolean",
+      description:
+        "All-or-nothing import: full pre-validation, then compensate (undo) everything " +
+        "this import wrote on any failure. Not compatible with --on-collision overwrite.",
+      default: false,
+    },
     json: JSON_ARG,
   },
   async run({ args }) {
@@ -371,6 +378,7 @@ const importCommand = defineCommand({
       return
     }
     const onCollision: OnCollision = onCollisionRaw
+    const strict = args.strict ?? false
 
     let archiveBytes: Buffer
     try {
@@ -402,6 +410,7 @@ const importCommand = defineCommand({
       passphrase: passphraseResult.passphrase,
       onCollision,
       includeProfiles: args["include-profiles"] ?? false,
+      strict,
     })
 
     if (result.isErr()) {
@@ -411,7 +420,9 @@ const importCommand = defineCommand({
 
     const summary = result.value
     if (json) {
-      process.stdout.write(`${JSON.stringify({ ok: true, summary })}\n`)
+      process.stdout.write(
+        `${JSON.stringify({ ok: true, summary, ...(strict ? { strict: true } : {}) })}\n`,
+      )
     } else {
       consola.success(
         `Imported ${summary.credentials.added} credential(s), ` +

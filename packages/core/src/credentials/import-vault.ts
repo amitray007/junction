@@ -3,14 +3,44 @@
 // platforms (+ optionally profiles) in the target vault. Backend-agnostic (writes via
 // CredentialStore.set / addCredential, identical on keyring and encrypted-file).
 // See docs/methods/32.4-vault-backup-recovery.md §0b/§0c/§3.
+//
+// --strict (increment 32.10): COMPENSATION-based, not a DB transaction. A one-tx
+// design is not implementable without reimplementing addCredential/oauth internals
+// (they interleave store+DB per credential; repos swallow errors into errAsync,
+// unreadable inside a synchronous better-sqlite3 tx). Strict is therefore:
+//   phase 1 — prevalidate the FULL manifest, ZERO writes;
+//   phase 2 — run this SAME interleaved import path, but with `store` and the
+//             `repos` objects wrapped in journaling decorators that record every
+//             successful write;
+//   phase 3 — on ANY failure, undo everything journaled, in reverse order.
+// Honest scope: "strict" = store-best-effort-compensated + full pre-validation —
+// NOT atomic across both stores (the keyring has no rollback primitive; same
+// residual as 32.3 rotation). Two documented residuals (see docs/futures/gotchas.md,
+// entry drafted in the 32.10 method-file report):
+//   1. SIGKILL mid-compensation can strand DB rows and/or keyring refs this import
+//      wrote — compensation is a best-effort loop, not itself transactional.
+//   2. TOCTOU: no lock is held between phase 1 and phase 2 — a concurrent process
+//      inserting a colliding (platformId, account) between the two phases slips
+//      past prevalidation. The 32.9 unique index is the backstop (surfaces as a
+//      DB constraint-violation mid phase-2, which strict compensates like any
+//      other mid-import failure).
+// Dropped-route case (a profile route referencing a credential absent from the
+// archive, see the idMap lookup below) is preserved identically in strict —
+// silently dropped, same as non-strict; strict does not change route semantics.
 
 import { err, errAsync, ok, okAsync, type Result, ResultAsync } from "neverthrow"
 import type { CredentialError } from "../errors/index.js"
 import { newCredentialId, newProfileId } from "../ids/index.js"
+import type { CredentialsRepo } from "../repositories/credentials.js"
 import type { Repositories } from "../repositories/index.js"
+import type { PlatformsRepo } from "../repositories/platforms.js"
+import type { ProfilesRepo } from "../repositories/profiles.js"
 import { type Credential, CredentialSchema } from "../schema/credential.js"
+import type { Platform } from "../schema/platform.js"
+import { PlatformIdSchema } from "../schema/primitives.js"
 import { ProfileSchema } from "../schema/profile.js"
 import { addCredential } from "./add-credential.js"
+import { isKindAccepted } from "./kind-compat.js"
 import { removeCredential } from "./remove-credential.js"
 import type { CredentialStore } from "./store.js"
 import { deriveKeyFromPassphrase, gcmDecrypt } from "./vault-crypto.js"
@@ -51,6 +81,14 @@ export interface ImportVaultInput {
   passphrase: string
   onCollision?: OnCollision
   includeProfiles?: boolean
+  /**
+   * All-or-nothing import (increment 32.10). See the module header for the
+   * full compensation-based design. `--strict --on-collision overwrite` is
+   * REFUSED (mirrors the includeProfiles+overwrite refusal below) — deleted
+   * refs are unrestorable on abort, and in-use collisions are only
+   * discoverable by ATTEMPTING the RESTRICT delete (a write).
+   */
+  strict?: boolean
 }
 
 export interface ImportSummary {
@@ -78,7 +116,15 @@ type ManifestCredential = VaultManifest["credentials"][number]
  * remapped through the _srcId → resolvedTargetId map.
  */
 export function importVault(input: ImportVaultInput): ResultAsync<ImportSummary, CredentialError> {
-  const { repos, store, archive, passphrase, onCollision = "skip", includeProfiles = false } = input
+  const {
+    repos,
+    store,
+    archive,
+    passphrase,
+    onCollision = "skip",
+    includeProfiles = false,
+    strict = false,
+  } = input
 
   if (passphrase.length === 0) {
     return errAsync({ kind: "import-failed", reason: "passphrase must not be empty" })
@@ -91,6 +137,19 @@ export function importVault(input: ImportVaultInput): ResultAsync<ImportSummary,
       kind: "import-failed",
       reason:
         "profile overwrite is not supported; remove the profile first or use --on-collision skip",
+    })
+  }
+
+  // --strict --on-collision overwrite is REFUSED (32.10 §"Overwrite under strict")
+  // — mirrors the includeProfiles+overwrite refusal above. Deleted refs are
+  // unrestorable on abort; in-use collisions are only discoverable by ATTEMPTING
+  // the RESTRICT delete (itself a write), which would violate the phase-1
+  // zero-writes promise.
+  if (strict && onCollision === "overwrite") {
+    return errAsync({
+      kind: "import-failed",
+      reason:
+        "--strict does not support --on-collision overwrite; deleted refs cannot be restored on abort — use skip or error",
     })
   }
 
@@ -136,6 +195,10 @@ export function importVault(input: ImportVaultInput): ResultAsync<ImportSummary,
       })
     }
     const manifest = manifestParse.data
+
+    if (strict) {
+      return new ResultAsync(runStrictImport(repos, store, manifest, onCollision, includeProfiles))
+    }
 
     return new ResultAsync(runImport(repos, store, manifest, onCollision, includeProfiles))
   })
@@ -343,6 +406,410 @@ async function runImport(
       profileSummary.added++
     }
     summary.profiles = profileSummary
+  }
+
+  return ok(summary)
+}
+
+// ===========================================================================
+// --strict (increment 32.10)
+// ===========================================================================
+
+/**
+ * Phase 1 — prevalidate the ENTIRE manifest with ZERO writes. Anything missed
+ * here fails later in phase 2 AFTER secrets were written, which would violate
+ * the zero-writes-on-abort promise. Runs BEFORE any store/DB write.
+ *
+ * Checklist (method file §"Phase 1"):
+ *  1. Build each candidate credential exactly as the real path does and
+ *     `CredentialSchema.safeParse` it (oauth2 candidates built the same shape
+ *     `addOAuthImportedCredential` constructs).
+ *  2. kind↔platform compatibility (mirrors add-credential.ts) + the 32 KiB
+ *     file-cred cap + `PlatformIdSchema` on every platform id.
+ *  3. Archive-INTERNAL duplicates — hard error: a Set over (platformId,
+ *     account), exact/untrimmed/case-sensitive (matches add-credential.ts's
+ *     duplicate-account guard); ditto duplicate platform ids (non-strict
+ *     silently last-wins via platformById — strict is the only place that can
+ *     catch a within-archive dup, since nothing commits between adds).
+ *  4. Archive-vs-DB collisions via one `forPlatform` sweep per platform
+ *     (abort if `onCollision === "error"`).
+ *  5. Profile shape (`ProfileSchema`) + duplicate-toolNamespace guard +
+ *     profile-name collisions (only when includeProfiles).
+ */
+async function prevalidateStrict(
+  repos: Pick<Repositories, "credentials" | "platforms" | "profiles">,
+  manifest: VaultManifest,
+  onCollision: OnCollision,
+  includeProfiles: boolean,
+): Promise<Result<void, CredentialError>> {
+  // ---- platform ids well-formed + archive-internal duplicate platform ids ----
+  const seenPlatformIds = new Set<string>()
+  for (const platform of manifest.platforms) {
+    const idParse = PlatformIdSchema.safeParse(platform.id)
+    if (!idParse.success) {
+      return err({
+        kind: "import-failed",
+        reason: `invalid platform id "${platform.id}": ${idParse.error.issues.map((i) => i.message).join(", ")}`,
+      })
+    }
+    if (seenPlatformIds.has(platform.id)) {
+      return err({
+        kind: "import-failed",
+        reason: `archive contains duplicate platform id "${platform.id}"`,
+      })
+    }
+    seenPlatformIds.add(platform.id)
+  }
+
+  const platformById = new Map<string, (typeof manifest.platforms)[number]>(
+    manifest.platforms.map((p) => [p.id, p]),
+  )
+
+  // ---- archive-vs-DB platform collisions under --on-collision error ----
+  if (onCollision === "error") {
+    for (const platform of manifest.platforms) {
+      const existing = await repos.platforms.get(platform.id)
+      if (existing.isOk()) {
+        return err({
+          kind: "import-failed",
+          reason: `platform "${platform.id}" already exists`,
+        })
+      }
+    }
+  }
+
+  // ---- credentials: shape, kind-compat, file cap, archive-internal dups, DB collisions ----
+  const seenAccounts = new Set<string>()
+  for (const mc of manifest.credentials) {
+    const label = `${mc.platformId}/${mc.account}`
+    const platform = platformById.get(mc.platformId)
+    if (platform === undefined) {
+      // Mirrors the non-strict dropped/missing-platform guard — this credential
+      // would fail in phase 2 too, but strict must catch it here (zero writes).
+      return err({
+        kind: "import-failed",
+        reason: `credential ${label} references a platform not present in the archive`,
+      })
+    }
+
+    const dupKey = `${mc.platformId} ${mc.account}`
+    if (seenAccounts.has(dupKey)) {
+      return err({
+        kind: "import-failed",
+        reason: `archive contains a duplicate credential for ${label}`,
+      })
+    }
+    seenAccounts.add(dupKey)
+
+    const candidateResult = buildCandidateForValidation(mc, platform)
+    if (candidateResult.isErr()) {
+      return err({
+        kind: "import-failed",
+        reason: `invalid credential ${label}: ${candidateResult.error}`,
+      })
+    }
+
+    if (mc.kind !== "oauth2") {
+      if (!isKindAccepted(platform, mc.kind)) {
+        return err({
+          kind: "import-failed",
+          reason: `credential ${label}: kind "${mc.kind}" not accepted for this platform`,
+        })
+      }
+      if (mc.kind === "file") {
+        const byteLength = Buffer.byteLength(mc.secret, "utf8")
+        const FILE_SECRET_MAX_BYTES = 32 * 1024
+        if (byteLength > FILE_SECRET_MAX_BYTES) {
+          return err({
+            kind: "import-failed",
+            reason: `credential ${label} exceeds 32 KiB (got ${byteLength} bytes)`,
+          })
+        }
+      }
+    }
+
+    if (onCollision === "error") {
+      const existingForPlatform = await repos.credentials.forPlatform(platform.id)
+      if (existingForPlatform.isErr()) {
+        return err({
+          kind: "import-failed",
+          reason: `failed to check for collision on ${label}: ${describeDbError(existingForPlatform.error)}`,
+        })
+      }
+      const collision = existingForPlatform.value.find((c) => c.profileName === mc.account)
+      if (collision !== undefined) {
+        return err({ kind: "import-failed", reason: `credential ${label} already exists` })
+      }
+    }
+  }
+
+  // ---- profiles: shape + duplicate namespace + name collisions ----
+  if (includeProfiles && manifest.profiles !== undefined) {
+    const seenProfileNames = new Set<string>()
+    for (const profile of manifest.profiles) {
+      if (seenProfileNames.has(profile.name)) {
+        return err({
+          kind: "import-failed",
+          reason: `archive contains a duplicate profile name "${profile.name}"`,
+        })
+      }
+      seenProfileNames.add(profile.name)
+
+      const seenNamespaces = new Set<string>()
+      for (const sr of profile.sources) {
+        if (seenNamespaces.has(sr.toolNamespace)) {
+          return err({
+            kind: "import-failed",
+            reason: `profile "${profile.name}" has duplicate toolNamespace "${sr.toolNamespace}"`,
+          })
+        }
+        seenNamespaces.add(sr.toolNamespace)
+      }
+
+      const parsed = ProfileSchema.safeParse({
+        id: newProfileId(),
+        name: profile.name,
+        sources: profile.sources,
+      })
+      if (!parsed.success) {
+        return err({
+          kind: "import-failed",
+          reason: `invalid profile "${profile.name}": ${parsed.error.issues.map((i) => i.message).join(", ")}`,
+        })
+      }
+
+      if (onCollision === "error") {
+        const existing = await repos.profiles.getByName(profile.name)
+        if (existing.isOk()) {
+          return err({
+            kind: "import-failed",
+            reason: `profile "${profile.name}" already exists`,
+          })
+        }
+      }
+    }
+  }
+
+  return ok(undefined)
+}
+
+/**
+ * Build (and Zod-validate) the candidate `Credential` shape phase 1 would
+ * write in phase 2, WITHOUT ever touching the store or DB — mirrors
+ * addImportedCredential/addOAuthImportedCredential's shape exactly (using
+ * throwaway ids; phase 2 mints the real ones). Returns the description string
+ * of any validation failure (never the secret).
+ */
+function buildCandidateForValidation(
+  mc: ManifestCredential,
+  platform: Platform,
+): Result<void, string> {
+  if (mc.kind !== "oauth2") {
+    const parsed = CredentialSchema.safeParse({
+      id: newCredentialId(),
+      platformId: platform.id,
+      profileName: mc.account,
+      kind: mc.kind,
+      secretRef: newCredentialId(),
+    })
+    if (!parsed.success) {
+      return err(parsed.error.issues.map((i) => i.message).join(", "))
+    }
+    return ok(undefined)
+  }
+
+  const parsed = CredentialSchema.safeParse({
+    id: newCredentialId(),
+    platformId: platform.id,
+    profileName: mc.account,
+    kind: "oauth2",
+    secretRef: newCredentialId(),
+    oauthMeta: {
+      refreshTokenRef: mc.refreshToken !== undefined ? newCredentialId() : undefined,
+      clientIdRef: mc.clientId !== undefined ? newCredentialId() : undefined,
+      clientSecretRef: mc.clientSecret !== undefined ? newCredentialId() : undefined,
+      providerId: mc.oauthMeta?.providerId,
+      authMode: mc.oauthMeta?.authMode,
+      scopes: mc.oauthMeta?.scopes,
+      expiresAt: mc.oauthMeta?.expiresAt,
+      needsReauth: mc.oauthMeta?.needsReauth ?? false,
+      obtainedAt: mc.oauthMeta?.obtainedAt ?? new Date().toISOString(),
+    },
+    ...(mc.lastVerifyResult !== undefined ? { lastVerifyResult: mc.lastVerifyResult } : {}),
+    ...(mc.lastVerifiedAt !== undefined ? { lastVerifiedAt: mc.lastVerifiedAt } : {}),
+  })
+  if (!parsed.success) {
+    return err(parsed.error.issues.map((i) => i.message).join(", "))
+  }
+  return ok(undefined)
+}
+
+/**
+ * A single journaled event, in the order it happened — compensation walks
+ * this list in REVERSE. `kind` selects which repo/store call undoes it.
+ */
+type JournalEntry =
+  | { kind: "store-ref"; ref: string }
+  | { kind: "platform"; id: string }
+  | { kind: "credential"; id: string }
+  | { kind: "profile"; id: string }
+
+/** Append-only journal shared by the store/repo decorators for one strict import. */
+class ImportJournal {
+  private readonly entries: JournalEntry[] = []
+
+  record(entry: JournalEntry): void {
+    this.entries.push(entry)
+  }
+
+  /** Reverse-order compensation (method file §"Phase 3"). Best-effort: a single
+   *  cleanup step failing never stops the sweep — every OTHER journaled write
+   *  still gets its cleanup attempt. */
+  async compensate(
+    repos: Pick<Repositories, "credentials" | "platforms" | "profiles">,
+    store: CredentialStore,
+  ): Promise<void> {
+    for (let i = this.entries.length - 1; i >= 0; i--) {
+      const entry = this.entries[i]
+      if (entry === undefined) continue
+      switch (entry.kind) {
+        case "profile":
+          await repos.profiles
+            .delete(entry.id)
+            .orElse((): ResultAsync<void, never> => okAsync(undefined))
+          break
+        case "credential":
+          await repos.credentials
+            .delete(entry.id)
+            .orElse((): ResultAsync<void, never> => okAsync(undefined))
+          break
+        case "platform":
+          await repos.platforms
+            .delete(entry.id)
+            .orElse((): ResultAsync<void, never> => okAsync(undefined))
+          break
+        case "store-ref":
+          await store.delete(entry.ref).orElse((): ResultAsync<void, never> => okAsync(undefined))
+          break
+        default: {
+          const _exhaustive: never = entry
+          void _exhaustive
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Wrap `store` so every successful `set` is journaled. Pass-through otherwise
+ * (identical behavior on get/delete/backend) — mirrors the flakyStore test
+ * decorator pattern (import-vault.test.ts's flakyStore).
+ */
+function journalStore(store: CredentialStore, journal: ImportJournal): CredentialStore {
+  return {
+    backend: store.backend,
+    get: (ref) => store.get(ref),
+    delete: (ref) => store.delete(ref),
+    set: (ref, value) =>
+      store.set(ref, value).map((v) => {
+        journal.record({ kind: "store-ref", ref })
+        return v
+      }),
+  }
+}
+
+/** Wrap the platforms repo so every successful create/upsert is journaled. */
+function journalPlatformsRepo(repo: PlatformsRepo, journal: ImportJournal): PlatformsRepo {
+  return {
+    ...repo,
+    upsert: (input) =>
+      repo.upsert(input).map((v) => {
+        journal.record({ kind: "platform", id: v.id })
+        return v
+      }),
+  }
+}
+
+/** Wrap the credentials repo so every successful create is journaled. */
+function journalCredentialsRepo(repo: CredentialsRepo, journal: ImportJournal): CredentialsRepo {
+  return {
+    ...repo,
+    create: (input) =>
+      repo.create(input).map((v) => {
+        journal.record({ kind: "credential", id: v.id })
+        return v
+      }),
+  }
+}
+
+/** Wrap the profiles repo so every successful create is journaled. */
+function journalProfilesRepo(repo: ProfilesRepo, journal: ImportJournal): ProfilesRepo {
+  return {
+    ...repo,
+    create: (input) =>
+      repo.create(input).map((v) => {
+        journal.record({ kind: "profile", id: v.id })
+        return v
+      }),
+  }
+}
+
+/**
+ * --strict orchestrator: phase 1 (prevalidate, zero writes) → phase 2 (the
+ * EXISTING interleaved runImport, under journaling decorators) → phase 3 (on
+ * ANY failure, reverse-order compensation). See the module header for why
+ * this is compensation-based rather than a single DB transaction.
+ */
+async function runStrictImport(
+  repos: Pick<Repositories, "credentials" | "platforms" | "profiles">,
+  store: CredentialStore,
+  manifest: VaultManifest,
+  onCollision: OnCollision,
+  includeProfiles: boolean,
+): Promise<Result<ImportSummary, CredentialError>> {
+  const prevalidation = await prevalidateStrict(repos, manifest, onCollision, includeProfiles)
+  if (prevalidation.isErr()) {
+    return err(prevalidation.error)
+  }
+
+  const journal = new ImportJournal()
+  const journaledStore = journalStore(store, journal)
+  const journaledRepos = {
+    credentials: journalCredentialsRepo(repos.credentials, journal),
+    platforms: journalPlatformsRepo(repos.platforms, journal),
+    profiles: journalProfilesRepo(repos.profiles, journal),
+  }
+
+  const result = await runImport(
+    journaledRepos,
+    journaledStore,
+    manifest,
+    onCollision,
+    includeProfiles,
+  )
+
+  if (result.isErr()) {
+    await journal.compensate(repos, store)
+    return err({
+      kind: "import-failed",
+      reason: `${describeCredentialError(result.error)} (all rows/refs written by this import were removed again — best-effort compensation)`,
+    })
+  }
+
+  // Per-credential/per-profile failures inside `summary.*.failed` are NOT a
+  // hard Err from runImport (see the non-strict `failed` contract) — but
+  // strict promises all-or-nothing, so ANY recorded failure still triggers
+  // full compensation of what DID succeed.
+  const summary = result.value
+  const hasPartialFailure =
+    summary.credentials.failed.length > 0 || (summary.profiles?.failed.length ?? 0) > 0
+  if (hasPartialFailure) {
+    await journal.compensate(repos, store)
+    const failedCount = summary.credentials.failed.length + (summary.profiles?.failed.length ?? 0)
+    return err({
+      kind: "import-failed",
+      reason: `strict import aborted: ${failedCount} item(s) failed mid-import (all rows/refs written by this import were removed again — best-effort compensation)`,
+    })
   }
 
   return ok(summary)

@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { getDatabase } from "../db/index.js"
 import { newPlatformId } from "../ids/index.js"
 import { ensureHome, getPaths } from "../paths/index.js"
+import type { Repositories } from "../repositories/index.js"
 import { createRepositories } from "../repositories/index.js"
 import { addCredential } from "./add-credential.js"
 import { createEncryptedFileStore } from "./encrypted-file-store.js"
@@ -17,6 +18,29 @@ import { exportVault } from "./export-vault.js"
 import { importVault } from "./import-vault.js"
 import { resolveMasterKey } from "./master-key.js"
 import type { CredentialStore } from "./store.js"
+import { deriveKeyFromPassphrase, gcmEncrypt } from "./vault-crypto.js"
+import { VAULT_KDF, VAULT_MAGIC, VAULT_VERSION, type VaultManifest } from "./vault-manifest.js"
+
+/**
+ * Hand-build a `.jvlt` archive from a raw manifest object — bypasses exportVault
+ * (which can never produce an archive-internal duplicate) so strict's phase-1
+ * archive-internal-duplicate checks can be exercised directly.
+ */
+async function buildRawArchive(manifest: VaultManifest, passphrase: string): Promise<Buffer> {
+  const salt = Buffer.from(Array.from({ length: 16 }, () => Math.floor(Math.random() * 256)))
+  const keyResult = await deriveKeyFromPassphrase(passphrase, salt)
+  if (keyResult.isErr()) throw keyResult.error
+  const key = keyResult.value
+  const version = Buffer.from([VAULT_VERSION])
+  const kdf = Buffer.from([VAULT_KDF])
+  const header = Buffer.concat([VAULT_MAGIC, version, kdf, salt])
+  const rec = gcmEncrypt(key, header, JSON.stringify(manifest))
+  key.fill(0)
+  const iv = Buffer.from(rec.iv, "base64")
+  const tag = Buffer.from(rec.tag, "base64")
+  const ct = Buffer.from(rec.ct, "base64")
+  return Buffer.concat([header, iv, tag, ct])
+}
 
 async function makeHome(prefix: string) {
   const home = await mkdtemp(join(tmpdir(), prefix))
@@ -1018,6 +1042,459 @@ describe("importVault", () => {
 
       const dstCreds = (await dst.repos.credentials.list())._unsafeUnwrap()
       expect(dstCreds[0]?.kind).toBe("oauth2")
+    })
+
+    // -----------------------------------------------------------------------
+    // --strict (increment 32.10) — compensation-based all-or-nothing import.
+    // -----------------------------------------------------------------------
+    describe("strict", () => {
+      it("happy path: identical end-state to non-strict happy path, including verify-state parity", async () => {
+        const platform = await seedPlatform(src.repos)
+        const cred = (
+          await addCredential(
+            { platformId: String(platform.id), account: "work", kind: "bearer", secret: "S1" },
+            platform,
+            src.store,
+            src.repos.credentials,
+          )
+        )._unsafeUnwrap()
+        // Seed a verify result so we can prove strict carries it exactly like non-strict.
+        await src.repos.credentials.setVerifyState(cred.id, "ok", 1_700_000_000_000)
+
+        const exportResult = await exportVault({
+          repos: src.repos,
+          store: src.store,
+          passphrase: "strict-happy-pass",
+        })
+        if (!exportResult.isOk()) throw exportResult.error
+
+        const importResult = await importVault({
+          repos: dst.repos,
+          store: dst.store,
+          archive: exportResult.value.archive,
+          passphrase: "strict-happy-pass",
+          strict: true,
+        })
+        expect(importResult.isOk()).toBe(true)
+        if (!importResult.isOk()) return
+        expect(importResult.value.credentials.added).toBe(1)
+        expect(importResult.value.credentials.failed).toHaveLength(0)
+
+        const dstCreds = (await dst.repos.credentials.list())._unsafeUnwrap()
+        expect(dstCreds).toHaveLength(1)
+        expect(dstCreds[0]?.lastVerifyResult).toBe("ok")
+        expect(dstCreds[0]?.lastVerifiedAt).toBe(1_700_000_000_000)
+        const secret = (await dst.store.get(dstCreds[0]?.secretRef ?? ""))._unsafeUnwrap()
+        expect(secret).toBe("S1")
+      })
+
+      it("flaky store failing the Nth set → full compensation (rows + refs), typed import-failed", async () => {
+        const platformA = await seedPlatform(src.repos, "Strict Store A")
+        const platformB = await seedPlatform(src.repos, "Strict Store B")
+        await addCredential(
+          {
+            platformId: String(platformA.id),
+            account: "one",
+            kind: "bearer",
+            secret: "SECRET_ONE",
+          },
+          platformA,
+          src.store,
+          src.repos.credentials,
+        )
+        await addCredential(
+          {
+            platformId: String(platformB.id),
+            account: "two",
+            kind: "bearer",
+            secret: "SECRET_TWO",
+          },
+          platformB,
+          src.store,
+          src.repos.credentials,
+        )
+        const exportResult = await exportVault({
+          repos: src.repos,
+          store: src.store,
+          passphrase: "strict-flaky-store-pass",
+        })
+        if (!exportResult.isOk()) throw exportResult.error
+
+        const deletedRefs: string[] = []
+        let setCallCount = 0
+        const flakyStore: CredentialStore = {
+          ...dst.store,
+          set: (ref: string, value: string) => {
+            setCallCount++
+            if (setCallCount === 2) {
+              return errAsync({ kind: "io-failed" as const, cause: new Error("injected failure") })
+            }
+            return dst.store.set(ref, value)
+          },
+          delete: (ref: string) => {
+            deletedRefs.push(ref)
+            return dst.store.delete(ref)
+          },
+        }
+
+        const result = await importVault({
+          repos: dst.repos,
+          store: flakyStore,
+          archive: exportResult.value.archive,
+          passphrase: "strict-flaky-store-pass",
+          strict: true,
+        })
+        expect(result.isErr()).toBe(true)
+        if (result.isErr()) expect(result.error.kind).toBe("import-failed")
+
+        // Compensation removed the ONE ref that did get written.
+        expect(deletedRefs.length).toBeGreaterThanOrEqual(1)
+
+        // DB read-back is empty — the first credential's row was compensated too.
+        const dstCreds = (await dst.repos.credentials.list())._unsafeUnwrap()
+        expect(dstCreds).toHaveLength(0)
+        const dstPlatforms = (await dst.repos.platforms.list())._unsafeUnwrap()
+        expect(dstPlatforms).toHaveLength(0)
+      })
+
+      it("flaky repo decorator failing the Nth create → full compensation (the DB-failure leg)", async () => {
+        const platformA = await seedPlatform(src.repos, "Strict Repo A")
+        const platformB = await seedPlatform(src.repos, "Strict Repo B")
+        await addCredential(
+          {
+            platformId: String(platformA.id),
+            account: "one",
+            kind: "bearer",
+            secret: "SECRET_ONE",
+          },
+          platformA,
+          src.store,
+          src.repos.credentials,
+        )
+        await addCredential(
+          {
+            platformId: String(platformB.id),
+            account: "two",
+            kind: "bearer",
+            secret: "SECRET_TWO",
+          },
+          platformB,
+          src.store,
+          src.repos.credentials,
+        )
+        const exportResult = await exportVault({
+          repos: src.repos,
+          store: src.store,
+          passphrase: "strict-flaky-repo-pass",
+        })
+        if (!exportResult.isOk()) throw exportResult.error
+
+        let createCallCount = 0
+        const flakyRepos: Repositories = {
+          ...dst.repos,
+          credentials: {
+            ...dst.repos.credentials,
+            create: (input) => {
+              createCallCount++
+              if (createCallCount === 2) {
+                return errAsync({
+                  kind: "constraint-violation" as const,
+                  cause: new Error("injected DB failure"),
+                })
+              }
+              return dst.repos.credentials.create(input)
+            },
+          },
+        }
+
+        const result = await importVault({
+          repos: flakyRepos,
+          store: dst.store,
+          archive: exportResult.value.archive,
+          passphrase: "strict-flaky-repo-pass",
+          strict: true,
+        })
+        expect(result.isErr()).toBe(true)
+        if (result.isErr()) expect(result.error.kind).toBe("import-failed")
+
+        // Everything (the platforms AND the one credential that did commit) was
+        // compensated — DB read-back is empty, and the store ref was cleaned up.
+        const dstCreds = (await dst.repos.credentials.list())._unsafeUnwrap()
+        expect(dstCreds).toHaveLength(0)
+        const dstPlatforms = (await dst.repos.platforms.list())._unsafeUnwrap()
+        expect(dstPlatforms).toHaveLength(0)
+      })
+
+      it("malformed oauth2 candidate in manifest → phase-1 abort, store NEVER touched", async () => {
+        const platform = await seedPlatform(src.repos)
+        const manifest: VaultManifest = {
+          v: 1,
+          exportedAt: new Date().toISOString(),
+          platforms: [platform],
+          credentials: [
+            {
+              platformId: String(platform.id),
+              account: "bad-oauth",
+              kind: "oauth2",
+              // authMode is not one of the enum's allowed values — invalid shape.
+              oauthMeta: { authMode: "not-a-real-mode" as never },
+              secret: "ACCESS_BAD",
+              _srcId: "src-bad-oauth-1",
+            },
+          ],
+        }
+        const archive = await buildRawArchive(manifest, "strict-malformed-oauth-pass")
+
+        let setCalls = 0
+        const spyStore: CredentialStore = {
+          ...dst.store,
+          set: (ref, value) => {
+            setCalls++
+            return dst.store.set(ref, value)
+          },
+        }
+
+        const result = await importVault({
+          repos: dst.repos,
+          store: spyStore,
+          archive,
+          passphrase: "strict-malformed-oauth-pass",
+          strict: true,
+        })
+        expect(result.isErr()).toBe(true)
+        if (result.isErr()) expect(result.error.kind).toBe("import-failed")
+        expect(setCalls).toBe(0)
+
+        const dstCreds = (await dst.repos.credentials.list())._unsafeUnwrap()
+        expect(dstCreds).toHaveLength(0)
+      })
+
+      it("archive-INTERNAL duplicate credential (same platform+account twice) → phase-1 abort, zero writes", async () => {
+        const platform = await seedPlatform(src.repos)
+        const manifest: VaultManifest = {
+          v: 1,
+          exportedAt: new Date().toISOString(),
+          platforms: [platform],
+          credentials: [
+            {
+              platformId: String(platform.id),
+              account: "dupe-account",
+              kind: "bearer",
+              secret: "SECRET_A",
+              _srcId: "src-dupe-1",
+            },
+            {
+              platformId: String(platform.id),
+              account: "dupe-account",
+              kind: "bearer",
+              secret: "SECRET_B",
+              _srcId: "src-dupe-2",
+            },
+          ],
+        }
+        const archive = await buildRawArchive(manifest, "strict-dup-account-pass")
+
+        const result = await importVault({
+          repos: dst.repos,
+          store: dst.store,
+          archive,
+          passphrase: "strict-dup-account-pass",
+          strict: true,
+        })
+        expect(result.isErr()).toBe(true)
+        if (result.isErr()) {
+          expect(result.error.kind).toBe("import-failed")
+          expect(result.error.kind === "import-failed" && result.error.reason).toContain(
+            "duplicate",
+          )
+        }
+
+        const dstCreds = (await dst.repos.credentials.list())._unsafeUnwrap()
+        expect(dstCreds).toHaveLength(0)
+        const dstPlatforms = (await dst.repos.platforms.list())._unsafeUnwrap()
+        expect(dstPlatforms).toHaveLength(0)
+      })
+
+      it("archive-INTERNAL duplicate platform id → phase-1 abort, zero writes", async () => {
+        const platform = await seedPlatform(src.repos, "Dup Platform")
+        const manifest: VaultManifest = {
+          v: 1,
+          exportedAt: new Date().toISOString(),
+          platforms: [platform, { ...platform, displayName: "Dup Platform (renamed)" }],
+          credentials: [],
+        }
+        const archive = await buildRawArchive(manifest, "strict-dup-platform-pass")
+
+        const result = await importVault({
+          repos: dst.repos,
+          store: dst.store,
+          archive,
+          passphrase: "strict-dup-platform-pass",
+          strict: true,
+        })
+        expect(result.isErr()).toBe(true)
+        if (result.isErr()) {
+          expect(result.error.kind).toBe("import-failed")
+          expect(result.error.kind === "import-failed" && result.error.reason).toContain(
+            "duplicate platform",
+          )
+        }
+        const dstPlatforms = (await dst.repos.platforms.list())._unsafeUnwrap()
+        expect(dstPlatforms).toHaveLength(0)
+      })
+
+      it("collision + --on-collision error → phase-1 abort, zero writes", async () => {
+        const platform = await seedPlatform(src.repos)
+        await addCredential(
+          {
+            platformId: String(platform.id),
+            account: "work",
+            kind: "bearer",
+            secret: "SRC_SECRET",
+          },
+          platform,
+          src.store,
+          src.repos.credentials,
+        )
+        const exportResult = await exportVault({
+          repos: src.repos,
+          store: src.store,
+          passphrase: "strict-collision-error-pass",
+        })
+        if (!exportResult.isOk()) throw exportResult.error
+
+        await dst.repos.platforms.upsert(platform)
+        await addCredential(
+          {
+            platformId: String(platform.id),
+            account: "work",
+            kind: "bearer",
+            secret: "DST_SECRET",
+          },
+          platform,
+          dst.store,
+          dst.repos.credentials,
+        )
+
+        let setCalls = 0
+        const spyStore: CredentialStore = {
+          ...dst.store,
+          set: (ref, value) => {
+            setCalls++
+            return dst.store.set(ref, value)
+          },
+        }
+
+        const result = await importVault({
+          repos: dst.repos,
+          store: spyStore,
+          archive: exportResult.value.archive,
+          passphrase: "strict-collision-error-pass",
+          onCollision: "error",
+          strict: true,
+        })
+        expect(result.isErr()).toBe(true)
+        if (result.isErr()) expect(result.error.kind).toBe("import-failed")
+        expect(setCalls).toBe(0)
+
+        // Only the pre-existing credential remains — nothing new was written.
+        const dstCreds = (await dst.repos.credentials.list())._unsafeUnwrap()
+        expect(dstCreds).toHaveLength(1)
+        const secret = (await dst.store.get(dstCreds[0]?.secretRef ?? ""))._unsafeUnwrap()
+        expect(secret).toBe("DST_SECRET")
+      })
+
+      it("--strict --on-collision overwrite → typed refusal (message pinned)", async () => {
+        const result = await importVault({
+          repos: dst.repos,
+          store: dst.store,
+          archive: Buffer.from("JVLT"),
+          passphrase: "pw",
+          onCollision: "overwrite",
+          strict: true,
+        })
+        expect(result.isErr()).toBe(true)
+        if (result.isErr()) {
+          expect(result.error.kind).toBe("import-failed")
+          expect(result.error.kind === "import-failed" && result.error.reason).toBe(
+            "--strict does not support --on-collision overwrite; deleted refs cannot be restored on abort — use skip or error",
+          )
+        }
+      })
+
+      it("dropped-route case preserved under strict: route to a credential absent from the archive is silently dropped", async () => {
+        const platform = await seedPlatform(src.repos)
+        const platformB = await seedPlatform(src.repos, "Strict Missing B")
+        const cred = (
+          await addCredential(
+            { platformId: String(platform.id), account: "work", kind: "bearer", secret: "S1" },
+            platform,
+            src.store,
+            src.repos.credentials,
+          )
+        )._unsafeUnwrap()
+        const missingSecretCred = (
+          await addCredential(
+            {
+              platformId: String(platformB.id),
+              account: "will-vanish",
+              kind: "bearer",
+              secret: "VANISHING",
+            },
+            platformB,
+            src.store,
+            src.repos.credentials,
+          )
+        )._unsafeUnwrap()
+
+        await src.repos.profiles.create({
+          id: "profile-strict-drop-1",
+          name: "strict-drop-profile",
+          sources: [
+            {
+              platformId: platform.id,
+              credentialId: cred.id,
+              toolNamespace: "strict_kept_ns",
+              enabled: true,
+            },
+            {
+              platformId: platformB.id,
+              credentialId: missingSecretCred.id,
+              toolNamespace: "strict_dropped_ns",
+              enabled: true,
+            },
+          ],
+        })
+
+        await src.store.delete(missingSecretCred.secretRef)
+        const exportResult = await exportVault({
+          repos: src.repos,
+          store: src.store,
+          passphrase: "strict-drop-pass",
+          includeProfiles: true,
+          skipMissing: true,
+        })
+        if (!exportResult.isOk()) throw exportResult.error
+
+        const importResult = await importVault({
+          repos: dst.repos,
+          store: dst.store,
+          archive: exportResult.value.archive,
+          passphrase: "strict-drop-pass",
+          includeProfiles: true,
+          strict: true,
+        })
+        expect(importResult.isOk()).toBe(true)
+        if (!importResult.isOk()) return
+
+        const dstProfile = (
+          await dst.repos.profiles.getByName("strict-drop-profile")
+        )._unsafeUnwrap()
+        expect(dstProfile.sources.find((s) => s.toolNamespace === "strict_kept_ns")).toBeDefined()
+        expect(
+          dstProfile.sources.find((s) => s.toolNamespace === "strict_dropped_ns"),
+        ).toBeUndefined()
+      })
     })
   })
 })
