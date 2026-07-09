@@ -25,30 +25,19 @@
 
 ### 1a. Dogfooding finds — real UX gaps (found 2026-07-07 by using the web UI)
 
-> **Method files authored + doc-reviewed 2026-07-07** as the **32.6 web-fixes wave** (parallel-safe,
-> disjoint `touches`): `32.6a-app-authmodes.md` · `32.6b-audit-web-page.md` · `32.6c-surfaces-backfill.md`.
-> Ready to build in isolated worktrees → staging branch → merge to main. Not yet started.
+> **✅ SHIPPED 2026-07-09 as the 32.6 web-fixes wave (PR #123)** — built in 3 isolated worktrees → staging
+> → serial-verify integrate → review gate (all clean) → real-server QA. Method files `32.6{a,b,c}-*.md`.
+> Boxes below checked accordingly; the surfaces-backfill has a follow-up batch (34 more apps).
 
-- [ ] **App-detail pages are near-empty for 44 of 45 apps** (e.g. `/app/gitlab`). Root cause: only
-      GitHub has an authored `surfaces[]`; the other 44 fall into `readAppDetail`'s *thin fallback*,
-      which hardcodes `authModes={[]}` (`app.$id.tsx:883`) → strips the Connect / Add-Credential
-      buttons even though the catalog entry declares `auth:[{oauth2},{token}]`.
-  - [ ] **Cheap high-leverage fix:** thread the catalog entry's top-level `auth[]` into the thin DTO
-        (`thinAppDetail`, `data.server.ts:582-588`) + pass real `authModes` to `EmptyAppState` →
-        instantly gives **all 44 apps** working Connect CTAs. (small: 1 DTO field + 1 prop)
-  - [ ] **Full fix (bigger, per-app data):** author `surfaces[]` for the 44 apps (mirror
-        `catalog/github/catalog.json`) + regenerate `catalog.generated.ts`. Lights up the surface-first
-        capability view (available/connected cards, tools). Can be incremental (top apps first:
-        gitlab, stripe, slack, notion, linear, …).
-- [ ] **Web `/audit` page is a ComingSoon stub** (`routes/audit.tsx`) — the audit backend shipped inc 31
-      (`junction audit` reads `<home>/audit.log`) but the web page was deferred.
-  - [ ] Extract the CLI's reader/filter (`readAuditLog` + `filterAuditEntries` + `AuditFilters`,
-        `cli/commands/audit.ts:27-109`) into a new `core/src/audit/read.ts` (web can't import cli);
-        re-wire the CLI onto it (dedup).
-  - [ ] Add a server-fn + `data.server.ts` reader (metadata-only entries → no redaction obstacle) +
-        a filterable table UI (mirror `credentials.tsx`/`useTableView`) with the CLI's filters
-        (`--profile`/`--key`/`--tool`/`--since`/`-n`). **Tail the file, don't slurp** (no rotation yet).
-  - [ ] Fix the stale header comment in `audit.tsx` (says "inc 29"; backend shipped inc 31).
+- [x] **App-detail pages are near-empty for 44 of 45 apps** (e.g. `/app/gitlab`). — **DONE 32.6a (PR #123).**
+  - [x] **Cheap high-leverage fix:** catalog `auth[]` → thin DTO `authModes` → `EmptyAppState` CTAs. Shipped 32.6a.
+  - [~] **Full fix (per-app surfaces[]):** **10 apps done in 32.6c** (gitlab/stripe/slack/notion/linear/sentry/
+        vercel/openai/cloudflare; shopify omitted). **FOLLOW-UP: 34 more apps** to backfill (same flow;
+        no-fabrication discipline; the inc-30.9 importer can accelerate). Still §1 actionable.
+- [x] **Web `/audit` page is a ComingSoon stub** — **DONE 32.6b (PR #123).**
+  - [x] Extracted the reader/filter into `core/src/audit/read.ts` (+ bounded `readAuditLogTail`); CLI rewired.
+  - [x] Server-only `audit.server.ts` + `audit.functions.ts` + filterable table; metadata-only DTO (secret-swept clean); tail-not-slurp.
+  - [x] Stale "inc 29" comments fixed (`audit.tsx` + `index.tsx`).
 
 ### 1b. Unfinished increment carried forward
 
