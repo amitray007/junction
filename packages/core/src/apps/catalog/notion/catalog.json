@@ -14,5 +14,29 @@
   "iconSlug": "notion",
   "help": {
     "notes": ["No stable canonical raw OpenAPI spec URL (JS-rendered portal) — MCP + OAuth only."]
-  }
+  },
+  "surfaces": [
+    {
+      "kind": "mcp",
+      "displayName": "Notion MCP Server",
+      "connection": {
+        "kind": "mcp",
+        "transport": "http",
+        "url": "https://mcp.notion.com/mcp"
+      },
+      "auth": [{ "mode": "oauth2", "providerId": "notion" }],
+      "build": {
+        "platformIdTemplate": "{app}-{kind}",
+        "via": "flattened",
+        "credential": { "kind": "oauth2", "from": "auth" }
+      },
+      "verify": { "kind": "mcp", "listTools": true },
+      "docs": "https://developers.notion.com/guides/mcp/get-started-with-mcp",
+      "agentGuidance": "Notion's own hosted MCP server — pages, databases, comments, search — OAuth-only (no token/bearer path).",
+      "notes": [
+        "url confirmed via https://developers.notion.com/guides/mcp/get-started-with-mcp (official Notion developer docs): hosted endpoint https://mcp.notion.com/mcp (Streamable HTTP, the recommended transport; a legacy /sse endpoint also exists).",
+        "auth is OAuth-only by design: the same docs state Notion MCP 'requires user-based OAuth authentication and does not support bearer token authentication' — so this surface's auth array omits the app-level token mode."
+      ]
+    }
+  ]
 }
