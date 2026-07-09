@@ -3,12 +3,12 @@
 // System info (Store/Sandbox/Home) moved to the sidebar panel (inc 26).
 // No @junction/core import.
 
-import { createFileRoute } from "@tanstack/react-router"
+import { createFileRoute, Link } from "@tanstack/react-router"
+import { ChevronRight } from "lucide-react"
 import type { CSSProperties, ReactNode } from "react"
 import { getSettings } from "../server/data.functions.js"
 import { AgentConfig } from "../ui/agent-config.js"
 import { Card, CardContent } from "../ui/card.js"
-import { ComingSoon } from "../ui/coming-soon.js"
 import { PageHeader } from "../ui/page-header.js"
 import { TableSkeleton } from "../ui/skeleton.js"
 
@@ -62,17 +62,30 @@ function DashboardPage() {
         </Card>
       </section>
 
-      {/* Recent Activity — quiet footer (ComingSoon, audit inc 29). */}
+      {/* Recent Activity — link-card to the real /audit page (inc 32.6b). */}
       <section aria-labelledby="activity-heading">
-        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
-          <SectionLabel id="activity-heading" style={{ margin: 0 }}>
-            Recent Activity
-          </SectionLabel>
-          <ComingSoon />
-        </div>
-        <p style={{ fontSize: "var(--text-body)", color: "var(--gray-600)", margin: 0 }}>
-          Per-agent usage and audit log coming in a later update.
-        </p>
+        <SectionLabel id="activity-heading" style={{ marginBottom: "12px" }}>
+          Recent Activity
+        </SectionLabel>
+        <Link
+          to="/audit"
+          className="no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue-700)] focus-visible:ring-offset-1 rounded-[var(--radius-12)]"
+        >
+          <Card className="transition-colors duration-[var(--motion-fast)] hover:bg-[var(--gray-100)]">
+            <CardContent
+              style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}
+            >
+              <p style={{ fontSize: "var(--text-body)", color: "var(--gray-600)", margin: 0 }}>
+                View the audit log — a record of tool calls and credential use across your agents.
+              </p>
+              <ChevronRight
+                className="h-4 w-4"
+                aria-hidden="true"
+                style={{ color: "var(--gray-600)" }}
+              />
+            </CardContent>
+          </Card>
+        </Link>
       </section>
     </div>
   )
