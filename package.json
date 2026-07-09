@@ -33,7 +33,7 @@
     "type-coverage:check": "type-coverage -p tsconfig.typecoverage.json --strict --at-least 99"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.1",
+    "@biomejs/biome": "^2.5.2",
     "@changesets/changelog-github": "^0.7.0",
     "@changesets/cli": "^2.31.0",
     "dependency-cruiser": "^18.0.0",
@@ -44,7 +44,7 @@
     "type-coverage": "^2.29.7",
     "typescript": "^6.0.3",
     "unrun": "^0.3.1",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.10"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
