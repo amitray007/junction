@@ -534,15 +534,22 @@ describe("data.server", () => {
       expect(detail.app.authModes).toEqual(["oauth2", "oauth2", "token"])
     })
 
-    // NOTE: use a still-surfaceless app here. gitlab/stripe/slack/… gained authored
-    // surfaces[] in inc 32.6c, so they no longer hit the thin fallback. `atlassian` is a
-    // stable surfaceless oauth2+token app (exercises BOTH the Connect-OAuth and
-    // Add-Credential CTAs). If atlassian is ever backfilled, swap for another still-thin
-    // oauth2+token app (discord).
-    it("a surfaceless (thin) app (atlassian) carries its catalog auth modes on app.authModes, surfaces empty", async () => {
-      const detail = await readAppDetail("atlassian")
-      expect(detail.app.authModes).toEqual(["oauth2", "token"])
+    // Backfill-proof (this test kept breaking as apps gained surfaces[] — gitlab in
+    // 32.6c, atlassian in 30.13). Instead of hardcoding one app, DYNAMICALLY find a
+    // still-surfaceless catalog app and assert the thin-fallback plumbs its catalog
+    // auth[] modes onto app.authModes with an empty surfaces list. As long as ONE thin
+    // app exists this is stable; if the catalog ever fully backfills, this skips.
+    it("a surfaceless (thin) app carries its catalog auth modes on app.authModes, surfaces empty", async () => {
+      const { listCatalogEntries } = await import("@junction/core")
+      const thin = listCatalogEntries().find(
+        (e) => (e.surfaces === undefined || e.surfaces.length === 0) && e.auth.length > 0,
+      )
+      if (thin === undefined) return // fully backfilled — nothing thin to exercise (unlikely)
+      const detail = await readAppDetail(thin.id)
       expect(detail.surfaces).toEqual([])
+      expect(detail.app.authModes).toEqual(thin.auth.map((a) => a.mode))
+      // the thin fallback still plumbs SOME auth mode → at least one Connect/Add CTA renders
+      expect(detail.app.authModes.length).toBeGreaterThan(0)
     })
 
     it("a none-only auth app (anilist) carries authModes: ['none']", async () => {
