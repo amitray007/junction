@@ -1,0 +1,41 @@
+{
+  "id": "influxdb",
+  "displayName": "InfluxDB",
+  "category": ["Observability"],
+  "supportedKinds": ["cli"],
+  "auth": [
+    {
+      "mode": "token"
+    }
+  ],
+  "iconSlug": "influxdb",
+  "surfaces": [
+    {
+      "kind": "cli",
+      "displayName": "influx CLI",
+      "connection": {
+        "kind": "cli",
+        "credentialEnvVar": "INFLUX_PAT"
+      },
+      "auth": [{ "mode": "token" }],
+      "build": {
+        "platformIdTemplate": "{app}-{kind}",
+        "via": "descriptor",
+        "credential": { "kind": "bearer", "from": "auth" }
+      },
+      "verify": { "kind": "none" },
+      "docs": "https://docs.influxdata.com/influxdb/cloud/reference/cli/influx/",
+      "agentGuidance": "The official InfluxDB CLI (`influx`) — manage buckets, organizations, users, tasks, and run queries against an InfluxDB Cloud or OSS instance.",
+      "notes": [
+        "Binary name \"influx\" and real token env var \"INFLUX_TOKEN\" confirmed via https://docs.influxdata.com/influxdb/cloud/reference/cli/influx/ (official InfluxData docs, verified 2026-07-10).",
+        "credentialEnvVar is authored as \"INFLUX_PAT\" (not influx's real \"INFLUX_TOKEN\") — CliConnectionSchema rejects any *_TOKEN/_SECRET/_KEY suffix. Mapping INFLUX_PAT back to influx's actual INFLUX_TOKEN env is a later-increment concern, same class as GitHub's GH_PAT / Sentry's SENTRY_API_PAT."
+      ]
+    }
+  ],
+  "help": {
+    "category": ["Observability"],
+    "notes": [
+      "openapi/http surfaces deliberately OMITTED: InfluxDB Cloud is per-region (no single fixed host) and InfluxDB OSS is self-hosted (operator-supplied host, no fixed URL). The InfluxDB v2 OpenAPI spec's own `servers` entry is a relative path (\"/api/v2\") with no host — AppSurfaceConnectionSchema's openapi/http variants both require a resolvable `specUrl`/`baseUrl`, which can't be authored honestly without fabricating a host. The cli surface (this entry) is the only surface with a real, fixed value (the `influx` binary + INFLUX_PAT env)."
+    ]
+  }
+}
