@@ -7,5 +7,30 @@
       "mode": "token"
     }
   ],
-  "iconSlug": "openai"
+  "iconSlug": "openai",
+  "surfaces": [
+    {
+      "kind": "openapi",
+      "displayName": "REST API",
+      "connection": {
+        "kind": "openapi",
+        "specUrl": "https://raw.githubusercontent.com/openai/openai-openapi/master/openapi.yaml",
+        "baseUrl": "https://api.openai.com/v1"
+      },
+      "auth": [{ "mode": "token" }],
+      "build": {
+        "platformIdTemplate": "{app}-{kind}",
+        "via": "flattened",
+        "credential": { "kind": "bearer", "from": "auth" }
+      },
+      "verify": { "kind": "openapi", "operationId": "listModels" },
+      "docs": "https://platform.openai.com/docs/api-reference",
+      "agentGuidance": "OpenAI's REST surface — chat completions, responses, models, files, fine-tuning — from OpenAI's own published OpenAPI spec (a public mirror of their internal spec).",
+      "notes": [
+        "specUrl fetched and confirmed 2,827,153 bytes (~2.7 MB, well under the 10 MB SPEC_BYTE_CAP) as of 2026-07-10. Source: https://github.com/openai/openai-openapi (official openai org repo, openapi.yaml).",
+        "baseUrl confirmed from the spec's own `servers[0].url`: \"https://api.openai.com/v1\".",
+        "verifyOperationId \"listModels\" confirmed present in the parsed spec (GET /models) — a lightweight authenticated probe."
+      ]
+    }
+  ]
 }

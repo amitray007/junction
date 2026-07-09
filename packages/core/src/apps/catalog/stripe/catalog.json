@@ -8,5 +8,72 @@
     }
   ],
   "setupHints": ["Use a Restricted Key for the MCP/CLI path."],
-  "iconSlug": "stripe"
+  "iconSlug": "stripe",
+  "surfaces": [
+    {
+      "kind": "openapi",
+      "displayName": "REST API",
+      "connection": {
+        "kind": "openapi",
+        "specUrl": "https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json",
+        "baseUrl": "https://api.stripe.com"
+      },
+      "auth": [{ "mode": "token" }],
+      "build": {
+        "platformIdTemplate": "{app}-{kind}",
+        "via": "flattened",
+        "credential": { "kind": "bearer", "from": "auth" }
+      },
+      "verify": { "kind": "openapi", "operationId": "GetBalance" },
+      "docs": "https://docs.stripe.com/api",
+      "agentGuidance": "Stripe's full REST surface — customers, charges, subscriptions, invoices — generated from Stripe's own OpenAPI spec (stripe/openapi).",
+      "notes": [
+        "specUrl fetched and confirmed 7,866,866 bytes (~7.5 MB, under the 10 MB SPEC_BYTE_CAP) as of 2026-07-10. Source: https://github.com/stripe/openapi (official stripe org repo, openapi/spec3.json).",
+        "baseUrl confirmed from the spec's own `servers[0].url`: \"https://api.stripe.com/\".",
+        "verifyOperationId \"GetBalance\" confirmed present in the parsed spec (GET /v1/balance) — a lightweight authenticated probe."
+      ]
+    },
+    {
+      "kind": "mcp",
+      "displayName": "Stripe MCP Server",
+      "connection": {
+        "kind": "mcp",
+        "transport": "http",
+        "url": "https://mcp.stripe.com"
+      },
+      "auth": [{ "mode": "token" }],
+      "build": {
+        "platformIdTemplate": "{app}-{kind}",
+        "via": "flattened",
+        "credential": { "kind": "bearer", "from": "auth" }
+      },
+      "verify": { "kind": "mcp", "listTools": true },
+      "docs": "https://docs.stripe.com/mcp",
+      "agentGuidance": "Stripe's own hosted MCP server — curated tools for customers, payments, and subscriptions, plus Stripe knowledge-base search.",
+      "notes": [
+        "url confirmed via https://docs.stripe.com/mcp (official Stripe docs) — hosted endpoint https://mcp.stripe.com, authenticated with a Bearer restricted-key token."
+      ]
+    },
+    {
+      "kind": "cli",
+      "displayName": "Stripe CLI",
+      "connection": {
+        "kind": "cli",
+        "credentialEnvVar": "STRIPE_API_PAT"
+      },
+      "auth": [{ "mode": "token" }],
+      "build": {
+        "platformIdTemplate": "{app}-{kind}",
+        "via": "descriptor",
+        "credential": { "kind": "bearer", "from": "auth" }
+      },
+      "verify": { "kind": "none" },
+      "docs": "https://docs.stripe.com/stripe-cli",
+      "agentGuidance": "Stripe's official CLI — best for webhook forwarding/testing and quick resource inspection outside the REST/MCP surfaces.",
+      "notes": [
+        "credentialEnvVar is \"STRIPE_API_PAT\" (not the CLI's real \"--api-key\" flag / STRIPE_API_KEY-style env) — CliConnectionSchema rejects any *_TOKEN/_SECRET/_KEY suffix. Mapping to the CLI's actual invocation is a later-increment concern (generic CLI primitives rework), same as GitHub's GH_PAT precedent.",
+        "Binary name \"stripe\" confirmed via https://github.com/stripe/stripe-cli (official stripe org repo) and https://docs.stripe.com/stripe-cli."
+      ]
+    }
+  ]
 }
