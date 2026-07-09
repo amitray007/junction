@@ -880,7 +880,7 @@ function AppDetailPage() {
       />
 
       {!hasSurfaces && otherConnections.length === 0 ? (
-        <EmptyAppState displayName={app.displayName} authModes={[]} />
+        <EmptyAppState displayName={app.displayName} authModes={app.authModes} />
       ) : (
         <div className="flex flex-col gap-4">
           {hasSurfaces && (
