@@ -7,5 +7,42 @@
       "mode": "token"
     }
   ],
-  "aliases": ["sendgrid-mail"]
+  "aliases": ["sendgrid-mail"],
+  "surfaces": [
+    {
+      "kind": "openapi",
+      "displayName": "Mail API",
+      "connection": {
+        "kind": "openapi",
+        "specUrl": "https://raw.githubusercontent.com/twilio/sendgrid-oai/main/spec/json/tsg_mail_v3.json",
+        "baseUrl": "https://api.sendgrid.com"
+      },
+      "auth": [
+        {
+          "mode": "token"
+        }
+      ],
+      "build": {
+        "platformIdTemplate": "{app}-{kind}",
+        "via": "flattened",
+        "credential": {
+          "kind": "bearer",
+          "from": "auth"
+        }
+      },
+      "verify": {
+        "kind": "none"
+      },
+      "docs": "https://www.twilio.com/docs/sendgrid/api-reference/mail-send/mail-send",
+      "agentGuidance": "SendGrid's Mail Send v3 API \u2014 send transactional email and check batch-send status. Full-API surfaces (contacts, stats, etc.) are not in this spec (404 upstream) \u2014 mail-send only.",
+      "notes": [
+        "specUrl verified 2026-07-10: downloaded https://raw.githubusercontent.com/twilio/sendgrid-oai/main/spec/json/tsg_mail_v3.json \u2014 54,706 bytes (matches the method file's cited size exactly; well under the 10 MiB cap). auth: token (Bearer) per SendGrid API-key convention.",
+        "BASE URL CORRECTION (verified, not the method file's literal string): the downloaded spec's own `servers[].url` is https://api.sendgrid.com (no /v3 suffix) and every path in the spec already includes the /v3 prefix (e.g. /v3/mail/send, /v3/mail/batch, /v3/mail/batch/{batch_id} \u2014 confirmed by parsing the spec's `paths` object, only 3 entries total). Authoring baseUrl as https://api.sendgrid.com/v3 (the method file's literal value) would double the prefix to /v3/v3/... at request time \u2014 this mirrors the documented slack.com/api convention (base = host + prefix NOT already in the spec's paths) in reverse: sendgrid's paths already carry /v3, so base must be host-only. Using the spec-verified https://api.sendgrid.com here instead.",
+        "verify: NONE (honest omission, not fabricated) \u2014 the spec's only GET operation is GetMailBatch at /v3/mail/batch/{batch_id}, which requires a path parameter (batch_id) with no default/no-arg way to call it. There is no GET operation in this scoped Mail API spec with zero required parameters, so no verifyOperationId can satisfy OpenApiConnectionSchema's 'GET with no required params' contract. Not verifiable via this surface today."
+      ]
+    }
+  ],
+  "help": {
+    "category": ["Communication"]
+  }
 }

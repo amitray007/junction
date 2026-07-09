@@ -13,6 +13,7 @@ import { platformCommand } from "./commands/platform.js"
 import { profileCommand } from "./commands/profile.js"
 import { serveCommand } from "./commands/serve.js"
 import { runStatus, statusCommand } from "./commands/status.js"
+import { vaultCommand } from "./commands/vault.js"
 import { webCommand } from "./commands/web.js"
 
 const main = defineCommand({
@@ -34,6 +35,7 @@ const main = defineCommand({
     serve: serveCommand,
     keys: keysCommand,
     audit: auditCommand,
+    vault: vaultCommand,
   },
 })
 

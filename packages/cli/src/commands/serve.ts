@@ -175,7 +175,18 @@ export const serveCommand = defineCommand({
         const profileResult = await repos.profiles.get(profileId)
         if (profileResult.isErr()) continue // absent → skip, fail-safe shrink
         const profile = profileResult.value
-        const proxy = createProfileProxy(profile.sources, resolveProvider)
+        // Tool-poisoning mitigation (increment 32.5): sanitize is always applied inside
+        // createProfileProxy; onDescriptionDrift only SURFACES it — one structured warn,
+        // metadata only, never the (possibly-injected) description text.
+        const proxy = createProfileProxy(profile.sources, resolveProvider, (info) => {
+          consola.warn({
+            event: "description_sanitized",
+            namespace: info.namespace,
+            tool: info.tool,
+            strippedSuspicious: info.strippedSuspicious,
+            truncated: info.truncated,
+          })
+        })
         entries.push({ profileName: profile.name, proxy })
       }
 

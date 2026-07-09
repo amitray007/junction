@@ -3,29 +3,14 @@
 // SECURITY: fresh IV per set(), auth-tag verified before final(), AAD = secretRef.
 // NEVER logs the key, plaintext, or the full encrypted map. NEVER puts secret values in error cause.
 
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto"
+import { randomBytes } from "node:crypto"
 import { chmod, readFile, rename, unlink, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { err, ok, okAsync, ResultAsync } from "neverthrow"
-import { z } from "zod"
 import type { CredentialError } from "../errors/index.js"
 import type { JunctionPaths } from "../paths/index.js"
 import type { CredentialStore } from "./store.js"
-
-// ---- on-disk schema ----
-
-const EncRecordSchema = z.object({
-  iv: z.string(),
-  tag: z.string(),
-  ct: z.string(),
-})
-type EncRecord = z.infer<typeof EncRecordSchema>
-
-const EncFileSchema = z.object({
-  v: z.literal(1),
-  entries: z.record(z.string(), EncRecordSchema),
-})
-type EncFile = z.infer<typeof EncFileSchema>
+import { type EncFile, EncFileSchema, gcmDecrypt, gcmEncrypt } from "./vault-crypto.js"
 
 // ---- helpers ----
 
@@ -78,34 +63,6 @@ async function saveEncFile(paths: JunctionPaths, data: EncFile): Promise<void> {
   }
 }
 
-function encryptRecord(key: Buffer, secretRef: string, plaintext: string): EncRecord {
-  const iv = randomBytes(12)
-  const cipher = createCipheriv("aes-256-gcm", key, iv)
-  cipher.setAAD(Buffer.from(secretRef))
-  const ct = Buffer.concat([cipher.update(plaintext, "utf-8"), cipher.final()])
-  const tag = cipher.getAuthTag()
-  return {
-    iv: iv.toString("base64"),
-    tag: tag.toString("base64"),
-    ct: ct.toString("base64"),
-  }
-}
-
-/**
- * Decrypts a record. Throws if the auth tag does not match — caller maps throw → decrypt-failed.
- * setAuthTag MUST be called before final() to enforce GCM integrity.
- */
-function decryptRecord(key: Buffer, secretRef: string, record: EncRecord): string {
-  const iv = Buffer.from(record.iv, "base64")
-  const tag = Buffer.from(record.tag, "base64")
-  const ct = Buffer.from(record.ct, "base64")
-  const decipher = createDecipheriv("aes-256-gcm", key, iv)
-  decipher.setAAD(Buffer.from(secretRef))
-  decipher.setAuthTag(tag) // MUST precede final() — a mismatch makes final() throw
-  const plaintext = Buffer.concat([decipher.update(ct), decipher.final()])
-  return plaintext.toString("utf-8")
-}
-
 // ---- store ----
 
 /** Load the enc-file, mapping any filesystem/parse failure to an io-failed Err. */
@@ -133,7 +90,7 @@ export function createEncryptedFileStore(paths: JunctionPaths, key: Buffer): Cre
         const record = data.entries[secretRef]
         if (record === undefined) return ok<string | null, CredentialError>(null)
         try {
-          return ok<string | null, CredentialError>(decryptRecord(key, secretRef, record))
+          return ok<string | null, CredentialError>(gcmDecrypt(key, Buffer.from(secretRef), record))
         } catch (cause) {
           // SECURITY: never return partial plaintext; the GCM auth failure carries no secret data
           return err<string | null, CredentialError>({ kind: "decrypt-failed", cause })
@@ -143,7 +100,7 @@ export function createEncryptedFileStore(paths: JunctionPaths, key: Buffer): Cre
 
     set(secretRef: string, secret: string): ResultAsync<void, CredentialError> {
       return loadOrIoFailed(paths.credentialsFile).andThen((data) => {
-        data.entries[secretRef] = encryptRecord(key, secretRef, secret)
+        data.entries[secretRef] = gcmEncrypt(key, Buffer.from(secretRef), secret)
         return saveOrIoFailed(paths, data)
       })
     },

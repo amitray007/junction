@@ -45,6 +45,7 @@ import type { SourceRef, ToolFilter, UpstreamError } from "../index.js"
 import { err, ok, type Result, ResultAsync } from "../result/index.js"
 import { namespaceToolName, splitNamespacedName } from "./naming.js"
 import type { ProviderTool, ToolProvider, ToolResult } from "./provider.js"
+import { sanitizeDescription } from "./sanitize-description.js"
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -62,6 +63,26 @@ export type ResolveProviderFn = (
   { provider: ToolProvider; toolNamespace: string; toolFilter?: ToolFilter | undefined },
   UpstreamError
 >
+
+/**
+ * Injected callback (increment 32.5): fired when a tool DESCRIPTION was
+ * sanitized in a way that indicates a real injection attempt — a
+ * control/format character was stripped, or the description was truncated
+ * for excessive length. NOT fired for cosmetic-only changes (NFKC
+ * normalization or whitespace collapse alone) — that would drown the real
+ * signal on nearly every listTools call for many honest, non-English or
+ * multi-line sources.
+ *
+ * METADATA ONLY: never passed the raw or sanitized description text — the
+ * (possibly-injected) text must never reach a log. Same injection pattern as
+ * resolveProvider; the pure proxy never imports a logger.
+ */
+export type OnDescriptionDriftFn = (info: {
+  namespace: string
+  tool: string
+  strippedSuspicious: boolean
+  truncated: boolean
+}) => void
 
 /** Multi-source proxy for a profile's aggregated MCP tools. */
 export interface ProfileProxy {
@@ -128,17 +149,23 @@ function isToolAllowed(rawName: string, filter: ToolFilter | undefined): boolean
 /**
  * Build a ProfileProxy for a profile's sources.
  *
- * @param sources         - The profile's SourceRef list. Only enabled ones are used.
- * @param resolveProvider - Injected by the cli: maps a SourceRef to its ToolProvider +
+ * @param sources             - The profile's SourceRef list. Only enabled ones are used.
+ * @param resolveProvider     - Injected by the cli: maps a SourceRef to its ToolProvider +
  *   namespace. Must NOT import from the credential store here — injection keeps core pure.
+ * @param onDescriptionDrift  - Optional (increment 32.5): fired from listTools only, once per
+ *   tool whose description sanitization stripped a suspicious char or truncated it for length.
+ *   Absent callback → sanitize is still applied, just not surfaced (no-op, never throws).
  *
- * The returned proxy applies namespacing (namespaceToolName / ≤64 guard) and toolFilter
- * on top of each provider's raw output. Per-source resilience: a failing source is skipped
- * on listTools and propagated as Err on callTool.
+ * The returned proxy applies namespacing (namespaceToolName / ≤64 guard), toolFilter, and
+ * description sanitization (increment 32.5 — tool-poisoning mitigation) on top of each
+ * provider's raw output. Per-source resilience: a failing source is skipped on listTools and
+ * propagated as Err on callTool. callTool needs no sanitization — descriptions never flow
+ * through the call path.
  */
 export function createProfileProxy(
   sources: SourceRef[],
   resolveProvider: ResolveProviderFn,
+  onDescriptionDrift?: OnDescriptionDriftFn,
 ): ProfileProxy {
   const enabledSources = sources.filter((s) => s.enabled)
 
@@ -180,7 +207,25 @@ export function createProfileProxy(
                 const nameResult = namespaceToolName(toolNamespace, t.name)
                 if (nameResult.isErr()) continue
 
-                namespaced.push({ ...t, name: nameResult.value })
+                // TOOL-POISONING MITIGATION (increment 32.5): sanitize the description —
+                // the ONE point every agent-visible tool description flows through, for
+                // every source kind. Surface drift ONLY when it's a real injection signal
+                // (strippedSuspicious or truncated), never for cosmetic-only changes.
+                let description = t.description
+                if (description !== undefined) {
+                  const sanitized = sanitizeDescription(description)
+                  description = sanitized.text
+                  if ((sanitized.strippedSuspicious || sanitized.truncated) && onDescriptionDrift) {
+                    onDescriptionDrift({
+                      namespace: toolNamespace,
+                      tool: t.name,
+                      strippedSuspicious: sanitized.strippedSuspicious,
+                      truncated: sanitized.truncated,
+                    })
+                  }
+                }
+
+                namespaced.push({ ...t, name: nameResult.value, description })
               }
               return namespaced
             } finally {

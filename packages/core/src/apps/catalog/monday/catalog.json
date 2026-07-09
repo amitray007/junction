@@ -6,5 +6,30 @@
     {
       "mode": "token"
     }
+  ],
+  "help": {
+    "category": ["Productivity"]
+  },
+  "surfaces": [
+    {
+      "kind": "graphql",
+      "displayName": "monday.com API",
+      "connection": {
+        "kind": "graphql",
+        "endpoint": "https://api.monday.com/v2"
+      },
+      "auth": [{ "mode": "token" }],
+      "build": {
+        "platformIdTemplate": "{app}-{kind}",
+        "via": "flattened",
+        "credential": { "kind": "bearer", "from": "auth" }
+      },
+      "verify": { "kind": "graphql", "typenameProbe": true },
+      "docs": "https://developer.monday.com/api-reference/reference/",
+      "agentGuidance": "monday.com's GraphQL v2 API — boards, items, columns, and updates.",
+      "notes": [
+        "endpoint \"https://api.monday.com/v2\" confirmed live 2026-07-10 (curl unauthenticated GET/POST -> HTTP 401, auth-gated not 404). Source: https://developer.monday.com/api-reference/reference/ (official monday.com developer docs)."
+      ]
+    }
   ]
 }

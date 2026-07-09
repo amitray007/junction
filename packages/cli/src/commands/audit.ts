@@ -7,106 +7,20 @@
 // that — arg keys + a correlation hash only, never values, never a
 // credential, never an upstream response/cause). This command does no
 // redaction of its own; it just parses, filters, and prints what's there.
+//
+// The reader/filter logic itself (readAuditLog/filterAuditEntries/
+// parseSinceUtc/AuditFilters) was extracted to @junction/core (increment
+// 32.6b) so the web /audit page — a sibling app that cannot import cli — can
+// share it. This file keeps only the human formatter + arg parsing/citty
+// wiring; behavior is byte-identical to before the extract.
 
-import { readFile } from "node:fs/promises"
-import { type AuditEntry, AuditEntrySchema, getPaths } from "@junction/core"
+import { type AuditEntry, filterAuditEntries, getPaths, readAuditLog } from "@junction/core"
 import { defineCommand } from "citty"
 import { JSON_ARG } from "../args.js"
 import { reportError } from "../format.js"
 
 /** Default tail size when `-n/--limit` is not supplied. */
 const DEFAULT_LIMIT = 50
-
-/**
- * Read + parse the JSONL audit log at `auditLogFile`. Never throws for a
- * missing file (honest "no entries yet" case) or a malformed line (skipped,
- * counted, never fatal — the log is an append-only stream other processes
- * may be writing to concurrently; one bad line must not break reads of
- * every other line).
- */
-async function readAuditLog(filePath: string): Promise<{ entries: AuditEntry[]; skipped: number }> {
-  let raw: string
-  try {
-    raw = await readFile(filePath, "utf8")
-  } catch (e) {
-    const err = e as NodeJS.ErrnoException
-    if (err.code === "ENOENT") return { entries: [], skipped: 0 }
-    throw e
-  }
-
-  const entries: AuditEntry[] = []
-  let skipped = 0
-  for (const line of raw.split("\n")) {
-    const trimmed = line.trim()
-    if (trimmed === "") continue
-    let parsedJson: unknown
-    try {
-      parsedJson = JSON.parse(trimmed)
-    } catch {
-      skipped++
-      continue
-    }
-    const result = AuditEntrySchema.safeParse(parsedJson)
-    if (!result.success) {
-      skipped++
-      continue
-    }
-    entries.push(result.data)
-  }
-  return { entries, skipped }
-}
-
-/**
- * Parse a `--since` value as ISO-8601, always in UTC. A bare date
- * (`2026-07-07`, no time component) is JS-native UTC-midnight — never local
- * time (the entry `ts` field is emitted in UTC by pino, so the comparison
- * must be apples-to-apples). Returns null if unparseable.
- */
-function parseSinceUtc(since: string): number | null {
-  const ms = Date.parse(since)
-  return Number.isNaN(ms) ? null : ms
-}
-
-export type AuditFilters = {
-  profile?: string
-  key?: string
-  tool?: string
-  since?: string
-  limit: number
-}
-
-/**
- * Apply --profile/--key/--tool/--since filters, then take the LAST `limit`
- * entries (a tail of the filtered set, not the unfiltered log).
- */
-export function filterAuditEntries(
-  entries: AuditEntry[],
-  filters: AuditFilters,
-): { filtered: AuditEntry[]; sinceError: boolean } {
-  let sinceMs: number | null = null
-  if (filters.since !== undefined) {
-    sinceMs = parseSinceUtc(filters.since)
-    if (sinceMs === null) return { filtered: [], sinceError: true }
-  }
-
-  const filtered = entries.filter((e) => {
-    if (filters.profile !== undefined) {
-      const matchesTarget = e.target.profile === filters.profile
-      const matchesPrincipal = e.principal.profiles.includes(filters.profile)
-      if (!matchesTarget && !matchesPrincipal) return false
-    }
-    if (filters.key !== undefined && e.principal.keyId !== filters.key) return false
-    if (filters.tool !== undefined && e.target.tool !== filters.tool) return false
-    if (sinceMs !== null) {
-      const entryMs = Date.parse(e.ts)
-      if (Number.isNaN(entryMs) || entryMs < sinceMs) return false
-    }
-    return true
-  })
-
-  const tail = filters.limit > 0 ? filtered.slice(-filters.limit) : filtered
-  return { filtered: tail, sinceError: false }
-}
 
 function formatHuman(entries: AuditEntry[], skipped: number): string {
   const lines: string[] = []

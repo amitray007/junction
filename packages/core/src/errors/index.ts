@@ -32,6 +32,16 @@ export type CredentialError =
    * DB-level hardening.
    */
   | { kind: "duplicate-account"; platformId: string; account: string }
+  /**
+   * Master-key rotation (increment 32.3) and vault export/import (increment 32.4) kinds —
+   * hoisted here by the 32.2 foundation slice so the exhaustive switch in
+   * `cli/format.ts#formatCredentialError` is extended ONCE, not twice in parallel by both
+   * builders (spec-flow finding C2). 32.3/32.4 only construct these; they never edit the switch.
+   */
+  | { kind: "rotate-refused"; reason: string }
+  | { kind: "rotate-failed"; cause: unknown }
+  | { kind: "export-failed"; reason: string }
+  | { kind: "import-failed"; reason: string }
 
 /**
  * Errors from minting/verifying/revoking junction API keys (increment 27).

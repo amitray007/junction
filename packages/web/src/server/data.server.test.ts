@@ -523,6 +523,45 @@ describe("data.server", () => {
       expect(detail.otherConnections).toEqual([])
     })
 
+    // App-detail Connect CTAs for surfaceless apps (increment 32.6a) — the
+    // catalog entry's top-level auth[] now rides through app.authModes on
+    // BOTH construction sites (thin fallback AND the full surface-first
+    // return), so the route's EmptyAppState always gets real modes instead
+    // of a hardcoded [].
+    it("a surface-authored app (github) also carries its catalog auth modes on app.authModes", async () => {
+      const detail = await readAppDetail("github")
+      // GitHub's catalog auth[] is [oauth2 (github), oauth2 (github-app), token].
+      expect(detail.app.authModes).toEqual(["oauth2", "oauth2", "token"])
+    })
+
+    // Backfill-proof (this test kept breaking as apps gained surfaces[] — gitlab in
+    // 32.6c, atlassian in 30.13). Instead of hardcoding one app, DYNAMICALLY find a
+    // still-surfaceless catalog app and assert the thin-fallback plumbs its catalog
+    // auth[] modes onto app.authModes with an empty surfaces list. As long as ONE thin
+    // app exists this is stable; if the catalog ever fully backfills, this skips.
+    it("a surfaceless (thin) app carries its catalog auth modes on app.authModes, surfaces empty", async () => {
+      const { listCatalogEntries } = await import("@junction/core")
+      const thin = listCatalogEntries().find(
+        (e) => (e.surfaces === undefined || e.surfaces.length === 0) && e.auth.length > 0,
+      )
+      if (thin === undefined) return // fully backfilled — nothing thin to exercise (unlikely)
+      const detail = await readAppDetail(thin.id)
+      expect(detail.surfaces).toEqual([])
+      expect(detail.app.authModes).toEqual(thin.auth.map((a) => a.mode))
+      // the thin fallback still plumbs SOME auth mode → at least one Connect/Add CTA renders
+      expect(detail.app.authModes.length).toBeGreaterThan(0)
+    })
+
+    it("a none-only auth app (anilist) carries authModes: ['none']", async () => {
+      const detail = await readAppDetail("anilist")
+      expect(detail.app.authModes).toEqual(["none"])
+    })
+
+    it("an unknown id with no catalog entry falls back to authModes: []", async () => {
+      const detail = await readAppDetail("totally-unknown-app-id")
+      expect(detail.app.authModes).toEqual([])
+    })
+
     it("metadata-only negative test: the DTO carries NO secretRef/build/connection fields", async () => {
       const detail = await readAppDetail("github")
       const serialized = JSON.stringify(detail)
