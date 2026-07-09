@@ -553,7 +553,13 @@ function surfaceIsVerifiable(surface: AppSurface): boolean {
 }
 
 export type AppDetail = {
-  app: { id: string; displayName: string; iconSlug?: string; help?: AppHelp }
+  app: {
+    id: string
+    displayName: string
+    iconSlug?: string
+    help?: AppHelp
+    authModes: AppAuth["mode"][]
+  }
   surfaces: SurfaceView[]
   otherConnections: ConnectionMeta[]
 }
@@ -579,9 +585,14 @@ function isHealthyConnection(conn: ConnectionMeta): boolean {
 }
 
 /** Thin fallback DTO for id==="other" / undefined-catalog / no-surfaces apps (§2 item 4). */
-function thinAppDetail(id: string, displayName: string, connections: ConnectionMeta[]): AppDetail {
+function thinAppDetail(
+  id: string,
+  displayName: string,
+  authModes: AppAuth["mode"][],
+  connections: ConnectionMeta[],
+): AppDetail {
   return {
-    app: { id, displayName },
+    app: { id, displayName, authModes },
     surfaces: [],
     otherConnections: connections,
   }
@@ -592,12 +603,17 @@ export async function readAppDetail(id: string): Promise<AppDetail> {
   const connections = groups.find((g) => g.appId === id)?.connections ?? []
 
   if (id === "other") {
-    return thinAppDetail("other", "Other", connections)
+    return thinAppDetail("other", "Other", [], connections)
   }
 
   const entry = getCatalogEntry(id)
   if (entry === undefined || entry.surfaces === undefined || entry.surfaces.length === 0) {
-    return thinAppDetail(id, entry?.displayName ?? id, connections)
+    return thinAppDetail(
+      id,
+      entry?.displayName ?? id,
+      entry?.auth.map((a) => a.mode) ?? [],
+      connections,
+    )
   }
 
   const { matched, leftover } = intersectSurfaces(entry.surfaces, connections)
@@ -663,6 +679,7 @@ export async function readAppDetail(id: string): Promise<AppDetail> {
       displayName: entry.displayName,
       ...(entry.iconSlug !== undefined ? { iconSlug: entry.iconSlug } : {}),
       ...(entry.help !== undefined ? { help: entry.help } : {}),
+      authModes: entry.auth.map((a) => a.mode),
     },
     surfaces,
     otherConnections: leftover,

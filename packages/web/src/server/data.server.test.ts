@@ -523,6 +523,33 @@ describe("data.server", () => {
       expect(detail.otherConnections).toEqual([])
     })
 
+    // App-detail Connect CTAs for surfaceless apps (increment 32.6a) — the
+    // catalog entry's top-level auth[] now rides through app.authModes on
+    // BOTH construction sites (thin fallback AND the full surface-first
+    // return), so the route's EmptyAppState always gets real modes instead
+    // of a hardcoded [].
+    it("a surface-authored app (github) also carries its catalog auth modes on app.authModes", async () => {
+      const detail = await readAppDetail("github")
+      // GitHub's catalog auth[] is [oauth2 (github), oauth2 (github-app), token].
+      expect(detail.app.authModes).toEqual(["oauth2", "oauth2", "token"])
+    })
+
+    it("a surfaceless (thin) app (gitlab) carries its catalog auth modes on app.authModes, surfaces empty", async () => {
+      const detail = await readAppDetail("gitlab")
+      expect(detail.app.authModes).toEqual(["oauth2", "token"])
+      expect(detail.surfaces).toEqual([])
+    })
+
+    it("a none-only auth app (anilist) carries authModes: ['none']", async () => {
+      const detail = await readAppDetail("anilist")
+      expect(detail.app.authModes).toEqual(["none"])
+    })
+
+    it("an unknown id with no catalog entry falls back to authModes: []", async () => {
+      const detail = await readAppDetail("totally-unknown-app-id")
+      expect(detail.app.authModes).toEqual([])
+    })
+
     it("metadata-only negative test: the DTO carries NO secretRef/build/connection fields", async () => {
       const detail = await readAppDetail("github")
       const serialized = JSON.stringify(detail)
