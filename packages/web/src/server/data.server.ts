@@ -5,7 +5,6 @@
 
 import {
   type AppAuth,
-  type AppDefinition,
   type AppHelp,
   type AppSurface,
   compatibleCredentialKinds,
@@ -20,6 +19,7 @@ import {
   intersectSurfaces,
   type JunctionPaths,
   listApps,
+  listCatalogEntries,
   listProviders,
   loadConfig,
   loadConfigState,
@@ -388,7 +388,24 @@ export async function readProfiles(): Promise<ProfileMeta[]> {
 // verify/oauth fields, re-keyed onto the Connection shape.
 // ---------------------------------------------------------------------------
 
-export type AppMeta = AppDefinition
+/**
+ * Web DTO for a catalog app on the /app index — mirrors the AppDefinition
+ * fields the index actually renders (routes never see a core type directly;
+ * same convention as audit.server.ts), plus `category`: the curated
+ * help.category labels (inc 30.13) that the legacy listApps() projection
+ * drops (see core/src/apps/catalog.ts's toAppDefinition). Metadata-only —
+ * every field is public catalog data.
+ */
+export type AppMeta = {
+  id: string
+  displayName: string
+  supportedKinds: string[]
+  auth: AppAuth[]
+  aliases?: string[]
+  iconSlug?: string
+  /** Curated category labels (may be several); absent/empty = uncategorized. */
+  category?: string[]
+}
 
 export type ConnectionMeta = {
   /** Underlying credential id — undefined for a credential-less (public) connection. */
@@ -482,7 +499,15 @@ async function readAppGroups(): Promise<AppGroupMeta[]> {
 
 export async function readApps(): Promise<AppsData> {
   const groupMetas = await readAppGroups()
-  return { catalog: listApps(), groups: groupMetas }
+  // Left-join help.category from the rich catalog: listApps()'s legacy
+  // AppDefinition projection drops `help` entirely (see core catalog.ts),
+  // so the Category facet would never see it otherwise.
+  const categoryById = new Map(listCatalogEntries().map((e) => [e.id, e.help?.category]))
+  const catalog: AppMeta[] = listApps().map((app) => ({
+    ...app,
+    category: categoryById.get(app.id),
+  }))
+  return { catalog, groups: groupMetas }
 }
 
 // ---------------------------------------------------------------------------
