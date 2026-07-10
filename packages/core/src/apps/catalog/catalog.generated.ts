@@ -502,6 +502,278 @@ export const CATALOG_ENTRIES: readonly AppCatalogEntry[] = [
     },
   },
   {
+    id: "google-calendar",
+    displayName: "Google Calendar",
+    supportedKinds: ["http"],
+    auth: [
+      {
+        mode: "oauth2",
+        providerId: "google",
+      },
+    ],
+    iconSlug: "google-calendar",
+    surfaces: [
+      {
+        kind: "http",
+        displayName: "Google Calendar (HTTP)",
+        connection: {
+          kind: "http",
+          baseUrl: "https://www.googleapis.com/calendar/v3",
+        },
+        auth: [
+          {
+            mode: "oauth2",
+            providerId: "google",
+          },
+        ],
+        build: {
+          platformIdTemplate: "{app}-{kind}",
+          via: "descriptor",
+          credential: {
+            kind: "bearer",
+            from: "auth",
+          },
+        },
+        verify: {
+          kind: "none",
+        },
+        docs: "https://developers.google.com/workspace/calendar/api/v3/reference",
+        agentGuidance:
+          "Hand-authored, stable pinned operations covering the Calendar agent core: list/get/create/update/delete events on a calendar, and list the user's calendars. Prefer these over ad-hoc calls — they are junction-owned and author-verified against the Calendar v3 Discovery document.",
+        starterTools: [
+          {
+            name: "list_events",
+            description:
+              "List events on a calendar (GET /calendars/{calendarId}/events). Supports time-range filtering and free-text search.",
+            method: "GET",
+            path: "/calendars/{calendarId}/events",
+            params: [
+              {
+                name: "calendarId",
+                in: "path",
+                type: "string",
+                required: true,
+                description:
+                  'The calendar id to list events from. Use "primary" for the authenticated user\'s main calendar, or an id from list_calendars.',
+              },
+              {
+                name: "timeMin",
+                in: "query",
+                type: "string",
+                required: false,
+                description:
+                  'RFC3339 timestamp — only return events that end on or after this time (e.g. "2026-07-11T00:00:00Z").',
+              },
+              {
+                name: "timeMax",
+                in: "query",
+                type: "string",
+                required: false,
+                description:
+                  'RFC3339 timestamp — only return events that start before this time (e.g. "2026-07-18T00:00:00Z").',
+              },
+              {
+                name: "q",
+                in: "query",
+                type: "string",
+                required: false,
+                description:
+                  "Free-text search terms to filter events (matches summary, description, location, attendee names/emails).",
+              },
+              {
+                name: "maxResults",
+                in: "query",
+                type: "number",
+                required: false,
+                description:
+                  "Maximum number of events to return. Defaults to 250; the maximum allowed value is 2500.",
+              },
+              {
+                name: "singleEvents",
+                in: "query",
+                type: "boolean",
+                required: false,
+                description:
+                  "Whether to expand recurring events into individual instances. Set true to get concrete instances rather than the recurring master event.",
+              },
+              {
+                name: "orderBy",
+                in: "query",
+                type: "enum",
+                required: false,
+                description:
+                  'The order to sort results in. "startTime" requires singleEvents=true.',
+                enum: ["startTime", "updated"],
+              },
+            ],
+            responseHint: "{ items: [Event], nextPageToken? }",
+          },
+          {
+            name: "get_event",
+            description: "Get a single event by id (GET /calendars/{calendarId}/events/{eventId}).",
+            method: "GET",
+            path: "/calendars/{calendarId}/events/{eventId}",
+            params: [
+              {
+                name: "calendarId",
+                in: "path",
+                type: "string",
+                required: true,
+                description:
+                  'The calendar id the event belongs to. Use "primary" for the authenticated user\'s main calendar, or an id from list_calendars.',
+              },
+              {
+                name: "eventId",
+                in: "path",
+                type: "string",
+                required: true,
+                description: "The event id, as returned by list_events or create_event.",
+              },
+            ],
+            responseHint: "An Event resource: { id, summary, start, end, attendees, status, ... }",
+          },
+          {
+            name: "create_event",
+            description:
+              'Create a new event on a calendar (POST /calendars/{calendarId}/events). The request body is a JSON Event resource, minimally {"summary":"...", "start":{"dateTime":"2026-07-11T10:00:00-07:00"} (or {"date":"2026-07-11"} for an all-day event), "end":{...same shape as start...}}. Optional fields include description, location, and attendees (array of {email}).',
+            method: "POST",
+            path: "/calendars/{calendarId}/events",
+            params: [
+              {
+                name: "calendarId",
+                in: "path",
+                type: "string",
+                required: true,
+                description:
+                  'The calendar id to create the event on. Use "primary" for the authenticated user\'s main calendar, or an id from list_calendars.',
+              },
+              {
+                name: "body",
+                in: "body",
+                type: "string",
+                required: true,
+                description:
+                  'JSON Event resource: {"summary":"...", "start":{"dateTime"|"date":"..."}, "end":{"dateTime"|"date":"..."}, "description"?, "location"?, "attendees"?:[{"email":"..."}]}. The agent builds this object itself.',
+              },
+            ],
+            responseHint: "The created Event resource: { id, htmlLink, summary, start, end, ... }",
+            confirm: true,
+          },
+          {
+            name: "update_event",
+            description:
+              "Partially update an existing event (PATCH /calendars/{calendarId}/events/{eventId}). Only the fields present in the body are changed; omitted fields are left as-is.",
+            method: "PATCH",
+            path: "/calendars/{calendarId}/events/{eventId}",
+            params: [
+              {
+                name: "calendarId",
+                in: "path",
+                type: "string",
+                required: true,
+                description:
+                  'The calendar id the event belongs to. Use "primary" for the authenticated user\'s main calendar, or an id from list_calendars.',
+              },
+              {
+                name: "eventId",
+                in: "path",
+                type: "string",
+                required: true,
+                description: "The event id to update, as returned by list_events or create_event.",
+              },
+              {
+                name: "body",
+                in: "body",
+                type: "string",
+                required: true,
+                description:
+                  'JSON object containing only the Event fields to change, e.g. {"summary":"New title"} or {"start":{"dateTime":"..."},"end":{"dateTime":"..."}} to reschedule.',
+              },
+            ],
+            responseHint: "The updated Event resource: { id, summary, start, end, ... }",
+            confirm: true,
+          },
+          {
+            name: "delete_event",
+            description:
+              "Delete an event from a calendar (DELETE /calendars/{calendarId}/events/{eventId}). Irreversible.",
+            method: "DELETE",
+            path: "/calendars/{calendarId}/events/{eventId}",
+            params: [
+              {
+                name: "calendarId",
+                in: "path",
+                type: "string",
+                required: true,
+                description:
+                  'The calendar id the event belongs to. Use "primary" for the authenticated user\'s main calendar, or an id from list_calendars.',
+              },
+              {
+                name: "eventId",
+                in: "path",
+                type: "string",
+                required: true,
+                description: "The event id to delete, as returned by list_events or create_event.",
+              },
+            ],
+            responseHint: "No response body on success (204).",
+            confirm: true,
+          },
+          {
+            name: "list_calendars",
+            description:
+              "List calendars on the authenticated user's calendar list (GET /users/me/calendarList) — every calendar the user owns or has subscribed to.",
+            method: "GET",
+            path: "/users/me/calendarList",
+            params: [],
+            responseHint: "{ items: [{id, summary, accessRole, primary?}], nextPageToken? }",
+          },
+        ],
+        notes: [
+          "Hand-authored templates covering the Calendar agent core (events + calendarList) — a curated subset, not full API coverage.",
+          "create_event/update_event/delete_event require the calendar or calendar.events (write) scope; a read-only grant (calendar.readonly / calendar.events.readonly) will 403 them (honest scope note).",
+          "Full REST coverage awaits a Discovery->OpenAPI adapter (see docs/futures/revisit-when.md).",
+        ],
+      },
+    ],
+    help: {
+      category: ["productivity", "calendar"],
+      homepage: "https://calendar.google.com/",
+      statusPage: "https://www.google.com/appsstatus/dashboard/",
+      description:
+        "Google's calendar and scheduling service — events, calendars, and availability, accessed via the Calendar REST API.",
+      agentGuidance:
+        "Covers listing/creating/updating/deleting events on a calendar and listing the user's calendars. The HTTP surface's templates are stable pinned operations (list/get/create/update/delete events, list calendars) — prefer them over exploratory calls.",
+      oauthApp: {
+        registerUrl: "https://console.cloud.google.com/apis/credentials",
+        callbackPath: "/oauth/callback/google",
+      },
+      provenance: {
+        authoredBy: "junction",
+        researchedFrom: [
+          "https://developers.google.com/workspace/calendar/api/v3/reference",
+          "https://developers.google.com/identity/protocols/oauth2/scopes#calendar",
+          "https://developers.google.com/identity/protocols/oauth2",
+          "https://calendar-json.googleapis.com/$discovery/rest?version=v3",
+          "https://console.cloud.google.com/apis/credentials",
+          "https://www.google.com/appsstatus/dashboard/",
+        ],
+        lastReviewed: "2026-07-11",
+      },
+      authSetup: {
+        interactive:
+          "create a project + OAuth client (type: Desktop app) in the Google Cloud Console, enable the Google Calendar API for the project, then request Calendar scopes (calendar.readonly / calendar.events / calendar.events.readonly / calendar) during connect",
+        env: "n/a — Google issues no static token; OAuth (with refresh) is the only auth mode",
+      },
+      notes: [
+        "Calendar's machine-readable API description is a Google Discovery document, not an OpenAPI 3.x spec — junction's openapi-client can't parse it, so no openapi surface ships. Full REST coverage awaits a Discovery->OpenAPI adapter (see docs/futures/revisit-when.md).",
+        "No CLI surface: there is no officially-supported Google Calendar user-data CLI (the unofficial @googleworkspace/cli 'gws' explicitly states it is not an official Google product, so junction doesn't ship it).",
+        "Google ships an official remote Calendar MCP server (calendarmcp.googleapis.com/mcp/v1, OAuth-protected) but it is Developer Preview (pre-GA), and junction's catalog build recipe can't yet bind an oauth2 credential to a remote mcp/http surface (the connect flow would present a Connect button that can't complete). Omitted for now — the HTTP surface is the supported programmatic path meanwhile. See docs/futures/revisit-when.md.",
+        "No GraphQL API exists for Google Calendar.",
+      ],
+    },
+  },
+  {
     id: "slack",
     displayName: "Slack",
     supportedKinds: ["openapi", "mcp"],

@@ -423,3 +423,11 @@ LEAD review, confirmed in the real-httpbin QA.)
 **Cause:** parallel-run resource contention / umask sensitivity in the ensureHome 0700 chmod path under load — not a code regression. First seen inc 37 (serve.test.ts), again inc 38 (mcp.test.ts), both on diffs that never touched those files.
 
 **Fix / discipline:** if a 0700-perms or serve/mcp test fails in a full parallel verify, re-run it in isolation and on the base branch before treating it as a regression. If it passes isolated + is in a file your diff didn't touch, it's this flake — re-run `pnpm verify`; it clears. (A real fix — serialize the perms tests or make the assertion umask-tolerant — is a deferred test-infra cleanup, not blocking.) (raised inc 37, recurred inc 38)
+
+## `pnpm -r build` web-before-core resolution race under load (inc 40)
+
+**Symptom:** a full `pnpm verify` fails at `packages/web build` with `Rolldown failed to resolve import "@junction/core" from ...web/src/server/*.server.ts` (`ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL`). The SAME `pnpm --filter @junction/web build` succeeds when run directly, and web runs fine.
+
+**Cause:** `pnpm -r build` builds workspace packages concurrently; under resource contention (e.g. a QA server or another verify running in parallel) web's vite/rolldown can start before `@junction/core`'s `dist` is fully written, so the `@junction/core` import doesn't resolve. A transient ordering race, not a code error.
+
+**Fix / discipline:** if `pnpm verify` fails ONLY with a `Rolldown failed to resolve "@junction/core"` (or similar cross-package resolve) error, it's this race — re-run after `pnpm --filter @junction/core build` (prebuild core) and with no competing background process (kill any QA server first). Distinct from the test-timeout parallel-flake above. (raised inc 40)

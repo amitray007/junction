@@ -2,8 +2,8 @@
 // App catalog tests — pure data lookups + catalog-integrity (every oauth2
 // providerId must resolve against the OAuth provider catalog). Reduced to
 // github-only in increment 35 (catalog strip-down); slack was the first app
-// reintroduced (increment 37), gmail followed (increment 39) — the rest
-// follow one at a time.
+// reintroduced (increment 37), gmail followed (increment 39), google-calendar
+// followed (increment 40, the last app of this push).
 
 import { describe, expect, it } from "vitest"
 import { getProvider, listProviders } from "../oauth/catalog.js"
@@ -18,11 +18,11 @@ describe("getApp / listApps", () => {
     expect(getApp("other")).toBeUndefined()
   })
 
-  it("listApps returns exactly github + gmail + slack", () => {
+  it("listApps returns exactly github + gmail + google-calendar + slack", () => {
     // Sorted by directory name (gen-catalog.mjs's appDirs.sort()), not
     // insertion/increment order.
     const ids = listApps().map((a) => a.id)
-    expect(ids).toEqual(["github", "gmail", "slack"])
+    expect(ids).toEqual(["github", "gmail", "google-calendar", "slack"])
   })
 
   it("github: multiple auth modes (two oauth2 variants + token)", () => {
