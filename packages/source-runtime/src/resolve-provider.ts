@@ -80,17 +80,13 @@ export function makeResolveProvider(
       }
       const platform = platformResult.value
 
-      // ── Dispatch by kind — unsupported kinds are cleanly skipped ──────
-      if (platform.kind !== "mcp" && platform.kind !== "openapi") {
-        log(
-          `${logPrefix}: source "${sourceRef.toolNamespace}": platform kind "${platform.kind}" not yet supported — skipping`,
-        )
-        return err({
-          kind: "unsupported-source-kind" as const,
-          platformKind: platform.kind,
-        } satisfies UpstreamError)
-      }
-
+      // ── Dispatch by kind — buildProvider (below) already handles all 5 kinds
+      // (mcp/openapi/graphql/http/cli); this closure has no kind-specific logic
+      // of its own beyond the authDeclared warn below, so there is nothing left
+      // to gate here. "custom" is the one PlatformKind buildProvider itself
+      // doesn't dispatch (falls through to its own unsupported-source-kind) —
+      // that stays a clean skip, surfaced by buildProvider's own Err below,
+      // not duplicated as a second check here.
       // ── Resolve credential (skip entirely when no credentialId — public source) ──────
       let secret: ResolvedSecret | null = null
       if (sourceRef.credentialId === undefined) {
@@ -104,7 +100,16 @@ export function makeResolveProvider(
               : platform.connection.tokenEnvVar !== undefined)) ||
           (platform.kind === "openapi" &&
             platform.openapi !== undefined &&
-            platform.openapi.auth !== undefined)
+            platform.openapi.auth !== undefined) ||
+          (platform.kind === "graphql" &&
+            platform.graphql !== undefined &&
+            platform.graphql.auth !== undefined) ||
+          (platform.kind === "http" &&
+            platform.http !== undefined &&
+            platform.http.auth !== undefined) ||
+          (platform.kind === "cli" &&
+            platform.cli !== undefined &&
+            platform.cli.credentialEnvVar !== undefined)
         if (authDeclared) {
           log(
             `${logPrefix}: source "${sourceRef.toolNamespace}": platform "${sourceRef.platformId}" declares auth but no credential is attached — calls may be unauthorized`,

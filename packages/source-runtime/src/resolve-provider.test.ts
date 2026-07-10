@@ -412,3 +412,230 @@ describe("makeResolveProvider — oauth2 wiring (inc29-B): the real arctic-backe
     })
   })
 })
+
+// ---------------------------------------------------------------------------
+// 33.1 fix 2 — resolve-provider's kind gate now matches build-provider's
+// (mcp/openapi/graphql/http/cli), not just mcp/openapi. These three tests
+// prove a graphql/http/cli SourceRef no longer hits "unsupported-source-kind"
+// and instead reaches (and succeeds through) buildProvider — the same
+// generic ResolvedSecret{kind, value} construction path mcp/openapi already
+// used. No mocking needed: createGraphQlProvider/createHttpProvider/
+// createCliProvider are all synchronous at CONSTRUCTION time (no network/
+// sandbox call until listTools/callTool), so these exercise the real
+// dispatch through buildProvider without opening a real connection.
+// ---------------------------------------------------------------------------
+describe("makeResolveProvider — 33.1 fix 2: kind gate widened to all 5 kinds", () => {
+  it("graphql source: resolves to Ok(ToolProvider), NOT unsupported-source-kind (previously the narrow gate's failure mode)", async () => {
+    await withTempHome(async () => {
+      const paths = getPaths()
+      const dbResult = await getDatabase(paths)
+      expect(dbResult.isOk()).toBe(true)
+      if (dbResult.isErr()) return
+      const repos = createRepositories(dbResult.value)
+
+      const platform = PlatformSchema.parse({
+        id: PlatformIdSchema.parse("gql-platform"),
+        kind: "graphql" as const,
+        displayName: "GraphQL Source",
+        graphql: {
+          endpoint: "https://example.com/graphql",
+          auth: { scheme: "bearer" as const },
+        },
+      })
+      await repos.platforms.upsert(platform)
+
+      const storeResult = await createCredentialStore(paths)
+      expect(storeResult.isOk()).toBe(true)
+      if (storeResult.isErr()) return
+      const store = storeResult.value
+
+      const addResult = await addCredential(
+        { platformId: "gql-platform", account: "work", kind: "bearer", secret: "GQL_TOKEN" },
+        platform,
+        store,
+        repos.credentials,
+      )
+      expect(addResult.isOk()).toBe(true)
+      if (addResult.isErr()) return
+
+      const resolveProvider = makeResolveProvider(repos, store, paths, { logPrefix: "test" })
+      const result = await resolveProvider(
+        sourceRef({
+          platformId: PlatformIdSchema.parse("gql-platform"),
+          credentialId: addResult.value.id,
+        }),
+      )
+      expect(result.isOk()).toBe(true)
+      if (result.isErr()) {
+        // The load-bearing negative assertion: must NOT be the pre-fix
+        // failure mode (the narrow kind gate returning unsupported-source-kind
+        // BEFORE buildProvider is ever reached).
+        expect(result.error.kind).not.toBe("unsupported-source-kind")
+      }
+    })
+  })
+
+  it("http source: resolves to Ok(ToolProvider), NOT unsupported-source-kind", async () => {
+    await withTempHome(async () => {
+      const paths = getPaths()
+      const dbResult = await getDatabase(paths)
+      expect(dbResult.isOk()).toBe(true)
+      if (dbResult.isErr()) return
+      const repos = createRepositories(dbResult.value)
+
+      const platform = PlatformSchema.parse({
+        id: PlatformIdSchema.parse("http-platform"),
+        kind: "http" as const,
+        displayName: "HTTP Source",
+        http: {
+          baseUrl: "https://example.com/api",
+          auth: { scheme: "bearer" as const },
+          tools: [
+            {
+              name: "ping",
+              description: "Ping the API",
+              method: "GET" as const,
+              path: "/ping",
+              params: [],
+            },
+          ],
+        },
+      })
+      await repos.platforms.upsert(platform)
+
+      const storeResult = await createCredentialStore(paths)
+      expect(storeResult.isOk()).toBe(true)
+      if (storeResult.isErr()) return
+      const store = storeResult.value
+
+      const addResult = await addCredential(
+        { platformId: "http-platform", account: "work", kind: "bearer", secret: "HTTP_TOKEN" },
+        platform,
+        store,
+        repos.credentials,
+      )
+      expect(addResult.isOk()).toBe(true)
+      if (addResult.isErr()) return
+
+      const resolveProvider = makeResolveProvider(repos, store, paths, { logPrefix: "test" })
+      const result = await resolveProvider(
+        sourceRef({
+          platformId: PlatformIdSchema.parse("http-platform"),
+          credentialId: addResult.value.id,
+        }),
+      )
+      expect(result.isOk()).toBe(true)
+      if (result.isErr()) {
+        expect(result.error.kind).not.toBe("unsupported-source-kind")
+      }
+    })
+  })
+
+  it("cli source: resolves to Ok(ToolProvider) via the SAME ResolvedSecret{kind} path buildProvider uses for CliSecret env/file folding — proves resolve-provider didn't have to duplicate build-provider's cli-specific secret handling", async () => {
+    await withTempHome(async () => {
+      const paths = getPaths()
+      const dbResult = await getDatabase(paths)
+      expect(dbResult.isOk()).toBe(true)
+      if (dbResult.isErr()) return
+      const repos = createRepositories(dbResult.value)
+
+      const platform = PlatformSchema.parse({
+        id: PlatformIdSchema.parse("cli-platform"),
+        kind: "cli" as const,
+        displayName: "CLI Source",
+        cli: {
+          tools: [
+            {
+              name: "greet",
+              argv: [{ kind: "literal", value: "/bin/echo" }],
+              args: [],
+              policy: {
+                cwd: "/tmp",
+                readPaths: ["/tmp"],
+                writePaths: [],
+                allowNet: [],
+                timeoutMs: 5000,
+                envAllow: {},
+              },
+            },
+          ],
+          credentialEnvVar: "CLI_RESOLVE_TEST_CRED",
+        },
+      })
+      await repos.platforms.upsert(platform)
+
+      const storeResult = await createCredentialStore(paths)
+      expect(storeResult.isOk()).toBe(true)
+      if (storeResult.isErr()) return
+      const store = storeResult.value
+
+      const addResult = await addCredential(
+        { platformId: "cli-platform", account: "work", kind: "env", secret: "CLI_ENV_SECRET" },
+        platform,
+        store,
+        repos.credentials,
+      )
+      expect(addResult.isOk()).toBe(true)
+      if (addResult.isErr()) return
+
+      const resolveProvider = makeResolveProvider(repos, store, paths, { logPrefix: "test" })
+      const result = await resolveProvider(
+        sourceRef({
+          platformId: PlatformIdSchema.parse("cli-platform"),
+          credentialId: addResult.value.id,
+        }),
+      )
+      expect(result.isOk()).toBe(true)
+      if (result.isOk()) {
+        // The provider was actually built (has the ToolProvider shape) —
+        // proves buildProvider's cli branch was reached and constructed
+        // successfully with the resolved env-kind secret.
+        expect(typeof result.value.provider.listTools).toBe("function")
+        expect(typeof result.value.provider.callTool).toBe("function")
+      }
+      if (result.isErr()) {
+        expect(result.error.kind).not.toBe("unsupported-source-kind")
+      }
+    })
+  })
+
+  it("mcp/openapi kinds are UNCHANGED: mcp still resolves exactly as before the widening (regression guard)", async () => {
+    await withTempHome(async () => {
+      const paths = getPaths()
+      const dbResult = await getDatabase(paths)
+      expect(dbResult.isOk()).toBe(true)
+      if (dbResult.isErr()) return
+      const repos = createRepositories(dbResult.value)
+
+      const platform = PlatformSchema.parse({
+        id: PlatformIdSchema.parse("mcp-unchanged"),
+        kind: "mcp" as const,
+        displayName: "MCP Unchanged",
+        connection: { transport: "http" as const, url: "https://example.com/mcp" },
+      })
+      await repos.platforms.upsert(platform)
+
+      const { createMcpProvider } = await import("@junction/mcp-client")
+      const stubProvider: ToolProvider = {
+        listTools: () => new ResultAsync(Promise.resolve(ok([]))),
+        callTool: () => new ResultAsync(Promise.resolve(ok({ content: [] }))),
+        close: vi.fn().mockResolvedValue(undefined),
+      }
+      vi.mocked(createMcpProvider).mockReturnValue(
+        new ResultAsync(Promise.resolve(ok(stubProvider))),
+      )
+
+      const storeResult = await createCredentialStore(paths)
+      expect(storeResult.isOk()).toBe(true)
+      if (storeResult.isErr()) return
+
+      const resolveProvider = makeResolveProvider(repos, storeResult.value, paths, {
+        logPrefix: "test",
+      })
+      const result = await resolveProvider(
+        sourceRef({ platformId: PlatformIdSchema.parse("mcp-unchanged") }),
+      )
+      expect(result.isOk()).toBe(true)
+    })
+  })
+})
