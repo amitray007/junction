@@ -217,6 +217,8 @@ export const CliConnectionSchema = z
       // Heuristic-suffix denylist + exact master-key names (incl. _FILE, which the
       // _KEY$ suffix misses). Mirrors validatePolicy so a descriptor that would be
       // rejected at call-time is rejected at add-time instead.
+      // Extending this list? Add a name to the parity corpus in cli-connection.test.ts —
+      // additions here are invisible to the lock-step test unless the corpus grows too.
       const name = conn.credentialEnvVar
       if (/_TOKEN$|_SECRET$|_KEY$/.test(name)) return false
       if (name === "JUNCTION_MASTER_KEY" || name === "JUNCTION_MASTER_KEY_FILE") return false

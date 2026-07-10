@@ -37,6 +37,7 @@ import {
   getPaths,
   type Profile,
   ProfileIdSchema,
+  sweepStaleCredDirs,
 } from "@junction/core"
 import { makeResolveProvider } from "@junction/source-runtime"
 import { defineCommand } from "citty"
@@ -110,6 +111,14 @@ const serveCommand = defineCommand({
       process.exitCode = 1
       return
     }
+
+    // Fire-and-forget: sweep any stale (>1h) cred-* temp dirs stranded by a
+    // hard kill mid-materialization (increment 32.7 item 2). Placed before
+    // the synthetic-default early-return so that path is swept too. `paths`
+    // (getPaths()) isn't in scope until below — ensureHome() already
+    // resolved to the same JunctionPaths, so use homeResult.value directly.
+    // Never awaited into the startup path, never fails it.
+    void sweepStaleCredDirs(homeResult.value).catch(() => {})
 
     // ── No profile name given: serve synthetic default immediately ──────────
     if (!profileName) {

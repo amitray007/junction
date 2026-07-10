@@ -16,7 +16,21 @@ import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const clientDir = join(__dirname, "..", "packages", "web", "dist", "client")
+
+// --dir <path> overrides the scan root (used by the leakcheck self-tests to
+// point at a planted fixture instead of the real build output). Default
+// unchanged: packages/web/dist/client. A --dir flag with a MISSING value is a
+// hard error — silently falling back to the real default dir would make a
+// mis-invoked self-test scan the wrong tree and pass vacuously.
+const dirFlagIndex = process.argv.indexOf("--dir")
+if (dirFlagIndex !== -1 && !process.argv[dirFlagIndex + 1]) {
+  console.error("web:leakcheck FAILED — --dir flag given without a value")
+  process.exit(1)
+}
+const clientDir =
+  dirFlagIndex !== -1
+    ? process.argv[dirFlagIndex + 1]
+    : join(__dirname, "..", "packages", "web", "dist", "client")
 const assetsDir = join(clientDir, "assets")
 
 // Server-only mechanisms + secret payload markers that must never reach the client.
