@@ -10,6 +10,7 @@ export {
   readAuditLogTail,
 } from "./audit/read.js"
 export { argKeys, hashArgs } from "./audit/redact.js"
+export { type AuditRotateOutcome, rotateAuditLogIfOversized } from "./audit/rotate.js"
 // ---------------------------------------------------------------------------
 // Audit — structured tool-call log schema + sink interface (increment 31)
 // ---------------------------------------------------------------------------

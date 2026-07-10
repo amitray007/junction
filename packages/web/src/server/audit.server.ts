@@ -9,8 +9,11 @@
 // never returns the raw core AuditEntry type (the web convention: routes never
 // see a core type directly).
 //
-// BOUNDED READ: the log is append-only and can grow unbounded over a long-lived
-// `serve` (rotation deferred — see docs/futures/revisit-when.md). readAuditLogTail
+// BOUNDED READ: the log is append-only. Size-based rotation now runs at
+// serve/mcp-serve startup (increment 32.8, core/src/audit/rotate.ts), but
+// this page reads the CURRENT file only — by design, rotated `.1..keep`
+// generations are on-disk history, not queried here — so it can still grow
+// large between rotations or across a long-lived `serve`. readAuditLogTail
 // caps the read at AUDIT_TAIL_CAP bytes so this loader never slurps an
 // arbitrarily large file into memory.
 
@@ -22,7 +25,7 @@ import {
   readAuditLogTail,
 } from "@junction/core"
 
-/** Bound the web read — rotation/retention stays deferred (see docs/futures/). */
+/** Bound the web read — current-file-only, independent of the startup rotation (32.8). */
 const AUDIT_TAIL_CAP = 2 * 1024 * 1024
 
 export interface AuditEntryDTO {

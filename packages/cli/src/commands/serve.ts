@@ -32,6 +32,7 @@ import {
   getMcpPort,
   getPaths,
   isValidMcpPort,
+  rotateAuditLogIfOversized,
   type ScopedProxyEntry,
   sweepStaleCredDirs,
   verifyApiKey,
@@ -122,6 +123,14 @@ export const serveCommand = defineCommand({
       logPrefix: "junction serve",
       log: (msg: string) => consola.warn(msg),
     })
+
+    // Rotate BEFORE the sink opens its fd (increment 32.8) — see rotate.ts's
+    // header for the rotate-before-open design rationale. A rotation failure
+    // never blocks startup; it's just a warn in this file's own idiom.
+    const rotate = await rotateAuditLogIfOversized(paths.auditLogFile)
+    if (rotate.kind === "failed") {
+      consola.warn(`junction serve: audit-log rotation failed (${rotate.code}), continuing`)
+    }
 
     // Audit sink (increment 31 Slice B): one pino-backed file sink per
     // process, injected into every buildHandlers() call this session.
