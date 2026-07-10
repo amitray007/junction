@@ -3,7 +3,7 @@
 // Strategy: mock createFileRoute so Route.useLoaderData() returns test fixtures,
 // then import the module and render Route.options.component.
 
-import { cleanup, render } from "@testing-library/react"
+import { cleanup, render, within } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 // ---- Fixtures ---------------------------------------------------------------
@@ -95,11 +95,16 @@ describe("DashboardPage", () => {
     expect(queryByText(/localhost/)).not.toBeInTheDocument()
   })
 
-  it("renders the Recent Activity section with a Coming soon pill", () => {
+  it("renders the Recent Activity section as a link-card to /audit, with no Coming soon pill", () => {
     mockUseLoaderData.mockReturnValue(emptyData)
-    const { getAllByText, getByRole } = render(<DashboardPage />)
-    expect(getByRole("region", { name: /recent activity/i })).toBeInTheDocument()
-    // Multiple "Coming soon" pills render (AgentConfig + Recent Activity) — assert at least one.
-    expect(getAllByText("Coming soon").length).toBeGreaterThanOrEqual(1)
+    const { getByRole } = render(<DashboardPage />)
+    const activity = getByRole("region", { name: /recent activity/i })
+    // The section is a link-card to the real /audit page (inc 32.6b).
+    expect(within(activity).getByRole("link")).toHaveAttribute("href", "/audit")
+    // ComingSoon is gone WITHIN this section only — AgentConfig legitimately
+    // renders its own "Coming soon" elsewhere on the page, so a page-wide
+    // absence assertion would be wrong.
+    expect(within(activity).queryByText("Coming soon")).not.toBeInTheDocument()
+    expect(within(activity).queryByText(/coming in a later update/i)).not.toBeInTheDocument()
   })
 })
