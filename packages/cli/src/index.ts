@@ -11,6 +11,7 @@ import { keysCommand } from "./commands/keys.js"
 import { mcpCommand } from "./commands/mcp.js"
 import { platformCommand } from "./commands/platform.js"
 import { profileCommand } from "./commands/profile.js"
+import { runCommand } from "./commands/run.js"
 import { serveCommand } from "./commands/serve.js"
 import { runStatus, statusCommand } from "./commands/status.js"
 import { vaultCommand } from "./commands/vault.js"
@@ -34,6 +35,7 @@ const main = defineCommand({
     credential: credentialCommand,
     connect: connectCommand,
     profile: profileCommand,
+    run: runCommand,
     status: statusCommand,
     debug: debugCommand,
     web: webCommand,
