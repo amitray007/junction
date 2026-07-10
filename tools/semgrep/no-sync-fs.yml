@@ -1,0 +1,55 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Increment 32.12 — no sync fs in core (rule 2 of 8).
+#
+# Mirrors the docs/rules/ "no fs.*Sync in core/server paths" convention (also
+# enforced by the .claude PreToolUse boundary-guard hook at edit time) —
+# belt-and-suspenders in CI so a sync-fs call that slips past the hook (e.g.
+# committed via a path the hook doesn't cover, or added outside an editor
+# session) is still caught before merge.
+rules:
+  - id: no-sync-fs-in-core
+    languages: [typescript]
+    severity: ERROR
+    message: >-
+      Synchronous fs API used in packages/core/src/**. Core must use
+      node:fs/promises (async) — sync fs calls block the event loop in a
+      library that may run inside a long-lived MCP server process. If this is
+      a deliberate, justified exception, suppress with a `// nosemgrep:
+      no-sync-fs-in-core — <reason>` comment at the call site.
+    patterns:
+      - pattern-either:
+          - pattern: $FS.readFileSync(...)
+          - pattern: $FS.writeFileSync(...)
+          - pattern: $FS.existsSync(...)
+          - pattern: $FS.mkdirSync(...)
+          - pattern: $FS.readdirSync(...)
+          - pattern: $FS.statSync(...)
+          - pattern: $FS.lstatSync(...)
+          - pattern: $FS.unlinkSync(...)
+          - pattern: $FS.copyFileSync(...)
+          - pattern: $FS.renameSync(...)
+          - pattern: $FS.appendFileSync(...)
+          - pattern: $FS.rmSync(...)
+          - pattern: $FS.rmdirSync(...)
+          - pattern: $FS.chmodSync(...)
+          - pattern: $FS.realpathSync(...)
+          - pattern: readFileSync(...)
+          - pattern: writeFileSync(...)
+          - pattern: existsSync(...)
+          - pattern: mkdirSync(...)
+          - pattern: readdirSync(...)
+          - pattern: statSync(...)
+          - pattern: lstatSync(...)
+          - pattern: unlinkSync(...)
+          - pattern: copyFileSync(...)
+          - pattern: renameSync(...)
+          - pattern: appendFileSync(...)
+          - pattern: rmSync(...)
+          - pattern: rmdirSync(...)
+          - pattern: chmodSync(...)
+          - pattern: realpathSync(...)
+    paths:
+      include:
+        - "**/packages/core/src/**/*.ts"
+      exclude:
+        - "**/packages/core/src/**/*.test.ts"

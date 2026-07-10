@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Increment 32.12 — no bare throw in core (rule 7 of 8).
+#
+# docs/rules/: fallible operations return neverthrow Result<T, E> with
+# discriminated-union domain errors; no bare throws across boundaries. This
+# rule catches `throw new $ERR(...)` in packages/core/src/** (excluding
+# tests). Four named categories of legitimate exception exist — each
+# allowlisted with an inline `// nosemgrep: no-bare-throw-in-core -- <reason>`
+# comment citing its category, never a path exclusion, so any NEW bare throw
+# in core still fails the gate:
+#   1. Module-load-time integrity checks (fail fast at import on committed/
+#      codegen'd data, never request input).
+#   2. `never`-exhaustiveness guards (unreachable in a type-checked build).
+#   3. Throws caught by an enclosing try/catch in the SAME function/step and
+#      converted to a typed Result there (never leaves the function).
+#   4. Documented-throwing contracts (@throws JSDoc on the exported entry
+#      point) consumed via a Result-converting try/catch wrapper in the
+#      consuming package — e.g. normalizeTokenResponse + its internal
+#      parsers, whose throws are caught in source-runtime/oauth-connect.ts,
+#      a DIFFERENT package. The @throws JSDoc is the guard for any future
+#      core-internal caller.
+rules:
+  - id: no-bare-throw-in-core
+    languages: [typescript]
+    severity: ERROR
+    message: >-
+      `throw new $ERR(...)` used in packages/core/src/**. Fallible
+      operations in core must return a neverthrow Result<T, E> with a
+      discriminated-union domain error, not throw — a bare throw crosses the
+      typed-error boundary uncaught. If this is a deliberate, narrowly-scoped
+      exception matching one of the four named categories in this file's
+      header (module-load-time integrity check; exhaustiveness guard;
+      same-function try/catch conversion; documented-@throws contract
+      consumed via a Result-converting wrapper in the consuming package),
+      suppress with a `// nosemgrep: no-bare-throw-in-core -- <reason>`
+      comment citing the category at the call site.
+    pattern: throw new $ERR(...)
+    paths:
+      include:
+        - "**/packages/core/src/**/*.ts"
+      exclude:
+        - "**/packages/core/src/**/*.test.ts"

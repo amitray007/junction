@@ -12,6 +12,7 @@
 // bridge. serve.mjs itself loads the built SSR bundle (dist/server/server.js)
 // and will exit with a clear error if that bundle is missing.
 
+// nosemgrep: no-child-process-outside-sandbox -- spawns process.execPath against a resolved package-artifact path (serve.mjs), never a user-controlled command string
 import { spawn } from "node:child_process"
 import { access } from "node:fs/promises"
 import { fileURLToPath } from "node:url"

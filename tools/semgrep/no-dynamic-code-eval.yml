@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Increment 32.12 — no dynamic code evaluation (rule 3 of 8).
+#
+# Pre-Code-Mode discipline: junction never constructs and executes code from
+# a runtime string. Untrusted script execution goes through the sandbox
+# (Deno/bubblewrap/Seatbelt with capability scoping), never eval/new Function.
+rules:
+  - id: no-new-function-or-eval
+    languages: [typescript]
+    severity: ERROR
+    message: >-
+      `new Function(...)` or `eval(...)` used. junction never constructs and
+      executes code from a runtime string — untrusted code execution goes
+      through the sandbox (packages/core/src/sandbox/**), which enforces
+      capability scoping (Deno --deny-run/--deny-ffi, bubblewrap/Seatbelt).
+      If this is a deliberate, justified exception, suppress with a `//
+      nosemgrep: no-new-function-or-eval — <reason>` comment at the call site.
+    patterns:
+      - pattern-either:
+          - pattern: new Function(...)
+          - pattern: eval(...)
+    paths:
+      include:
+        - "**/packages/**/*.ts"
+        - "**/packages/**/*.tsx"
+      exclude:
+        - "**/packages/**/*.test.ts"
+        - "**/packages/**/*.test.tsx"

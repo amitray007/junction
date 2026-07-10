@@ -73,6 +73,9 @@ function defaultParseTokenResponse(provider: OAuthProvider, raw: unknown): Norma
   const body = raw as Record<string, unknown>
   const accessToken = body.access_token
   if (typeof accessToken !== "string" || accessToken.length === 0) {
+    // Internal parser behind normalizeTokenResponse's documented @throws contract; the catch lives
+    // in a DIFFERENT package (source-runtime/oauth-connect.ts), which converts to a typed Result.
+    // nosemgrep: no-bare-throw-in-core -- category 4 (documented-@throws contract): caught + Result-converted by the consuming package, source-runtime/oauth-connect.ts
     throw new Error(`${provider.id}: token response missing access_token`)
   }
   const refreshToken = typeof body.refresh_token === "string" ? body.refresh_token : undefined
@@ -105,10 +108,13 @@ function parseSlackTokenResponse(raw: unknown): NormalizedTokens {
     authed_user?: { access_token?: string }
   }
   if (body.ok === false) {
+    // Same documented-@throws contract as defaultParseTokenResponse above (via normalizeTokenResponse).
+    // nosemgrep: no-bare-throw-in-core -- category 4 (documented-@throws contract): caught + Result-converted by the consuming package, source-runtime/oauth-connect.ts
     throw new Error(`slack: ${body.error ?? "unknown error"}`)
   }
   const accessToken = body.access_token ?? body.authed_user?.access_token
   if (typeof accessToken !== "string" || accessToken.length === 0) {
+    // nosemgrep: no-bare-throw-in-core -- category 4 (documented-@throws contract), same as above: caught + Result-converted in source-runtime/oauth-connect.ts
     throw new Error("slack: token response missing access_token")
   }
   return {
@@ -552,6 +558,14 @@ export function buildAuthorizationParams(
  * Dispatches to the provider's `parseTokenResponse` override if present, else
  * the default OAuth2 `{access_token, refresh_token?, expires_in?, scope?}`
  * parser. This is the ONE place the default-vs-override split lives.
+ *
+ * @throws {Error} if the response is not a usable token payload (missing
+ * access_token, or a provider-signaled in-body error like Slack's
+ * `{ok:false}`). This is a documented-throwing contract: the consuming
+ * wrapper (source-runtime/oauth-connect.ts) catches and converts to a typed
+ * Result<Credential, OAuthConnectError>. Any future core-internal caller on
+ * a Result-typed path must do the same — wrap the call in try/catch and
+ * convert; never let this throw cross a Result boundary uncaught.
  */
 export function normalizeTokenResponse(provider: OAuthProvider, raw: unknown): NormalizedTokens {
   if (provider.parseTokenResponse) return provider.parseTokenResponse(raw)

@@ -18,6 +18,60 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  knip:
+    # Increment 32.12 — dead-code/unused-dependency gate. knip.jsonc is tuned
+    # to zero false positives on this monorepo (see docs/methods/32.12-heavy-
+    # analyzers.md for the triage): every ignore carries a one-line reason,
+    # no blanket suppressions. Lands BLOCKING (a fully clean baseline was
+    # reachable in-increment — no report-only `|| true` fallback needed).
+    name: knip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          cache: true
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: pnpm install --frozen-lockfile
+      # Generate web's TanStack route tree BEFORE knip: routeTree.gen.ts is
+      # gitignored codegen output (absent on a fresh checkout), and
+      # packages/web/src/router.tsx imports it — without this step knip fails
+      # with "Unresolved imports: ./routeTree.gen". Mirrors the type-coverage
+      # job below and packages/web's own typecheck script (`tsr generate &&
+      # tsc`). Generation over a knip ignore: an ignore would also mask a
+      # genuinely broken import of the route tree.
+      - run: pnpm --filter @junction/web exec tsr generate
+      - run: pnpm run knip
+
+  semgrep:
+    # Increment 32.12 — targeted semgrep with LOCAL committed rules only
+    # (tools/semgrep/*.yml). No registry, no login, deterministic — every
+    # rule proven against a deliberate local violation before landing (see
+    # docs/methods/32.12-heavy-analyzers.md). Blocking: the rules are ours
+    # and precise, tuned to zero false positives on current main.
+    name: semgrep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # pipx (preinstalled on ubuntu runners) gives semgrep an ISOLATED venv:
+      # a plain `pip install` into the runner's shared site-packages crashed
+      # semgrep at startup on a broken transitive opentelemetry set (PR #133's
+      # first CI run). Version stays pinned to the exact one these rules were
+      # authored + proven against locally — an unpinned install could drift to
+      # a version with different metavariable-regex/pattern semantics (this
+      # increment's build hit a real fullmatch-vs-substring surprise there)
+      # and silently change what the rules catch.
+      - run: pipx install semgrep==1.136.0
+      # semgrep 1.136.0's opentelemetry-instrumentation imports pkg_resources,
+      # which modern setuptools (>=81) REMOVED — and the runner's pipx venv
+      # already carries a modern setuptools, so a plain inject no-ops
+      # ("already injected"). Force an older setuptools that still ships
+      # pkg_resources or the CLI crashes at startup (ModuleNotFoundError).
+      - run: pipx inject --force semgrep "setuptools<81"
+      - run: semgrep scan --config tools/semgrep/ --error
+
   no-publish-guard:
     # Locks in the publish-disabled invariant (increment 0.75): junction
     # must never gain an npm-publish path until deliberately enabled.
