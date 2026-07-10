@@ -45,7 +45,7 @@ export interface OAuthProvider {
   tokenAuthMethod: "client_secret_basic" | "client_secret_post" | "none"
   bodyFormat: "form" | "json"
   expiryStrategy: "expires_in" | "expires_at" | "none"
-  /** Override the default token-response parse for a provider whose token endpoint deviates from standard OAuth2 (e.g. a 200-with-in-body-error shape). */
+  /** Override the default token-response parse (e.g. Slack's {ok:false}-at-200). */
   parseTokenResponse?: (raw: unknown) => NormalizedTokens
   redirectMode: "loopback-fixed" | "loopback-ephemeral"
   defaultScopes?: string[]
@@ -83,6 +83,49 @@ function defaultParseTokenResponse(provider: OAuthProvider, raw: unknown): Norma
   const scope = typeof body.scope === "string" ? body.scope : undefined
   const scopes = scope ? scope.split(provider.scopeSeparator) : undefined
   return { accessToken, refreshToken, expiresInSeconds, scopes }
+}
+
+/**
+ * Slack's token endpoint always returns HTTP 200 — a failed exchange is
+ * signaled by `{ok:false, error:"..."}` in the BODY, which arctic (and every
+ * generic OAuth2 client) will happily treat as a success. Reject it here so
+ * the failure surfaces as a typed error, not a "successful" empty token.
+ *
+ * Slack's v2 OAuth response nests the bot token at the top level
+ * (`access_token`) and the user token under `authed_user.access_token`. For
+ * junction's purposes (a single bearer credential per connect) we normalize
+ * to the top-level `access_token`, falling back to `authed_user.access_token`
+ * when the top-level one is absent (e.g. a user-token-only app config).
+ */
+function parseSlackTokenResponse(raw: unknown): NormalizedTokens {
+  const body = raw as {
+    ok?: boolean
+    error?: string
+    access_token?: string
+    refresh_token?: string
+    expires_in?: number
+    scope?: string
+    authed_user?: { access_token?: string }
+  }
+  if (body.ok === false) {
+    // Same documented-@throws contract as defaultParseTokenResponse above (via normalizeTokenResponse).
+    // nosemgrep: no-bare-throw-in-core -- category 4 (documented-@throws contract): caught + Result-converted by the consuming package, source-runtime/oauth-connect.ts
+    throw new Error(`slack: ${body.error ?? "unknown error"}`)
+  }
+  const accessToken = body.access_token ?? body.authed_user?.access_token
+  if (typeof accessToken !== "string" || accessToken.length === 0) {
+    // nosemgrep: no-bare-throw-in-core -- category 4 (documented-@throws contract), same as above: caught + Result-converted in source-runtime/oauth-connect.ts
+    throw new Error("slack: token response missing access_token")
+  }
+  return {
+    accessToken,
+    refreshToken: body.refresh_token,
+    expiresInSeconds: body.expires_in,
+    // Slack's scope separator is a comma, not a space (see the "slack"
+    // catalog entry's scopeSeparator) — this parser is Slack-specific so the
+    // separator is hardcoded here rather than threaded through as a param.
+    scopes: body.scope ? body.scope.split(",") : undefined,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -153,6 +196,33 @@ const PROVIDERS: readonly OAuthProvider[] = [
       Accept: "application/vnd.github+json",
       "User-Agent": "junction",
     },
+  },
+  {
+    id: "slack",
+    displayName: "Slack",
+    authorizationUrl: "https://slack.com/oauth/v2/authorize",
+    tokenUrl: "https://slack.com/api/oauth.v2.access",
+    pkce: "S256",
+    scopeSeparator: ",",
+    tokenAuthMethod: "client_secret_post",
+    bodyFormat: "form",
+    expiryStrategy: "expires_in",
+    parseTokenResponse: parseSlackTokenResponse,
+    redirectMode: "loopback-fixed",
+    // Only true when the workspace/app has token rotation enabled — junction
+    // can't detect this ahead of time; a refresh attempt with no refresh
+    // token on file simply no-ops (needsReauth is not forced).
+    supportsRefresh: true,
+    registrationHint: {
+      redirectUri: OAUTH_CALLBACK_URI,
+      scopes: "channels:read,chat:write (comma-separated; adjust per platform)",
+      docsUrl: "https://api.slack.com/authentication/oauth-v2",
+    },
+    // auth.test: confirms the token is live and identifies the bot/user +
+    // team. Slack's usual 200-with-{ok:false} pattern applies here too — the
+    // identity-check branch in source-runtime must reject ok:false at 200,
+    // same as parseSlackTokenResponse above.
+    userinfoUrl: "https://slack.com/api/auth.test",
   },
   {
     // The escape hatch: user supplies authorizationUrl/tokenUrl (and scopes)

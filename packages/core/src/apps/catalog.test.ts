@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // App catalog tests — pure data lookups + catalog-integrity (every oauth2
 // providerId must resolve against the OAuth provider catalog). Reduced to
-// github-only in increment 35 (catalog strip-down) — the other ~53 apps are
-// reintroduced properly, one at a time, starting increment 36.
+// github-only in increment 35 (catalog strip-down); slack was the first app
+// reintroduced (increment 37) — the rest follow one at a time.
 
 import { describe, expect, it } from "vitest"
 import { getProvider, listProviders } from "../oauth/catalog.js"
@@ -17,9 +17,9 @@ describe("getApp / listApps", () => {
     expect(getApp("other")).toBeUndefined()
   })
 
-  it("listApps returns exactly the github-only catalog (inc 35 strip-down)", () => {
+  it("listApps returns exactly github + slack", () => {
     const ids = listApps().map((a) => a.id)
-    expect(ids).toEqual(["github"])
+    expect(ids).toEqual(["github", "slack"])
   })
 
   it("github: multiple auth modes (two oauth2 variants + token)", () => {

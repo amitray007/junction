@@ -285,7 +285,7 @@ describe("callTool — operation-type enforcement", () => {
 describe("callTool — maxQueryBytes guard", () => {
   it("rejects a query document exceeding maxQueryBytes", async () => {
     const provider = createGraphQlProvider(makeConn({ maxQueryBytes: 50 }), null)
-    const bigQuery = "{ " + "viewer { login } ".repeat(10) + "}"
+    const bigQuery = `{ ${"viewer { login } ".repeat(10)}}`
     const result = await provider.callTool("graphql_query", { query: bigQuery })
     expect(result.isErr()).toBe(true)
     if (!result.isErr()) return

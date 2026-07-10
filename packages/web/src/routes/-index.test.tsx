@@ -20,7 +20,7 @@ const emptyData = {
   mcpHost: undefined as string | undefined,
 }
 
-const populatedData = {
+const _populatedData = {
   ...emptyData,
   counts: { platforms: 3, credentials: 2, profiles: 1 },
 }

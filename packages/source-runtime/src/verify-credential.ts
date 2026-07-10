@@ -85,8 +85,8 @@ function firstText(content: unknown): string {
  * SECRET DISCIPLINE: the token flows ONLY into the Authorization header; the
  * outcome's `detail` carries only an HTTP status or an error constructor name —
  * NEVER the token, NEVER the response body (a userinfo body identifies the user
- * and may echo request data; the body is read only for a provider whose 2xx can
- * still carry an in-body error, then discarded).
+ * and may echo request data; it is read solely to check Slack's `{ok:false}`
+ * flag and then discarded).
  */
 async function verifyOAuthToken(provider: OAuthProvider, token: string): Promise<VerifyOutcome> {
   const url = provider.userinfoUrl
@@ -131,12 +131,23 @@ async function verifyOAuthToken(provider: OAuthProvider, token: string): Promise
     return { status: "unreachable", detail: `HTTP ${response.status}` }
   }
 
-  // Every current catalog provider's 2xx already means live (a plain bearer
-  // GET with no in-body error signaling) — we only needed the status, so
-  // release the unread body. A future provider whose 2xx can still carry a
-  // dead token (e.g. Slack's `{ok:false}`-at-200, removed with its provider
-  // in inc 35) would special-case here, matching its own catalog behavior.
-  await response.body?.cancel()
+  // Slack always returns HTTP 200; a live token is signaled by `{ok:true}` in
+  // the body (auth.test is a bare identity endpoint that ALWAYS includes `ok`,
+  // so require ok===true rather than merely !==false — an absent `ok` means the
+  // token isn't confirmed live and must NOT read as "ok"). Mirrors the catalog's
+  // parseSlackTokenResponse strictness. Every other provider's 2xx already means live.
+  if (provider.id === "slack") {
+    let body: { ok?: unknown }
+    try {
+      body = (await response.json()) as { ok?: unknown }
+    } catch {
+      return { status: "unreachable", detail: "unexpected response shape" }
+    }
+    if (body.ok !== true) return { status: "auth-failed" }
+  } else {
+    // Non-Slack 2xx: we only needed the status — release the unread body.
+    await response.body?.cancel()
+  }
 
   return { status: "ok" }
 }

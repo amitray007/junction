@@ -383,7 +383,7 @@ function isMonochromeBW(svgString) {
   return colored.every((f) => PURE_BW.has(f))
 }
 
-function categorize(slug, variants) {
+function categorize(_slug, variants) {
   if (variants.light !== undefined && variants.dark !== undefined) {
     return "themed"
   }

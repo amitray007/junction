@@ -287,4 +287,129 @@ export const CATALOG_ENTRIES: readonly AppCatalogEntry[] = [
       },
     },
   },
+  {
+    id: "slack",
+    displayName: "Slack",
+    supportedKinds: ["openapi", "mcp"],
+    auth: [
+      {
+        mode: "oauth2",
+        providerId: "slack",
+      },
+      {
+        mode: "token",
+      },
+    ],
+    iconSlug: "slack",
+    surfaces: [
+      {
+        kind: "openapi",
+        displayName: "REST API",
+        connection: {
+          kind: "openapi",
+          specUrl:
+            "https://raw.githubusercontent.com/slackapi/slack-api-specs/master/web-api/slack_web_openapi_v2.json",
+          baseUrl: "https://slack.com/api/",
+          verifyOperationId: "auth_test",
+        },
+        auth: [
+          {
+            mode: "oauth2",
+            providerId: "slack",
+          },
+          {
+            mode: "token",
+          },
+        ],
+        build: {
+          platformIdTemplate: "{app}-{kind}",
+          via: "flattened",
+          credential: {
+            kind: "oauth2",
+            from: "auth",
+          },
+        },
+        verify: {
+          kind: "openapi",
+          operationId: "auth_test",
+        },
+        docs: "https://docs.slack.dev/apis/web-api/",
+        agentGuidance:
+          "Prefer REST for full coverage — channels, messages, users, and more, generated from Slack's own OpenAPI spec.",
+        notes: [
+          "The OpenAPI spec is Swagger 2.0 (not 3.x), and the slackapi/slack-api-specs repo has been archived (read-only since Mar 2024) — stable but no longer tracking newer Web API methods.",
+          "Many write methods (e.g. chat.postMessage) are POST form-encoded; the spec's declarations may not match exactly — verification is anchored on auth.test, which needs no scopes and validates any token.",
+        ],
+      },
+      {
+        kind: "mcp",
+        displayName: "Slack MCP Server (community)",
+        connection: {
+          kind: "mcp",
+          transport: "stdio",
+          command: "npx",
+          args: ["-y", "slack-mcp-server@1.3.0", "--transport", "stdio"],
+          tokenEnvVar: "SLACK_MCP_XOXB_TOKEN",
+        },
+        auth: [
+          {
+            mode: "token",
+          },
+        ],
+        build: {
+          platformIdTemplate: "{app}-{kind}",
+          via: "flattened",
+          credential: {
+            kind: "bearer",
+            from: "auth",
+          },
+        },
+        verify: {
+          kind: "mcp",
+          listTools: true,
+        },
+        docs: "https://github.com/korotovsky/slack-mcp-server",
+        agentGuidance:
+          "Use the community MCP server for curated conversational tools; prefer the REST surface for full API coverage.",
+        notes: [
+          "Community-maintained (korotovsky/slack-mcp-server), not affiliated with or endorsed by Slack. junction verified bot-token mode at v1.3.0 on 2026-07-11. Version is pinned — review before bumping.",
+          "Runs locally over stdio; the bot token is injected into the local process env and never sent to any third party.",
+          "Bot/user-token mode only — the XOXC/XOXD browser-session 'stealth' mode is out of scope and security-sensitive.",
+        ],
+      },
+    ],
+    help: {
+      category: ["communication", "chat"],
+      homepage: "https://slack.com/",
+      statusPage: "https://slack-status.com/",
+      description: "Team messaging — channels, direct messages, and workspace collaboration.",
+      agentGuidance:
+        "Covers channels, messages, and users. Prefer REST for full coverage; use the community MCP server for curated conversational tools.",
+      oauthApp: {
+        registerUrl: "https://api.slack.com/apps",
+        callbackPath: "/oauth/callback/slack",
+      },
+      provenance: {
+        authoredBy: "junction",
+        researchedFrom: [
+          "https://docs.slack.dev/apis/web-api/",
+          "https://api.slack.com/authentication/oauth-v2",
+          "https://api.slack.com/apps",
+          "https://github.com/slackapi/slack-api-specs",
+          "https://github.com/korotovsky/slack-mcp-server",
+          "https://slack-status.com/",
+        ],
+        lastReviewed: "2026-07-11",
+      },
+      authSetup: {
+        interactive:
+          "create an app at https://api.slack.com/apps, add scopes under OAuth & Permissions, install to workspace",
+        env: "SLACK_BOT_TOKEN (xoxb-…)",
+      },
+      notes: [
+        "Slack's official `slack` CLI is app-development/deployment tooling only — it cannot do user-data operations (post a message, list channels), so junction ships no CLI surface for Slack. (Also: the `slack` binary name can collide with other host tools.)",
+        "Slack operates an official hosted MCP server at https://mcp.slack.com/mcp, but restricts MCP to directory-published or internal apps (unlisted apps prohibited) — unavailable to junction's self-hosted custom-app model as of 2026-07-11.",
+      ],
+    },
+  },
 ]

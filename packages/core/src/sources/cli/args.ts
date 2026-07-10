@@ -73,7 +73,7 @@ export function validateArgValue(
   }
 
   if (arg.type === "enum") {
-    if (!arg.enum || !arg.enum.includes(strValue)) {
+    if (!arg.enum?.includes(strValue)) {
       const allowed = arg.enum ? arg.enum.join(", ") : "(none defined)"
       return err({
         kind: "invalid-args",

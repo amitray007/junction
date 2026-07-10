@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Provider catalog tests — pure data + pure dispatchers, no HTTP/I/O. Reduced
-// to github/github-app/generic in increment 35 (catalog strip-down) — the
-// other providers are reintroduced properly, alongside their app, starting
-// increment 36.
+// to github/github-app/generic in increment 35 (catalog strip-down); slack was
+// reintroduced in increment 37 alongside its app catalog entry.
 
 import { describe, expect, it } from "vitest"
 import {
@@ -19,9 +18,9 @@ describe("getProvider / listProviders", () => {
     expect(getProvider("nope")).toBeUndefined()
   })
 
-  it("listProviders returns exactly github/github-app/generic (inc 35 strip-down)", () => {
+  it("listProviders returns exactly github/github-app/slack/generic", () => {
     const ids = listProviders().map((p) => p.id)
-    expect(ids).toEqual(["github", "github-app", "generic"])
+    expect(ids).toEqual(["github", "github-app", "slack", "generic"])
   })
 })
 
@@ -60,34 +59,13 @@ describe("tuned provider overrides", () => {
 
 describe("resolveScopeString", () => {
   it("uses the provider's separator", () => {
+    const slack = getProvider("slack")
     const github = getProvider("github")
-    const generic = getProvider("generic")
+    expect(slack).toBeDefined()
     expect(github).toBeDefined()
-    expect(generic).toBeDefined()
-    if (!github || !generic) return
+    if (!slack || !github) return
+    expect(resolveScopeString(slack, ["a", "b"])).toBe("a,b")
     expect(resolveScopeString(github, ["a", "b"])).toBe("a b")
-    expect(resolveScopeString(generic, ["a", "b"])).toBe("a b")
-  })
-
-  it("uses a provider's non-default separator when it has one (comma)", () => {
-    // No surviving catalog provider uses a comma separator (removed with
-    // slack in inc 35) — assert the mechanism directly against a synthetic
-    // provider rather than lose separator coverage entirely.
-    const commaProvider: OAuthProvider = {
-      id: "synthetic-comma",
-      displayName: "Synthetic",
-      authorizationUrl: "https://example.com/authorize",
-      tokenUrl: "https://example.com/token",
-      pkce: "S256",
-      scopeSeparator: ",",
-      tokenAuthMethod: "client_secret_post",
-      bodyFormat: "form",
-      expiryStrategy: "expires_in",
-      redirectMode: "loopback-fixed",
-      supportsRefresh: true,
-      registrationHint: { redirectUri: "", scopes: "", docsUrl: "" },
-    }
-    expect(resolveScopeString(commaProvider, ["a", "b"])).toBe("a,b")
   })
 })
 
@@ -134,6 +112,39 @@ describe("buildAuthorizationParams", () => {
 })
 
 describe("normalizeTokenResponse", () => {
+  it("slack rejects {ok:false} at HTTP 200 (throws)", () => {
+    const slack = getProvider("slack")
+    expect(slack).toBeDefined()
+    if (!slack) return
+    expect(() => normalizeTokenResponse(slack, { ok: false, error: "invalid_code" })).toThrow(
+      /slack: invalid_code/,
+    )
+  })
+
+  it("slack happily parses a {ok:true, access_token, ...} response", () => {
+    const slack = getProvider("slack")
+    expect(slack).toBeDefined()
+    if (!slack) return
+    const tokens = normalizeTokenResponse(slack, {
+      ok: true,
+      access_token: "xoxb-123",
+      scope: "channels:read,chat:write",
+    })
+    expect(tokens.accessToken).toBe("xoxb-123")
+    expect(tokens.scopes).toEqual(["channels:read", "chat:write"])
+  })
+
+  it("slack falls back to authed_user.access_token when the top-level token is absent", () => {
+    const slack = getProvider("slack")
+    expect(slack).toBeDefined()
+    if (!slack) return
+    const tokens = normalizeTokenResponse(slack, {
+      ok: true,
+      authed_user: { access_token: "xoxp-456" },
+    })
+    expect(tokens.accessToken).toBe("xoxp-456")
+  })
+
   it("default parser: standard OAuth2 response normalizes scopes by the provider's separator", () => {
     const github = getProvider("github")
     expect(github).toBeDefined()
@@ -172,6 +183,7 @@ describe("userinfoUrl (OAuth-native Test Connection)", () => {
   it("tuned providers with a stable identity endpoint carry a userinfoUrl", () => {
     expect(getProvider("github")?.userinfoUrl).toBe("https://api.github.com/user")
     expect(getProvider("github-app")?.userinfoUrl).toBe("https://api.github.com/user")
+    expect(getProvider("slack")?.userinfoUrl).toBe("https://slack.com/api/auth.test")
   })
 
   it("github requires a User-Agent header (GitHub rejects UA-less requests)", () => {

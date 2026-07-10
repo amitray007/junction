@@ -678,6 +678,36 @@ describe("verifyCredential — oauth2 identity check", () => {
     }
   })
 
+  it("slack: 200 + {ok:false} → auth-failed (the token is dead despite HTTP 200)", async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ ok: false, error: "invalid_auth" }), { status: 200 }),
+      )
+    const result = await verifyCredential(mcpPlatform(), "tok", FAKE_PATHS, {
+      oauthProviderId: "slack",
+    })
+    expect(result._unsafeUnwrap()).toEqual({ status: "auth-failed" })
+  })
+
+  it("slack: 200 + {ok:true} → ok", async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ ok: true, user: "u" }), { status: 200 }))
+    const result = await verifyCredential(mcpPlatform(), "tok", FAKE_PATHS, {
+      oauthProviderId: "slack",
+    })
+    expect(result._unsafeUnwrap()).toEqual({ status: "ok" })
+  })
+
+  it("slack: 200 + {ok absent} → auth-failed (require ok===true; absent ok is not confirmed-live)", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }))
+    const result = await verifyCredential(mcpPlatform(), "tok", FAKE_PATHS, {
+      oauthProviderId: "slack",
+    })
+    expect(result._unsafeUnwrap()).toEqual({ status: "auth-failed" })
+  })
+
   it("NO TOKEN LEAK: the sentinel token never appears in any outcome, across every branch", async () => {
     for (const status of [200, 401, 500]) {
       globalThis.fetch = vi.fn().mockResolvedValue(new Response("{}", { status }))
