@@ -7,9 +7,13 @@
 // No @junction/core import. Core access is only inside getApps' createServerFn.
 //
 // Search + filters + sort (increment 30.5 slice 2): a client-side
-// search/facet/sort toolbar over the 45-card catalog grid, mirroring
-// credentials.tsx's useTableView + FacetSelect pattern. No pagination — the
-// catalog is small enough that narrowing via search/filters is sufficient.
+// search/facet/sort toolbar over the catalog grid, mirroring credentials.tsx's
+// useTableView + FacetSelect pattern. No pagination — the catalog is small
+// enough that narrowing via search/filters is sufficient. (The catalog was
+// stripped to github-only in increment 35 — see
+// docs/methods/35-catalog-stripdown.md; apps are reintroduced deeply per
+// docs/design/apps-ready-to-connect.md, so this toolbar stays wired for the
+// grid to grow back into.)
 
 import { createFileRoute, Link } from "@tanstack/react-router"
 import { LayoutGrid } from "lucide-react"

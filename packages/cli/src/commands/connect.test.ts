@@ -28,14 +28,50 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 // ---------------------------------------------------------------------------
 
 const openInBrowserMock = vi.fn()
+
+// Synthetic device-code-capable provider — the catalog is github-only since
+// the inc 35 strip-down (docs/methods/35-catalog-stripdown.md); no surviving
+// provider carries a deviceAuthorizationUrl (google, the device-code example,
+// was removed). Injected into getProvider/listProviders below so the device
+// flow itself stays under real test coverage rather than going untested
+// until a device-code provider is reintroduced.
+// Hoisted so the vi.mock factory below (which vitest lifts to the top of the
+// file) can reference it without a TDZ crash — a plain top-level `const` is
+// initialized AFTER the hoisted factory runs. Mirrors the lazy-wrapper note
+// on openInBrowser below (same hoisting hazard, different fix).
+const { DEVICE_CODE_PROVIDER_ID } = vi.hoisted(() => ({
+  DEVICE_CODE_PROVIDER_ID: "synthetic-device-code-provider",
+}))
+
 vi.mock("@junction/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@junction/core")>()
-  // Lazy wrapper (not a direct `openInBrowserMock` reference) — vi.mock
-  // factories are hoisted above this file's top-level `const`s, so a direct
-  // reference would TDZ-crash; deferring the lookup to call time works
-  // because openInBrowserMock is defined by the time openInBrowser actually
-  // runs (mirrors credential-verify-honesty.test.ts's lazy-closure pattern).
-  return { ...actual, openInBrowser: (url: string) => openInBrowserMock(url) }
+  const syntheticDeviceProvider: import("@junction/core").OAuthProvider = {
+    id: DEVICE_CODE_PROVIDER_ID,
+    displayName: "Synthetic Device-Code Provider",
+    authorizationUrl: "https://example.com/oauth/authorize",
+    tokenUrl: "https://example.com/oauth/token",
+    deviceAuthorizationUrl: "https://example.com/oauth/device/code",
+    pkce: "S256",
+    scopeSeparator: " ",
+    tokenAuthMethod: "client_secret_basic",
+    bodyFormat: "form",
+    expiryStrategy: "expires_in",
+    redirectMode: "loopback-ephemeral",
+    supportsRefresh: true,
+    registrationHint: { redirectUri: "", scopes: "synthetic test fixture", docsUrl: "" },
+  }
+  return {
+    ...actual,
+    // Lazy wrapper (not a direct `openInBrowserMock` reference) — vi.mock
+    // factories are hoisted above this file's top-level `const`s, so a direct
+    // reference would TDZ-crash; deferring the lookup to call time works
+    // because openInBrowserMock is defined by the time openInBrowser actually
+    // runs (mirrors credential-verify-honesty.test.ts's lazy-closure pattern).
+    openInBrowser: (url: string) => openInBrowserMock(url),
+    getProvider: (id: string) =>
+      id === DEVICE_CODE_PROVIDER_ID ? syntheticDeviceProvider : actual.getProvider(id),
+    listProviders: () => [...actual.listProviders(), syntheticDeviceProvider],
+  }
 })
 
 const buildAuthorizeUrlMock = vi.fn()
@@ -288,9 +324,12 @@ describe("junction connect (unit)", () => {
 
   it("device flow: pending → slow-down → success, persists via mode:create", async () => {
     await withTempHome(async () => {
-      // google has deviceAuthorizationUrl set (unlike github's OAuth-App entry) —
-      // the device flow is only offered where the catalog declares it.
-      await setupOAuthPlatform("google")
+      // The synthetic provider (injected by the @junction/core mock above)
+      // has deviceAuthorizationUrl set (unlike github's OAuth-App entry) —
+      // the device flow is only offered where the catalog declares it. No
+      // surviving real provider has one since the inc 35 strip-down removed
+      // google (the prior example) — see docs/methods/35-catalog-stripdown.md.
+      await setupOAuthPlatform(DEVICE_CODE_PROVIDER_ID)
       fakeStdin()
       feedStdin("sentinel-client-secret-value")
 
@@ -317,13 +356,15 @@ describe("junction connect (unit)", () => {
         .mockResolvedValueOnce({ isOk: () => true, isErr: () => false, value: NORMALIZED_TOKENS })
 
       persistOAuthTokensMock.mockReturnValue(
-        new ResultAsync(Promise.resolve(ok(fakeCredential({ platformId: "google" })))),
+        new ResultAsync(
+          Promise.resolve(ok(fakeCredential({ platformId: DEVICE_CODE_PROVIDER_ID }))),
+        ),
       )
 
       const { stdout, stderr } = await captureAllOutput(() =>
         connectCommand.run?.(
           ctx({
-            platform: "google",
+            platform: DEVICE_CODE_PROVIDER_ID,
             account: "work",
             device: true,
             "client-id": "cid",
@@ -335,7 +376,11 @@ describe("junction connect (unit)", () => {
 
       expect(devicePollMock).toHaveBeenCalledTimes(3)
       expect(persistOAuthTokensMock).toHaveBeenCalledWith(
-        expect.objectContaining({ mode: "create", authMode: "device_code", platformId: "google" }),
+        expect.objectContaining({
+          mode: "create",
+          authMode: "device_code",
+          platformId: DEVICE_CODE_PROVIDER_ID,
+        }),
       )
       const lines = stdout.trim().split("\n")
       const last = JSON.parse(lines[lines.length - 1]) as {
@@ -351,14 +396,14 @@ describe("junction connect (unit)", () => {
 
   it("device flow not supported for a provider without deviceAuthorizationUrl → clean error", async () => {
     await withTempHome(async () => {
-      await setupOAuthPlatform("notion")
+      await setupOAuthPlatform("github-app")
       fakeStdin()
       feedStdin("sentinel-client-secret-value")
 
       const { stdout } = await captureAllOutput(() =>
         connectCommand.run?.(
           ctx({
-            platform: "notion",
+            platform: "github-app",
             account: "work",
             device: true,
             "client-id": "cid",
@@ -425,7 +470,11 @@ describe("junction connect (unit)", () => {
 
   it("state-mismatch on the browser callback (real ephemeral loopback listener) → typed error, exchangeCode never called", async () => {
     await withTempHome(async () => {
-      await setupOAuthPlatform("google") // loopback-ephemeral — browser flow is offered
+      // Needs a loopback-ephemeral provider so the CLI browser flow actually
+      // runs (github-app requires an exact pre-registered redirect URI and
+      // REFUSES the CLI browser flow). The synthetic device-code provider is
+      // loopback-ephemeral (formerly this used google, removed in inc 35).
+      await setupOAuthPlatform(DEVICE_CODE_PROVIDER_ID)
       fakeStdin()
       feedStdin("sentinel-client-secret-value")
 
@@ -435,7 +484,7 @@ describe("junction connect (unit)", () => {
       buildAuthorizeUrlMock.mockImplementation((callArgs: { redirectUri: string }) => {
         capturedRedirectUri = callArgs.redirectUri
         return {
-          url: "https://accounts.google.com/o/oauth2/v2/auth?mock=1",
+          url: "https://github.com/login/oauth/authorize?mock=1",
           state: "expected-state",
           codeVerifier: "verifier-abc",
         }
@@ -456,7 +505,7 @@ describe("junction connect (unit)", () => {
       const { stdout } = await captureAllOutput(() =>
         connectCommand.run?.(
           ctx({
-            platform: "google",
+            platform: DEVICE_CODE_PROVIDER_ID,
             account: "work",
             device: false,
             "client-id": "cid",
@@ -476,12 +525,15 @@ describe("junction connect (unit)", () => {
 
   it("openInBrowser throwing (no browser available) → clean typed error, not a hang", async () => {
     await withTempHome(async () => {
-      await setupOAuthPlatform("google") // loopback-ephemeral — browser flow is offered
+      // Loopback-ephemeral provider (see the state-mismatch test above) so the
+      // browser flow actually runs and openInBrowser is reached; github-app
+      // refuses the CLI browser flow before that point.
+      await setupOAuthPlatform(DEVICE_CODE_PROVIDER_ID)
       fakeStdin()
       feedStdin("sentinel-client-secret-value")
 
       buildAuthorizeUrlMock.mockReturnValue({
-        url: "https://accounts.google.com/o/oauth2/v2/auth?mock=1",
+        url: "https://github.com/login/oauth/authorize?mock=1",
         state: "expected-state",
         codeVerifier: "verifier-abc",
       })
@@ -495,7 +547,7 @@ describe("junction connect (unit)", () => {
       const { stdout } = await captureAllOutput(() =>
         connectCommand.run?.(
           ctx({
-            platform: "google",
+            platform: DEVICE_CODE_PROVIDER_ID,
             account: "work",
             device: false,
             "client-id": "cid",
@@ -516,7 +568,7 @@ describe("junction connect (unit)", () => {
 
   it("--json emits registration hint fields, no secret anywhere in stdout/stderr (sentinel sweep)", async () => {
     await withTempHome(async () => {
-      await setupOAuthPlatform("google") // device-capable (see the flow test above)
+      await setupOAuthPlatform(DEVICE_CODE_PROVIDER_ID) // device-capable (see the flow test above)
       fakeStdin()
       feedStdin("SUPER-SECRET-SENTINEL-VALUE")
 
@@ -524,7 +576,7 @@ describe("junction connect (unit)", () => {
         ok({
           deviceCode: "devcode",
           userCode: "WXYZ-9999",
-          verificationUri: "https://www.google.com/device",
+          verificationUri: "https://example.com/device",
           intervalSeconds: 0,
           expiresInSeconds: 600,
         }),
@@ -539,7 +591,7 @@ describe("junction connect (unit)", () => {
       const { stdout, stderr } = await captureAllOutput(() =>
         connectCommand.run?.(
           ctx({
-            platform: "google",
+            platform: DEVICE_CODE_PROVIDER_ID,
             account: "work",
             device: true,
             "client-id": "cid",

@@ -4,8 +4,52 @@
 // Method file §2a / §3 proof-of-done.
 
 import { describe, expect, it } from "vitest"
+import type { AppDefinition } from "./catalog.js"
 import { listApps } from "./catalog.js"
 import { appIdForConnection, groupByApp } from "./group.js"
+
+// A minimal synthetic catalog for tests that need more than one app (the real
+// catalog is github-only since the inc 35 strip-down — see
+// docs/methods/35-catalog-stripdown.md).
+//
+// "-search" is deliberately NOT one of group.ts's BUILD_KIND_SUFFIXES
+// (mcp/openapi/graphql/http/cli), so brave-search proves exact-id matching
+// wins for a hyphenated id without the suffix-strip logic ever getting a
+// chance to misfire on it. gitlab-oauth stands in for a second, DIFFERENT
+// oauth2-backed app (its providerId doesn't need to resolve in the real
+// oauth/catalog.ts — appIdForConnection's step 1 only needs the App's own
+// auth[] to declare it).
+const SYNTHETIC_APPS: AppDefinition[] = [
+  {
+    id: "brave-search",
+    displayName: "Brave Search",
+    supportedKinds: ["openapi"],
+    auth: [{ mode: "token" }],
+  },
+  {
+    id: "gitlab-oauth",
+    displayName: "GitLab (synthetic)",
+    supportedKinds: ["graphql"],
+    auth: [{ mode: "oauth2", providerId: "gitlab-oauth" }],
+  },
+  {
+    // Stands in for a surface-less oauth2 app (the 30.8 motivating case,
+    // formerly demonstrated with "google") — supportedKinds without a ready
+    // surfaces[] entry. Proves groupByApp reads app-level auth[] only, never
+    // `surfaces` (this AppDefinition has no `surfaces` field at all).
+    id: "surfaceless-oauth-app",
+    displayName: "Surface-less OAuth App (synthetic)",
+    supportedKinds: ["openapi"],
+    auth: [{ mode: "oauth2", providerId: "surfaceless-oauth-app" }],
+  },
+  {
+    // Stands in for a surface-less byo/escape-hatch app (formerly "wpgraphql").
+    id: "byo-graphql-app",
+    displayName: "BYO GraphQL App (synthetic)",
+    supportedKinds: ["graphql"],
+    auth: [{ mode: "byo" }],
+  },
+]
 
 const BUILD_KIND_SUFFIXES = ["mcp", "openapi", "graphql", "http", "cli"] as const
 
@@ -123,12 +167,15 @@ describe("appIdForConnection", () => {
     }
   })
 
-  it("SUFFIX-STRIP negative control: 'brave-search' (the only hyphenated app id) resolves via exact-id, NOT mis-stripped as 'brave' + '-search'", () => {
-    const appId = appIdForConnection({
-      platformId: "brave-search",
-      platformDisplayName: "irrelevant",
-      kind: "openapi",
-    })
+  it("SUFFIX-STRIP negative control: a hyphenated app id resolves via exact-id, NOT mis-stripped at the hyphen", () => {
+    const appId = appIdForConnection(
+      {
+        platformId: "brave-search",
+        platformDisplayName: "irrelevant",
+        kind: "openapi",
+      },
+      SYNTHETIC_APPS,
+    )
     expect(appId).toBe("brave-search")
   })
 
@@ -208,13 +255,13 @@ describe("groupByApp", () => {
 
   it("PUBLIC: a platform with no credentials yields one credential-less connection (account '—')", () => {
     const groups = groupByApp({
-      platforms: [{ id: "filesystem", kind: "mcp", displayName: "Filesystem" }],
+      platforms: [{ id: "github", kind: "mcp", displayName: "GitHub" }],
       credentials: [],
     })
-    const group = groups.find((g) => g.appId === "filesystem")
+    const group = groups.find((g) => g.appId === "github")
     expect(group).toBeDefined()
     expect(group?.connections).toEqual([
-      { appId: "filesystem", account: "—", platformId: "filesystem", kind: "mcp" },
+      { appId: "github", account: "—", platformId: "github", kind: "mcp" },
     ])
   })
 
@@ -239,16 +286,22 @@ describe("groupByApp", () => {
     // credentials for DIFFERENT services. Attribution is per-connection and the
     // authoritative providerId wins, so the platform legitimately appears under
     // BOTH app headers. Pinned as intended behavior (per-connection grain), not
-    // a surprise — see the correctness review (inc 30 Slice A).
-    const groups = groupByApp({
-      platforms: [{ id: "shared-host", kind: "graphql", displayName: "Shared Host" }],
-      credentials: [
-        { platformId: "shared-host", account: "gh", oauthProviderId: "github" },
-        { platformId: "shared-host", account: "gl", oauthProviderId: "gitlab" },
-      ],
-    })
+    // a surprise — see the correctness review (inc 30 Slice A). Uses the
+    // synthetic 2nd app (gitlab-oauth) alongside the real 'github' app since
+    // the catalog is github-only post-strip-down.
+    const apps = [...listApps(), ...SYNTHETIC_APPS]
+    const groups = groupByApp(
+      {
+        platforms: [{ id: "shared-host", kind: "graphql", displayName: "Shared Host" }],
+        credentials: [
+          { platformId: "shared-host", account: "gh", oauthProviderId: "github" },
+          { platformId: "shared-host", account: "gl", oauthProviderId: "gitlab-oauth" },
+        ],
+      },
+      apps,
+    )
     expect(groups.find((g) => g.appId === "github")?.connections).toHaveLength(1)
-    expect(groups.find((g) => g.appId === "gitlab")?.connections).toHaveLength(1)
+    expect(groups.find((g) => g.appId === "gitlab-oauth")?.connections).toHaveLength(1)
   })
 
   it("ORPHAN credential (platformId absent from platforms) is silently dropped — documented, FK-guaranteed unreachable", () => {
@@ -270,29 +323,41 @@ describe("groupByApp", () => {
     expect(groups.some((g) => g.connections.some((c) => c.account === "orphan"))).toBe(false)
   })
 
-  it("SURFACE-LESS (30.8): Google (oauth2 + openapi, zero surfaces[]) still groups via its oauth2 providerId", () => {
-    // The design doc's motivating bug (§1) — Google ships oauth2 + supportedKinds
-    // ["openapi"] but no ready surface in THIS increment (surfaces are optional;
-    // only GitHub is fully authored). Proof-of-done: a surface-less catalog
-    // entry must still resolve through groupByApp exactly like a surfaced one —
-    // grouping reads app-level auth[] only, never `surfaces`.
-    const groups = groupByApp({
-      platforms: [{ id: "some-google-platform", kind: "openapi", displayName: "My Google" }],
-      credentials: [
-        { platformId: "some-google-platform", account: "work", oauthProviderId: "google" },
-      ],
-    })
-    const googleGroup = groups.find((g) => g.appId === "google")
-    expect(googleGroup).toBeDefined()
-    expect(googleGroup?.connections).toHaveLength(1)
+  it("SURFACE-LESS (30.8): an oauth2 app with zero surfaces[] still groups via its oauth2 providerId", () => {
+    // The design doc's motivating bug (§1) — an app can ship oauth2 +
+    // supportedKinds without a ready surface (surfaces are optional; only
+    // GitHub is fully authored post-strip-down). Proof-of-done: a surface-less
+    // catalog entry must still resolve through groupByApp exactly like a
+    // surfaced one — grouping reads app-level auth[] only, never `surfaces`.
+    const apps = [...listApps(), ...SYNTHETIC_APPS]
+    const groups = groupByApp(
+      {
+        platforms: [{ id: "some-surfaceless-platform", kind: "openapi", displayName: "My App" }],
+        credentials: [
+          {
+            platformId: "some-surfaceless-platform",
+            account: "work",
+            oauthProviderId: "surfaceless-oauth-app",
+          },
+        ],
+      },
+      apps,
+    )
+    const group = groups.find((g) => g.appId === "surfaceless-oauth-app")
+    expect(group).toBeDefined()
+    expect(group?.connections).toHaveLength(1)
   })
 
-  it("SURFACE-LESS (30.8): the byo escape-hatch app (wpgraphql, zero surfaces[]) still groups by id", () => {
-    const groups = groupByApp({
-      platforms: [{ id: "wpgraphql", kind: "graphql", displayName: "WPGraphQL" }],
-      credentials: [{ platformId: "wpgraphql", account: "default" }],
-    })
-    const group = groups.find((g) => g.appId === "wpgraphql")
+  it("SURFACE-LESS (30.8): the byo escape-hatch app (zero surfaces[]) still groups by id", () => {
+    const apps = [...listApps(), ...SYNTHETIC_APPS]
+    const groups = groupByApp(
+      {
+        platforms: [{ id: "byo-graphql-app", kind: "graphql", displayName: "BYO GraphQL App" }],
+        credentials: [{ platformId: "byo-graphql-app", account: "default" }],
+      },
+      apps,
+    )
+    const group = groups.find((g) => g.appId === "byo-graphql-app")
     expect(group).toBeDefined()
     expect(group?.connections).toHaveLength(1)
   })
@@ -302,9 +367,9 @@ describe("groupByApp", () => {
       platforms: [{ id: "totally-unrelated", kind: "cli", displayName: "Totally Unrelated" }],
       credentials: [{ platformId: "totally-unrelated", account: "default" }],
     })
-    // "notion" is a real catalog app but has no connection in this input —
+    // "github" is a real catalog app but has no connection in this input —
     // it must not appear as an emitted group here (the /app index left-joins
     // listApps() separately for browsable-but-unconnected apps).
-    expect(groups.find((g) => g.appId === "notion")).toBeUndefined()
+    expect(groups.find((g) => g.appId === "github")).toBeUndefined()
   })
 })

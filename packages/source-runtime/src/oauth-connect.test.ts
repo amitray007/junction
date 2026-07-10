@@ -13,6 +13,8 @@ import {
   getDatabase,
   getPaths,
   getProvider,
+  type NormalizedTokens,
+  type OAuthProvider,
   ResultAsync,
 } from "@junction/core"
 import { withTempHome } from "@junction/core/testing"
@@ -26,6 +28,65 @@ import {
 } from "./oauth-connect.js"
 
 const validateAuthorizationCode = vi.fn()
+
+// Synthetic providers for behavior the surviving catalog (github, github-app,
+// generic) no longer exercises: an offline-access/device-code provider (was
+// "google") and a comma-scope-separator + custom {ok:false}-at-200 parser
+// provider (was "slack"). These mirror the SHAPE of the since-removed catalog
+// entries without depending on catalog data — the removed apps return in inc
+// 37/38 with their own catalog entries; these fixtures just keep the
+// mechanism (device-code flow, non-default scope separator, parseTokenResponse
+// override) under test in the meantime.
+const DEVICE_CODE_PROVIDER: OAuthProvider = {
+  id: "synthetic-device-code",
+  displayName: "Synthetic Device-Code Provider",
+  authorizationUrl: "https://example.com/oauth/authorize",
+  tokenUrl: "https://example.com/oauth/token",
+  deviceAuthorizationUrl: "https://example.com/oauth/device/code",
+  pkce: "S256",
+  scopeSeparator: " ",
+  authorizationParams: { access_type: "offline", prompt: "consent" },
+  tokenAuthMethod: "client_secret_basic",
+  bodyFormat: "form",
+  expiryStrategy: "expires_in",
+  redirectMode: "loopback-ephemeral",
+  supportsRefresh: true,
+  registrationHint: {
+    redirectUri: "http://127.0.0.1:<ephemeral-port>/",
+    scopes: "synthetic fixture — not a real registered app",
+    docsUrl: "",
+  },
+}
+
+function syntheticCommaScopeParser(raw: unknown): NormalizedTokens {
+  const body = raw as { ok?: boolean; error?: string; access_token?: string; scope?: string }
+  if (body.ok === false) throw new Error(`synthetic: ${body.error ?? "unknown error"}`)
+  const accessToken = body.access_token
+  if (typeof accessToken !== "string" || accessToken.length === 0) {
+    throw new Error("synthetic: token response missing access_token")
+  }
+  return { accessToken, scopes: body.scope ? body.scope.split(",") : undefined }
+}
+
+const COMMA_SCOPE_PROVIDER: OAuthProvider = {
+  id: "synthetic-comma-scope",
+  displayName: "Synthetic Comma-Scope Provider",
+  authorizationUrl: "https://example.com/oauth/authorize",
+  tokenUrl: "https://example.com/oauth/token",
+  pkce: "S256",
+  scopeSeparator: ",",
+  tokenAuthMethod: "client_secret_post",
+  bodyFormat: "form",
+  expiryStrategy: "expires_in",
+  parseTokenResponse: syntheticCommaScopeParser,
+  redirectMode: "loopback-fixed",
+  supportsRefresh: true,
+  registrationHint: {
+    redirectUri: "http://127.0.0.1:4321/oauth/callback",
+    scopes: "synthetic fixture — not a real registered app",
+    docsUrl: "",
+  },
+}
 
 vi.mock("arctic", async (importOriginal) => {
   const actual = await importOriginal<typeof import("arctic")>()
@@ -58,10 +119,8 @@ const SENTINEL_CLIENT_SECRET = "sentinel-client-secret-do-not-leak"
 // ---------------------------------------------------------------------------
 
 describe("buildAuthorizeUrl", () => {
-  it("google: produces an S256 PKCE URL with state, code_challenge, offline access_type + consent, and scopes", () => {
-    const provider = getProvider("google")
-    expect(provider).toBeDefined()
-    if (!provider) return
+  it("offline-access provider: produces an S256 PKCE URL with state, code_challenge, offline access_type + consent, and scopes", () => {
+    const provider = DEVICE_CODE_PROVIDER
 
     const result = buildAuthorizeUrl({
       provider,
@@ -89,10 +148,8 @@ describe("buildAuthorizeUrl", () => {
     expect(second.codeVerifier).not.toBe(result.codeVerifier)
   })
 
-  it("slack: uses the comma scope separator", () => {
-    const provider = getProvider("slack")
-    expect(provider).toBeDefined()
-    if (!provider) return
+  it("comma-scope provider: uses the comma scope separator", () => {
+    const provider = COMMA_SCOPE_PROVIDER
     const result = buildAuthorizeUrl({
       provider,
       clientId: "cid",
@@ -153,10 +210,8 @@ describe("exchangeCode", () => {
     }
   })
 
-  it("slack {ok:false}-at-200 is rejected as a typed error, not a fake success", async () => {
-    const provider = getProvider("slack")
-    expect(provider).toBeDefined()
-    if (!provider) return
+  it("custom parseTokenResponse override: {ok:false}-at-200 is rejected as a typed error, not a fake success", async () => {
+    const provider = COMMA_SCOPE_PROVIDER
 
     validateAuthorizationCode.mockResolvedValueOnce({
       data: { ok: false, error: "invalid_code" },
@@ -175,10 +230,8 @@ describe("exchangeCode", () => {
     if (result.isErr()) expect(result.error.kind).toBe("exchange-failed")
   })
 
-  it("slack {ok:true} with a real access_token normalizes correctly", async () => {
-    const provider = getProvider("slack")
-    expect(provider).toBeDefined()
-    if (!provider) return
+  it("custom parseTokenResponse override: {ok:true} with a real access_token normalizes correctly", async () => {
+    const provider = COMMA_SCOPE_PROVIDER
 
     validateAuthorizationCode.mockResolvedValueOnce({
       data: { ok: true, access_token: "xoxb-tok", scope: "channels:read,chat:write" },
@@ -201,7 +254,7 @@ describe("exchangeCode", () => {
   })
 
   it("a thrown OAuth2RequestError(invalid_grant) maps to exchange-failed/invalid_grant, never leaking the sentinel code text", async () => {
-    const provider = getProvider("google")
+    const provider = getProvider("github-app")
     expect(provider).toBeDefined()
     if (!provider) return
     const { OAuth2RequestError } = await import("arctic")
@@ -233,7 +286,7 @@ describe("exchangeCode", () => {
 
 describe("deviceAuthorize / devicePoll", () => {
   it("device-not-supported for a provider without deviceAuthorizationUrl", async () => {
-    const provider = getProvider("slack")
+    const provider = getProvider("github-app")
     expect(provider).toBeDefined()
     if (!provider) return
     const result = await deviceAuthorize({ provider, clientId: "cid", scopes: [] })
@@ -242,16 +295,14 @@ describe("deviceAuthorize / devicePoll", () => {
   })
 
   it("deviceAuthorize parses a valid device response", async () => {
-    const provider = getProvider("google")
-    expect(provider).toBeDefined()
-    if (!provider) return
+    const provider = DEVICE_CODE_PROVIDER
 
     const fetchMock = vi.fn().mockResolvedValueOnce({
       ok: true,
       json: async () => ({
         device_code: "devcode",
         user_code: "ABCD-EFGH",
-        verification_uri: "https://google.com/device",
+        verification_uri: "https://example.com/device",
         interval: 5,
         expires_in: 1800,
       }),
@@ -268,9 +319,7 @@ describe("deviceAuthorize / devicePoll", () => {
   })
 
   it("devicePoll: authorization_pending / slow_down / access_denied / expired_token map to typed device-* errors", async () => {
-    const provider = getProvider("google")
-    expect(provider).toBeDefined()
-    if (!provider) return
+    const provider = DEVICE_CODE_PROVIDER
 
     const cases: Array<[string, string]> = [
       ["authorization_pending", "device-pending"],
@@ -299,9 +348,7 @@ describe("deviceAuthorize / devicePoll", () => {
   })
 
   it("devicePoll: success normalizes tokens", async () => {
-    const provider = getProvider("google")
-    expect(provider).toBeDefined()
-    if (!provider) return
+    const provider = DEVICE_CODE_PROVIDER
 
     const fetchMock = vi.fn().mockResolvedValueOnce({
       status: 200,
@@ -853,9 +900,7 @@ describe("persistOAuthTokens", () => {
 
 describe("deviceAuthorize null-body guard", () => {
   it("a 200 response whose JSON body is literal null → typed Err, never a thrown TypeError", async () => {
-    const provider = getProvider("google")
-    expect(provider).toBeDefined()
-    if (!provider) return
+    const provider = DEVICE_CODE_PROVIDER
     const realFetch = globalThis.fetch
     // biome-ignore lint/suspicious/noExplicitAny: minimal fetch stub for the test
     globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => null })) as any

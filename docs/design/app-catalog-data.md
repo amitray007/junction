@@ -1,5 +1,13 @@
 # App catalog — researched real-service data (inc 30 Slice A seed)
 
+> **Increment 35 note:** the *running* catalog was stripped to **github-only** in increment 35
+> (`docs/methods/35-catalog-stripdown.md`) — a thin catalog of deep apps beats a broad catalog
+> of shallow ones (anti-Composio positioning, `docs/design/apps-ready-to-connect.md` §1a). The
+> research below is **not deleted** — it's the reference data each app is reintroduced from,
+> properly and deeply, one at a time, starting increment 36 (GitHub gold-standard → 37 Slack →
+> 38 Gmail → 39 Google Calendar → …). Treat every non-GitHub entry here as **not currently
+> seeded**, pending its own increment.
+
 **Status:** research output for inc 30's `AppCatalog` seed. Every entry here is **verified
 against an official source** (vendor docs / official repo) — cited inline. Entries flagged
 **⚠️ UNVERIFIED** must be confirmed (or dropped) before shipping; **do NOT ship guessed

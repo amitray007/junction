@@ -144,11 +144,13 @@ export function appIdForConnection(
  * app in the catalog with ZERO connections is not emitted here (the /app
  * index left-joins listApps() separately, §2b).
  */
-export function groupByApp(input: {
-  platforms: { id: string; kind: PlatformKind; displayName: string }[]
-  credentials: { platformId: string; account: string; oauthProviderId?: string }[]
-}): AppGroup[] {
-  const apps = listApps()
+export function groupByApp(
+  input: {
+    platforms: { id: string; kind: PlatformKind; displayName: string }[]
+    credentials: { platformId: string; account: string; oauthProviderId?: string }[]
+  },
+  apps: AppDefinition[] = listApps(),
+): AppGroup[] {
   const credentialsByPlatform = new Map<string, typeof input.credentials>()
   for (const cred of input.credentials) {
     const bucket = credentialsByPlatform.get(cred.platformId)
