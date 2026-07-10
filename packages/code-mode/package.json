@@ -14,11 +14,11 @@
     "build": "tsdown"
   },
   "dependencies": {
-    "@jitl/quickjs-singlefile-mjs-release-asyncify": "^0.31.0",
+    "@jitl/quickjs-singlefile-mjs-release-asyncify": "0.31.0",
     "@junction/core": "workspace:*",
     "@junction/mcp-server": "workspace:*",
     "neverthrow": "catalog:",
-    "quickjs-emscripten-core": "^0.31.0"
+    "quickjs-emscripten-core": "0.31.0"
   },
   "devDependencies": {
     "@types/node": "^26.1.0"

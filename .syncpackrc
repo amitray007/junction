@@ -15,6 +15,12 @@
   ],
   "semverGroups": [
     {
+      "label": "QuickJS runtime pinned EXACTLY (inc 33b): 0.32.0 has a dispose-crash and the asyncify build is <1.0/unaudited — a caret would let a broken minor resolve transitively. See docs/futures/gotchas.md + deprecations.md.",
+      "packages": ["@junction/code-mode"],
+      "dependencies": ["quickjs-emscripten-core", "@jitl/quickjs-singlefile-mjs-release-asyncify"],
+      "range": ""
+    },
+    {
       "label": "All deps use ^ ranges",
       "packages": ["**"],
       "dependencies": ["**"],

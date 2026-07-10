@@ -45,6 +45,7 @@ import {
   type QuickJSAsyncContext,
   type QuickJSAsyncRuntime,
   type QuickJSAsyncWASMModule,
+  type QuickJSDeferredPromise,
   type QuickJSHandle,
   Scope,
   shouldInterruptAfterDeadline,
@@ -172,6 +173,21 @@ export class QuickJsExecutor implements CodeExecutor {
 
     let outcomeErrorKind: "timeout" | "guest-error" | "memory" | "internal" | null = null
 
+    // EVERY facade tool call's in-flight deferred is tracked here so the
+    // finally block can settle+dispose any that are STILL PENDING before
+    // context.dispose() runs. This closes a guest-reachable process-level
+    // DoS (HIGH, inc 33b sandbox-security review): a tool call whose host
+    // promise outlives the remaining budget leaves an unsettled
+    // QuickJSDeferredPromise (+ its guest Promise) in QuickJS's GC object
+    // list; disposing the context then hits `list_empty(&rt->gc_obj_list)`
+    // in JS_FreeRuntime → a WASM abort() (NOT a catchable throw — the
+    // try/catch below cannot contain it), crashing the whole process. On the
+    // shared long-lived MCP server that is a DoS for every consumer. The
+    // `.alive` guards in the bridge callbacks only stop a LATE callback from
+    // throwing; they do not free a promise that never settled — this drain
+    // does.
+    const pendingDeferreds = new Set<QuickJSDeferredPromise>()
+
     try {
       // ONE Scope spans facade installation THROUGH guest execution — every
       // console/emit/tool-bridge handle installed below must stay ALIVE
@@ -179,15 +195,40 @@ export class QuickJsExecutor implements CodeExecutor {
       // loop below, not during installation). Disposing the scope right
       // after installation frees those handles before the guest ever calls
       // them — empirically confirmed to corrupt the runtime.
-      const runOutcome = await Scope.withScopeAsync(async (scope) => {
+      //
+      // OUTER WALL-CLOCK BACKSTOP: the QuickJS interrupt handler only bounds
+      // guest CPU — it CANNOT interrupt a wedged/slow HOST-side tool promise
+      // the guest is awaiting (that promise runs on the Node event loop,
+      // outside the WASM interpreter). So race the whole execution against a
+      // real host timer set a small margin past the deadline; a stuck host
+      // call resolves to a clean timeout instead of hanging forever. The
+      // pending-deferred drain in `finally` then frees the still-in-flight
+      // promise safely.
+      const execution: Promise<RunOutcome> = Scope.withScopeAsync(async (scope) => {
         installConsole(context, scope, captureLog)
         installEmit(context, scope, captureLog, () => {
           emitted += 1
         })
-        installTools(context, scope, auditedInvoker, plan, opts, this.options.safeUpstreamMessage)
+        installTools(
+          context,
+          scope,
+          auditedInvoker,
+          plan,
+          opts,
+          this.options.safeUpstreamMessage,
+          pendingDeferreds,
+        )
 
         return runGuestCode(context, runtime, code, deadline)
       })
+      // If the OUTER timer wins the race, `execution` is left un-awaited and
+      // could later reject (e.g. a Scope-disposal throw against the context
+      // this finally will already have disposed) → an unhandled promise
+      // rejection that could crash the process under strict mode. Attach a
+      // no-op catch so a late rejection is swallowed. The result is still
+      // taken from the race below, not from this handle.
+      execution.catch(() => {})
+      const runOutcome = await Promise.race([execution, outerTimeout(opts.timeoutMs)])
 
       if (runOutcome.kind === "timeout") {
         outcomeErrorKind = "timeout"
@@ -225,6 +266,10 @@ export class QuickJsExecutor implements CodeExecutor {
         errorKind: outcomeErrorKind,
         toolCallCount: auditedInvoker.toolCallCount,
       })
+      // Settle+dispose any still-in-flight tool-call deferreds BEFORE
+      // disposing the context — otherwise an unsettled promise in the GC
+      // list aborts the process at JS_FreeRuntime (see pendingDeferreds).
+      drainPendingDeferreds(context, runtime, pendingDeferreds)
       // Dispose context BEFORE runtime — a leaked handle throws here, the
       // deliberate leak signature the handle-leak regression test relies on.
       context.dispose()
@@ -260,6 +305,62 @@ function isMemoryOrStackError(message: string): boolean {
 const MAX_DRAIN_ITERATIONS = 1_000_000
 /** How long the drain loop yields to the host event loop between polls — bounds latency without busy-spinning. */
 const DRAIN_POLL_INTERVAL_MS = 1
+/**
+ * Grace period added to the outer wall-clock backstop past the guest-CPU
+ * deadline. The interrupt-driven drain loop should always finish first for a
+ * well-behaved guest; this outer Promise.race only fires when a HOST-side
+ * tool promise the guest is awaiting is wedged/slow (which the interrupt
+ * handler cannot touch). The margin keeps the two mechanisms from racing on
+ * a normal timeout — the interrupt path wins and returns first.
+ */
+const OUTER_TIMEOUT_MARGIN_MS = 2_000
+
+/**
+ * The outer wall-clock backstop (see execute()): resolves to a timeout
+ * RunOutcome `OUTER_TIMEOUT_MARGIN_MS` after the guest-CPU deadline. Raced
+ * against the execution so a wedged HOST-side tool call (outside the WASM
+ * interpreter, unreachable by the CPU interrupt) is bounded independently.
+ */
+function outerTimeout(timeoutMs: number): Promise<RunOutcome> {
+  return new Promise((resolve) => {
+    setTimeout(() => resolve({ kind: "timeout" }), timeoutMs + OUTER_TIMEOUT_MARGIN_MS)
+  })
+}
+
+/**
+ * Settle and dispose every still-pending tool-call deferred, then flush the
+ * job queue once so QuickJS actually frees the associated promise objects
+ * out of its GC list — MUST run before context.dispose() to avoid the
+ * `list_empty(&rt->gc_obj_list)` abort (see execute()'s pendingDeferreds
+ * comment). Rejecting with an opaque, non-secret-bearing error is safe: by
+ * the time this runs the guest is no longer observing the promise (the
+ * execution already resolved to a timeout/error outcome), and even if a
+ * late microtask did observe it, the message carries no host detail.
+ * Best-effort and self-contained: never throws into the caller (a dispose
+ * failure must not mask the real outcome).
+ */
+function drainPendingDeferreds(
+  context: QuickJSAsyncContext,
+  runtime: QuickJSAsyncRuntime,
+  pending: Set<QuickJSDeferredPromise>,
+): void {
+  if (pending.size === 0) return
+  try {
+    for (const deferred of pending) {
+      if (deferred.alive) {
+        using errHandle = context.newError("execution ended before the tool call completed")
+        deferred.reject(errHandle)
+      }
+      deferred.dispose()
+    }
+    // One flush empties the now-settled promises out of the GC object list.
+    runtime.executePendingJobs()
+  } catch {
+    // Best-effort: a failure here must not mask the execution's real outcome.
+  } finally {
+    pending.clear()
+  }
+}
 
 /**
  * Eval the guest code (wrapped in an async IIFE so the guest gets `await`)
@@ -457,6 +558,13 @@ const TOOLS_PROXY_BOOTSTRAP = `
  * `using`-scoped — resolve/reject dup what they need internally, so the
  * caller must still dispose its own reference (verified empirically: not
  * disposing the handle passed to `reject` leaks it and corrupts dispose).
+ *
+ * ASYNC-PATH deferreds are registered in `pendingDeferreds` on dispatch and
+ * removed when they settle, so execute()'s finally block can force-settle
+ * any still-in-flight ones before context.dispose() (the DoS fix — see
+ * execute()'s pendingDeferreds comment). Sync-reject paths (arg-cap /
+ * JSON-parse) settle before returning, so they are never in-flight at
+ * dispose and need not be tracked.
  */
 function installTools(
   context: QuickJSAsyncContext,
@@ -465,6 +573,7 @@ function installTools(
   plan: FacadePlan,
   opts: ExecuteOpts,
   safeUpstreamMessage: (e: UpstreamError) => string,
+  pendingDeferreds: Set<QuickJSDeferredPromise>,
 ): void {
   const rawToolsHandle = scope.manage(context.newObject())
 
@@ -492,14 +601,21 @@ function installTools(
             return deferred.handle
           }
 
+          // ASYNC path: track until settled so the finally-block drain can
+          // force-settle it if the host call outlives the budget.
+          pendingDeferreds.add(deferred)
+
           invoker
             .callTool(entry.wireName, args)
             .then((result) => {
+              pendingDeferreds.delete(deferred)
               // deferred.alive: resolve/reject after dispose is documented
               // as a no-op, but disposing/creating handles on an already-
               // disposed context still throws — guard explicitly rather
               // than rely on the no-op alone (a timeout can dispose the
-              // context while a host call is still in flight).
+              // context while a host call is still in flight; the
+              // finally-block drain may also have already settled+disposed
+              // this deferred).
               if (!deferred.alive) return
               if (result.isErr()) {
                 // SECRET-SAFE: the guest sees ONLY the opaque
@@ -515,9 +631,19 @@ function installTools(
               using strHandle = context.newString(bounded)
               deferred.resolve(strHandle)
             })
-            .catch((cause: unknown) => {
+            .catch(() => {
+              pendingDeferreds.delete(deferred)
               if (!deferred.alive) return
-              using errHandle = context.newError(describeCause(cause))
+              // GUEST-FACING ERROR CHANNEL — MUST STAY NON-SECRET-BEARING.
+              // This catch fires on an UNEXPECTED host-side throw (not a
+              // typed UpstreamError — those go through the isErr() branch
+              // above via safeUpstreamMessage). The thrown `cause` could be
+              // anything (an axios-like object with Authorization headers, a
+              // stack with paths), so it is DELIBERATELY discarded here and a
+              // fixed opaque string crosses into the guest. The host-facing
+              // describeCause is reserved for the executor's OWN Result
+              // (module-load/dispose failures), which never reaches the guest.
+              using errHandle = context.newError("tool call failed")
               deferred.reject(errHandle)
             })
 

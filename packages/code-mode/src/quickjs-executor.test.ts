@@ -423,6 +423,73 @@ describe("QuickJsExecutor — handle-leak regression", () => {
   })
 })
 
+describe("QuickJsExecutor — dispose-crash on an in-flight tool call (HIGH regression)", () => {
+  /** An invoker whose callTool resolves AFTER a configurable host delay. */
+  function makeSlowInvoker(delayMs: number): ToolInvoker {
+    return {
+      listTools: async (): Promise<Result<ProviderTool[], UpstreamError>> =>
+        ok([{ name: "slow__op", description: "slow", inputSchema: {} }]),
+      callTool: async (): Promise<Result<ToolResult, UpstreamError>> => {
+        await new Promise((r) => setTimeout(r, delayMs))
+        return ok({ content: { done: true } })
+      },
+    }
+  }
+
+  it("a tool that resolves AFTER the deadline returns a clean {kind:'timeout'} and does NOT crash", async () => {
+    // Before the fix, the still-pending QuickJSDeferredPromise sits in the GC
+    // object list at context.dispose() -> JS_FreeRuntime abort() (a WASM
+    // process crash, uncatchable). If we reach these assertions AT ALL, the
+    // process did not abort. The pre-fix K=100/timeout tests all dodged this
+    // (they resolve-before-deadline or are sync guest loops that never leave
+    // a tool call in flight).
+    const { sink } = makeSink()
+    const invoker = makeSlowInvoker(2000) // resolves 2s later — well past the 300ms budget
+    const result = await makeExecutor(sink).execute(`return await tools.slow.op({});`, invoker, {
+      timeoutMs: 300,
+    })
+    expect(result.isOk()).toBe(true) // NOT err(dispose-failed) — dispose was clean
+    if (result.isOk() && !result.value.ok) {
+      expect(result.value.kind).toBe("timeout")
+    }
+  }, 10_000)
+
+  it("a host promise that NEVER resolves still times out cleanly (no hang, no crash)", async () => {
+    const { sink } = makeSink()
+    const invoker: ToolInvoker = {
+      listTools: async () => ok([{ name: "wedged__op", description: "d", inputSchema: {} }]),
+      callTool: () => new Promise(() => {}), // never settles
+    }
+    const started = Date.now()
+    const result = await makeExecutor(sink).execute(`return await tools.wedged.op({});`, invoker, {
+      timeoutMs: 300,
+    })
+    expect(result.isOk()).toBe(true)
+    if (result.isOk() && !result.value.ok) {
+      expect(result.value.kind).toBe("timeout")
+    }
+    // Bounded — not hung past the outer wall-clock backstop.
+    expect(Date.now() - started).toBeLessThan(5000)
+  }, 10_000)
+
+  it("survives rapid resolve-after-deadline executions without an abort (abandoned-callback window)", async () => {
+    const { sink } = makeSink()
+    const invoker = makeSlowInvoker(400) // resolves after the 100ms deadline every time
+    for (let i = 0; i < 10; i++) {
+      const result = await makeExecutor(sink).execute(`return await tools.slow.op({});`, invoker, {
+        timeoutMs: 100,
+      })
+      expect(result.isOk()).toBe(true)
+      if (result.isOk() && !result.value.ok) {
+        expect(result.value.kind).toBe("timeout")
+      }
+    }
+    // Let the abandoned host promises fire into the (now-disposed) contexts;
+    // the .alive guards must swallow them with no crash.
+    await new Promise((r) => setTimeout(r, 600))
+  }, 15_000)
+})
+
 describe("QuickJsExecutor — budgets", () => {
   it("(i) an outer timeout produces ExecuteResultErr{kind:'timeout'}", async () => {
     const { sink } = makeSink()
