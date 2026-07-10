@@ -16,6 +16,12 @@
 > 30.5 still `planned` in the map (just needs the flip to `superseded`).
 > **Reformatted 2026-07-10** to at-a-glance tables per section (detailed prose bullets kept below each table).
 >
+> **Reconciled 2026-07-10 (post-backlog-burn-down):** the full §1 PENDING list above was burned down in
+> one autonomous session — 7 increments, 7 PRs (#128–#134): 30.14 (UI completion), 32.7 (small debts),
+> 32.8 (audit rotation), 32.9 (DB unique index), 32.10 (strict import), 32.11 (hash-pinning), 32.12
+> (heavy-analyzers CI). **§1 now contains only the two Tier-1 increments (33 Code-mode, 34
+> Distribution)** — every other row is checked. See `docs/STATE.md` §7 for the full session narrative.
+>
 > Three lists, kept deliberately separate:
 > - **§1 PENDING** — actionable *now*: unfinished work, real bugs/gaps found by dogfooding, and
 >   the two remaining Tier-1 increments. No external trigger needed — we could pick any of these up today.
@@ -36,22 +42,28 @@
 
 | ✓ | Item | Group | Type | Size |
 |---|------|-------|------|------|
-| ☐ | Category facet on the Apps page (30.13 taxonomy is data-only) | UI completion | web | S |
-| ☐ | Dashboard "Recent Activity" → link `/audit` (still ComingSoon) | UI completion | web | S |
-| ☐ | `removeCredential` warn-on-orphan (pino trigger fired) | small debt | core/sec | S |
-| ☐ | File-cred `cred-*` orphan reaper (startup sweep) | small debt | core/sec | S |
-| ☐ | `credentialEnvVar` denylist lock-step test (pin 2 lists) | small debt | test/sec | S |
-| ☐ | `serve.mjs` static-serve regression tests | small debt | test/sec | S |
-| ☐ | Flip **30.5 → `superseded`** in the method map | housekeeping | docs | XS |
-| ☐ | Audit-log rotation / retention (`audit.log` grows unbounded) | heavier debt | core/ops | M |
-| ☐ | DB `(platform_id, profile_name)` unique index (dedup-then-constrain) | heavier debt | migration | M |
-| ☐ | Tool-description hash-pinning (rug-pull detection; 32.5 deferred) | heavier debt | core/sec | M |
-| ☐ | 32.4 strict all-or-nothing import (temp-DB swap) | heavier debt | core | M |
-| ☐ | 32.2 heavy-analyzers CI (knip / semgrep / CodeQL) | heavier debt | ci | M |
+| ☑ | Category facet on the Apps page (30.13 taxonomy is data-only) | UI completion | web | S |
+| ☑ | Dashboard "Recent Activity" → link `/audit` (still ComingSoon) | UI completion | web | S |
+| ☑ | `removeCredential` warn-on-orphan (pino trigger fired) | small debt | core/sec | S |
+| ☑ | File-cred `cred-*` orphan reaper (startup sweep) | small debt | core/sec | S |
+| ☑ | `credentialEnvVar` denylist lock-step test (pin 2 lists) | small debt | test/sec | S |
+| ☑ | `serve.mjs` static-serve regression tests | small debt | test/sec | S |
+| ☑ | Flip **30.5 → `superseded`** in the method map | housekeeping | docs | XS |
+| ☑ | Audit-log rotation / retention (`audit.log` grows unbounded) | heavier debt | core/ops | M |
+| ☑ | DB `(platform_id, profile_name)` unique index (dedup-then-constrain) | heavier debt | migration | M |
+| ☑ | Tool-description hash-pinning (rug-pull detection; 32.5 deferred) | heavier debt | core/sec | M |
+| ☑ | 32.4 strict all-or-nothing import (temp-DB swap) | heavier debt | core | M |
+| ☑ | 32.2 heavy-analyzers CI (knip / semgrep / CodeQL) | heavier debt | ci | M |
 | ☐ | **33 — Code-mode** (QuickJS over the proxy) | big Tier-1 | core/sec | L (fresh session) |
 | ☐ | **34 — Distribution** (npm publish; gated + pre-req migration-0003 fix) | big Tier-1 | packaging | L (fresh session) |
 
 **✅ Done since the last reconcile:** app-page CTAs (32.6a) · `/audit` page (32.6b) · surfaces backfill for the curated set (32.6c + 30.13, 54 apps) · 30.5 parts (a) Test-Connection refresh + (c) per-app icons · stale "inc 29" comments.
+
+**✅ Done in the 2026-07-10 backlog burn-down (PRs #128–#134):** Category facet + Dashboard Recent
+Activity link (30.14) · `removeCredential` warn-on-orphan + `cred-*` reaper + denylist lock-step test +
+`serve.mjs` regression tests + 30.5→`superseded` (32.7) · audit-log rotation (32.8) · DB unique index
+(32.9) · strict all-or-nothing import (32.10) · tool-description hash-pinning (32.11) · heavy-analyzers CI
+— knip + semgrep + CodeQL (32.12). §1 PENDING now contains only 33/34.
 
 ---
 
@@ -73,30 +85,34 @@
 #### 1a-UI. UI completion — the taxonomy/audit surfaces shipped in DATA but not yet in the UI (found 2026-07-10)
 
 > After 30.13 (categories) + 32.6b (`/audit`), the DATA exists but the web UI doesn't fully surface it.
-> Real-server-QA-confirmed gaps:
+> Real-server-QA-confirmed gaps.
+>
+> **✅ SHIPPED as inc 30.14 (PR #128).**
 
-- [ ] **Category facet on the Apps page** — 30.13 set `help.category` on every app (Productivity/
-      Communication/Developer/CRM/Observability/Search/Social), but `app.index.tsx` has only **Status +
-      Method** facets — **no Category filter**, and no grouping/labeling by category. The whole
-      categorization payoff is invisible. Add a Category `FacetSelect` (+ optionally category section
-      headers) mirroring the existing facet pattern. **(the completion of 30.13; small web)**
-- [ ] **Dashboard "Recent Activity" → link to `/audit`** — `index.tsx:65` is still a ComingSoon stub
+- [x] **Category facet on the Apps page** — 30.13 set `help.category` on every app (Productivity/
+      Communication/Developer/CRM/Observability/Search/Social), but `app.index.tsx` had only **Status +
+      Method** facets — **no Category filter**, and no grouping/labeling by category. **DONE inc 30.14
+      (PR #128):** a Category `FacetSelect` (derived options + an Uncategorized bucket, multi-category
+      `includes` matching) via an explicit `AppMeta` DTO w/ category left-joined from `listCatalogEntries`
+      — web-only, no core/DB change. **(the completion of 30.13; small web)**
+- [x] **Dashboard "Recent Activity" → link to `/audit`** — `index.tsx:65` was a ComingSoon stub
       ("Per-agent usage and audit log coming in a later update") even though `/audit` shipped (32.6b).
-      Link it to the real page (+ optionally a small recent-activity summary). **(small web)**
+      **DONE inc 30.14 (PR #128):** the ComingSoon stub retired for a real `/audit` link-card. **(small web)**
 
 ### 1b. Unfinished increment carried forward
 
-- [ ] **30.5 — App lifecycle + polish** (status `planned` in the map, but 2 of 3 parts ALREADY SHIPPED —
+> **✅ RESOLVED as part of inc 32.7 (PR #131).** 30.5 flipped to `superseded` in `docs/methods/README.md`.
+
+- [x] **30.5 — App lifecycle + polish** (status `planned` in the map, but 2 of 3 parts ALREADY SHIPPED —
       **reconciled 2026-07-07**; the map row is stale). Actual state:
   - [x] **(a) Test-Connection auto-refresh BUG** — **DONE, merged PR #101** (`5a9e8fe`): `testCredential`
         now `refreshIfExpired`s before verifying.
   - [x] **(c) Per-app icons/logos** — **DONE, merged PR #102**: full-color `@thesvg/icons` via a build-time
         codegen (`gen-brand-icons.mjs` → committed `brand-icons.generated.tsx`) + letter-tile fallback.
-  - [ ] **(b) Change method** — the ONLY unbuilt part, and **superseded by inc 30.12's "add a surface"**
+  - [x] **(b) Change method** — the ONLY unbuilt part, and **superseded by inc 30.12's "add a surface"**
         (surfaces now accumulate via `{app}-{kind}` instead of swapping). The reconnect-first *swap* flow
-        (spec: `30.5-app-lifecycle.md §5`) is deferred unless a real swap-not-add need appears. **Decision
-        needed:** mark 30.5 `superseded`/`done` in `docs/methods/README.md` rather than leave it `planned`.
-        Low urgency.
+        (spec: `30.5-app-lifecycle.md §5`) is deferred unless a real swap-not-add need appears. **DONE
+        inc 32.7 (PR #131):** flipped `superseded`/`done` in `docs/methods/README.md`.
 
 ### 1c. Remaining Tier-1 increments (the roadmap tail)
 
@@ -117,31 +133,56 @@
 
 ### 1d. Small correctness/ops debts (low-risk, pick up anytime)
 
-- [ ] **32.2 heavy-analyzers CI** (deferred from 32): knip (dead code/deps), targeted semgrep
-      (sandbox/secrets paths), CodeQL. Deferred as noisy; low-risk hardening when wanted.
-- [ ] **Audit-log rotation / retention** — `audit.log` grows unbounded (no rotation anywhere). Needed
-      before `/audit` web tailing at scale, and generally for a long-lived `serve`.
-- [ ] **DB unique index on `(platform_id, profile_name)`** — a *dedup-then-constrain* migration to
+> **✅ ALL SHIPPED in the 2026-07-10 backlog burn-down** (32.7 PR #131, 32.8 PR #132, 32.9 PR #129,
+> 32.10 PR #130, 32.11 PR #134, 32.12 PR #133).
+
+- [x] **32.2 heavy-analyzers CI** (deferred from 32): knip (dead code/deps), targeted semgrep
+      (sandbox/secrets paths), CodeQL. Deferred as noisy; low-risk hardening when wanted. **DONE inc
+      32.12 (PR #133):** knip BLOCKING at zero false positives (tsr generate before scan; 1 dead file
+      deleted), semgrep BLOCKING with 8 local committed rules (pipx-isolated, `setuptools<81` force-inject),
+      CodeQL informational (weekly + push-to-main, deliberately not required).
+- [x] **Audit-log rotation / retention** — `audit.log` grows unbounded (no rotation anywhere). Needed
+      before `/audit` web tailing at scale, and generally for a long-lived `serve`. **DONE inc 32.8
+      (PR #132):** size-based rotation at serve/mcp startup (8 MiB, keep 5, rename-shift BEFORE the sink
+      fd opens), `AuditRotateOutcome` returned (never throws/logs internally), readers stay
+      current-file-only (v1 decision).
+- [x] **DB unique index on `(platform_id, profile_name)`** — a *dedup-then-constrain* migration to
       enforce the dup-account guard at the data layer (today it's app-level only in `addCredential`).
-- [ ] **Tool-description hash-pinning** (32.5 deferred) — detect a previously-seen tool's
+      **DONE inc 32.9 (PR #129):** migration 0010 — source_refs repoint UPDATE first (doc-review CRITICAL:
+      the naive design would have bricked real DBs), dedup DELETE keep-newest-by-MAX(ULID), then the
+      index; constraint-violation remaps to `duplicate-account` inside `writeCredential`'s orElse.
+- [x] **Tool-description hash-pinning** (32.5 deferred) — detect a previously-seen tool's
       description/schema silently CHANGING between calls (rug-pull detection), beyond sanitizing.
-- [ ] **32.4 strict all-or-nothing import** — a transactional (temp-DB-swap) import vs today's
-      additive-resumable one. Only if an operator needs full rollback on a mid-import failure.
-- [ ] **`removeCredential` warn-on-orphan** — the gotcha (`gotchas.md`, inc 6/13) said "emit a `warn`
+      **DONE inc 32.11 (PR #134):** TOFU + warn-and-serve at the proxy chokepoint, pins
+      `(platformId, rawName) → sha256(stableStringify({sanitizedDescription, inputSchema}))` in
+      `<home>/tool-pins.json` (v2, 0600, lockfile, atomic).
+- [x] **32.4 strict all-or-nothing import** — a transactional (temp-DB-swap) import vs today's
+      additive-resumable one. Only if an operator needs full rollback on a mid-import failure. **DONE
+      inc 32.10 (PR #130):** `vault import --strict`, COMPENSATION-based (a true one-tx design was proven
+      unimplementable in doc review — the keyring backend has no rollback): full prevalidation → the
+      existing path under journaling decorators → reverse-order compensation on failure.
+- [x] **`removeCredential` warn-on-orphan** — the gotcha (`gotchas.md`, inc 6/13) said "emit a `warn`
       from `removeCredential` on store-delete failure once pino lands, so the reverse-orphan is
       observable in the audit log." **Pino shipped inc 31 → the trigger has FIRED**; the code still
       silently swallows (`repositories/credentials.ts` orphan path). Now actionable, not deferred. (small)
-- [ ] **File-cred `cred-*` orphan reaper** — a hard kill between the per-call `writeFile` and the
+      **DONE inc 32.7 (PR #131):** a core Logger seam + cli stderr JSON logger, warns with the secretRef
+      handle + error KIND only (never a value).
+- [x] **File-cred `cred-*` orphan reaper** — a hard kill between the per-call `writeFile` and the
       `finally`-rm strands a 0600 `~/.junction/run/cred-XXXX` dir (`gotchas.md`, inc 28.9). A best-effort
       startup sweep of stale `cred-*` dirs was flagged as future hardening and never built. (small)
-- [ ] **`credentialEnvVar` denylist lock-step (invariant guard).** The schema `.refine` in
+      **DONE inc 32.7 (PR #131):** `sweepStaleCredDirs` (>1h mtime, dirs-only, symlink-safe,
+      fire-and-forget at serve/mcp startup).
+- [x] **`credentialEnvVar` denylist lock-step (invariant guard).** The schema `.refine` in
       `cli-connection.ts` and `SECRET_DENYLIST_RE` in `sandbox.ts` (`validatePolicy`) both reject
       `_TOKEN/_SECRET/_KEY` and MUST stay in sync — if one drifts, a name passes `platform add` schema
       validation but is rejected at run time. No test currently pins them together. Cheap: a unit test
-      asserting the two lists match. *(security-adjacent)*
-- [ ] **`serve.mjs` static-serve regression tests** — the `resolveStaticFile` path-traversal guard
+      asserting the two lists match. *(security-adjacent)* **DONE inc 32.7 (PR #131):** a behavioral,
+      drift-verified parity test.
+- [x] **`serve.mjs` static-serve regression tests** — the `resolveStaticFile` path-traversal guard
       (blocks `../` + sibling-prefix `dist/client-evil`) is verified by manual fuzzing but has NO automated
       test; and the CI leak-grep's negative path is unverified. Add before the next `serve.mjs`/leak-grep edit.
+      **DONE inc 32.7 (PR #131):** `resolveStaticFile` exported + a `baseDir` param, a realpath-hardened
+      main-guard proven spawn-only across all 4 launchers, + a leakcheck `--dir` flag + 4-fixture self-test.
 
 ---
 
