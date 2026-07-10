@@ -14,7 +14,13 @@
 // fork this logic — both providers must share ONE copy (see
 // docs/futures/gotchas.md).
 
-import type { OpenApiAuth, OpenApiConnection, ToolResult, UpstreamError } from "@junction/core"
+import {
+  type OpenApiAuth,
+  type OpenApiConnection,
+  rejectControlCharacters,
+  type ToolResult,
+  type UpstreamError,
+} from "@junction/core"
 import { err, ok, type Result, ResultAsync } from "neverthrow"
 import { deriveNameFromMethodPath, sanitizeOperationId } from "./naming.js"
 
@@ -299,7 +305,18 @@ async function buildAndExecuteRequestAsync({
 
     const val = args[param.name]
     if (val !== undefined && val !== null) {
-      queryParams.set(param.name, String(val))
+      const strVal = String(val)
+      // Control-char guard (32.13 Slice D2, defense-in-depth): URLSearchParams
+      // percent-encodes the value, so this is not exploitable via query TODAY,
+      // but mirrors http-client's validateHttpArgs (which already rejects this
+      // for the operator-declared REST surface) for parity across the two
+      // consumers of this shared engine — a future encoding change here should
+      // not silently reopen the gap this guard closes for http-client.
+      const controlCharResult = rejectControlCharacters(strVal, `query param "${param.name}"`)
+      if (controlCharResult.isErr()) {
+        return err<ToolResult, UpstreamError>(controlCharResult.error)
+      }
+      queryParams.set(param.name, strVal)
     }
   }
 
@@ -309,7 +326,18 @@ async function buildAndExecuteRequestAsync({
 
     const val = args[param.name]
     if (val !== undefined && val !== null) {
-      headers[param.name] = String(val)
+      const strVal = String(val)
+      // Control-char guard (32.13 Slice D2): undici throws on a raw CR/LF in a
+      // header value today (mitigating header-injection), but that's an
+      // implementation detail of the fetch client, not a validated contract —
+      // reject explicitly here so the behavior doesn't depend on undici's
+      // internals and so OpenAPI gets the SAME defense-in-depth http-client's
+      // validateHttpArgs already applies.
+      const controlCharResult = rejectControlCharacters(strVal, `header param "${param.name}"`)
+      if (controlCharResult.isErr()) {
+        return err<ToolResult, UpstreamError>(controlCharResult.error)
+      }
+      headers[param.name] = strVal
     }
   }
 

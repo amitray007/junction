@@ -8,6 +8,8 @@
 // SOURCE-AGNOSTIC: no vendor-specific fields.
 
 import { z } from "zod"
+import { hasUnsafePathChars } from "../sandbox/index.js"
+import { looksLikeCatastrophicRegex } from "./http-connection.js"
 
 // ---------------------------------------------------------------------------
 // Arg declarations — operator specifies the shape; agent fills the values
@@ -48,6 +50,17 @@ export const CliArgSchema = z
     // unbounded agent value can hang the event loop. Require maxLength with pattern.
     message: "`maxLength` is required when `pattern` is set (bounds regex input)",
     path: ["maxLength"],
+  })
+  .refine((a) => a.pattern === undefined || !looksLikeCatastrophicRegex(a.pattern), {
+    // ReDoS guard (pattern shape, 32.13 Slice D3): reject the classic nested-
+    // quantifier footgun at author-time — mirrors the HTTP schema's identical
+    // guard on HttpParamSchema.pattern (inc-30.7). The CLI surface had the
+    // maxLength-required guard above but never this shape check, leaving a
+    // pathological pattern like `(\w+)+$` acceptable as long as maxLength was
+    // set — still enough input to backtrack catastrophically within a bounded
+    // string.
+    message: "`pattern` has a nested-quantifier shape that risks catastrophic backtracking (ReDoS)",
+    path: ["pattern"],
   })
 
 export type CliArg = z.infer<typeof CliArgSchema>
@@ -155,6 +168,24 @@ export const CliToolSchema = z
     {
       message:
         'argv[0] must be a {kind:"literal"} segment with an absolute binary path (starts with "/")',
+    },
+  )
+  .refine(
+    (tool) => {
+      // SECURITY (32.13 Slice D1): argv[0]'s dirname is interpolated directly into
+      // the Seatbelt SBPL profile (seatbelt.ts's readSources / `(allow file-read*
+      // (subpath "${p}"))`) — the SAME metachar class validatePolicy already
+      // checks for readPaths/writePaths/cwd via hasUnsafePathChars, but argv[0]
+      // itself was never checked, leaving one profile-input surface unguarded
+      // (also reachable by the Deno tier via the same binaryPath). Reject at
+      // author-time rather than at sandbox-generation time.
+      const first = tool.argv[0]
+      if (first === undefined || first.kind !== "literal") return true // covered by the prior refine
+      return !hasUnsafePathChars(first.value)
+    },
+    {
+      message:
+        'argv[0] must not contain unsafe metacharacters (" \\ ( ) , or control characters) — it is interpolated into the sandbox profile',
     },
   )
   .refine(
