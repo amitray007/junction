@@ -369,13 +369,17 @@ async function runRekeySequence(
     const tmpKeys = new Set(Object.keys(tmpParsed.entries))
     const expectedKeys = new Set(plaintextByRef.keys())
     if (tmpKeys.size !== expectedKeys.size || [...expectedKeys].some((k) => !tmpKeys.has(k))) {
+      // Caught by the enclosing try/catch below, converted to Result<RotateResult, CredentialError>.
+      // nosemgrep: no-bare-throw-in-core -- category 3 (same-function try/catch): caught below, converted to a typed Result
       throw new Error("rekey tmp file key-set does not match the source key-set")
     }
     for (const [secretRef, expectedPlaintext] of plaintextByRef) {
       const record = tmpParsed.entries[secretRef]
+      // nosemgrep: no-bare-throw-in-core -- category 3 (same-function try/catch), same enclosing try/catch as above
       if (record === undefined) throw new Error(`missing secretRef ${secretRef} in rekey tmp`)
       const decrypted = gcmDecrypt(newKey, Buffer.from(secretRef), record)
       if (decrypted !== expectedPlaintext) {
+        // nosemgrep: no-bare-throw-in-core -- category 3 (same-function try/catch), same enclosing try/catch as above
         throw new Error(`verify mismatch for secretRef ${secretRef}`)
       }
     }
@@ -424,6 +428,8 @@ async function runRekeySequence(
     const [firstRef] = plaintextByRef.keys()
     if (firstRef !== undefined) {
       const record = verifyParsed.entries[firstRef]
+      // Caught by the enclosing try/catch below, converted to Result<RotateResult, CredentialError>.
+      // nosemgrep: no-bare-throw-in-core -- category 3 (same-function try/catch): caught below, converted to a typed Result
       if (record === undefined) throw new Error("post-swap live file missing an entry")
       gcmDecrypt(newKey, Buffer.from(firstRef), record)
     }

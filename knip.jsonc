@@ -1,0 +1,136 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Increment 32.12 — dead-code/unused-dependency gate (knip).
+//
+// Tuned to this monorepo's real entry-point shape: a pnpm workspace of libs
+// (core, mcp/server, mcp/client, openapi-client, graphql-client, http-client,
+// platform-orchestration, source-runtime) plus two apps (cli, web — a
+// TanStack Start app). Every `ignoreDependencies` / `ignore` entry below
+// carries a one-line reason — see docs/methods/32.12-heavy-analyzers.md for
+// the full initial-report → triage table this config resolves.
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "ignoreExportsUsedInFile": true,
+  "workspaces": {
+    ".": {
+      // Root-level maintenance scripts invoked directly by pnpm scripts / CI,
+      // never imported.
+      "entry": ["scripts/*.mjs"],
+      "project": ["scripts/**/*.mjs"],
+      "ignoreDependencies": [
+        // Invoked only via `pnpm changeset` / `changeset version` — never
+        // imported. knip can't trace CLI-only devDependencies used purely
+        // through their bin, not a real dead dep.
+        "@changesets/cli"
+      ]
+    },
+    "packages/cli": {
+      // src/index.ts is knip's default bin entry (package.json#bin) — no need
+      // to restate it. The Ink TUI dashboard is dynamically imported
+      // (await import("./tui/index.js")) from src/index.ts; knip's
+      // dynamic-import tracing already follows it, so no explicit entry needed.
+      "project": ["src/**/*.{ts,tsx}"],
+      "ignoreDependencies": [
+        // Same shape as web's identical ignores below: @junction/source-runtime
+        // (a direct cli dep) lazy-loads these two by package name inside
+        // build-provider.ts's `await import("@junction/{graphql,openapi}-client")`
+        // — a cross-package dynamic import knip cannot trace. cli declares
+        // them directly so pnpm hoists/links them for that runtime resolution;
+        // no static import exists in cli's own source.
+        "@junction/graphql-client",
+        "@junction/openapi-client"
+      ]
+    },
+    "packages/core": {
+      // src/index.ts and src/testing/index.ts are knip default entries
+      // (package.json "exports"."." and "exports"."./testing") — not restated.
+      "entry": ["scripts/*.mjs"],
+      "project": ["src/**/*.ts", "scripts/**/*.mjs"],
+      "ignoreDependencies": [
+        // drizzle-kit is invoked only via its CLI (schema push/generate during
+        // dev), never imported from source — same shape as @changesets/cli above.
+        "drizzle-kit"
+      ]
+    },
+    // mcp/server, mcp/client, openapi-client, graphql-client, http-client,
+    // platform-orchestration, source-runtime: each declares "exports"."."
+    // -> src/index.ts in its package.json, which knip's default plugin
+    // detection already resolves as the entry — no explicit "entry" needed.
+    "packages/mcp/server": {
+      "project": ["src/**/*.ts"]
+    },
+    "packages/mcp/client": {
+      "project": ["src/**/*.ts"]
+    },
+    "packages/openapi-client": {
+      "project": ["src/**/*.ts"]
+    },
+    "packages/graphql-client": {
+      "project": ["src/**/*.ts"]
+    },
+    "packages/http-client": {
+      "project": ["src/**/*.ts"]
+    },
+    "packages/platform-orchestration": {
+      "project": ["src/**/*.ts"]
+    },
+    "packages/source-runtime": {
+      "project": ["src/**/*.ts"]
+    },
+    "packages/web": {
+      // serve.mjs (package.json "exports"."./server") and vite.config.ts are
+      // already knip default entries — not restated here.
+      "entry": [
+        "src/router.tsx",
+        // TanStack Start file-routes: every route module is loaded by the
+        // generated route tree, not statically imported by name.
+        "src/routes/**/*.{ts,tsx}",
+        // TanStack server functions (createServerFn) — called from route
+        // loaders/actions via the generated client reference, not a plain import.
+        "src/server/*.functions.ts",
+        // ui/ is a deliberate barrel: "Import from this barrel; never from
+        // individual files outside of ui/" (packages/web/src/ui/index.ts
+        // header comment). Its unused re-exports are a public surface for
+        // future routes/components, not dead code.
+        "src/ui/index.ts",
+        "scripts/*.mjs"
+      ],
+      "project": ["src/**/*.{ts,tsx}", "scripts/**/*.mjs", "*.{ts,mjs}"],
+      "ignoreDependencies": [
+        // tailwindcss v4 is consumed via the @tailwindcss/vite plugin + CSS
+        // @import — no JS import site exists to trace.
+        "tailwindcss",
+        // @thesvg/icons is consumed only by scripts/gen-brand-icons.mjs at
+        // generation time (offline codegen step, not part of the app build).
+        "@thesvg/icons",
+        // tw-animate-css is a CSS-only import consumed from app.css
+        // (@import "tw-animate-css"), not a JS/TS import site.
+        "tw-animate-css",
+        // graphql-client/http-client/mcp-client/openapi-client are workspace
+        // deps declared for import.meta.resolve / dynamic-import resolution
+        // parity with source-runtime's provider set (build-provider.ts lazy-
+        // loads these by package name at runtime) — no static import exists
+        // in web's own source for knip to see.
+        "@junction/graphql-client",
+        "@junction/http-client",
+        "@junction/mcp-client",
+        "@junction/openapi-client"
+      ]
+    }
+  },
+  "ignore": [
+    // knip's vitest plugin does not auto-resolve the root vitest.config.ts's
+    // `include: ["packages/**/src/**/*.test.ts", ...]` glob across every
+    // workspace it's applied to in this monorepo shape (root config covers
+    // all packages incl. web's *.server.test.ts). Without this ignore, real
+    // *.test.ts files (run by `pnpm test:ci`) are false-flagged as "unused
+    // files" — verified by removing it and confirming exactly the executed
+    // test suite (101 files / 1661 tests, `pnpm verify`) re-surfaces, i.e. a
+    // knip-detection gap, not genuinely dead code. *.test.tsx does NOT need
+    // the same ignore: web's route-scoped component tests live under
+    // src/routes/-*.test.tsx, already covered by the "src/routes/**/*.{ts,tsx}"
+    // entry glob above; the remaining *.test.tsx files (src/lib, src/ui) are
+    // picked up by knip's vitest-plugin detection of
+    // packages/web/vitest.config.ts's own `include` glob.
+    "**/*.test.ts"
+  ]
+}

@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Increment 32.12 — never log injected/secret-shaped text (rule 5 of 8).
+#
+# console.* calls in the sources/credentials layer whose arguments reference
+# an identifier matching /description|secret|token|passphrase/i are a strong
+# signal of accidentally logging upstream-injected text (a platform
+# description field, a credential value) rather than a sanitized summary.
+# Scoped to core/src/sources/** + core/src/credentials/** — the two places
+# that handle untrusted upstream text and secret material respectively.
+rules:
+  - id: no-log-injected-or-secret-text
+    languages: [typescript]
+    severity: ERROR
+    message: >-
+      console.* called with an argument identifier matching
+      /description|secret|token|passphrase/i in packages/core/src/sources/**
+      or packages/core/src/credentials/**. This risks logging
+      upstream-injected text or secret material directly. Log a sanitized
+      summary (length, hash, redacted form) instead. If this is a
+      deliberate, justified exception (e.g. the identifier name is
+      misleading but the value is already redacted), suppress with a `//
+      nosemgrep: no-log-injected-or-secret-text — <reason>` comment at the
+      call site.
+    patterns:
+      - pattern-either:
+          - pattern: console.log(..., $ARG, ...)
+          - pattern: console.warn(..., $ARG, ...)
+          - pattern: console.error(..., $ARG, ...)
+          - pattern: console.info(..., $ARG, ...)
+          - pattern: console.debug(..., $ARG, ...)
+      - metavariable-regex:
+          metavariable: $ARG
+          regex: (?i).*(description|secret|token|passphrase).*
+    paths:
+      include:
+        - "**/packages/core/src/sources/**/*.ts"
+        - "**/packages/core/src/credentials/**/*.ts"
+      exclude:
+        - "**/packages/core/src/sources/**/*.test.ts"
+        - "**/packages/core/src/credentials/**/*.test.ts"

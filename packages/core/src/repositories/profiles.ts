@@ -94,6 +94,8 @@ function runSourceMutation(
           // `never` assignment (no cast — a cast would defeat it) forces a compile
           // error the moment a kind is added without a case here.
           const _exhaustive: never = op
+          // Exhaustiveness guard (see comment above): unreachable in a type-checked build.
+          // nosemgrep: no-bare-throw-in-core -- category 2 (exhaustiveness guard): unreachable given the `never` assignment above
           throw new Error(`unhandled SourceOp kind: ${JSON.stringify(_exhaustive)}`)
         }
       }

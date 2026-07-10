@@ -1,0 +1,39 @@
+name: CodeQL
+on:
+  push: { branches: [main] }
+  schedule:
+    # Mirrors security.yml's weekly cron (Monday 06:00 UTC).
+    - cron: "0 6 * * 1"
+permissions:
+  contents: read
+jobs:
+  analyze:
+    name: analyze (javascript-typescript)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # CodeQL needs write access to upload SARIF results to the repo's Code
+      # Scanning tab — the only elevated permission this job needs.
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+      # github/codeql-action is GitHub-owned but still SHA-pinned per the
+      # repo's hard third-party-action-pinning policy (mirrors
+      # denoland/setup-deno, gitleaks/gitleaks-action, google/osv-scanner-action
+      # in security.yml) — v3.37.0 release commits.
+      - uses: github/codeql-action/init@e5d2f324924c57b6cabef9bdd7a1c85d62a89be2 # v3.37.0
+        with:
+          languages: javascript-typescript
+          queries: security-extended
+      - uses: github/codeql-action/analyze@e5d2f324924c57b6cabef9bdd7a1c85d62a89be2 # v3.37.0
+        with:
+          category: "/language:javascript-typescript"
+# NOT added as a required check (see .github/rulesets/main.json / branch
+# protection): CodeQL's javascript-typescript + security-extended analysis on
+# this repo's size can be slow and has historically been prone to
+# infrastructure flakiness across the ecosystem. A slow/flaky REQUIRED check
+# would block every merge on CodeQL's availability, not just on real
+# findings. It stays informational — weekly cron + push-to-main — until
+# there's a track record of stable runtimes; revisit (flip to required) once
+# that's established. Findings land in the repo's Code Scanning tab
+# regardless of required-check status.
