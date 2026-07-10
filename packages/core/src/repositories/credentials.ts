@@ -135,7 +135,12 @@ export function createCredentialsRepo(db: Db) {
 
     delete(id: string): ResultAsync<void, DbError> {
       try {
-        db.delete(credentials).where(eq(credentials.id, id)).run()
+        const result = db.delete(credentials).where(eq(credentials.id, id)).run()
+        // changes === 0 means no row matched — surface as typed not-found rather
+        // than silently returning Ok (32.13 Slice E1 — mirrors platforms.delete).
+        if (result.changes === 0) {
+          return errAsync({ kind: "not-found" as const, entity: "credential", id })
+        }
         return okAsync(undefined)
       } catch (cause) {
         return errAsync(mapDbError(cause))

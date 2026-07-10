@@ -2,14 +2,16 @@
 // Mutation server function wrappers — POST endpoints for credential write paths.
 // Routes MUST NOT import @junction/core or mutations.server.ts directly.
 //
-// Every handler: (1) assertLocalHost() — DNS-rebinding / CSRF guard, and
-// (2) validates input before touching core.
+// Every handler: (1) assertLocalHost() — loopback Host check (DNS-rebinding)
+// PLUS an explicit Origin allowlist (the actual CSRF control — see
+// fn-guards.server.ts's assertLocalHost doc comment), and (2) validates
+// input before touching core.
 //
 // The new secret is an INPUT only — it is NEVER echoed back in any return value.
 
 import type { CredentialKind } from "@junction/core"
 import { createServerFn } from "@tanstack/react-start"
-import { assertLocalHost, requireString } from "./fn-guards.server.js"
+import { assertLocalHost, requireSecretString, requireString } from "./fn-guards.server.js"
 import {
   mutateAddCredential,
   mutateRemoveCredential,
@@ -50,7 +52,9 @@ export const addCredentialFn = createServerFn({ method: "POST" })
       platformId: requireString(d.platformId, "platformId"),
       account: requireString(d.account, "account"),
       kind: requireCredentialKind(d.kind),
-      secret: requireString(d.secret, "secret"),
+      // requireSecretString (32.13 Slice E4) — NOT requireString: a secret's
+      // leading/trailing whitespace must be preserved, not silently trimmed.
+      secret: requireSecretString(d.secret, "secret"),
       verify: d.verify === true,
     }
   })
@@ -64,7 +68,8 @@ export const rotateCredentialFn = createServerFn({ method: "POST" })
     const d = raw as Record<string, unknown>
     return {
       credentialId: requireString(d.credentialId, "credentialId"),
-      newSecret: requireString(d.newSecret, "newSecret"),
+      // requireSecretString (32.13 Slice E4) — see addCredentialFn's comment.
+      newSecret: requireSecretString(d.newSecret, "newSecret"),
     }
   })
   .handler(async ({ data }) => {

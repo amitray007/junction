@@ -373,6 +373,19 @@ describe("repositories", () => {
       expect(okDel.isOk()).toBe(true)
     })
 
+    it("delete() returns not-found when the credential id does not exist (32.13 Slice E1)", async () => {
+      // credentials.delete checks .changes === 0 and returns a typed not-found
+      // rather than silently returning Ok — mirrors platforms.delete's guard.
+      const missingId = newCredentialId()
+      const result = await repos.credentials.delete(missingId)
+      expect(result.isErr()).toBe(true)
+      if (result.isErr()) {
+        expect(result.error.kind).toBe("not-found")
+        expect(result.error.entity).toBe("credential")
+        expect(result.error.id).toBe(missingId)
+      }
+    })
+
     it("lists all profiles", async () => {
       await repos.profiles.create({
         id: newProfileId(),

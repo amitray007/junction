@@ -8,7 +8,7 @@
 // load, no server.listen) now that its bootstrap lives behind the
 // realpath-hardened main() guard.
 
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
@@ -98,5 +98,30 @@ describe("resolveStaticFile — increment 32.7 item 4", () => {
   it("defaults baseDir to CLIENT_DIR when omitted (byte-identical behaviour) — a nonexistent path under the default dir returns null, not a throw", async () => {
     const hit = await resolveStaticFile("/definitely-not-a-real-asset-32-7.js")
     expect(hit).toBeNull()
+  })
+
+  it("blocks a symlink under clientDir pointing OUTSIDE it (32.13 Slice E3)", async () => {
+    // The symlink's own path is legitimately under clientDir (passes the
+    // traversal guard); only lstat (not stat) can tell it's a symlink at all.
+    const outsideTarget = path.join(tempRoot, "client-evil", "leak.txt")
+    const linkPath = path.join(clientDir, "assets", "escape-link.js")
+    await symlink(outsideTarget, linkPath)
+
+    const hit = await resolveStaticFile("/assets/escape-link.js", clientDir)
+    expect(hit).toBeNull()
+  })
+
+  it("blocks a symlink under clientDir pointing to another file INSIDE clientDir too (fail-closed on ANY symlink)", async () => {
+    const insideTarget = path.join(clientDir, "index.html")
+    const linkPath = path.join(clientDir, "assets", "inside-link.js")
+    await symlink(insideTarget, linkPath)
+
+    const hit = await resolveStaticFile("/assets/inside-link.js", clientDir)
+    expect(hit).toBeNull()
+  })
+
+  it("still serves a REAL (non-symlink) file normally — the symlink guard has no false positive", async () => {
+    const hit = await resolveStaticFile("/assets/app.js", clientDir)
+    expect(hit).not.toBeNull()
   })
 })

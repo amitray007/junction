@@ -5,7 +5,9 @@
 //
 // Every handler: (1) PURE validator — dedupes the profile-id list (a trust
 // boundary regardless of the web picker UI — §2.6/§1 of the method file), then
-// (2) assertLocalHost() — DNS-rebinding / CSRF guard — then the thin server helper.
+// (2) assertLocalHost() — loopback Host check (DNS-rebinding) PLUS an explicit
+// Origin allowlist (the actual CSRF control — see fn-guards.server.ts's
+// assertLocalHost doc comment) — then the thin server helper.
 //
 // The mint response is the ONE exception to metadata-only across this whole app:
 // it carries the plaintext key exactly once. It must never be re-fetchable.

@@ -3,9 +3,12 @@
 // 30.11, method file §4 Slice B). Routes MUST NOT import @junction/core,
 // @junction/source-runtime, or connect.server.ts directly.
 //
-// Every handler: (1) assertLocalHost() — DNS-rebinding/CSRF guard, and
-// (2) validates input before touching core. The secret is an INPUT only —
-// never echoed back in any return value (mirrors mutations.functions.ts).
+// Every handler: (1) assertLocalHost() — loopback Host check (DNS-rebinding)
+// PLUS an explicit Origin allowlist (the actual CSRF control — see
+// fn-guards.server.ts's assertLocalHost doc comment for why the Host check
+// alone does not stop CSRF), and (2) validates input before touching core.
+// The secret is an INPUT only — never echoed back in any return value
+// (mirrors mutations.functions.ts).
 
 import { createServerFn } from "@tanstack/react-start"
 import { connectSurface } from "./connect.server.js"
