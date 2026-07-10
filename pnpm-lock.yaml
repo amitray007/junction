@@ -133,9 +133,6 @@ importers:
       '@junction/core':
         specifier: workspace:*
         version: link:../core
-      '@junction/mcp-server':
-        specifier: workspace:*
-        version: link:../mcp/server
       neverthrow:
         specifier: 'catalog:'
         version: 8.2.0

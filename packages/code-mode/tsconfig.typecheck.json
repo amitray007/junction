@@ -1,8 +1,5 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": { "outDir": "dist-tsc", "tsBuildInfoFile": "tsconfig.typecheck.tsbuildinfo" },
-  "references": [
-    { "path": "../core/tsconfig.typecheck.json" },
-    { "path": "../mcp/server/tsconfig.typecheck.json" }
-  ]
+  "references": [{ "path": "../core/tsconfig.typecheck.json" }]
 }
