@@ -397,3 +397,11 @@ LEAD review, confirmed in the real-httpbin QA.)
 **Cause:** the pre-push `dup` lefthook does not run the SAME full `jscpd packages` scan the CI `quality` job runs (documented divergence — the hook is scoped/lighter). New code that adds structurally-identical blocks (here: `run.ts`'s audit-sink + stdio-principal + proxy-warn closures duplicating `mcp.ts`/`serve.ts`, and an intra-file eval-vs-rejected error classifier) tips the whole-repo ratio over 0.5% without any local signal.
 
 **Fix / discipline:** before pushing a diff that adds non-trivial CLI/command code, run the FULL `pnpm run quality` (or `npx jscpd packages --reporters console`) locally — don't trust the pre-push `dup` hook as the jscpd gate. Dedup honestly (extract a shared helper at the rule-of-three) rather than bumping the threshold or adding an ignore; a scoped, commented jscpd ignore is only acceptable for a genuinely-irreducible clone (e.g. two structurally-similar tests). (inc 33 CI fix)
+
+## Two literal NUL bytes in `data.server.ts` make it grep-binary (pre-inc-36, still present)
+
+**Symptom:** `grep`/`rg` treat `packages/web/src/server/data.server.ts` as a binary file (must use `grep -a` or the Read tool to inspect it). Two `\x00` bytes sit at ~lines 472/482, inside the `` `${conn.platformId} ${conn.account}` `` cache-key template literal (a corrupted space char).
+
+**Cause:** a corrupted space character committed before inc 36 (confirmed via `git show HEAD:…` during the inc-36 build). Functionally harmless today — both the write and read sides use the same corrupted key consistently, so the cache still hits — but it silently defeats plain grep on a load-bearing server file (the SPDX-header gate already uses `grep -a` for the same reason, per inc 32.1).
+
+**Fix / discipline:** a one-line cleanup commit replacing the two NUL bytes with a normal space is safe and worth doing when next touching this file. NOT fixed in inc 36 (out of that slice's scope — flagged by the builder). Until then, use `grep -a` / Read on `data.server.ts`. (raised inc 36)

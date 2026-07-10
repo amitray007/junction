@@ -29,6 +29,13 @@ import {
 import { probeSurface, type ToolListResult } from "./probe.server.js"
 import { getDb } from "./shared.server.js"
 
+// Re-exported so client route/components can type-annotate AppDetail.app.help
+// (increment 36) without a direct @junction/core import — same convention as
+// this file's other own `export type` DTOs below. AppHelpSchema (catalog-
+// schema.ts) is metadata-only: no secret/token/build-recipe field exists on
+// it, so re-exporting the type carries no disclosure risk.
+export type { AppHelp }
+
 async function withRepos<T>(fallback: T, fn: (repos: Repositories) => Promise<T>): Promise<T> {
   const db = await getDb()
   if (db === null) return fallback
