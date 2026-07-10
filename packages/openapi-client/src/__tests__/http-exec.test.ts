@@ -398,7 +398,7 @@ describe("header/query control-char guard (32.13 Slice D2)", () => {
   it("rejects a query arg containing a NUL byte", async () => {
     const schema = await getSchema()
     const result = await callOperation(schema, makeConnection(), null, "echoPost", {
-      q: "value injected",
+      q: `value${String.fromCharCode(0)}injected`,
       body: { msg: "test" },
     })
     expect(result.isErr()).toBe(true)
