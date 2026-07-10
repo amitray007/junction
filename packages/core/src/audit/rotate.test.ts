@@ -62,8 +62,8 @@ describe("rotateAuditLogIfOversized", () => {
 
   it("keep bound: with keep=2, a pre-existing .2 is deleted (nothing beyond .2 survives)", async () => {
     await writeSizedFile(auditLogFile, 30) // becomes .1
-    await writeSizedFile(`${auditLogFile}.1`, 20) // shifts to .2
-    await writeSizedFile(`${auditLogFile}.2`, 10) // would shift to .3 — beyond keep=2, deleted
+    await writeSizedFile(`${auditLogFile}.1`, 20) // shifts to .2 — the rename(.1→.2) CLOBBERS the old .2
+    await writeSizedFile(`${auditLogFile}.2`, 10) // destroyed by that overwriting rename (POSIX), never shifted to .3
 
     const outcome = await rotateAuditLogIfOversized(auditLogFile, { maxBytes: 10, keep: 2 })
     expect(outcome).toEqual({ kind: "rotated" })
@@ -73,6 +73,20 @@ describe("rotateAuditLogIfOversized", () => {
     expect(gen1).toBe("x".repeat(30))
     expect(gen2).toBe("x".repeat(20))
     await expect(stat(`${auditLogFile}.3`)).rejects.toMatchObject({ code: "ENOENT" })
+  })
+
+  it("straggler cleanup: pre-existing .3 and .4 from a prior larger keep are both unlinked with keep=2", async () => {
+    await writeSizedFile(auditLogFile, 30)
+    await writeSizedFile(`${auditLogFile}.3`, 8) // straggler from a prior run with keep >= 3
+    await writeSizedFile(`${auditLogFile}.4`, 6) // straggler from a prior run with keep >= 4
+
+    const outcome = await rotateAuditLogIfOversized(auditLogFile, { maxBytes: 10, keep: 2 })
+    expect(outcome).toEqual({ kind: "rotated" })
+
+    const gen1 = await readFile(`${auditLogFile}.1`, "utf8")
+    expect(gen1).toBe("x".repeat(30))
+    await expect(stat(`${auditLogFile}.3`)).rejects.toMatchObject({ code: "ENOENT" })
+    await expect(stat(`${auditLogFile}.4`)).rejects.toMatchObject({ code: "ENOENT" })
   })
 
   it("under-sized file: untouched, returns skipped", async () => {

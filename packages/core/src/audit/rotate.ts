@@ -48,7 +48,7 @@ import { rename, stat, unlink } from "node:fs/promises"
 const DEFAULT_MAX_BYTES = 8 * 1024 * 1024
 const DEFAULT_KEEP = 5
 
-export type RotateOutcome =
+export type AuditRotateOutcome =
   | { kind: "rotated" }
   | { kind: "skipped" }
   | { kind: "failed"; code: string }
@@ -72,7 +72,7 @@ export type RotateOutcome =
 export async function rotateAuditLogIfOversized(
   auditLogFile: string,
   opts?: { maxBytes?: number; keep?: number },
-): Promise<RotateOutcome> {
+): Promise<AuditRotateOutcome> {
   const maxBytes = opts?.maxBytes ?? DEFAULT_MAX_BYTES
   const keep = opts?.keep ?? DEFAULT_KEEP
 
@@ -102,13 +102,21 @@ export async function rotateAuditLogIfOversized(
       }
     }
 
-    // Anything shifted beyond `.keep` (only possible if a prior run used a
-    // larger `keep`) is unlinked rather than left to accumulate unbounded.
-    try {
-      await unlink(`${auditLogFile}.${keep + 1}`)
-    } catch (e) {
-      const err = e as NodeJS.ErrnoException
-      if (err.code !== "ENOENT") throw e
+    // Straggler cleanup. The shift loop above never moves anything beyond
+    // `.keep` — its last step, `rename(.{keep-1} → .keep)`, CLOBBERS any
+    // existing `.keep` (POSIX rename overwrites). Generations beyond `.keep`
+    // can therefore only exist as stragglers from a PRIOR run that used a
+    // larger `keep`. Unlink `.keep+1`, `.keep+2`, ... until the first ENOENT
+    // (generations are contiguous — the first gap ends the chain) so they
+    // don't sit around forever after a keep downgrade.
+    for (let n = keep + 1; ; n++) {
+      try {
+        await unlink(`${auditLogFile}.${n}`)
+      } catch (e) {
+        const err = e as NodeJS.ErrnoException
+        if (err.code === "ENOENT") break
+        throw e
+      }
     }
 
     // audit.log -> audit.log.1 — the rotate-before-open moment (design note a).
