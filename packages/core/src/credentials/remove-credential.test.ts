@@ -37,13 +37,33 @@ function makeRepo(credential: Credential): CredentialsRepo {
   } as unknown as CredentialsRepo
 }
 
-function makeStore(deleteResult: ResultAsync<void, CredentialError>): CredentialStore {
-  return {
+/** A store stub that counts delete() calls so tests can pin whether it was touched. */
+function makeStore(deleteResult: ResultAsync<void, CredentialError>): {
+  store: CredentialStore
+  deleteCalls: string[]
+} {
+  const deleteCalls: string[] = []
+  const store: CredentialStore = {
     backend: "encrypted-file",
     get: () => okAsync(null),
     set: () => okAsync(undefined),
-    delete: () => deleteResult,
+    delete: (secretRef: string) => {
+      deleteCalls.push(secretRef)
+      return deleteResult
+    },
   }
+  return { store, deleteCalls }
+}
+
+/**
+ * Leak-scan serializer: JSON.stringify with a replacer that expands Error
+ * instances into { message, stack } — a raw Error serializes to {} and would
+ * silently evade the sentinel sweep if one ever landed in logged meta.
+ */
+function serialiseForLeakScan(value: unknown): string {
+  return JSON.stringify(value, (_key, v: unknown) =>
+    v instanceof Error ? { message: v.message, stack: v.stack } : v,
+  )
 }
 
 /** A spy Logger that records every call's (level, msg, meta) tuple. */
@@ -71,7 +91,7 @@ describe("removeCredential — warn-on-orphan (increment 32.7 item 1)", () => {
   it("(a) store.delete fails -> removeCredential still returns ok, warn called once with credentialId + secretRef, no secret value leaked", async () => {
     const credential = makeCredential()
     const repo = makeRepo(credential)
-    const store = makeStore(
+    const { store } = makeStore(
       errAsync({ kind: "io-failed", cause: SECRET_VALUE_SENTINEL } as CredentialError),
     )
     const { logger, calls } = makeSpyLogger()
@@ -86,15 +106,17 @@ describe("removeCredential — warn-on-orphan (increment 32.7 item 1)", () => {
     expect(warnCalls[0]?.meta?.credentialId).toBe(credential.id)
     expect(warnCalls[0]?.meta?.secretRef).toBe(credential.secretRef)
 
-    // THE LOAD-BEARING ASSERTION: the secret VALUE never appears in any logged call.
-    const serialised = JSON.stringify(calls)
+    // THE LOAD-BEARING ASSERTION: the secret VALUE never appears in any logged
+    // call — Error-aware serialization (a raw Error stringifies to {} and
+    // would evade a plain JSON.stringify sweep).
+    const serialised = serialiseForLeakScan(calls)
     expect(serialised).not.toContain(SECRET_VALUE_SENTINEL)
   })
 
   it("(b) store.delete succeeds -> no warn call", async () => {
     const credential = makeCredential()
     const repo = makeRepo(credential)
-    const store = makeStore(okAsync(undefined))
+    const { store } = makeStore(okAsync(undefined))
     const { logger, calls } = makeSpyLogger()
     setLogger(logger)
 
@@ -110,7 +132,7 @@ describe("removeCredential — warn-on-orphan (increment 32.7 item 1)", () => {
       get: () => okAsync(credential),
       delete: () => errAsync({ kind: "in-use", cause: "fk" } as DbError),
     } as unknown as CredentialsRepo
-    const store = makeStore(okAsync(undefined))
+    const { store, deleteCalls } = makeStore(okAsync(undefined))
     const { logger, calls } = makeSpyLogger()
     setLogger(logger)
 
@@ -119,5 +141,8 @@ describe("removeCredential — warn-on-orphan (increment 32.7 item 1)", () => {
     expect(result.isErr()).toBe(true)
     if (result.isErr()) expect(result.error.kind).toBe("in-use")
     expect(calls).toHaveLength(0)
+    // THE SECURITY INVARIANT: the secret must never be deleted while the DB
+    // row survives (in-use short-circuits BEFORE any store interaction).
+    expect(deleteCalls).toHaveLength(0)
   })
 })

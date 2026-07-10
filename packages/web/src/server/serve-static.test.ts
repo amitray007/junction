@@ -74,6 +74,22 @@ describe("resolveStaticFile — increment 32.7 item 4", () => {
     expect(hit).toBeNull()
   })
 
+  it("blocks a double-encoded traversal (%252e%252e) — locks out a future double-decode regression", async () => {
+    const hit = await resolveStaticFile("/%252e%252e/outside", clientDir)
+    expect(hit).toBeNull()
+  })
+
+  it("returns null on an encoded NUL byte (%00) — the throw-to-null contract", async () => {
+    const hit = await resolveStaticFile("/%00", clientDir)
+    expect(hit).toBeNull()
+  })
+
+  it("strips the query string — /assets/app.js?v=1 is a HIT", async () => {
+    const hit = await resolveStaticFile("/assets/app.js?v=1", clientDir)
+    expect(hit).not.toBeNull()
+    expect(hit?.filePath).toBe(path.join(clientDir, "assets", "app.js"))
+  })
+
   it("returns null for a directory path (not a file)", async () => {
     const hit = await resolveStaticFile("/assets", clientDir)
     expect(hit).toBeNull()

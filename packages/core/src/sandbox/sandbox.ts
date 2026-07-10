@@ -7,6 +7,8 @@ import type { SandboxError } from "../errors/index.js"
 import { grantedPathExposesSecrets, hasUnsafePathChars, isPathWithin } from "./policy.js"
 
 // Secret key patterns that must never appear in sandbox env.
+// Extending this list? Add a name to the parity corpus in schema/cli-connection.test.ts —
+// additions here are invisible to the lock-step test unless the corpus grows with them.
 const SECRET_DENYLIST_EXACT = new Set(["JUNCTION_MASTER_KEY", "JUNCTION_MASTER_KEY_FILE"])
 const SECRET_DENYLIST_RE = [/_TOKEN$/, /_SECRET$/, /_KEY$/]
 

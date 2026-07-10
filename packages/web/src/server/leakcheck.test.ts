@@ -66,10 +66,24 @@ describe("scripts/web-leakcheck.mjs — increment 32.7 item 4 self-test", () => 
     expect(result.exitCode).toBe(0)
   })
 
-  it("fixture C (vacuous — missing assets dir): exits 1 (existence guard, not a vacuous pass)", async () => {
+  it("fixture C (vacuous — missing assets dir): exits 1 via the existence guard, not a vacuous pass", async () => {
     // tempRoot exists but has no assets/ subdir at all.
     const result = await runLeakcheck(tempRoot)
 
     expect(result.exitCode).toBe(1)
+    // Pin the BRANCH, not just the exit code — a timeout-killed child also
+    // maps to exit 1 in runLeakcheck, so assert the existence-guard message.
+    expect(result.stdout + result.stderr).toContain("missing")
+  })
+
+  it("--dir flag with a MISSING value: exits 1 with an error (never silently scans the default dir)", async () => {
+    try {
+      await execFileAsync("node", [scriptPath, "--dir"], { timeout: 10_000 })
+      expect.unreachable("leakcheck must fail on --dir without a value")
+    } catch (err) {
+      const e = err as { code?: number; stdout?: string; stderr?: string }
+      expect(e.code).toBe(1)
+      expect((e.stdout ?? "") + (e.stderr ?? "")).toContain("--dir")
+    }
   })
 })

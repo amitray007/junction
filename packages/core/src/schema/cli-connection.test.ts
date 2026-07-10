@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Schema-level tests for CliConnectionSchema's security refines.
-import { describe, expect, it } from "vitest"
+import { mkdtemp, rm } from "node:fs/promises"
+import os from "node:os"
+import path from "node:path"
+import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { validatePolicy } from "../sandbox/index.js"
 import { CliConnectionSchema, CliToolSchema } from "./cli-connection.js"
 
@@ -72,6 +75,12 @@ describe("credentialEnvVar denylist — lock-step with validatePolicy", () => {
   // Nothing pins them together — this test is that pin, via BEHAVIORAL
   // parity over a corpus (neither list is exported; both stay private).
   //
+  // JUNCTION_HOME is stubbed to a tmpdir for this block (testing.md rule;
+  // mirrors sandbox.test.ts): validatePolicy →
+  // grantedPathExposesSecrets realpaths REAL home-derived secret-file paths,
+  // so running against the developer's actual ~/.junction would couple the
+  // test to machine state.
+  //
   // CORPUS CONSTRAINT (load-bearing — do not add a lowercase entry): every
   // name below MUST match the schema's charset regex ^[A-Z_][A-Z0-9_]*$.
   // The schema is strictly stricter than validatePolicy on charset (a
@@ -87,6 +96,21 @@ describe("credentialEnvVar denylist — lock-step with validatePolicy", () => {
     "JUNCTION_MASTER_KEY_FILE",
   ]
   const ACCEPTED = ["GH_PAT", "API_AUTH", "TOKEN_FOO", "MY_KEYS", "KEYRING_NAME"]
+
+  let fakeJunctionHome: string
+  let prevJunctionHome: string | undefined
+
+  beforeAll(async () => {
+    fakeJunctionHome = await mkdtemp(path.join(os.tmpdir(), "junction-parity-test-"))
+    prevJunctionHome = process.env.JUNCTION_HOME
+    process.env.JUNCTION_HOME = fakeJunctionHome
+  })
+
+  afterAll(async () => {
+    if (prevJunctionHome === undefined) delete process.env.JUNCTION_HOME
+    else process.env.JUNCTION_HOME = prevJunctionHome
+    await rm(fakeJunctionHome, { recursive: true, force: true })
+  })
 
   function baseConnection(credentialEnvVar: string) {
     return {

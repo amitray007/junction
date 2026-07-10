@@ -52,7 +52,14 @@ describe("sweepStaleCredDirs — increment 32.7 item 2", () => {
     await mkdir(otherDir)
     await writeFile(credFile, "not a dir")
 
+    // A real stranded cred-* dir is NON-EMPTY (it holds the 0600 secret file
+    // the materializer wrote) — plant one so a regression to a non-recursive
+    // rm (whose ENOTEMPTY the best-effort catch would swallow) fails this
+    // test instead of passing vacuously on an empty dir.
+    await writeFile(path.join(oldDir, "cred"), "stranded-secret-payload", { mode: 0o600 })
+
     // Backdate the old dir and the stray file to 2h ago (beyond the 1h default).
+    // (The inner file write happens FIRST — writing into a dir bumps its mtime.)
     const backdated = new Date(Date.now() - TWO_HOURS_MS)
     await utimes(oldDir, backdated, backdated)
     await utimes(credFile, backdated, backdated)

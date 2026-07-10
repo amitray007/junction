@@ -8,7 +8,15 @@
 import type { Logger } from "@junction/core"
 
 function writeLine(level: string, msg: string, meta?: Record<string, unknown>): void {
-  process.stderr.write(`${JSON.stringify({ level, msg, ...meta })}\n`)
+  // Envelope spread order: meta FIRST so a meta key can never clobber level/msg.
+  // JSON.stringify can throw (circular refs, BigInt) — this logger is called from
+  // inside neverthrow orElse handlers, so it must NEVER throw; degrade to a
+  // plain-text line (still stderr only) instead.
+  try {
+    process.stderr.write(`${JSON.stringify({ ...meta, level, msg })}\n`)
+  } catch {
+    process.stderr.write(`${level}: ${msg} (meta unserializable)\n`)
+  }
 }
 
 export const stderrLogger: Logger = {
