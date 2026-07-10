@@ -232,8 +232,11 @@ export const runCommand = defineCommand({
     if (result.isErr()) {
       // Executor-side failure (module load / dispose) — distinct from a
       // guest-side outcome (ExecuteResultErr, handled below as `ok:false`
-      // within a successful execute()).
-      reportError(json, `code-mode executor error (${result.error.kind}): ${result.error.message}`)
+      // within a successful execute()). Surfaced as `.kind` ONLY (never
+      // `.message`, which for e.g. `dispose-failed` can carry host-internal
+      // bootstrap text) — symmetric with synthetic-tool.ts's MCP-edge
+      // handling of the same CodeModeError channel.
+      reportError(json, `code-mode executor error: ${result.error.kind}`)
       return
     }
 

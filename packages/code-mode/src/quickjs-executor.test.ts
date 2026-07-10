@@ -465,8 +465,11 @@ describe("QuickJsExecutor — dispose-crash on an in-flight tool call (HIGH regr
       timeoutMs: 300,
     })
     expect(result.isOk()).toBe(true) // NOT err(dispose-failed) — dispose was clean
-    if (result.isOk() && !result.value.ok) {
-      expect(result.value.kind).toBe("timeout")
+    if (result.isOk()) {
+      expect(result.value.ok).toBe(false) // closes the escape hatch: must fail loudly if unexpectedly ok
+      if (!result.value.ok) {
+        expect(result.value.kind).toBe("timeout")
+      }
     }
   }, 10_000)
 
@@ -481,8 +484,11 @@ describe("QuickJsExecutor — dispose-crash on an in-flight tool call (HIGH regr
       timeoutMs: 300,
     })
     expect(result.isOk()).toBe(true)
-    if (result.isOk() && !result.value.ok) {
-      expect(result.value.kind).toBe("timeout")
+    if (result.isOk()) {
+      expect(result.value.ok).toBe(false) // closes the escape hatch: must fail loudly if unexpectedly ok
+      if (!result.value.ok) {
+        expect(result.value.kind).toBe("timeout")
+      }
     }
     // Bounded — not hung past the outer wall-clock backstop.
     expect(Date.now() - started).toBeLessThan(5000)
@@ -496,8 +502,11 @@ describe("QuickJsExecutor — dispose-crash on an in-flight tool call (HIGH regr
         timeoutMs: 100,
       })
       expect(result.isOk()).toBe(true)
-      if (result.isOk() && !result.value.ok) {
-        expect(result.value.kind).toBe("timeout")
+      if (result.isOk()) {
+        expect(result.value.ok).toBe(false) // closes the escape hatch: must fail loudly if unexpectedly ok
+        if (!result.value.ok) {
+          expect(result.value.kind).toBe("timeout")
+        }
       }
     }
     // Let the abandoned host promises fire into the (now-disposed) contexts;
@@ -512,8 +521,11 @@ describe("QuickJsExecutor — budgets", () => {
     const { invoker } = makeFakeInvoker()
     const result = await makeExecutor(sink).execute(`while (true) {}`, invoker, { timeoutMs: 300 })
     expect(result.isOk()).toBe(true)
-    if (result.isOk() && !result.value.ok) {
-      expect(result.value.kind).toBe("timeout")
+    if (result.isOk()) {
+      expect(result.value.ok).toBe(false) // closes the escape hatch: must fail loudly if unexpectedly ok
+      if (!result.value.ok) {
+        expect(result.value.kind).toBe("timeout")
+      }
     }
   }, 10_000)
 
@@ -530,8 +542,11 @@ describe("QuickJsExecutor — budgets", () => {
       { memoryBytes: 4 * 1024 * 1024, timeoutMs: 10_000 },
     )
     expect(result.isOk()).toBe(true)
-    if (result.isOk() && !result.value.ok) {
-      expect(result.value.kind).toBe("memory")
+    if (result.isOk()) {
+      expect(result.value.ok).toBe(false) // closes the escape hatch: must fail loudly if unexpectedly ok
+      if (!result.value.ok) {
+        expect(result.value.kind).toBe("memory")
+      }
     }
   }, 15_000)
 
