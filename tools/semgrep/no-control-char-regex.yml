@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Increment 32.12 — no control-char ranges in regex literals (rule 6 of 8).
+#
+# docs/futures/gotchas.md: Biome's noControlCharactersInRegex auto-fix
+# MANGLES control-char ranges in regex literals — a `/[\s\x00-\x1f\x7f]/`
+# written to reject control characters gets silently rewritten by the
+# PostToolUse `biome --write` hook into `/[\s -]/` (whitespace + the
+# U+0020-U+002D *printable* range), which no longer rejects control chars AND
+# wrongly rejects `!"#$%&'()*+,-`. The documented fix: never put a
+# \x-hex-escape control-char range in a regex literal — scan char codes in a
+# loop instead (`charCodeAt(i) <= 0x1f || === 0x7f`).
+rules:
+  - id: no-control-char-regex-literal
+    languages: [typescript]
+    severity: ERROR
+    message: >-
+      Regex literal contains a \x-hex-escape control-char range (e.g.
+      \x00-\x1f). Biome's noControlCharactersInRegex auto-fix silently
+      mangles these ranges into an unrelated printable-char range (see
+      docs/futures/gotchas.md) — the fix is to scan char codes in a loop
+      (charCodeAt(i) <= 0x1f || === 0x7f) instead of a regex control-char
+      class. If this is a deliberate, justified exception, suppress with a
+      `// nosemgrep: no-control-char-regex-literal — <reason>` comment at the
+      call site.
+    pattern-regex: /[^/\n]*\\x[0-9a-fA-F]{2}[^/\n]*-[^/\n]*/
+    paths:
+      include:
+        - "**/packages/**/*.ts"
+        - "**/packages/**/*.tsx"
+      exclude:
+        - "**/packages/**/*.test.ts"
+        - "**/packages/**/*.test.tsx"

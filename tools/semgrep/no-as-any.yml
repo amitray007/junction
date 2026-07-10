@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Increment 32.12 — no `as any` in core (rule 8 of 8).
+#
+# Core is a credential broker's trust boundary — an `as any` cast silently
+# defeats the type system exactly where correctness matters most. Validate
+# untyped input with Zod (docs/rules/) instead of casting past it.
+rules:
+  - id: no-as-any-in-core
+    languages: [typescript]
+    severity: ERROR
+    message: >-
+      `as any` used in packages/core/src/**. Validate untyped/external input
+      with Zod at the trust boundary instead of casting past the type
+      system. If this is a deliberate, justified exception, suppress with a
+      `// nosemgrep: no-as-any-in-core -- <reason>` comment at the call site.
+    pattern: $EXPR as any
+    paths:
+      include:
+        - "**/packages/core/src/**/*.ts"
+      exclude:
+        - "**/packages/core/src/**/*.test.ts"

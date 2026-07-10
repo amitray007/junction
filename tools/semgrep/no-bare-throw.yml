@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Increment 32.12 — no bare throw in core (rule 7 of 8).
+#
+# docs/rules/: fallible operations return neverthrow Result<T, E> with
+# discriminated-union domain errors; no bare throws across boundaries. This
+# rule catches `throw new $ERR(...)` in packages/core/src/** (excluding
+# tests). A handful of legitimate exceptions exist — module-load-time
+# integrity checks, `never`-exhaustiveness guards, and internal parsers
+# caught immediately by an enclosing try/catch at the SAME module boundary
+# (the throw never crosses out of the module) — each is allowlisted with an
+# inline `// nosemgrep: no-bare-throw-in-core — <reason>` comment, not a path
+# exclusion, so any NEW bare throw in core still fails the gate.
+rules:
+  - id: no-bare-throw-in-core
+    languages: [typescript]
+    severity: ERROR
+    message: >-
+      `throw new $ERR(...)` used in packages/core/src/**. Fallible
+      operations in core must return a neverthrow Result<T, E> with a
+      discriminated-union domain error, not throw — a bare throw crosses the
+      typed-error boundary uncaught. If this is a deliberate, narrowly-scoped
+      exception (an exhaustiveness guard, a module-load-time integrity
+      check, or an internal helper caught immediately by an enclosing
+      try/catch at the same boundary), suppress with a `// nosemgrep:
+      no-bare-throw-in-core — <reason>` comment at the call site.
+    pattern: throw new $ERR(...)
+    paths:
+      include:
+        - "**/packages/core/src/**/*.ts"
+      exclude:
+        - "**/packages/core/src/**/*.test.ts"

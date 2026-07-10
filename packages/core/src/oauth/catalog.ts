@@ -73,6 +73,8 @@ function defaultParseTokenResponse(provider: OAuthProvider, raw: unknown): Norma
   const body = raw as Record<string, unknown>
   const accessToken = body.access_token
   if (typeof accessToken !== "string" || accessToken.length === 0) {
+    // Internal parser: caught + converted to a typed Result at the source-runtime/oauth-connect.ts boundary.
+    // nosemgrep: no-bare-throw-in-core -- caught by oauth-connect.ts's try/catch, converted to a typed Result there
     throw new Error(`${provider.id}: token response missing access_token`)
   }
   const refreshToken = typeof body.refresh_token === "string" ? body.refresh_token : undefined
@@ -105,10 +107,13 @@ function parseSlackTokenResponse(raw: unknown): NormalizedTokens {
     authed_user?: { access_token?: string }
   }
   if (body.ok === false) {
+    // Same escape hatch as defaultParseTokenResponse above.
+    // nosemgrep: no-bare-throw-in-core -- caught by oauth-connect.ts's try/catch, converted to a typed Result there
     throw new Error(`slack: ${body.error ?? "unknown error"}`)
   }
   const accessToken = body.access_token ?? body.authed_user?.access_token
   if (typeof accessToken !== "string" || accessToken.length === 0) {
+    // nosemgrep: no-bare-throw-in-core -- same escape hatch as above, caught by oauth-connect.ts's try/catch
     throw new Error("slack: token response missing access_token")
   }
   return {
