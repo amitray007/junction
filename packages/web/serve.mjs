@@ -6,13 +6,19 @@
 // Build the SSR bundle first: `pnpm --filter @junction/web build`
 // The bundle (dist/server/server.js) exports a WinterCG-compatible
 // { fetch(request: Request): Promise<Response> } default export.
+//
+// resolveStaticFile and main are exported (see serve.d.mts for the hand-written
+// ambient types — this file has no allowJs/.d.ts generation) so a Node-env test
+// can import resolveStaticFile directly without triggering this module's
+// side effects (SSR bundle load, HTTP listen) — see the realpath-hardened
+// main-guard at the bottom.
 
-import { createReadStream } from "node:fs"
+import { createReadStream, realpathSync } from "node:fs"
 import { stat } from "node:fs/promises"
 import { createServer } from "node:http"
 import { dirname, join, normalize, sep } from "node:path"
 import { Readable } from "node:stream"
-import { fileURLToPath } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -36,11 +42,14 @@ const CONTENT_TYPES = {
 }
 
 /**
- * Resolve a request path to a real file INSIDE CLIENT_DIR, or null if it escapes
+ * Resolve a request path to a real file INSIDE baseDir, or null if it escapes
  * the dir / isn't a file. Path-traversal guard: the normalized absolute path must
- * stay under CLIENT_DIR. Returns { filePath, contentType } on a hit.
+ * stay under baseDir. Returns { filePath, contentType } on a hit.
+ *
+ * @param {string} reqPath
+ * @param {string} [baseDir]
  */
-async function resolveStaticFile(reqPath) {
+export async function resolveStaticFile(reqPath, baseDir = CLIENT_DIR) {
   // Strip query/hash; decode percent-encoding (a 404 on malformed input is fine).
   let pathname
   try {
@@ -50,10 +59,10 @@ async function resolveStaticFile(reqPath) {
   }
   if (!pathname || pathname === "/") return null
 
-  const candidate = normalize(join(CLIENT_DIR, pathname))
-  // Must stay within CLIENT_DIR (block ../ traversal). Append sep to avoid a
+  const candidate = normalize(join(baseDir, pathname))
+  // Must stay within baseDir (block ../ traversal). Append sep to avoid a
   // sibling-prefix bypass (e.g. dist/client-evil).
-  if (candidate !== CLIENT_DIR && !candidate.startsWith(CLIENT_DIR + sep)) return null
+  if (candidate !== baseDir && !candidate.startsWith(baseDir + sep)) return null
 
   try {
     const s = await stat(candidate)
@@ -65,153 +74,177 @@ async function resolveStaticFile(reqPath) {
   }
 }
 
-let app
-try {
-  const mod = await import(join(__dirname, "dist/server/server.js"))
-  app = mod.default
-} catch (err) {
-  process.stderr.write(
-    `junction web: failed to load built server bundle.\nRun \`pnpm --filter @junction/web build\` first.\n\n${String(err)}\n`,
-  )
-  process.exit(1)
-}
-
-const HOST = process.env.HOST ?? "127.0.0.1"
-// Keep in sync with core's DEFAULT_WEB_PORT / OAUTH_CALLBACK_URI. OAuth connect
-// (inc 29) pre-registers `http://127.0.0.1:4321/oauth/callback` as the redirect
-// URI, so running on a different port silently breaks every OAuth connect whose
-// redirect was registered against 4321 — warn loudly rather than fail obscurely.
-const DEFAULT_WEB_PORT = 4321
-const PORT = Number(process.env.PORT ?? String(DEFAULT_WEB_PORT))
-if (PORT !== DEFAULT_WEB_PORT) {
-  process.stderr.write(
-    `junction web: WARNING — running on port ${PORT}, not the default ${DEFAULT_WEB_PORT}. ` +
-      `OAuth connect registers redirects against :${DEFAULT_WEB_PORT}, so the OAuth "Connect" flow ` +
-      `will fail on this port unless you re-register your OAuth apps with this port's callback URI.\n`,
-  )
-}
-const MAX_BODY_BYTES = 1_048_576 // 1 MB — reject oversized bodies before buffering OOMs us
-
-/** Loopback-only Host check at the HTTP layer — reject DNS-rebinding early + cheaply. */
-function isLocalHost(hostHeader) {
-  const h = (hostHeader ?? "").toLowerCase()
-  const hostname = h.startsWith("[") ? h.slice(0, h.indexOf("]") + 1) : (h.split(":")[0] ?? "")
-  return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "[::1]"
-}
-
-const server = createServer(async (req, res) => {
-  // Defense-in-depth headers (also defends inc-23+ mutations / any future networked mode).
-  res.setHeader("X-Content-Type-Options", "nosniff")
-  res.setHeader("X-Frame-Options", "DENY")
-  res.setHeader("Content-Security-Policy", "frame-ancestors 'none'")
-
-  // HTTP-layer DNS-rebinding guard — reject non-loopback Host before any app logic.
-  if (!isLocalHost(req.headers.host)) {
-    res.writeHead(403)
-    res.end("Forbidden: access restricted to localhost")
-    return
-  }
-
-  // Serve built client assets directly (CSS/JS/fonts). Only GET/HEAD; everything
-  // else (incl. all non-file paths) falls through to the SSR handler below.
-  if (req.method === "GET" || req.method === "HEAD") {
-    try {
-      const hit = await resolveStaticFile(req.url ?? "")
-      if (hit) {
-        res.statusCode = 200
-        res.setHeader("Content-Type", hit.contentType)
-        // Hashed asset filenames are content-addressed → safe to cache long.
-        res.setHeader("Cache-Control", "public, max-age=31536000, immutable")
-        if (req.method === "HEAD") {
-          res.end()
-          return
-        }
-        const fileStream = createReadStream(hit.filePath)
-        fileStream.on("error", (err) => {
-          process.stderr.write(`junction web: static file stream error: ${String(err)}\n`)
-          res.destroy()
-        })
-        fileStream.pipe(res)
-        return
-      }
-    } catch (err) {
-      process.stderr.write(`junction web: static serve error: ${String(err)}\n`)
-      // fall through to SSR
-    }
-  }
-
+/**
+ * All side-effectful bootstrap: load the SSR bundle, build the HTTP server,
+ * and start listening. Gated behind the realpath-hardened main-check at the
+ * bottom of this file so importing resolveStaticFile alone (e.g. from a test)
+ * never triggers it.
+ */
+export async function main() {
+  let app
   try {
-    const url = `http://${req.headers.host ?? `${HOST}:${PORT}`}${req.url}`
+    const mod = await import(join(__dirname, "dist/server/server.js"))
+    app = mod.default
+  } catch (err) {
+    process.stderr.write(
+      `junction web: failed to load built server bundle.\nRun \`pnpm --filter @junction/web build\` first.\n\n${String(err)}\n`,
+    )
+    process.exit(1)
+  }
 
-    const chunks = []
-    let total = 0
-    for await (const chunk of req) {
-      total += chunk.length
-      if (total > MAX_BODY_BYTES) {
-        res.writeHead(413)
-        res.end("Payload Too Large")
-        req.destroy()
-        return
-      }
-      chunks.push(chunk)
-    }
-    const body =
-      req.method !== "GET" && req.method !== "HEAD" && chunks.length > 0
-        ? Buffer.concat(chunks)
-        : undefined
+  const HOST = process.env.HOST ?? "127.0.0.1"
+  // Keep in sync with core's DEFAULT_WEB_PORT / OAUTH_CALLBACK_URI. OAuth connect
+  // (inc 29) pre-registers `http://127.0.0.1:4321/oauth/callback` as the redirect
+  // URI, so running on a different port silently breaks every OAuth connect whose
+  // redirect was registered against 4321 — warn loudly rather than fail obscurely.
+  const DEFAULT_WEB_PORT = 4321
+  const PORT = Number(process.env.PORT ?? String(DEFAULT_WEB_PORT))
+  if (PORT !== DEFAULT_WEB_PORT) {
+    process.stderr.write(
+      `junction web: WARNING — running on port ${PORT}, not the default ${DEFAULT_WEB_PORT}. ` +
+        `OAuth connect registers redirects against :${DEFAULT_WEB_PORT}, so the OAuth "Connect" flow ` +
+        `will fail on this port unless you re-register your OAuth apps with this port's callback URI.\n`,
+    )
+  }
+  const MAX_BODY_BYTES = 1_048_576 // 1 MB — reject oversized bodies before buffering OOMs us
 
-    // Build Fetch-compatible headers, skipping undefined values
-    const headers = new Headers()
-    for (const [k, v] of Object.entries(req.headers)) {
-      if (v == null) continue
-      headers.set(k, Array.isArray(v) ? v.join(", ") : v)
-    }
+  /** Loopback-only Host check at the HTTP layer — reject DNS-rebinding early + cheaply. */
+  function isLocalHost(hostHeader) {
+    const h = (hostHeader ?? "").toLowerCase()
+    const hostname = h.startsWith("[") ? h.slice(0, h.indexOf("]") + 1) : (h.split(":")[0] ?? "")
+    return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "[::1]"
+  }
 
-    const fetchReq = new Request(url, {
-      method: req.method,
-      headers,
-      body,
-      // @ts-expect-error — duplex is required for streaming request bodies in Node 18+
-      duplex: "half",
-    })
-
-    const fetchRes = await app.fetch(fetchReq)
-
-    res.statusCode = fetchRes.status
-    res.statusMessage = fetchRes.statusText
-    for (const [k, v] of fetchRes.headers.entries()) {
-      res.setHeader(k, v)
-    }
-    // Re-assert our security headers in case the app set conflicting values.
+  const server = createServer(async (req, res) => {
+    // Defense-in-depth headers (also defends inc-23+ mutations / any future networked mode).
     res.setHeader("X-Content-Type-Options", "nosniff")
     res.setHeader("X-Frame-Options", "DENY")
+    res.setHeader("Content-Security-Policy", "frame-ancestors 'none'")
 
-    if (fetchRes.body) {
-      // Node 18+ supports ReadableStream → Readable.fromWeb. Handle mid-stream errors:
-      // they fire AFTER the try block, so attach an explicit error handler.
-      const nodeStream = Readable.fromWeb(fetchRes.body)
-      nodeStream.on("error", (err) => {
-        process.stderr.write(`junction web: response stream error: ${String(err)}\n`)
-        res.destroy()
+    // HTTP-layer DNS-rebinding guard — reject non-loopback Host before any app logic.
+    if (!isLocalHost(req.headers.host)) {
+      res.writeHead(403)
+      res.end("Forbidden: access restricted to localhost")
+      return
+    }
+
+    // Serve built client assets directly (CSS/JS/fonts). Only GET/HEAD; everything
+    // else (incl. all non-file paths) falls through to the SSR handler below.
+    if (req.method === "GET" || req.method === "HEAD") {
+      try {
+        const hit = await resolveStaticFile(req.url ?? "")
+        if (hit) {
+          res.statusCode = 200
+          res.setHeader("Content-Type", hit.contentType)
+          // Hashed asset filenames are content-addressed → safe to cache long.
+          res.setHeader("Cache-Control", "public, max-age=31536000, immutable")
+          if (req.method === "HEAD") {
+            res.end()
+            return
+          }
+          const fileStream = createReadStream(hit.filePath)
+          fileStream.on("error", (err) => {
+            process.stderr.write(`junction web: static file stream error: ${String(err)}\n`)
+            res.destroy()
+          })
+          fileStream.pipe(res)
+          return
+        }
+      } catch (err) {
+        process.stderr.write(`junction web: static serve error: ${String(err)}\n`)
+        // fall through to SSR
+      }
+    }
+
+    try {
+      const url = `http://${req.headers.host ?? `${HOST}:${PORT}`}${req.url}`
+
+      const chunks = []
+      let total = 0
+      for await (const chunk of req) {
+        total += chunk.length
+        if (total > MAX_BODY_BYTES) {
+          res.writeHead(413)
+          res.end("Payload Too Large")
+          req.destroy()
+          return
+        }
+        chunks.push(chunk)
+      }
+      const body =
+        req.method !== "GET" && req.method !== "HEAD" && chunks.length > 0
+          ? Buffer.concat(chunks)
+          : undefined
+
+      // Build Fetch-compatible headers, skipping undefined values
+      const headers = new Headers()
+      for (const [k, v] of Object.entries(req.headers)) {
+        if (v == null) continue
+        headers.set(k, Array.isArray(v) ? v.join(", ") : v)
+      }
+
+      const fetchReq = new Request(url, {
+        method: req.method,
+        headers,
+        body,
+        // @ts-expect-error — duplex is required for streaming request bodies in Node 18+
+        duplex: "half",
       })
-      nodeStream.pipe(res)
-    } else {
-      res.end()
-    }
-  } catch (err) {
-    process.stderr.write(`junction web: request error: ${String(err)}\n`)
-    if (!res.headersSent) {
-      res.writeHead(500)
-    }
-    res.end("Internal Server Error")
-  }
-})
 
-server.listen(PORT, HOST, () => {
-  process.stdout.write(`junction web dashboard on http://${HOST}:${PORT}\n`)
-})
+      const fetchRes = await app.fetch(fetchReq)
 
-server.on("error", (err) => {
-  process.stderr.write(`junction web: server error: ${String(err)}\n`)
-  process.exit(1)
-})
+      res.statusCode = fetchRes.status
+      res.statusMessage = fetchRes.statusText
+      for (const [k, v] of fetchRes.headers.entries()) {
+        res.setHeader(k, v)
+      }
+      // Re-assert our security headers in case the app set conflicting values.
+      res.setHeader("X-Content-Type-Options", "nosniff")
+      res.setHeader("X-Frame-Options", "DENY")
+
+      if (fetchRes.body) {
+        // Node 18+ supports ReadableStream → Readable.fromWeb. Handle mid-stream errors:
+        // they fire AFTER the try block, so attach an explicit error handler.
+        const nodeStream = Readable.fromWeb(fetchRes.body)
+        nodeStream.on("error", (err) => {
+          process.stderr.write(`junction web: response stream error: ${String(err)}\n`)
+          res.destroy()
+        })
+        nodeStream.pipe(res)
+      } else {
+        res.end()
+      }
+    } catch (err) {
+      process.stderr.write(`junction web: request error: ${String(err)}\n`)
+      if (!res.headersSent) {
+        res.writeHead(500)
+      }
+      res.end("Internal Server Error")
+    }
+  })
+
+  server.listen(PORT, HOST, () => {
+    process.stdout.write(`junction web dashboard on http://${HOST}:${PORT}\n`)
+  })
+
+  server.on("error", (err) => {
+    process.stderr.write(`junction web: server error: ${String(err)}\n`)
+    process.exit(1)
+  })
+}
+
+// Realpath-hardened main-check: a naive `import.meta.url === pathToFileURL(process.argv[1])`
+// comparison silently fails when argv[1] is a symlinked path — Node realpaths the ESM main
+// module's import.meta.url but NOT argv[1]. That failure mode is a silent no-server exit 0,
+// so argv[1] is realpath'd here to match. All known launch paths spawn this file as a
+// subprocess (never import it as a module) — see packages/cli/src/commands/web.ts,
+// scripts/web-smoke.mjs, scripts/web-launch.mjs, and the package.json "start" script.
+let argvPath = process.argv[1] ?? ""
+try {
+  argvPath = realpathSync(argvPath)
+} catch {
+  /* keep raw */
+}
+if (import.meta.url === pathToFileURL(argvPath).href) {
+  await main()
+}

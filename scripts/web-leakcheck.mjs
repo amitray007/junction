@@ -16,7 +16,15 @@ import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const clientDir = join(__dirname, "..", "packages", "web", "dist", "client")
+
+// --dir <path> overrides the scan root (used by the leakcheck self-tests to
+// point at a planted fixture instead of the real build output). Default
+// unchanged: packages/web/dist/client.
+const dirFlagIndex = process.argv.indexOf("--dir")
+const clientDir =
+  dirFlagIndex !== -1 && process.argv[dirFlagIndex + 1]
+    ? process.argv[dirFlagIndex + 1]
+    : join(__dirname, "..", "packages", "web", "dist", "client")
 const assetsDir = join(clientDir, "assets")
 
 // Server-only mechanisms + secret payload markers that must never reach the client.
