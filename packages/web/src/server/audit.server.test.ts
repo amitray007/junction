@@ -9,12 +9,12 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { AuditEntry } from "@junction/core"
+import type { AuditEntry, ToolCallEntry } from "@junction/core"
 import { getPaths } from "@junction/core"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { readAudit } from "./audit.server.js"
 
-function makeEntry(overrides: Partial<AuditEntry> = {}): AuditEntry {
+function makeEntry(overrides: Partial<ToolCallEntry> = {}): AuditEntry {
   return {
     v: 1,
     ts: "2026-07-01T00:00:00.000Z",
@@ -64,6 +64,7 @@ describe("audit.server", () => {
     const result = await readAudit({ limit: 0 })
     expect(result.entries).toHaveLength(1)
     expect(result.entries[0]).toEqual({
+      event: "tool_call",
       ts: "2026-07-01T00:00:00.000Z",
       principalKind: "api-key",
       keyId: "key-1",
@@ -76,6 +77,41 @@ describe("audit.server", () => {
       outcome: "ok",
       errorKind: null,
     })
+  })
+
+  it("maps a code_exec entry to its DTO variant — no namespace/tool/argKeys field", async () => {
+    await seedAuditLog([
+      {
+        v: 1,
+        ts: "2026-07-01T00:00:00.000Z",
+        event: "code_exec",
+        correlationId: "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        principal: { kind: "stdio", keyId: null, label: null, profiles: ["work"] },
+        profile: "work",
+        durationMs: 88,
+        outcome: "ok",
+        errorKind: null,
+        toolCallCount: 2,
+      },
+    ])
+
+    const result = await readAudit({ limit: 0 })
+    expect(result.entries).toHaveLength(1)
+    expect(result.entries[0]).toEqual({
+      event: "code_exec",
+      ts: "2026-07-01T00:00:00.000Z",
+      principalKind: "stdio",
+      keyId: null,
+      label: null,
+      profile: "work",
+      durationMs: 88,
+      outcome: "ok",
+      errorKind: null,
+      toolCallCount: 2,
+    })
+    expect(result.entries[0]).not.toHaveProperty("namespace")
+    expect(result.entries[0]).not.toHaveProperty("tool")
+    expect(result.entries[0]).not.toHaveProperty("argKeys")
   })
 
   it("the DTO never carries an arg VALUE or a secret (JSON-stringify negative check)", async () => {

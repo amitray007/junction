@@ -1,18 +1,25 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// `junction audit` — read/filter the append-only tool-call audit log
-// (increment 31, Slice C). The log itself is written by the Slice B pino
-// sink hooked into `adaptToMcpHandlers`; this command is a PURE READER.
+// `junction audit` — read/filter the append-only audit log (increment 31,
+// Slice C; event-aware rendering added increment 33 Slice A). The log itself
+// is written by the Slice B pino sink hooked into `adaptToMcpHandlers` (and,
+// later, code-mode's own emit calls); this command is a PURE READER.
 //
-// The audit log contains NO secrets (Slice A's AuditEntry shape guarantees
-// that — arg keys + a correlation hash only, never values, never a
-// credential, never an upstream response/cause). This command does no
+// The audit log contains NO secrets (the AuditEntry shape guarantees that —
+// arg keys + a correlation hash only, never values, never a credential,
+// never an upstream response/cause, never code text). This command does no
 // redaction of its own; it just parses, filters, and prints what's there.
 //
 // The reader/filter logic itself (readAuditLog/filterAuditEntries/
 // parseSinceUtc/AuditFilters) was extracted to @junction/core (increment
 // 32.6b) so the web /audit page — a sibling app that cannot import cli — can
 // share it. This file keeps only the human formatter + arg parsing/citty
-// wiring; behavior is byte-identical to before the extract.
+// wiring.
+//
+// EVENT-AWARE FORMATTING (increment 33 Slice A): `AuditEntry` is now a
+// discriminated union (`tool_call` | `code_exec`). A `code_exec` entry has NO
+// `target`/`tool` field — formatHuman branches on `e.event` rather than
+// reading `.target.*` unconditionally (which would break-or-garbage on a
+// tool-less code_exec line).
 
 import { type AuditEntry, filterAuditEntries, getPaths, readAuditLog } from "@junction/core"
 import { defineCommand } from "citty"
@@ -21,6 +28,21 @@ import { reportError } from "../format.js"
 
 /** Default tail size when `-n/--limit` is not supplied. */
 const DEFAULT_LIMIT = 50
+
+function principalLabel(e: AuditEntry): string {
+  if (e.principal.kind === "api-key") return `key:${e.principal.keyId ?? "?"}`
+  const profile = e.event === "tool_call" ? e.target.profile : e.profile
+  return `stdio:${profile}`
+}
+
+function profileOf(e: AuditEntry): string {
+  return e.event === "tool_call" ? e.target.profile : e.profile
+}
+
+function targetLabel(e: AuditEntry): string {
+  if (e.event === "tool_call") return `${e.target.namespace}__${e.target.tool}`
+  return `(code_exec: ${e.toolCallCount} tool call${e.toolCallCount !== 1 ? "s" : ""})`
+}
 
 function formatHuman(entries: AuditEntry[], skipped: number): string {
   const lines: string[] = []
@@ -34,14 +56,11 @@ function formatHuman(entries: AuditEntry[], skipped: number): string {
       "  ---------------------  -------------------  --------------  -------------------------------  -------  --------",
     )
     for (const e of entries) {
-      const who =
-        e.principal.kind === "api-key"
-          ? `key:${e.principal.keyId ?? "?"}`
-          : `stdio:${e.target.profile}`
-      const target = `${e.target.namespace}__${e.target.tool}`
+      const who = principalLabel(e)
+      const target = targetLabel(e)
       const outcome = e.outcome === "error" ? `error(${e.errorKind ?? "?"})` : "ok"
       lines.push(
-        `  ${e.ts.padEnd(21)}  ${who.padEnd(19)}  ${e.target.profile.padEnd(14)}  ${target.padEnd(33)}  ${outcome.padEnd(7)}  ${e.durationMs}ms`,
+        `  ${e.ts.padEnd(21)}  ${who.padEnd(19)}  ${profileOf(e).padEnd(14)}  ${target.padEnd(33)}  ${outcome.padEnd(7)}  ${e.durationMs}ms`,
       )
     }
   }

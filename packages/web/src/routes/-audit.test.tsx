@@ -11,6 +11,7 @@ import type { AuditEntryDTO } from "../server/audit.functions.js"
 const emptyData = { entries: [] as AuditEntryDTO[], skipped: 0, truncated: false, total: 0 }
 
 const okEntry: AuditEntryDTO = {
+  event: "tool_call",
   ts: "2026-07-01T12:00:00.000Z",
   principalKind: "api-key",
   keyId: "key-abc",
@@ -25,6 +26,7 @@ const okEntry: AuditEntryDTO = {
 }
 
 const errorEntry: AuditEntryDTO = {
+  event: "tool_call",
   ts: "2026-07-02T08:30:00.000Z",
   principalKind: "stdio",
   keyId: null,
@@ -38,8 +40,28 @@ const errorEntry: AuditEntryDTO = {
   errorKind: "auth-failed",
 }
 
+const codeExecEntry: AuditEntryDTO = {
+  event: "code_exec",
+  ts: "2026-07-03T10:00:00.000Z",
+  principalKind: "stdio",
+  keyId: null,
+  label: null,
+  profile: "work",
+  durationMs: 240,
+  outcome: "ok",
+  errorKind: null,
+  toolCallCount: 4,
+}
+
 const populatedData = {
   entries: [okEntry, errorEntry],
+  skipped: 0,
+  truncated: false,
+  total: 2,
+}
+
+const withCodeExecData = {
+  entries: [okEntry, codeExecEntry],
   skipped: 0,
   truncated: false,
   total: 2,
@@ -158,5 +180,31 @@ describe("AuditPage — filters narrow visible rows", () => {
     const filteredTable = getByRole("table")
     expect(filteredTable.textContent).toContain("personal")
     expect(filteredTable.textContent).not.toContain("work")
+  })
+})
+
+describe("AuditPage — code_exec rendering (increment 33 Slice A)", () => {
+  it("renders a code_exec row with its tool-call count, not a namespace__tool", () => {
+    mockUseLoaderData.mockReturnValue(withCodeExecData)
+    const { getByRole } = render(<AuditPage />)
+    const table = getByRole("table")
+    expect(table.textContent).toContain("code_exec (4 calls)")
+  })
+
+  it("shows no arg count for a code_exec row (it has no argKeys)", () => {
+    mockUseLoaderData.mockReturnValue({
+      entries: [codeExecEntry],
+      skipped: 0,
+      truncated: false,
+      total: 1,
+    })
+    const { getByRole } = render(<AuditPage />)
+    const table = getByRole("table")
+    expect(table.textContent).not.toMatch(/\d+ args?/)
+  })
+
+  it("does not throw rendering a code_exec entry alongside a tool_call entry", () => {
+    mockUseLoaderData.mockReturnValue(withCodeExecData)
+    expect(() => render(<AuditPage />)).not.toThrow()
   })
 })
