@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Locks the LOAD-BEARING arity split for the audit target (inc 31; a doc-review
-// blocker). The wire tool name has two arities:
+// blocker). Relocated cli→core at increment 33 Slice A along with parseWireName
+// itself (see wire-name.ts's header). The wire tool name has two arities:
 //   unprefixed (single-profile / stdio): <namespace>__<tool>
 //   prefixed   (multi-profile / global): <profile>__<namespace>__<tool>
 // parseWireName must recover {profile, namespace, tool} correctly for both,
 // including a tool name that itself contains "__" (split on the FIRST "__").
 
 import { describe, expect, it } from "vitest"
-import { parseWireName } from "./providers.js"
+import { parseWireName } from "./wire-name.js"
 
 describe("parseWireName — arity-aware audit target split", () => {
   describe("unprefixed (single-profile / stdio)", () => {

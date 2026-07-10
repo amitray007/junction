@@ -2,6 +2,12 @@
 // Audit-log READER — parse + filter the append-only JSONL audit log (inc 31 wrote it; inc 32.6b
 // reads it). Shared by the CLI (`junction audit`) and the web /audit page (which can't import cli).
 // NEVER emits a secret — AuditEntry is metadata-only by the inc-31 contract.
+//
+// EVENT-AWARE FILTERING (increment 33 Slice A): `AuditEntry` is a discriminated
+// union (`tool_call` | `code_exec`). A `code_exec` entry has no `target`/`tool`
+// field, so `--tool` cannot match it — it is EXEMPT from a `--tool` filter
+// (never matches, never excluded-by-absence-of-tool — it simply isn't a tool
+// call). `--profile` still matches it via its own `profile` field.
 
 import { open, readFile } from "node:fs/promises"
 import { type AuditEntry, AuditEntrySchema } from "./schema.js"
@@ -86,13 +92,18 @@ export function filterAuditEntries(
   }
 
   const filtered = entries.filter((e) => {
+    const entryProfile = e.event === "tool_call" ? e.target.profile : e.profile
     if (filters.profile !== undefined) {
-      const matchesTarget = e.target.profile === filters.profile
+      const matchesTarget = entryProfile === filters.profile
       const matchesPrincipal = e.principal.profiles.includes(filters.profile)
       if (!matchesTarget && !matchesPrincipal) return false
     }
     if (filters.key !== undefined && e.principal.keyId !== filters.key) return false
-    if (filters.tool !== undefined && e.target.tool !== filters.tool) return false
+    // code_exec has no `target`/`tool` field — exempt from --tool (never matches).
+    if (filters.tool !== undefined) {
+      if (e.event !== "tool_call") return false
+      if (e.target.tool !== filters.tool) return false
+    }
     if (sinceMs !== null) {
       const entryMs = Date.parse(e.ts)
       if (Number.isNaN(entryMs) || entryMs < sinceMs) return false

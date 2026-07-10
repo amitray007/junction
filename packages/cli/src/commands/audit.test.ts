@@ -12,7 +12,7 @@ import { mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { promisify } from "node:util"
-import type { AuditEntry } from "@junction/core"
+import type { AuditEntry, CodeExecEntry, ToolCallEntry } from "@junction/core"
 import { withTempHome } from "@junction/core/testing"
 import { describe, expect, it } from "vitest"
 
@@ -34,8 +34,8 @@ async function run(env: NodeJS.ProcessEnv, args: string[]) {
   }
 }
 
-/** Build a well-formed AuditEntry with sane defaults, overridable per test. */
-function makeEntry(overrides: Partial<AuditEntry> = {}): AuditEntry {
+/** Build a well-formed tool_call AuditEntry with sane defaults, overridable per test. */
+function makeEntry(overrides: Partial<ToolCallEntry> = {}): AuditEntry {
   return {
     v: 1,
     ts: "2026-07-01T00:00:00.000Z",
@@ -218,3 +218,97 @@ describe.skipIf(!builtBinReady)("junction audit (built bin, child process)", () 
     })
   })
 })
+
+/** Build a well-formed code_exec AuditEntry (increment 33 Slice A). */
+function makeCodeExecEntry(overrides: Partial<CodeExecEntry> = {}): AuditEntry {
+  return {
+    v: 1,
+    ts: "2026-07-01T00:00:00.000Z",
+    event: "code_exec",
+    correlationId: "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+    principal: { kind: "stdio", keyId: null, label: null, profiles: ["work"] },
+    profile: "work",
+    durationMs: 240,
+    outcome: "ok",
+    errorKind: null,
+    toolCallCount: 2,
+    ...overrides,
+  }
+}
+
+describe.skipIf(!builtBinReady)(
+  "junction audit — code_exec rendering (increment 33 Slice A)",
+  () => {
+    it("a hand-crafted log with BOTH a tool_call and a code_exec line renders both in human mode", async () => {
+      await withTempHome(async (home) => {
+        const env = { ...process.env, JUNCTION_HOME: home }
+        const toolCall = makeEntry({ correlationId: "shared-id" })
+        const codeExec = makeCodeExecEntry({ correlationId: "shared-id" })
+        await seedAuditLog(home, [toolCall, codeExec])
+
+        const human = await run(env, ["audit"])
+        expect(human.code).toBe(0)
+        // tool_call row
+        expect(human.stdout).toContain("github__search_repos")
+        // code_exec row — no namespace/tool, renders its own label + count
+        expect(human.stdout).toContain("code_exec")
+        expect(human.stdout).toContain("2 tool calls")
+        // NO secret / code text anywhere in the output
+        expect(human.stdout).not.toMatch(/console\.log|fetch\(|require\(/)
+      })
+    })
+
+    it("--json emits both event shapes intact (no target/tool on code_exec)", async () => {
+      await withTempHome(async (home) => {
+        const env = { ...process.env, JUNCTION_HOME: home }
+        const toolCall = makeEntry()
+        const codeExec = makeCodeExecEntry()
+        await seedAuditLog(home, [toolCall, codeExec])
+
+        const result = await run(env, ["audit", "--json"])
+        expect(result.code).toBe(0)
+        const rows = JSON.parse(result.stdout.trim()) as AuditEntry[]
+        expect(rows).toHaveLength(2)
+        const tc = rows.find((r) => r.event === "tool_call")
+        const ce = rows.find((r) => r.event === "code_exec")
+        expect(tc).toBeDefined()
+        expect(ce).toBeDefined()
+        expect(ce).not.toHaveProperty("target")
+        expect(ce).not.toHaveProperty("tool")
+      })
+    })
+
+    it("--tool exempts code_exec (never matches — it has no tool field)", async () => {
+      await withTempHome(async (home) => {
+        const env = { ...process.env, JUNCTION_HOME: home }
+        const toolCall = makeEntry({
+          target: { profile: "work", namespace: "github", tool: "search" },
+        })
+        const codeExec = makeCodeExecEntry()
+        await seedAuditLog(home, [toolCall, codeExec])
+
+        const result = await run(env, ["audit", "--tool", "search", "--json"])
+        const rows = JSON.parse(result.stdout.trim()) as AuditEntry[]
+        expect(rows).toHaveLength(1)
+        expect(rows[0]?.event).toBe("tool_call")
+      })
+    })
+
+    it("--profile still matches a code_exec entry by its own `profile` field", async () => {
+      await withTempHome(async (home) => {
+        const env = { ...process.env, JUNCTION_HOME: home }
+        const workCodeExec = makeCodeExecEntry({ profile: "work" })
+        const otherCodeExec = makeCodeExecEntry({
+          profile: "other",
+          principal: { kind: "stdio", keyId: null, label: null, profiles: ["other"] },
+        })
+        await seedAuditLog(home, [workCodeExec, otherCodeExec])
+
+        const result = await run(env, ["audit", "--profile", "work", "--json"])
+        const rows = JSON.parse(result.stdout.trim()) as AuditEntry[]
+        expect(rows).toHaveLength(1)
+        expect(rows[0]).toMatchObject({ event: "code_exec", profile: "work" })
+      })
+    })
+  },
+)

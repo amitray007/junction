@@ -95,6 +95,21 @@ function principalLabel(e: AuditEntryDTO): string {
   return `stdio:${e.profile}`
 }
 
+/**
+ * The "Namespace · Tool" cell — a `code_exec` entry has no namespace/tool (it
+ * wraps zero or more inner tool_call lines, not one upstream tool call), so
+ * it renders a distinct label instead of reading `.tool` unconditionally.
+ */
+function targetLabel(e: AuditEntryDTO): string {
+  if (e.event === "tool_call") return `${e.namespace}__${e.tool}`
+  return `code_exec (${e.toolCallCount} call${e.toolCallCount !== 1 ? "s" : ""})`
+}
+
+/** Sort/search/facet key for the tool column — code_exec sorts/groups on its own label. */
+function targetSortKey(e: AuditEntryDTO): string {
+  return e.event === "tool_call" ? `${e.namespace}__${e.tool}` : "code_exec"
+}
+
 const ALL_FILTER = "all"
 
 interface AuditTableProps {
@@ -114,17 +129,14 @@ export function AuditTable({ entries, pageSize = PAGE_SIZE }: AuditTableProps) {
     [entries],
   )
   const toolOptions = useMemo(
-    () =>
-      Array.from(new Set(entries.map((e) => `${e.namespace}__${e.tool}`))).sort((a, b) =>
-        a.localeCompare(b),
-      ),
+    () => Array.from(new Set(entries.map(targetLabel))).sort((a, b) => a.localeCompare(b)),
     [entries],
   )
 
   const predicate = useCallback(
     (e: AuditEntryDTO) =>
       (profileFilter === ALL_FILTER || e.profile === profileFilter) &&
-      (toolFilter === ALL_FILTER || `${e.namespace}__${e.tool}` === toolFilter) &&
+      (toolFilter === ALL_FILTER || targetLabel(e) === toolFilter) &&
       (outcomeFilter === ALL_FILTER || e.outcome === outcomeFilter),
     [profileFilter, toolFilter, outcomeFilter],
   )
@@ -133,7 +145,7 @@ export function AuditTable({ entries, pageSize = PAGE_SIZE }: AuditTableProps) {
     () => [
       { key: "time", compare: (a, b) => Date.parse(a.ts) - Date.parse(b.ts) },
       { key: "profile", compare: (a, b) => a.profile.localeCompare(b.profile) },
-      { key: "tool", compare: (a, b) => a.tool.localeCompare(b.tool) },
+      { key: "tool", compare: (a, b) => targetSortKey(a).localeCompare(targetSortKey(b)) },
       { key: "duration", compare: (a, b) => a.durationMs - b.durationMs },
     ],
     [],
@@ -153,8 +165,8 @@ export function AuditTable({ entries, pageSize = PAGE_SIZE }: AuditTableProps) {
     rows: entries,
     searchFields: (e) => [
       e.profile,
-      e.namespace,
-      e.tool,
+      e.event === "tool_call" ? e.namespace : undefined,
+      e.event === "tool_call" ? e.tool : "code_exec",
       e.keyId ?? undefined,
       e.label ?? undefined,
     ],
@@ -255,7 +267,7 @@ export function AuditTable({ entries, pageSize = PAGE_SIZE }: AuditTableProps) {
                 // these (same ms, same principal, same target, same duration)
                 // would render identically anyway, so a collision is harmless.
                 <TableRow
-                  key={`${e.ts}|${e.keyId}|${e.profile}|${e.namespace}|${e.tool}|${e.durationMs}|${e.outcome}`}
+                  key={`${e.ts}|${e.keyId}|${e.profile}|${targetLabel(e)}|${e.durationMs}|${e.outcome}`}
                 >
                   <TableCellMono style={{ color: "var(--gray-700)" }}>
                     {formatTime(e.ts)}
@@ -264,14 +276,16 @@ export function AuditTable({ entries, pageSize = PAGE_SIZE }: AuditTableProps) {
                   <TableCellMono>
                     <MonoCode>{e.profile}</MonoCode>
                   </TableCellMono>
-                  <TableCellMono>
-                    {e.namespace}__{e.tool}
-                  </TableCellMono>
+                  <TableCellMono>{targetLabel(e)}</TableCellMono>
                   <TableCell>
-                    {e.argKeys.length > 0 ? (
-                      <span title={e.argKeys.join(", ")} style={{ color: "var(--gray-700)" }}>
-                        {e.argKeys.length} arg{e.argKeys.length !== 1 ? "s" : ""}
-                      </span>
+                    {e.event === "tool_call" ? (
+                      e.argKeys.length > 0 ? (
+                        <span title={e.argKeys.join(", ")} style={{ color: "var(--gray-700)" }}>
+                          {e.argKeys.length} arg{e.argKeys.length !== 1 ? "s" : ""}
+                        </span>
+                      ) : (
+                        <span style={{ color: "var(--gray-700)" }}>—</span>
+                      )
                     ) : (
                       <span style={{ color: "var(--gray-700)" }}>—</span>
                     )}
