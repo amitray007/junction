@@ -2,6 +2,17 @@
 
 /** Junction core — public API. */
 
+// ---------------------------------------------------------------------------
+// Audit — structured audit log schema + sink interface (increment 31; the
+// discriminated tool_call/code_exec union + the shared emit seam are
+// increment 33 Slice A)
+// ---------------------------------------------------------------------------
+export {
+  type EmitCodeExecInput,
+  type EmitToolCallInput,
+  emitCodeExec,
+  emitToolCall,
+} from "./audit/emit.js"
 export {
   type AuditFilters,
   filterAuditEntries,
@@ -11,16 +22,22 @@ export {
 } from "./audit/read.js"
 export { argKeys, hashArgs } from "./audit/redact.js"
 export { type AuditRotateOutcome, rotateAuditLogIfOversized } from "./audit/rotate.js"
-// ---------------------------------------------------------------------------
-// Audit — structured tool-call log schema + sink interface (increment 31)
-// ---------------------------------------------------------------------------
-export type { AuditEntry, AuditPrincipal, AuditTarget } from "./audit/schema.js"
+export type {
+  AuditEntry,
+  AuditPrincipal,
+  AuditTarget,
+  CodeExecEntry,
+  ToolCallEntry,
+} from "./audit/schema.js"
 export {
   AuditEntrySchema,
   AuditPrincipalSchema,
   AuditTargetSchema,
+  CodeExecEntrySchema,
+  ToolCallEntrySchema,
 } from "./audit/schema.js"
 export { type AuditSink, NoopAuditSink } from "./audit/sink.js"
+export { parseWireName } from "./audit/wire-name.js"
 export {
   type Config,
   ConfigSchema,
