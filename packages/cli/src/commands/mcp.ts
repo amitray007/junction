@@ -28,7 +28,6 @@
 //   Future kinds (graphql) plug in there without touching the proxy or this file.
 
 import {
-  type AuditPrincipal,
   createCredentialStore,
   createFileToolPinStore,
   createProfileProxy,
@@ -43,8 +42,8 @@ import {
 } from "@junction/core"
 import { makeResolveProvider } from "@junction/source-runtime"
 import { defineCommand } from "citty"
-import { createFileAuditSink } from "../audit-sink.js"
-import { adaptToMcpHandlers } from "../providers.js"
+import { createStdioAuditSink } from "../audit-sink.js"
+import { adaptToMcpHandlers, makeProxyWarnCallbacks } from "../providers.js"
 import { buildRunCodeHandlers, mergeHandlers } from "../synthetic-tool.js"
 
 // ---------------------------------------------------------------------------
@@ -198,31 +197,18 @@ const serveCommand = defineCommand({
     // never the (possibly-injected) description text, never old/new hashes, never file
     // content (detail is an error code/kind).
     const toolPinStore = createFileToolPinStore(paths)
+    // Same drift/pin warn callbacks as `run` / `serve` (makeProxyWarnCallbacks,
+    // providers.ts) — but emitted to process.stderr.write, NOT consola: stdout
+    // is the MCP protocol channel here, so structured warns must go to stderr.
+    const warns = makeProxyWarnCallbacks((event) => {
+      process.stderr.write(`${JSON.stringify(event)}\n`)
+    })
     const proxy = createProfileProxy(
       profile.sources,
       resolveProvider,
-      (info) => {
-        process.stderr.write(
-          `${JSON.stringify({
-            event: info.reason === "pin-drift" ? "tool_pin_drift" : "description_sanitized",
-            namespace: info.namespace,
-            tool: info.tool,
-            strippedSuspicious: info.strippedSuspicious,
-            truncated: info.truncated,
-            reason: info.reason,
-          })}\n`,
-        )
-      },
+      warns.onDescriptionDrift,
       toolPinStore,
-      (info) => {
-        process.stderr.write(
-          `${JSON.stringify({
-            event: "tool_pin_store_degraded",
-            op: info.op,
-            detail: info.detail,
-          })}\n`,
-        )
-      },
+      warns.onPinStoreWarning,
     )
 
     // Rotate BEFORE the sink opens its fd (increment 32.8) — see rotate.ts's
@@ -239,28 +225,14 @@ const serveCommand = defineCommand({
     // ── Audit sink (increment 31 Slice B) ─────────────────────────────────
     // One pino-backed file sink per process. stdio is always single-profile
     // passthrough — unprefixed wire names, principal.profiles is just this
-    // one profile.
-    const auditSink = createFileAuditSink(paths)
-    const principal: AuditPrincipal = {
-      kind: "stdio",
-      keyId: null,
-      label: null,
-      profiles: [profile.name],
-    }
-
-    // A raw Ctrl-C (SIGINT/SIGTERM) sends no stdin EOF, so serveStdio's
-    // Promise below never resolves on that path — without this handler the
-    // last buffered audit line would be dropped. process "exit" below is the
-    // belt-and-suspenders backstop for any other clean-exit path.
-    process.once("SIGINT", () => {
-      auditSink.flushSync()
-      process.exit(0)
+    // one profile. Shared with `junction run` via createStdioAuditSink (same
+    // sink + stdio principal + a raw-Ctrl-C flush backstop, since serveStdio's
+    // Promise never resolves on a signal). mcp serve exits 0 on either signal
+    // (a clean stdio teardown, not a signal-reported foreground command).
+    const { auditSink, principal } = createStdioAuditSink(paths, profile.name, {
+      sigint: 0,
+      sigterm: 0,
     })
-    process.once("SIGTERM", () => {
-      auditSink.flushSync()
-      process.exit(0)
-    })
-    process.on("exit", () => auditSink.flushSync())
 
     // ── Adapt proxy ResultAsync → Promise handlers for mcp/server ─────────
     // Shared with `junction serve` (commands/serve.ts) via providers.ts.

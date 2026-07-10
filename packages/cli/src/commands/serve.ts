@@ -43,7 +43,7 @@ import { makeResolveProvider } from "@junction/source-runtime"
 import { defineCommand } from "citty"
 import { consola } from "consola"
 import { createFileAuditSink } from "../audit-sink.js"
-import { adaptToMcpHandlers } from "../providers.js"
+import { adaptToMcpHandlers, makeProxyWarnCallbacks } from "../providers.js"
 import { buildRunCodeHandlers, mergeHandlers } from "../synthetic-tool.js"
 
 // ---------------------------------------------------------------------------
@@ -199,29 +199,16 @@ export const serveCommand = defineCommand({
         const profile = profileResult.value
         // Tool-poisoning mitigation (increment 32.5) + hash-pinning / rug-pull detection
         // (increment 32.11): sanitize and TOFU pin-comparison are always applied inside
-        // createProfileProxy; onDescriptionDrift only SURFACES either signal, discriminated
-        // by info.reason ("sanitized" | "pin-drift") — one structured warn, metadata only,
-        // never the (possibly-injected) description text, never old/new hashes.
-        // onPinStoreWarning surfaces pin-STORE degradation (corrupt file / failed write)
-        // so a broken pins file can never silently disable rug-pull detection; detail is
-        // an error code/kind only, never file content.
+        // createProfileProxy; the two warn callbacks (shared via makeProxyWarnCallbacks —
+        // see providers.ts) only SURFACE either signal — metadata only, never the
+        // (possibly-injected) description text, never old/new hashes, never file content.
+        const warns = makeProxyWarnCallbacks((event) => consola.warn(event))
         const proxy = createProfileProxy(
           profile.sources,
           resolveProvider,
-          (info) => {
-            consola.warn({
-              event: info.reason === "pin-drift" ? "tool_pin_drift" : "description_sanitized",
-              namespace: info.namespace,
-              tool: info.tool,
-              strippedSuspicious: info.strippedSuspicious,
-              truncated: info.truncated,
-              reason: info.reason,
-            })
-          },
+          warns.onDescriptionDrift,
           toolPinStore,
-          (info) => {
-            consola.warn({ event: "tool_pin_store_degraded", op: info.op, detail: info.detail })
-          },
+          warns.onPinStoreWarning,
         )
         entries.push({ profileName: profile.name, proxy })
       }

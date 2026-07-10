@@ -19,7 +19,6 @@
 import { readFile } from "node:fs/promises"
 import { runCode } from "@junction/code-mode"
 import {
-  type AuditPrincipal,
   createCredentialStore,
   createFileToolPinStore,
   createProfileProxy,
@@ -34,8 +33,9 @@ import { makeResolveProvider } from "@junction/source-runtime"
 import { defineCommand } from "citty"
 import { consola } from "consola"
 import { JSON_ARG } from "../args.js"
-import { createFileAuditSink } from "../audit-sink.js"
+import { createStdioAuditSink } from "../audit-sink.js"
 import { reportError } from "../format.js"
+import { makeProxyWarnCallbacks } from "../providers.js"
 
 // ---------------------------------------------------------------------------
 // run command
@@ -143,23 +143,13 @@ export const runCommand = defineCommand({
 
     // ── Build the profile proxy (core) — identical sequence to `mcp serve` ──
     const toolPinStore = createFileToolPinStore(paths)
+    const warns = makeProxyWarnCallbacks((event) => consola.warn(event))
     const proxy = createProfileProxy(
       profile.sources,
       resolveProvider,
-      (info) => {
-        consola.warn({
-          event: info.reason === "pin-drift" ? "tool_pin_drift" : "description_sanitized",
-          namespace: info.namespace,
-          tool: info.tool,
-          strippedSuspicious: info.strippedSuspicious,
-          truncated: info.truncated,
-          reason: info.reason,
-        })
-      },
+      warns.onDescriptionDrift,
       toolPinStore,
-      (info) => {
-        consola.warn({ event: "tool_pin_store_degraded", op: info.op, detail: info.detail })
-      },
+      warns.onPinStoreWarning,
     )
 
     // Rotate BEFORE the sink opens its fd (mirrors mcp.ts / serve.ts) — a
@@ -170,28 +160,14 @@ export const runCommand = defineCommand({
     }
 
     // ── Audit sink — one pino-backed file sink for this process ────────────
-    const auditSink = createFileAuditSink(paths)
-    // `run` is a local, single-profile invocation — same principal shape as
-    // `mcp serve` (stdio), unprefixed wire names.
-    const principal: AuditPrincipal = {
-      kind: "stdio",
-      keyId: null,
-      label: null,
-      profiles: [profile.name],
-    }
-
-    // A raw Ctrl-C sends no natural completion signal — without this handler
-    // the last buffered audit line could be dropped. process "exit" is the
-    // belt-and-suspenders backstop for any other clean-exit path.
-    process.once("SIGINT", () => {
-      auditSink.flushSync()
-      process.exit(130)
+    // `run` is a local, single-profile stdio invocation (unprefixed wire
+    // names) — same sink + stdio principal + flush-on-exit backstop as
+    // `mcp serve`, shared via createStdioAuditSink. SIGINT/SIGTERM report the
+    // signal (130/143) since `run` is a foreground command.
+    const { auditSink, principal } = createStdioAuditSink(paths, profile.name, {
+      sigint: 130,
+      sigterm: 143,
     })
-    process.once("SIGTERM", () => {
-      auditSink.flushSync()
-      process.exit(143)
-    })
-    process.on("exit", () => auditSink.flushSync())
 
     // ── Run the guest code (code-mode) ──────────────────────────────────────
     // safeUpstreamMessage is lazy-imported (mirrors mcp.ts/serve.ts's own lazy

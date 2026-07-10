@@ -483,6 +483,35 @@ function drainPendingDeferreds(
  * blocking); the deferred-backed tool calls inside it settle via the host's
  * real setTimeout/Promise machinery, picked up by the poll loop below.
  */
+/**
+ * Classify a QuickJS guest error handle into a RunOutcome — shared by the two
+ * error paths in runGuestCode (an eval-time error handle and a
+ * rejected-promise error handle), which are otherwise byte-identical.
+ *
+ * Takes OWNERSHIP of `errorHandle` and disposes it before returning (the
+ * `using` scoping the callers previously relied on moves in here).
+ *
+ * ORDER IS LOAD-BEARING: the deadline check runs BEFORE dumping the handle, so
+ * a guest error that fires only because the interrupt/deadline tripped is
+ * reclassified as "timeout" (a consistent budget-exceeded signal) rather than
+ * "guest-error" — regardless of where the interrupt happened to fire.
+ */
+function classifyGuestError(
+  context: QuickJSAsyncContext,
+  errorHandle: QuickJSHandle,
+  deadline: number,
+): RunOutcome {
+  using handle = errorHandle
+  if (Date.now() >= deadline) {
+    return { kind: "timeout" }
+  }
+  const message = describeGuestError(context.dump(handle))
+  if (isMemoryOrStackError(message)) {
+    return { kind: "memory", message }
+  }
+  return { kind: "guest-error", message }
+}
+
 async function runGuestCode(
   context: QuickJSAsyncContext,
   runtime: QuickJSAsyncRuntime,
@@ -492,22 +521,14 @@ async function runGuestCode(
   const wrapped = `(async () => {\n${code}\n})()`
   const evalResult = context.evalCode(wrapped)
   if (evalResult.error) {
-    using errorHandle = evalResult.error
     // shouldInterruptAfterDeadline fires QuickJS's OWN interrupt check
     // (a tight guest loop like `while(true){}` never reaches the drain
     // loop's deadline check below — evalCode itself returns an error the
-    // instant the interrupt handler trips). Reclassify as "timeout" (not
-    // "guest-error") whenever the deadline has already passed, so callers
-    // see a consistent budget-exceeded signal regardless of WHERE the
+    // instant the interrupt handler trips). classifyGuestError's deadline-
+    // first ordering reclassifies that as "timeout" (not "guest-error"), so
+    // callers see a consistent budget-exceeded signal regardless of WHERE the
     // interrupt happened to fire.
-    if (Date.now() >= deadline) {
-      return { kind: "timeout" }
-    }
-    const message = describeGuestError(context.dump(errorHandle))
-    if (isMemoryOrStackError(message)) {
-      return { kind: "memory", message }
-    }
-    return { kind: "guest-error", message }
+    return classifyGuestError(context, evalResult.error, deadline)
   }
   using promiseHandle = evalResult.value
 
@@ -518,15 +539,7 @@ async function runGuestCode(
       return { kind: "ok", value: context.dump(valueHandle) }
     }
     if (state.type === "rejected") {
-      using errorHandle = state.error
-      if (Date.now() >= deadline) {
-        return { kind: "timeout" }
-      }
-      const message = describeGuestError(context.dump(errorHandle))
-      if (isMemoryOrStackError(message)) {
-        return { kind: "memory", message }
-      }
-      return { kind: "guest-error", message }
+      return classifyGuestError(context, state.error, deadline)
     }
     if (Date.now() >= deadline) {
       return { kind: "timeout" }
