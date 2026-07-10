@@ -15,6 +15,15 @@ import { PlatformIdSchema } from "../schema/primitives.js"
 import { compatibleCredentialKinds, isKindAccepted } from "./kind-compat.js"
 import type { CredentialStore } from "./store.js"
 
+/**
+ * 32 KiB cap on kind "file" credential content — fits macOS Keychain AND
+ * Linux keyutils' ~32 KiB item ceiling (see method file 28.9). Shared with
+ * import-vault.ts (which validates the same cap for imported "file" secrets
+ * before addCredential is ever reached) so the two enforcement points can
+ * never drift out of sync (rule-of-three DRY, method file 33.1 fix 4).
+ */
+export const FILE_SECRET_MAX_BYTES = 32 * 1024
+
 export interface AddCredentialInput {
   /** FK → Platform */
   platformId: string
@@ -106,7 +115,6 @@ export function addCredential(
   // CredentialError formatters for a single new variant).
   if (input.kind === "file") {
     const byteLength = Buffer.byteLength(input.secret, "utf8")
-    const FILE_SECRET_MAX_BYTES = 32 * 1024
     if (byteLength > FILE_SECRET_MAX_BYTES) {
       return errAsync({
         kind: "invalid-input" as const,

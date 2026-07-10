@@ -97,7 +97,18 @@ export interface SearchResult {
   description: string | undefined
 }
 
-/** Case-insensitive substring match over namespace/tool/description — pure, no I/O. */
+/**
+ * Case-insensitive substring match over namespace/tool/description — pure, no I/O.
+ *
+ * GUEST ERGONOMICS (33.1 fix 3): this function returns a plain JS array/object
+ * host-side, but it crosses the QuickJS FFI as JSON text (like every host↔guest
+ * value) and used to be left un-parsed for the guest — `tools.search(...)`
+ * resolved to a raw JSON STRING the guest had to `JSON.parse()` itself. The
+ * guest-side wrapper (quickjs-executor.ts's TOOLS_PROXY_BOOTSTRAP, `wrapJsonFn`)
+ * now parses it back into a usable array through the SAME null-proto reviver
+ * `wrapToolFn` uses for direct tool-call results — `tools.search({query})`
+ * returns a usable array directly, matching the 33f direct-call unwrap.
+ */
 export function searchFacade(plan: FacadePlan, query: string): SearchResult[] {
   const q = query.toLowerCase()
   return plan.flat
@@ -134,6 +145,13 @@ export interface DescribeResult {
   resultShape: string
 }
 
+/**
+ * GUEST ERGONOMICS (33.1 fix 3): same guest-side null-proto-reviver JSON.parse
+ * wrap as searchFacade above — `tools.describe.tool({path})` now returns a
+ * usable object directly (e.g. `.inputSchema` accessible without a manual
+ * parse), not a raw JSON string. See searchFacade's doc comment for the
+ * full rationale.
+ */
 export function describeFacadeTool(plan: FacadePlan, path: string): DescribeResult | undefined {
   const dot = path.indexOf(".")
   if (dot === -1) return undefined

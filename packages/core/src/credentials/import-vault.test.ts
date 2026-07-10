@@ -12,7 +12,7 @@ import { newPlatformId } from "../ids/index.js"
 import { ensureHome, getPaths } from "../paths/index.js"
 import type { Repositories } from "../repositories/index.js"
 import { createRepositories } from "../repositories/index.js"
-import { addCredential } from "./add-credential.js"
+import { addCredential, FILE_SECRET_MAX_BYTES } from "./add-credential.js"
 import { createEncryptedFileStore } from "./encrypted-file-store.js"
 import { exportVault } from "./export-vault.js"
 import { importVault } from "./import-vault.js"
@@ -287,6 +287,128 @@ describe("importVault", () => {
 
       const dstPlatforms = (await dst.repos.platforms.list())._unsafeUnwrap()
       expect(dstPlatforms).toHaveLength(2)
+    })
+
+    it("import path enforces the same FILE_SECRET_MAX_BYTES cap as addCredential (33.1 fix 4 — shared const, not a duplicated literal)", async () => {
+      // A "cli" platform is the only kind whose kind-compat matrix accepts
+      // "file" (kind-compat.ts). Hand-build a raw manifest (bypasses
+      // exportVault, which can never produce oversized content by
+      // construction) carrying a "file" secret one byte over the shared
+      // FILE_SECRET_MAX_BYTES cap.
+      const platform = await src.repos.platforms.create({
+        id: newPlatformId(),
+        kind: "cli" as const,
+        displayName: "CLI File-Secret Platform",
+        cli: {
+          tools: [
+            {
+              name: "greet",
+              argv: [{ kind: "literal", value: "/bin/echo" }],
+              args: [],
+              policy: {
+                cwd: "/tmp",
+                readPaths: ["/tmp"],
+                writePaths: [],
+                allowNet: [],
+                timeoutMs: 5000,
+                envAllow: {},
+              },
+            },
+          ],
+          credentialEnvVar: "CLI_FILE_SECRET_CRED",
+        },
+      })
+      if (platform.isErr()) throw platform.error
+
+      const oversized = "x".repeat(FILE_SECRET_MAX_BYTES + 1)
+      const manifest: VaultManifest = {
+        v: 1,
+        exportedAt: new Date().toISOString(),
+        platforms: [platform.value],
+        credentials: [
+          {
+            platformId: String(platform.value.id),
+            account: "oversized-file",
+            kind: "file",
+            secret: oversized,
+            _srcId: "src-oversized-file-1",
+          },
+        ],
+      }
+      const archive = await buildRawArchive(manifest, "file-secret-cap-pass")
+
+      const result = await importVault({
+        repos: dst.repos,
+        store: dst.store,
+        archive,
+        passphrase: "file-secret-cap-pass",
+      })
+      // Non-strict: the oversized credential fails, but the import itself
+      // still completes (per-credential failures land in summary.failed).
+      expect(result.isOk()).toBe(true)
+      if (result.isOk()) {
+        expect(result.value.credentials.added).toBe(0)
+        expect(result.value.credentials.failed).toHaveLength(1)
+        expect(result.value.credentials.failed[0]?.reason).toContain("32 KiB")
+      }
+      // Zero writes for the rejected credential — never reaches the store.
+      const dstCreds = (await dst.repos.credentials.list())._unsafeUnwrap()
+      expect(dstCreds).toHaveLength(0)
+    })
+
+    it("oauth2 import carries verify state (33.1 fix 1 — addOAuthImportedCredential was missing the setVerifyState call the non-oauth path already had)", async () => {
+      const platform = await seedPlatform(src.repos, "OAuth Verify-State Platform")
+
+      await src.store.set("ref-access-vs", "ACCESS_TOKEN_VS")
+      await src.store.set("ref-refresh-vs", "REFRESH_TOKEN_VS")
+      const oauthCred = (
+        await src.repos.credentials.create({
+          id: "cred-oauth-vs",
+          platformId: String(platform.id),
+          profileName: "verify-state-account",
+          kind: "oauth2",
+          secretRef: "ref-access-vs",
+          oauthMeta: {
+            providerId: "github",
+            authMode: "authorization_code",
+            refreshTokenRef: "ref-refresh-vs",
+            needsReauth: false,
+          },
+        })
+      )._unsafeUnwrap()
+      // Seed the same verify result the non-oauth bearer parity test seeds
+      // (strict's "happy path" test above) — proves oauth2 gets the SAME
+      // carry-over treatment, not a special-cased omission.
+      await src.repos.credentials.setVerifyState(oauthCred.id, "ok", 1_700_000_000_000)
+
+      const exportResult = await exportVault({
+        repos: src.repos,
+        store: src.store,
+        passphrase: "oauth-verify-state-pass",
+      })
+      expect(exportResult.isOk()).toBe(true)
+      if (!exportResult.isOk()) return
+
+      const importResult = await importVault({
+        repos: dst.repos,
+        store: dst.store,
+        archive: exportResult.value.archive,
+        passphrase: "oauth-verify-state-pass",
+      })
+      expect(importResult.isOk()).toBe(true)
+      if (!importResult.isOk()) return
+      expect(importResult.value.credentials.added).toBe(1)
+      expect(importResult.value.credentials.failed).toHaveLength(0)
+
+      const dstCreds = (await dst.repos.credentials.list())._unsafeUnwrap()
+      expect(dstCreds).toHaveLength(1)
+      const imported = dstCreds[0]
+      expect(imported?.kind).toBe("oauth2")
+      // The load-bearing assertion: WITHOUT fix 1, addOAuthImportedCredential
+      // never called setVerifyState, so these would both be undefined
+      // (never-verified) regardless of what the source vault recorded.
+      expect(imported?.lastVerifyResult).toBe("ok")
+      expect(imported?.lastVerifiedAt).toBe(1_700_000_000_000)
     })
 
     it("wrong passphrase → import-failed, ZERO writes", async () => {
@@ -1243,6 +1365,96 @@ describe("importVault", () => {
         }
       })
 
+      it("33.1 fix 1: a strict abort rolls back an already-imported oauth2 credential's verify-state write, not just its row/refs", async () => {
+        // First credential: oauth2 WITH a verify state (fix 1's addOAuthImportedCredential
+        // now calls setVerifyState after create()). Second credential: a bearer
+        // whose create() is injected to fail, forcing compensation to unwind
+        // the FIRST (already-fully-committed, including verify-state) credential.
+        const platformOauth = await seedPlatform(src.repos, "Strict OAuth Verify-State A")
+        const platformBearer = await seedPlatform(src.repos, "Strict OAuth Verify-State B")
+
+        await src.store.set("ref-access-comp", "ACCESS_TOKEN_COMP")
+        const oauthCred = (
+          await src.repos.credentials.create({
+            id: "cred-oauth-comp",
+            platformId: String(platformOauth.id),
+            profileName: "comp-account",
+            kind: "oauth2",
+            secretRef: "ref-access-comp",
+            oauthMeta: {
+              providerId: "github",
+              authMode: "authorization_code",
+              needsReauth: false,
+            },
+          })
+        )._unsafeUnwrap()
+        await src.repos.credentials.setVerifyState(oauthCred.id, "ok", 1_700_000_000_000)
+
+        await addCredential(
+          { platformId: String(platformBearer.id), account: "two", kind: "bearer", secret: "S2" },
+          platformBearer,
+          src.store,
+          src.repos.credentials,
+        )
+
+        const exportResult = await exportVault({
+          repos: src.repos,
+          store: src.store,
+          passphrase: "strict-oauth-verify-comp-pass",
+        })
+        if (!exportResult.isOk()) throw exportResult.error
+
+        // Manifest credential order matches archive/manifest array order — the
+        // export writes platforms then credentials in creation order, so the
+        // oauth2 credential (created first, above) is processed before the
+        // bearer in phase 2. Fail create() on the 2nd credential call so the
+        // oauth2 credential's create+setVerifyState has ALREADY happened by
+        // the time compensation runs.
+        let createCallCount = 0
+        const flakyRepos: Repositories = {
+          ...dst.repos,
+          credentials: {
+            ...dst.repos.credentials,
+            create: (input) => {
+              createCallCount++
+              if (createCallCount === 2) {
+                return errAsync({
+                  kind: "constraint-violation" as const,
+                  cause: new Error("injected DB failure — forces compensation of item 1"),
+                })
+              }
+              return dst.repos.credentials.create(input)
+            },
+          },
+        }
+
+        const result = await importVault({
+          repos: flakyRepos,
+          store: dst.store,
+          archive: exportResult.value.archive,
+          passphrase: "strict-oauth-verify-comp-pass",
+          strict: true,
+        })
+        expect(result.isErr()).toBe(true)
+        if (result.isErr()) expect(result.error.kind).toBe("import-failed")
+
+        // The load-bearing assertion: the oauth2 credential's ROW is gone
+        // entirely (compensation's delete-by-journaled-id), which — because
+        // setVerifyState is a plain UPDATE on that same row, never a second
+        // row — transitively rolls back the verify-state write too. If fix 1
+        // ever journaled setVerifyState incorrectly (e.g. tried to "undo" it
+        // with a separate compensation step that ran BEFORE the row delete,
+        // or if the row delete were somehow skipped for oauth2 credentials),
+        // a stray row with lastVerifyResult:"ok" would survive here.
+        const dstCreds = (await dst.repos.credentials.list())._unsafeUnwrap()
+        expect(dstCreds).toHaveLength(0)
+        const dstPlatforms = (await dst.repos.platforms.list())._unsafeUnwrap()
+        expect(dstPlatforms).toHaveLength(0)
+        // And the store ref the oauth2 credential wrote is also gone.
+        const dstCredsAll = (await dst.repos.credentials.list())._unsafeUnwrap()
+        expect(dstCredsAll.find((c) => c.kind === "oauth2")).toBeUndefined()
+      })
+
       it("malformed oauth2 candidate in manifest → phase-1 abort, store NEVER touched", async () => {
         const platform = await seedPlatform(src.repos)
         const manifest: VaultManifest = {
@@ -1283,6 +1495,89 @@ describe("importVault", () => {
         if (result.isErr()) expect(result.error.kind).toBe("import-failed")
         expect(setCalls).toBe(0)
 
+        const dstCreds = (await dst.repos.credentials.list())._unsafeUnwrap()
+        expect(dstCreds).toHaveLength(0)
+      })
+
+      it("oversized file-secret in manifest → phase-1 abort via the SAME FILE_SECRET_MAX_BYTES cap (33.1 fix 4 — prevalidateStrict's own enforcement point), store NEVER touched", async () => {
+        const platform = await src.repos.platforms.create({
+          id: newPlatformId(),
+          kind: "cli" as const,
+          displayName: "CLI File-Secret Platform (strict)",
+          cli: {
+            tools: [
+              {
+                name: "greet",
+                argv: [{ kind: "literal", value: "/bin/echo" }],
+                args: [],
+                policy: {
+                  cwd: "/tmp",
+                  readPaths: ["/tmp"],
+                  writePaths: [],
+                  allowNet: [],
+                  timeoutMs: 5000,
+                  envAllow: {},
+                },
+              },
+            ],
+            credentialEnvVar: "CLI_FILE_SECRET_CRED_STRICT",
+          },
+        })
+        if (platform.isErr()) throw platform.error
+
+        const oversized = "y".repeat(FILE_SECRET_MAX_BYTES + 1)
+        const manifest: VaultManifest = {
+          v: 1,
+          exportedAt: new Date().toISOString(),
+          platforms: [platform.value],
+          credentials: [
+            {
+              platformId: String(platform.value.id),
+              account: "oversized-file-strict",
+              kind: "file",
+              secret: oversized,
+              _srcId: "src-oversized-file-strict-1",
+            },
+          ],
+        }
+        const archive = await buildRawArchive(manifest, "strict-file-secret-cap-pass")
+
+        let setCalls = 0
+        const spyStore: CredentialStore = {
+          ...dst.store,
+          set: (ref, value) => {
+            setCalls++
+            return dst.store.set(ref, value)
+          },
+        }
+
+        const result = await importVault({
+          repos: dst.repos,
+          store: spyStore,
+          archive,
+          passphrase: "strict-file-secret-cap-pass",
+          strict: true,
+        })
+        expect(result.isErr()).toBe(true)
+        if (result.isErr()) {
+          expect(result.error.kind).toBe("import-failed")
+          expect(result.error.kind === "import-failed" && result.error.reason).toContain("32 KiB")
+          // Must be the DIRECT phase-1 prevalidation message, NOT phase-2's
+          // "strict import aborted: ... mid-import ..." compensation wrapper
+          // (runStrictImport's fallback path) — that wrapper would ALSO
+          // eventually reject an oversized secret (addCredential's own cap
+          // enforces it independently in phase 2), so asserting only
+          // isErr()+"32 KiB" cannot distinguish "prevalidateStrict's cap
+          // check is correctly wired to the shared constant" from "some
+          // other later check happened to catch it". Pinning "does NOT
+          // contain the phase-2 wrapper text" proves THIS test exercises
+          // prevalidateStrict's own FILE_SECRET_MAX_BYTES import specifically.
+          expect(result.error.kind === "import-failed" && result.error.reason).not.toContain(
+            "strict import aborted",
+          )
+        }
+        // Phase-1 prevalidation caught it — zero writes, store never touched.
+        expect(setCalls).toBe(0)
         const dstCreds = (await dst.repos.credentials.list())._unsafeUnwrap()
         expect(dstCreds).toHaveLength(0)
       })

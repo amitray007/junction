@@ -39,7 +39,7 @@ import { type Credential, CredentialSchema } from "../schema/credential.js"
 import type { Platform } from "../schema/platform.js"
 import { PlatformIdSchema } from "../schema/primitives.js"
 import { ProfileSchema } from "../schema/profile.js"
-import { addCredential } from "./add-credential.js"
+import { addCredential, FILE_SECRET_MAX_BYTES } from "./add-credential.js"
 import { isKindAccepted } from "./kind-compat.js"
 import { removeCredential } from "./remove-credential.js"
 import type { CredentialStore } from "./store.js"
@@ -542,10 +542,9 @@ async function prevalidateStrict(
       }
       if (mc.kind === "file") {
         const byteLength = Buffer.byteLength(mc.secret, "utf8")
-        // keep in sync with add-credential.ts's FILE_SECRET_MAX_BYTES — NOT
-        // extracted because add-credential.ts is owned by a parallel increment
-        // (32.9); extraction is a follow-up once both land.
-        const FILE_SECRET_MAX_BYTES = 32 * 1024
+        // FILE_SECRET_MAX_BYTES imported from add-credential.js (33.1 fix 4) —
+        // was a locally-duplicated literal ("keep in sync" comment); now one
+        // exported const both enforcement points import.
         if (byteLength > FILE_SECRET_MAX_BYTES) {
           return err({
             kind: "import-failed",
@@ -1018,6 +1017,31 @@ async function addOAuthImportedCredential(
     return err({
       reason: `failed to persist oauth2 credential for ${mc.platformId}/${mc.account}: ${describeDbError(createResult.error)}`,
     })
+  }
+
+  // Best-effort carry over the verify state — mirrors the non-oauth
+  // addImportedCredential path above (33.1 fix 1: this call was previously
+  // missing here, so every imported oauth2 credential showed never-verified
+  // regardless of what the source vault recorded, forcing a spurious
+  // reconnect/re-verify prompt). A formatting-only field, never load-bearing
+  // to the import's correctness, so a failure here is swallowed (matches the
+  // non-oauth path's contract exactly).
+  //
+  // STRICT-MODE COMPENSATION: setVerifyState is a plain UPDATE on the row
+  // `credentials.create()` just journaled above (repos here may be the
+  // strict-mode journalCredentialsRepo decorator, which journals `create`
+  // only) — it never mints a new id/row. If a LATER item in this import
+  // fails and strict's compensate() deletes this credential by the
+  // journaled id, the delete removes the ENTIRE row (verify-state fields
+  // included), so the verify-state write is rolled back transitively
+  // without needing its own journal entry. Verified by
+  // import-vault.test.ts's strict-mode oauth2 verify-state compensation test.
+  if (mc.lastVerifyResult !== undefined && mc.lastVerifiedAt !== undefined) {
+    await repos.credentials.setVerifyState(
+      createResult.value.id,
+      mc.lastVerifyResult,
+      mc.lastVerifiedAt,
+    )
   }
 
   return ok(createResult.value)

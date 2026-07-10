@@ -342,6 +342,35 @@ describe("QuickJsExecutor — the `tools` enumeration guard", () => {
     }
   })
 
+  it("(33.1 fix 3) tools.search()/tools.describe.tool() return ALREADY-UNWRAPPED objects — no guest-side JSON.parse needed", async () => {
+    const { sink } = makeSink()
+    const { invoker } = makeFakeInvoker()
+    const result = await makeExecutor(sink).execute(
+      `
+        // NO JSON.parse here — the guest wrapper (TOOLS_PROXY_BOOTSTRAP)
+        // already parses the result, matching the 33f direct-call unwrap
+        // ergonomics. Direct field/index access proves it's a real
+        // object/array, not a string a caller forgot to parse.
+        const hits = tools.search({ query: "search" });
+        const described = tools.describe.tool("github.search_repos");
+        return { firstHitTool: hits[0].tool, describedInputSchema: described.inputSchema };
+      `,
+      invoker,
+    )
+    expect(result.isOk()).toBe(true)
+    if (result.isOk() && result.value.ok) {
+      const value = result.value.value as {
+        firstHitTool: string
+        describedInputSchema: unknown
+      }
+      // If this were still a raw JSON string, `hits[0]` would be a single
+      // CHARACTER (string indexing), not an object with a `.tool` field —
+      // `.tool` on a character would be `undefined`, not "search_repos".
+      expect(value.firstHitTool).toBe("search_repos")
+      expect(value.describedInputSchema).toEqual({ type: "object" })
+    }
+  })
+
   it("direct property access on a namespace object still works (only enumeration is guarded)", async () => {
     const { sink } = makeSink()
     const { invoker } = makeFakeInvoker()
@@ -807,6 +836,66 @@ describe("QuickJsExecutor — prototype-pollution guard (#7)", () => {
     // guest-side prototype mutation can never reach here.
     expect((Object.prototype as Record<string, unknown>)[sentinelKey]).toBeUndefined()
   })
+
+  it("(33.1 fix 3) tools.describe.tool()'s guest-side JSON.parse uses the SAME null-proto reviver as direct tool-call results — a __proto__-keyed inputSchema (upstream-controlled data) can't pollute the guest's OWN Object.prototype", async () => {
+    const { sink } = makeSink()
+    // inputSchema is the one field of a ProviderTool that's genuinely
+    // upstream/attacker-shaped data (an MCP server or CLI catalog author
+    // controls it) and flows verbatim into DescribeResult.inputSchema
+    // (facade.ts's describeFacadeTool) — unlike name/description (which are
+    // catalog labels, not structured objects), inputSchema CAN carry a
+    // literal "__proto__" key. This is the real injection surface the
+    // guest-side reviver on tools.describe.tool() must guard.
+    // Object-literal `{ __proto__: ... }` syntax sets the actual prototype
+    // (not an own property) and would vanish under JSON.stringify — use
+    // JSON.parse to construct a genuine OWN "__proto__" property that
+    // round-trips through JSON.stringify/parse exactly like real
+    // upstream-controlled inputSchema data would.
+    const pollutingInputSchema = JSON.parse(
+      '{"__proto__": {"polluted_via_describe_schema": "pwned"}}',
+    ) as object
+    const protoPollutingInvoker: ToolInvoker = {
+      listTools: async () =>
+        ok([
+          {
+            name: "github__search_repos",
+            description: "Search repos",
+            inputSchema: pollutingInputSchema,
+          } as ProviderTool,
+        ]),
+      callTool: async () => ok({ content: { ok: true } }),
+    }
+
+    const result = await makeExecutor(sink).execute(
+      `
+        // NO JSON.parse (33.1 fix 3) — tools.describe.tool() is already
+        // parsed. If the guest-side wrap used a PLAIN JSON.parse (no
+        // reviver), described.inputSchema's "__proto__" key would set the
+        // GUEST's own Object.prototype's "polluted_via_describe_schema"
+        // field, and a brand-new {} would inherit it.
+        const described = tools.describe.tool("github.search_repos");
+        const freshObj = {};
+        return {
+          hasOwnProtoKey: Object.prototype.hasOwnProperty.call(described.inputSchema, "__proto__"),
+          freshObjPolluted: freshObj.polluted_via_describe_schema,
+        };
+      `,
+      protoPollutingInvoker,
+    )
+    expect(result.isOk()).toBe(true)
+    if (result.isOk() && result.value.ok) {
+      const value = result.value.value as {
+        hasOwnProtoKey: boolean
+        freshObjPolluted: unknown
+      }
+      // The reviver drops the "__proto__" KEY entirely (nullProtoReviver
+      // returns undefined for it) — described.inputSchema never gets an
+      // own "__proto__" property at all.
+      expect(value.hasOwnProtoKey).toBe(false)
+      // And a brand-new guest object was never polluted by the parse.
+      expect(value.freshObjPolluted).toBeUndefined()
+    }
+  })
 })
 
 describe("QuickJsExecutor — filtered-toolset-only (#11)", () => {
@@ -870,8 +959,9 @@ describe("QuickJsExecutor — filtered-toolset-only (#11)", () => {
     }
     const result = await makeExecutor(sink).execute(
       `
-        const found = JSON.parse(tools.search("repo"));
-        const described = JSON.parse(tools.describe.tool("github.get_repo"));
+        // NO JSON.parse (33.1 fix 3) — the guest wrapper already parses these.
+        const found = tools.search("repo");
+        const described = tools.describe.tool("github.get_repo");
         return { foundCount: found.length, foundTools: found.map(f => f.tool), described };
       `,
       filteredInvoker,

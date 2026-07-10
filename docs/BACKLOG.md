@@ -26,7 +26,7 @@
 > landed in **32.13 audit remediation** (PR #136, incl. the HIGH encrypted-store lost-update race), and
 > **33 Code Mode** (PR #138 — sandboxed QuickJS-WASM JS over the ToolProvider proxy: `junction__run_code`
 > MCP tool + `junction run` CLI; sandbox-security LEAD gate caught+fixed a HIGH dispose-crash DoS).
-> **§1 now: 33.1 (audit/Code-Mode follow-ups, in flight) + 34 Distribution (still excluded/gated).** The
+> **§1 now: 33.1 (audit/Code-Mode follow-ups, DONE — PR #140) + 34 Distribution (still excluded/gated).** The
 > three trigger-gated audit follow-ups (store split-brain, per-keyId session cap, probe fan-out cache)
 > stay in §2 / `revisit-when.md` — their triggers have not fired.
 >
@@ -64,7 +64,7 @@
 | ☑ | 32.2 heavy-analyzers CI (knip / semgrep / CodeQL) | heavier debt | ci | M |
 | ☑ | **Extensive codebase audit** (6 agents) + **32.13 audit remediation** (HIGH store race + more) | audit | core/sec | L |
 | ☑ | **33 — Code-mode** (QuickJS over the proxy) | big Tier-1 | core/sec | L |
-| ◐ | **33.1 — audit/Code-Mode follow-ups** (oauth2 verify-state · resolve-provider all-kinds · facade discovery unwrap · FILE_SECRET DRY) | follow-up | core/sec | S (in flight) |
+| ☑ | **33.1 — audit/Code-Mode follow-ups** (oauth2 verify-state · resolve-provider all-kinds · facade discovery unwrap · FILE_SECRET DRY) — PR #140 | follow-up | core/sec | S |
 | ☐ | **34 — Distribution** (npm publish; gated + pre-req migration-0003 fix) | big Tier-1 | packaging | L (fresh session) |
 
 **✅ Done since the last reconcile:** app-page CTAs (32.6a) · `/audit` page (32.6b) · surfaces backfill for the curated set (32.6c + 30.13, 54 apps) · 30.5 parts (a) Test-Connection refresh + (c) per-app icons · stale "inc 29" comments.
@@ -137,7 +137,7 @@ Activity link (30.14) · `removeCredential` warn-on-orphan + `cred-*` reaper + d
       + mcp-contract + boundary all clean. Runtime exact-pinned `quickjs-emscripten` 0.31.0 (unaudited-lib
       entry in `deprecations.md`; Deno-subprocess recorded as the escalation runtime). CI caught a `using`
       ESM-transpile bug on the Node 20/22 floor (invisible on newer local Node) — root-caused + fixed.
-- [ ] **33.1 — audit + Code-Mode follow-ups (IN FLIGHT).** 4 confirmed small items, one increment:
+- [x] **33.1 — audit + Code-Mode follow-ups (DONE — PR #140).** 4 confirmed small items, one increment:
       (a) **oauth2-verify-state-drop on vault import** — real pre-existing bug (`addOAuthImportedCredential`
       never calls `setVerifyState` → imported OAuth creds show a false never-verified); (b) **widen
       `resolve-provider` kind-gate mcp/openapi → all 5** (unblocks code-mode/probe over graphql/http/cli);

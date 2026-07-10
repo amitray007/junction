@@ -16,7 +16,7 @@ import { newCredentialId, newPlatformId } from "../ids/index.js"
 import type { CredentialsRepo } from "../repositories/credentials.js"
 import type { Credential } from "../schema/credential.js"
 import type { Platform } from "../schema/platform.js"
-import { addCredential } from "./add-credential.js"
+import { addCredential, FILE_SECRET_MAX_BYTES } from "./add-credential.js"
 import type { CredentialStore } from "./store.js"
 
 // ---------------------------------------------------------------------------
@@ -150,8 +150,6 @@ function makeRecordingRepo(existing: Credential[]): {
   } as unknown as CredentialsRepo
   return { repo, createCalls }
 }
-
-const FILE_SECRET_MAX_BYTES = 32 * 1024
 
 describe("addCredential — 32 KiB file-content cap (increment 28.9 slice D)", () => {
   it("(a) file content > 32 KiB is rejected with invalid-input BEFORE any store write", async () => {
