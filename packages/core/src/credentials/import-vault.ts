@@ -260,6 +260,18 @@ async function runImport(
       summary.platforms.added++
       continue
     }
+    // 32.10 review fix (MEDIUM): only a typed not-found means "safe to create".
+    // Any OTHER get error (Zod parse-on-read failure on a schema-drifted row, a
+    // query failure, ...) previously fell through to upsert — onConflictDoUpdate
+    // would then silently OVERWRITE a pre-existing row (and under --strict the
+    // journal would claim it as this-import's write, so compensation would
+    // DELETE pre-existing data). A real DB error must abort, not create.
+    if (existing.error.kind !== "not-found") {
+      return err({
+        kind: "import-failed",
+        reason: `failed to read platform "${platform.id}": ${describeDbError(existing.error)}`,
+      })
+    }
     const created = await repos.platforms.upsert(platform)
     if (created.isErr()) {
       return err({
@@ -431,7 +443,7 @@ async function runImport(
  *     duplicate-account guard); ditto duplicate platform ids (non-strict
  *     silently last-wins via platformById — strict is the only place that can
  *     catch a within-archive dup, since nothing commits between adds).
- *  4. Archive-vs-DB collisions via one `forPlatform` sweep per platform
+ *  4. Archive-vs-DB collisions via a `forPlatform` sweep per CREDENTIAL
  *     (abort if `onCollision === "error"`).
  *  5. Profile shape (`ProfileSchema`) + duplicate-toolNamespace guard +
  *     profile-name collisions (only when includeProfiles).
@@ -475,6 +487,15 @@ async function prevalidateStrict(
           reason: `platform "${platform.id}" already exists`,
         })
       }
+      // Same discrimination as the write loop: only not-found means "no
+      // collision". Any other get error → we cannot prevalidate — abort here
+      // (zero writes) rather than let phase 2 write-then-compensate.
+      if (existing.error.kind !== "not-found") {
+        return err({
+          kind: "import-failed",
+          reason: `failed to read platform "${platform.id}": ${describeDbError(existing.error)}`,
+        })
+      }
     }
   }
 
@@ -492,7 +513,10 @@ async function prevalidateStrict(
       })
     }
 
-    const dupKey = `${mc.platformId} ${mc.account}`
+    // JSON-array key, NOT a delimiter-joined string — platform ids/accounts may
+    // themselves contain any delimiter we could pick (("a b","c") vs ("a","b c")
+    // would spuriously collide under a space-join).
+    const dupKey = JSON.stringify([mc.platformId, mc.account])
     if (seenAccounts.has(dupKey)) {
       return err({
         kind: "import-failed",
@@ -518,6 +542,9 @@ async function prevalidateStrict(
       }
       if (mc.kind === "file") {
         const byteLength = Buffer.byteLength(mc.secret, "utf8")
+        // keep in sync with add-credential.ts's FILE_SECRET_MAX_BYTES — NOT
+        // extracted because add-credential.ts is owned by a parallel increment
+        // (32.9); extraction is a follow-up once both land.
         const FILE_SECRET_MAX_BYTES = 32 * 1024
         if (byteLength > FILE_SECRET_MAX_BYTES) {
           return err({
@@ -718,7 +745,17 @@ function journalStore(store: CredentialStore, journal: ImportJournal): Credentia
   }
 }
 
-/** Wrap the platforms repo so every successful create/upsert is journaled. */
+/**
+ * Wrap the platforms repo so every successful upsert is journaled.
+ *
+ * INVARIANT (what makes journaling an upsert safe): under --strict, `upsert`
+ * is only reachable on the platform loop's not-found branch — overwrite is
+ * refused at entry, skip/error `continue`/abort before any upsert on an
+ * existing row, and (32.10 review fix) a non-not-found `get` error aborts the
+ * import instead of falling through. Every journaled "platform" entry is
+ * therefore a row THIS import created, never a pre-existing row mutated by
+ * onConflictDoUpdate — so compensation's delete can never destroy user data.
+ */
 function journalPlatformsRepo(repo: PlatformsRepo, journal: ImportJournal): PlatformsRepo {
   return {
     ...repo,
@@ -806,9 +843,19 @@ async function runStrictImport(
   if (hasPartialFailure) {
     await journal.compensate(repos, store)
     const failedCount = summary.credentials.failed.length + (summary.profiles?.failed.length ?? 0)
+    // Surface the FIRST failure's identity+reason — the abort discards the
+    // summary, so without this the caller gets a count with no diagnostics.
+    const firstCredFailure = summary.credentials.failed[0]
+    const firstProfileFailure = summary.profiles?.failed[0]
+    const firstDetail =
+      firstCredFailure !== undefined
+        ? `first: ${firstCredFailure.platformId}/${firstCredFailure.account}: ${firstCredFailure.reason}`
+        : firstProfileFailure !== undefined
+          ? `first: profile "${firstProfileFailure.name}": ${firstProfileFailure.reason}`
+          : "first failure unavailable"
     return err({
       kind: "import-failed",
-      reason: `strict import aborted: ${failedCount} item(s) failed mid-import (all rows/refs written by this import were removed again — best-effort compensation)`,
+      reason: `strict import aborted: ${failedCount} item(s) failed mid-import (${firstDetail}) (all rows/refs written by this import were removed again — best-effort compensation)`,
     })
   }
 

@@ -1207,9 +1207,20 @@ describe("importVault", () => {
           },
         }
 
+        // Record every ref written so the store-side compensation is provable
+        // (not just the DB side) — pass-through otherwise.
+        const writtenRefs: string[] = []
+        const recordingStore: CredentialStore = {
+          ...dst.store,
+          set: (ref: string, value: string) => {
+            writtenRefs.push(ref)
+            return dst.store.set(ref, value)
+          },
+        }
+
         const result = await importVault({
           repos: flakyRepos,
-          store: dst.store,
+          store: recordingStore,
           archive: exportResult.value.archive,
           passphrase: "strict-flaky-repo-pass",
           strict: true,
@@ -1223,6 +1234,13 @@ describe("importVault", () => {
         expect(dstCreds).toHaveLength(0)
         const dstPlatforms = (await dst.repos.platforms.list())._unsafeUnwrap()
         expect(dstPlatforms).toHaveLength(0)
+
+        // Store read-back: the ref(s) that WERE written before the DB failure
+        // no longer resolve — compensation deleted them from the store too.
+        expect(writtenRefs.length).toBeGreaterThanOrEqual(1)
+        for (const ref of writtenRefs) {
+          expect((await dst.store.get(ref))._unsafeUnwrap()).toBeNull()
+        }
       })
 
       it("malformed oauth2 candidate in manifest → phase-1 abort, store NEVER touched", async () => {
@@ -1494,6 +1512,186 @@ describe("importVault", () => {
         expect(
           dstProfile.sources.find((s) => s.toolNamespace === "strict_dropped_ns"),
         ).toBeUndefined()
+      })
+
+      it("pre-existing destination data SURVIVES a failed strict import's compensation untouched", async () => {
+        // Pins the journal invariant: compensation only ever deletes what THIS
+        // import wrote — pre-existing platform/credential/ref/profile rows are
+        // never journaled and never touched.
+        const prePlatform = await seedPlatform(dst.repos, "Pre-existing Platform")
+        const preCred = (
+          await addCredential(
+            {
+              platformId: String(prePlatform.id),
+              account: "pre-existing",
+              kind: "bearer",
+              secret: "PRE_EXISTING_SECRET",
+            },
+            prePlatform,
+            dst.store,
+            dst.repos.credentials,
+          )
+        )._unsafeUnwrap()
+        await dst.repos.profiles.create({
+          id: "profile-preexisting-1",
+          name: "pre-existing-profile",
+          sources: [
+            {
+              platformId: prePlatform.id,
+              credentialId: preCred.id,
+              toolNamespace: "preexisting_ns",
+              enabled: true,
+            },
+          ],
+        })
+
+        // Archive with 2 NEW (non-colliding) credentials; the 2nd store.set fails.
+        const platformA = await seedPlatform(src.repos, "Strict Survive A")
+        const platformB = await seedPlatform(src.repos, "Strict Survive B")
+        await addCredential(
+          { platformId: String(platformA.id), account: "one", kind: "bearer", secret: "S_ONE" },
+          platformA,
+          src.store,
+          src.repos.credentials,
+        )
+        await addCredential(
+          { platformId: String(platformB.id), account: "two", kind: "bearer", secret: "S_TWO" },
+          platformB,
+          src.store,
+          src.repos.credentials,
+        )
+        const exportResult = await exportVault({
+          repos: src.repos,
+          store: src.store,
+          passphrase: "strict-survive-pass",
+        })
+        if (!exportResult.isOk()) throw exportResult.error
+
+        let setCallCount = 0
+        const flakyStore: CredentialStore = {
+          ...dst.store,
+          set: (ref: string, value: string) => {
+            setCallCount++
+            if (setCallCount === 2) {
+              return errAsync({ kind: "io-failed" as const, cause: new Error("injected failure") })
+            }
+            return dst.store.set(ref, value)
+          },
+        }
+
+        const result = await importVault({
+          repos: dst.repos,
+          store: flakyStore,
+          archive: exportResult.value.archive,
+          passphrase: "strict-survive-pass",
+          strict: true,
+        })
+        expect(result.isErr()).toBe(true)
+        if (result.isErr()) expect(result.error.kind).toBe("import-failed")
+
+        // Every pre-existing row/ref survived the compensation untouched.
+        const survivingCred = (await dst.repos.credentials.get(preCred.id))._unsafeUnwrap()
+        expect(survivingCred.profileName).toBe("pre-existing")
+        expect((await dst.store.get(preCred.secretRef))._unsafeUnwrap()).toBe("PRE_EXISTING_SECRET")
+        const survivingPlatform = (await dst.repos.platforms.get(prePlatform.id))._unsafeUnwrap()
+        expect(survivingPlatform.displayName).toBe("Pre-existing Platform")
+        const survivingProfile = (
+          await dst.repos.profiles.getByName("pre-existing-profile")
+        )._unsafeUnwrap()
+        expect(survivingProfile.sources).toHaveLength(1)
+
+        // And nothing from the failed import remains.
+        const allCreds = (await dst.repos.credentials.list())._unsafeUnwrap()
+        expect(allCreds).toHaveLength(1)
+        const allPlatforms = (await dst.repos.platforms.list())._unsafeUnwrap()
+        expect(allPlatforms).toHaveLength(1)
+      })
+
+      it("flaky profiles.create failing the 2nd profile → reverse-order compensation (profile cascade before credential deletes, no RESTRICT trip)", async () => {
+        // The 1st profile commits (with a source_ref pointing at a journaled
+        // credential); the 2nd fails. Compensation must delete the journaled
+        // profile FIRST (cascading its source_refs) so the journaled credential
+        // deletes don't trip the source_refs FK RESTRICT. If the order were
+        // wrong, the best-effort credential delete would silently fail and the
+        // "everything gone" assertions below would catch the leftovers.
+        const platform = await seedPlatform(src.repos, "Strict Profiles Platform")
+        const cred = (
+          await addCredential(
+            { platformId: String(platform.id), account: "work", kind: "bearer", secret: "S1" },
+            platform,
+            src.store,
+            src.repos.credentials,
+          )
+        )._unsafeUnwrap()
+        await src.repos.profiles.create({
+          id: "profile-strict-rev-1",
+          name: "strict-rev-one",
+          sources: [
+            {
+              platformId: platform.id,
+              credentialId: cred.id,
+              toolNamespace: "strict_rev_ns1",
+              enabled: true,
+            },
+          ],
+        })
+        await src.repos.profiles.create({
+          id: "profile-strict-rev-2",
+          name: "strict-rev-two",
+          sources: [
+            {
+              platformId: platform.id,
+              credentialId: cred.id,
+              toolNamespace: "strict_rev_ns2",
+              enabled: true,
+            },
+          ],
+        })
+        const exportResult = await exportVault({
+          repos: src.repos,
+          store: src.store,
+          passphrase: "strict-rev-pass",
+          includeProfiles: true,
+        })
+        if (!exportResult.isOk()) throw exportResult.error
+
+        let profileCreateCount = 0
+        const flakyRepos: Repositories = {
+          ...dst.repos,
+          profiles: {
+            ...dst.repos.profiles,
+            create: (input) => {
+              profileCreateCount++
+              if (profileCreateCount === 2) {
+                return errAsync({
+                  kind: "query-failed" as const,
+                  cause: new Error("injected profile failure"),
+                })
+              }
+              return dst.repos.profiles.create(input)
+            },
+          },
+        }
+
+        const result = await importVault({
+          repos: flakyRepos,
+          store: dst.store,
+          archive: exportResult.value.archive,
+          passphrase: "strict-rev-pass",
+          includeProfiles: true,
+          strict: true,
+        })
+        expect(result.isErr()).toBe(true)
+        if (result.isErr()) expect(result.error.kind).toBe("import-failed")
+
+        // EVERYTHING is gone: the committed profile (cascade), the credential
+        // (only deletable because the profile went first), the platform.
+        const profiles = (await dst.repos.profiles.list())._unsafeUnwrap()
+        expect(profiles).toHaveLength(0)
+        const creds = (await dst.repos.credentials.list())._unsafeUnwrap()
+        expect(creds).toHaveLength(0)
+        const platforms = (await dst.repos.platforms.list())._unsafeUnwrap()
+        expect(platforms).toHaveLength(0)
       })
     })
   })
