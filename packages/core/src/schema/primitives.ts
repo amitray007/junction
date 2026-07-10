@@ -67,11 +67,23 @@ export type ApiKeyLabel = z.infer<typeof ApiKeyLabelSchema>
  *  the assembled name on the FIRST `__` to recover the profile. That split
  *  is only deterministic because a namespace can never itself contain `__`.
  *  Loosening this schema to allow `__` would make multi-profile tool-name
- *  parsing ambiguous — see the regression test asserting `__` is rejected. */
-export const ToolNamespaceSchema = z.string().regex(/^[a-z0-9]+(_[a-z0-9]+)*$/, {
-  message:
-    "must match ^[a-z0-9]+(_[a-z0-9]+)*$ (lowercase/digits, single underscores between segments, no '__')",
-})
+ *  parsing ambiguous — see the regression test asserting `__` is rejected.
+ *
+ *  ⚠️ RESERVED (increment 33 Slice C): `junction` is reserved for junction's
+ *  own synthetic `junction__run_code` tool (code-mode, mcp/server + cli
+ *  composition root) — a real source namespaced `junction` would collide
+ *  with the synthetic tool's namespace at the wire-name level. This is guard
+ *  point 1 of 2 (schema, for NEW sources); guard point 2 is the serve-time
+ *  read-guard in cli's synthetic-tool wiring, which refuses to register the
+ *  synthetic tool if a LEGACY `junction__*` proxy tool already exists (a
+ *  pre-existing DB row this schema refine cannot retroactively clean). */
+export const ToolNamespaceSchema = z
+  .string()
+  .regex(/^[a-z0-9]+(_[a-z0-9]+)*$/, {
+    message:
+      "must match ^[a-z0-9]+(_[a-z0-9]+)*$ (lowercase/digits, single underscores between segments, no '__')",
+  })
+  .refine((v) => v !== "junction", { message: "'junction' is a reserved tool namespace" })
 
 /** Profile name: URL-safe lowercase alphanumeric + hyphens.
  *  Example: "work", "personal", "client-acme"
@@ -82,10 +94,19 @@ export const ToolNamespaceSchema = z.string().regex(/^[a-z0-9]+(_[a-z0-9]+)*$/, 
  *  guarantees a profile name can never contain `_`, so the FIRST `__` in a
  *  `<profileName>__<namespace>__<tool>` name is unambiguously the
  *  profile/namespace boundary. Loosening this schema to allow `_` would
- *  break that parse — see the regression test asserting `_` is rejected. */
-export const ProfileNameSchema = z.string().regex(/^[a-z0-9-]+$/, {
-  message: "profileName must match ^[a-z0-9-]+$ (lowercase, digits, hyphens only)",
-})
+ *  break that parse — see the regression test asserting `_` is rejected.
+ *
+ *  ⚠️ RESERVED (increment 33 Slice C): `junction` is reserved so a profile
+ *  named `junction` can never produce a prefixed wire name
+ *  (`junction__<namespace>__<tool>`) that collides with the synthetic
+ *  `junction__run_code` tool's own namespace segment. Guard point 1 of 2 —
+ *  see ToolNamespaceSchema's header for guard point 2. */
+export const ProfileNameSchema = z
+  .string()
+  .regex(/^[a-z0-9-]+$/, {
+    message: "profileName must match ^[a-z0-9-]+$ (lowercase, digits, hyphens only)",
+  })
+  .refine((v) => v !== "junction", { message: "'junction' is a reserved profile name" })
 
 // ---------------------------------------------------------------------------
 // Convention helpers — renaming these later breaks every agent prompt
