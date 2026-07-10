@@ -32,6 +32,8 @@ const catalog: AppMeta[] = [
     auth: [{ mode: "oauth2", providerId: "gitlab" }, { mode: "token" }],
     aliases: ["glab"],
     iconSlug: "gitlab",
+    // Multi-category app — must match the Category facet under EACH category.
+    category: ["Developer", "Productivity"],
   },
   {
     id: "github",
@@ -40,8 +42,10 @@ const catalog: AppMeta[] = [
     auth: [{ mode: "oauth2", providerId: "github" }, { mode: "token" }],
     aliases: ["gh"],
     iconSlug: "github",
+    category: ["Developer"],
   },
   {
+    // Deliberately NO category — the Uncategorized bucket's fixture.
     id: "spotify",
     displayName: "Spotify",
     supportedKinds: [],
@@ -120,7 +124,7 @@ vi.mock("../server/data.functions.js", () => ({
   getApps: vi.fn(),
 }))
 
-const { Route } = await import("./app.index.js")
+const { Route, matchesCategory } = await import("./app.index.js")
 // biome-ignore lint/suspicious/noExplicitAny: test utility — internal options shape
 const AppsIndexPage = (Route as any).options.component as React.FC
 
@@ -251,6 +255,15 @@ describe("AppsIndexPage", () => {
     expect(methodTrigger.textContent).toMatch(/all methods/i)
   })
 
+  it("Category filter dropdown is present, labeled, defaults to 'All categories'", () => {
+    mockUseLoaderData.mockReturnValue(populatedLoaderData)
+    render(<AppsIndexPage />)
+
+    const categoryTrigger = screen.getByRole("combobox", { name: /filter by category/i })
+    expect(categoryTrigger).toBeInTheDocument()
+    expect(categoryTrigger.textContent).toMatch(/all categories/i)
+  })
+
   // ── Sort toggle ─────────────────────────────────────────────────────────────
 
   it("defaults to connected-first ordering (GitHub before GitLab/Spotify despite catalog order)", () => {
@@ -296,5 +309,34 @@ describe("AppsIndexPage", () => {
     expect(githubIdx).toBeLessThan(spotifyIdx)
     // Among the unconnected apps, order should now be reversed: Spotify before GitLab.
     expect(spotifyIdx).toBeLessThan(gitlabIdx)
+  })
+})
+
+// ── Category predicate (pure) ────────────────────────────────────────────────
+// The open→choose→filter UI path can't be driven in happy-dom (Radix Select
+// portal — see the file-level comment), so the facet's filtering rule is
+// unit-tested directly against the exported pure predicate.
+
+describe("matchesCategory", () => {
+  it("'all' matches every app, categorized or not", () => {
+    expect(matchesCategory({ category: ["Developer"] }, "all")).toBe(true)
+    expect(matchesCategory({}, "all")).toBe(true)
+  })
+
+  it("matches a multi-category app under each of its categories", () => {
+    const app = { category: ["Developer", "Productivity"] }
+    expect(matchesCategory(app, "Developer")).toBe(true)
+    expect(matchesCategory(app, "Productivity")).toBe(true)
+  })
+
+  it("does not match an app lacking the selected category", () => {
+    expect(matchesCategory({ category: ["Developer"] }, "Communication")).toBe(false)
+    expect(matchesCategory({}, "Developer")).toBe(false)
+  })
+
+  it("'uncategorized' matches only apps with no or empty category", () => {
+    expect(matchesCategory({}, "uncategorized")).toBe(true)
+    expect(matchesCategory({ category: [] }, "uncategorized")).toBe(true)
+    expect(matchesCategory({ category: ["Developer"] }, "uncategorized")).toBe(false)
   })
 })

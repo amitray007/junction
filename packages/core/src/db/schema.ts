@@ -23,24 +23,33 @@ export const platforms = sqliteTable("platforms", {
   http: text("http"),
 })
 
-export const credentials = sqliteTable("credentials", {
-  id: text("id").primaryKey(),
-  platformId: text("platform_id")
-    .notNull()
-    .references(() => platforms.id),
-  profileName: text("profile_name").notNull(),
-  kind: text("kind").notNull(),
-  // secrets-as-references: ONLY a handle, NEVER a secret value
-  secretRef: text("secret_ref").notNull(),
-  // JSON-serialized OAuthMeta (reserved for OAuth increment)
-  oauthMeta: text("oauth_meta"),
-  // Verify-on-add / test-connection persistence (inc 28.9, migration 0008).
-  // NULL = never verified. Set by `credential add --verify`, `credential test`,
-  // and the web verify actions. "not-verifiable" outcomes are NEVER persisted
-  // here — that's a property of the platform/source kind, not an event.
-  lastVerifiedAt: integer("last_verified_at"),
-  lastVerifyResult: text("last_verify_result"),
-})
+export const credentials = sqliteTable(
+  "credentials",
+  {
+    id: text("id").primaryKey(),
+    platformId: text("platform_id")
+      .notNull()
+      .references(() => platforms.id),
+    profileName: text("profile_name").notNull(),
+    kind: text("kind").notNull(),
+    // secrets-as-references: ONLY a handle, NEVER a secret value
+    secretRef: text("secret_ref").notNull(),
+    // JSON-serialized OAuthMeta (reserved for OAuth increment)
+    oauthMeta: text("oauth_meta"),
+    // Verify-on-add / test-connection persistence (inc 28.9, migration 0008).
+    // NULL = never verified. Set by `credential add --verify`, `credential test`,
+    // and the web verify actions. "not-verifiable" outcomes are NEVER persisted
+    // here — that's a property of the platform/source kind, not an event.
+    lastVerifiedAt: integer("last_verified_at"),
+    lastVerifyResult: text("last_verify_result"),
+  },
+  (table) => [
+    // DB-level backstop for the addCredential app-layer duplicate-account
+    // guard (inc 30.12). Migration 0010 dedups legacy rows before this index
+    // is created (dedup-then-constrain) — see docs/methods/32.9-db-unique-index.md.
+    uniqueIndex("credentials_platform_profile_unique").on(table.platformId, table.profileName),
+  ],
+)
 
 export const profiles = sqliteTable("profiles", {
   id: text("id").primaryKey(),

@@ -173,7 +173,31 @@ function writeCredential(
         return store
           .delete(credential.secretRef)
           .orElse((_cleanupErr): ResultAsync<void, never> => okAsync(undefined))
-          .andThen(() => errAsync(dbErr))
+          .andThen(() => {
+            // DB-level backstop (increment 32.9): the 30.12 app-level guard
+            // above already rejects most duplicate-account attempts before
+            // the store is ever touched, but a violation that slips past it
+            // (e.g. a concurrent create landing between the guard's read and
+            // this write) surfaces here as SQLITE_CONSTRAINT via the
+            // credentials_platform_profile_unique index, mapped to
+            // "constraint-violation" by mapDbError. Remap it to the same
+            // typed duplicate-account CredentialError the app-level guard
+            // produces, so callers see one consistent error shape either way.
+            // Accepted false-positive: a fresh-ULID primary-key collision
+            // would ALSO map to "constraint-violation" and get remapped here
+            // — astronomically unlikely (26-char Crockford ULID space) and
+            // harmless (the caller retries with a plain "duplicate account"
+            // message). FK failures are mapped to "in-use" separately by
+            // mapDbError, so they never reach this branch.
+            if (dbErr.kind === "constraint-violation") {
+              return errAsync({
+                kind: "duplicate-account" as const,
+                platformId: credential.platformId,
+                account: credential.profileName,
+              })
+            }
+            return errAsync(dbErr)
+          })
       }),
   )
 }

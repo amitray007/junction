@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url"
 import Database from "better-sqlite3"
 import { sql } from "drizzle-orm"
 import { errAsync, okAsync } from "neverthrow"
+import { ulid } from "ulid"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { addCredential } from "../credentials/add-credential.js"
 import type { CredentialStore } from "../credentials/store.js"
@@ -19,6 +20,22 @@ import { getPaths } from "../paths/index.js"
 import type { Platform } from "../schema/platform.js"
 import type { Repositories } from "./index.js"
 import { createRepositories } from "./index.js"
+
+// ---------------------------------------------------------------------------
+// Raw-migration test helper — module scope so every staged-migration block
+// (0004, 0007, 0008, 0010, ...) shares one definition instead of copy-pasting
+// it per describe (docs/principles/dry.md: DRY primitives eagerly).
+// ---------------------------------------------------------------------------
+const migrationsDir = fileURLToPath(new URL("../db/migrations/", import.meta.url))
+
+/** Apply one migration .sql file statement-by-statement (split on drizzle's breakpoint). */
+async function applyMigration(rawDb: Database.Database, tag: string): Promise<void> {
+  const sqlText = await readFile(join(migrationsDir, `${tag}.sql`), "utf8")
+  for (const stmt of sqlText.split("--> statement-breakpoint")) {
+    const trimmed = stmt.trim()
+    if (trimmed.length > 0) rawDb.exec(trimmed)
+  }
+}
 
 describe("repositories", () => {
   let db: Db
@@ -2081,17 +2098,6 @@ describe("repositories", () => {
 // drop-and-recreate, and asserts the row survived with its credential intact.
 // ---------------------------------------------------------------------------
 describe("migration 0004 — cross-version data preservation", () => {
-  const migrationsDir = fileURLToPath(new URL("../db/migrations/", import.meta.url))
-
-  /** Apply one migration .sql file statement-by-statement (split on drizzle's breakpoint). */
-  async function applyMigration(rawDb: Database.Database, tag: string): Promise<void> {
-    const sqlText = await readFile(join(migrationsDir, `${tag}.sql`), "utf8")
-    for (const stmt of sqlText.split("--> statement-breakpoint")) {
-      const trimmed = stmt.trim()
-      if (trimmed.length > 0) rawDb.exec(trimmed)
-    }
-  }
-
   it("preserves a pre-existing credentialed source row through the 0004 rebuild", async () => {
     const rawDb = new Database(":memory:")
     try {
@@ -2300,17 +2306,6 @@ describe("migration 0005 — graphql column", () => {
 // tables exist.
 // ---------------------------------------------------------------------------
 describe("migration 0007 — cross-version data preservation + new tables", () => {
-  const migrationsDir = fileURLToPath(new URL("../db/migrations/", import.meta.url))
-
-  /** Apply one migration .sql file statement-by-statement (split on drizzle's breakpoint). */
-  async function applyMigration(rawDb: Database.Database, tag: string): Promise<void> {
-    const sqlText = await readFile(join(migrationsDir, `${tag}.sql`), "utf8")
-    for (const stmt of sqlText.split("--> statement-breakpoint")) {
-      const trimmed = stmt.trim()
-      if (trimmed.length > 0) rawDb.exec(trimmed)
-    }
-  }
-
   it("preserves pre-existing profile + source_refs rows through the 0007 column drop, and creates api_keys/api_key_profiles", async () => {
     const rawDb = new Database(":memory:")
     try {
@@ -2445,17 +2440,6 @@ describe("migration 0007 — cross-version data preservation + new tables", () =
 // (default NULL — "never verified").
 // ---------------------------------------------------------------------------
 describe("migration 0008 — credential verify-state columns", () => {
-  const migrationsDir = fileURLToPath(new URL("../db/migrations/", import.meta.url))
-
-  /** Apply one migration .sql file statement-by-statement (split on drizzle's breakpoint). */
-  async function applyMigration(rawDb: Database.Database, tag: string): Promise<void> {
-    const sqlText = await readFile(join(migrationsDir, `${tag}.sql`), "utf8")
-    for (const stmt of sqlText.split("--> statement-breakpoint")) {
-      const trimmed = stmt.trim()
-      if (trimmed.length > 0) rawDb.exec(trimmed)
-    }
-  }
-
   it("preserves pre-existing credential rows through the 0008 column add; new columns are nullable and default NULL", async () => {
     const rawDb = new Database(":memory:")
     try {
@@ -2549,5 +2533,113 @@ describe("migration 0008 — credential verify-state columns", () => {
       ...journal.entries.filter((e) => e.idx < entry0008.idx).map((e) => e.when),
     )
     expect(entry0008.when).toBeGreaterThan(maxOfPriorEntries)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Migration 0010 — credentials (platform_id, profile_name) unique index,
+// dedup-then-constrain (increment 32.9)
+//
+// Mirrors the 0008 staged-migration pattern: apply 0000→0009 (the schema
+// BEFORE 0010) on a raw better-sqlite3 DB with foreign_keys=ON, seed TWO
+// credential rows sharing the same (platform_id, profile_name) — using real,
+// lexicographically-ordered ULID ids so the "MAX(id) is newest" claim is
+// actually exercised, not just asserted — plus a THIRD distinct row, plus a
+// source_ref pointing at the LOSER (older) credential. Then apply 0010 and
+// assert: the migration succeeds (proving the FK-safe repoint-before-delete
+// ordering), the source_ref survived and now points at the WINNER, only the
+// winner + the distinct row remain, and a raw duplicate INSERT is rejected
+// by the new unique index.
+// ---------------------------------------------------------------------------
+describe("migration 0010 — dedup then unique constraint", () => {
+  it("dedups legacy duplicate credentials keeping the newest (MAX id), repoints a source_ref off the loser onto the winner, and the new unique index rejects a raw duplicate INSERT", async () => {
+    const rawDb = new Database(":memory:")
+    try {
+      rawDb.pragma("foreign_keys = ON")
+
+      // ── Build the PRE-0010 schema exactly as a real post-0009 DB would look ──
+      for (const tag of [
+        "0000_odd_amazoness",
+        "0001_illegal_kingpin",
+        "0002_natural_lady_bullseye",
+        "0003_add_openapi_column",
+        "0004_neat_spirit",
+        "0005_confused_swordsman",
+        "0006_violet_kinsey_walden",
+        "0007_burly_elektra",
+        "0008_sticky_marvel_boy",
+        "0009_dear_yellowjacket",
+      ]) {
+        await applyMigration(rawDb, tag)
+      }
+
+      // Real, time-ordered ULIDs (seeded timestamps) — the loser is strictly
+      // OLDER than the winner, so MAX(id) picking the winner exercises the
+      // actual lexicographic-ULID-ordering claim, not just alphabetical luck.
+      const loserId = ulid(1_700_000_000_000)
+      const winnerId = ulid(1_700_000_001_000)
+      const distinctId = ulid(1_700_000_002_000)
+      expect(loserId.length).toBe(26)
+      expect(winnerId > loserId).toBe(true)
+
+      rawDb.exec(`
+        INSERT INTO platforms (id, kind, display_name) VALUES ('plat_m10', 'mcp', 'M10 Platform');
+        INSERT INTO credentials (id, platform_id, profile_name, kind, secret_ref)
+          VALUES ('${loserId}', 'plat_m10', 'work', 'bearer', 'ref_loser');
+        INSERT INTO credentials (id, platform_id, profile_name, kind, secret_ref)
+          VALUES ('${winnerId}', 'plat_m10', 'work', 'bearer', 'ref_winner');
+        INSERT INTO credentials (id, platform_id, profile_name, kind, secret_ref)
+          VALUES ('${distinctId}', 'plat_m10', 'personal', 'bearer', 'ref_distinct');
+        INSERT INTO profiles (id, name) VALUES ('prof_m10', 'm10-profile');
+      `)
+      // Seed a source_ref pointing at the LOSER credential — proves the
+      // repoint-before-delete ordering (a source_ref referencing the loser
+      // must survive by following the surviving credential, not by orphaning
+      // or failing the migration via the RESTRICT FK).
+      rawDb.exec(
+        `INSERT INTO source_refs (id, profile_id, platform_id, credential_id, tool_namespace, enabled)
+           VALUES ('sr_m10', 'prof_m10', 'plat_m10', '${loserId}', 'm10_ns', 1)`,
+      )
+
+      // ── The migration under test — must SUCCEED (not roll back on the FK) ──
+      await expect(applyMigration(rawDb, "0010_gifted_namor")).resolves.toBeUndefined()
+
+      // 1. Only the winner + the distinct row survive.
+      const survivingIds = (
+        rawDb.prepare("SELECT id FROM credentials ORDER BY id").all() as Array<{ id: string }>
+      ).map((r) => r.id)
+      expect(survivingIds).toEqual([winnerId, distinctId].sort())
+      expect(survivingIds).not.toContain(loserId)
+
+      // 2. The source_ref survived AND now points at the WINNER id.
+      const sourceRefRow = rawDb
+        .prepare("SELECT credential_id FROM source_refs WHERE id = ?")
+        .get("sr_m10") as { credential_id: string } | undefined
+      expect(sourceRefRow).toBeDefined()
+      expect(sourceRefRow?.credential_id).toBe(winnerId)
+
+      // 3. The distinct row (different profile_name) is untouched.
+      const distinctRow = rawDb
+        .prepare("SELECT profile_name, secret_ref FROM credentials WHERE id = ?")
+        .get(distinctId) as { profile_name: string; secret_ref: string } | undefined
+      expect(distinctRow?.profile_name).toBe("personal")
+      expect(distinctRow?.secret_ref).toBe("ref_distinct")
+
+      // 4. The unique index exists.
+      const indexes = rawDb
+        .prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='credentials'")
+        .all() as Array<{ name: string }>
+      expect(indexes.map((i) => i.name)).toContain("credentials_platform_profile_unique")
+
+      // 5. A raw duplicate INSERT now throws SQLITE_CONSTRAINT.
+      expect(() =>
+        rawDb.exec(
+          `INSERT INTO credentials (id, platform_id, profile_name, kind, secret_ref)
+             VALUES ('${ulid(1_700_000_003_000)}', 'plat_m10', 'work', 'bearer', 'ref_new_dup')`,
+        ),
+      ).toThrow(/UNIQUE constraint failed/)
+    } finally {
+      rawDb.close()
+    }
   })
 })
