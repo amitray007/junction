@@ -9,6 +9,7 @@
     { "path": "packages/http-client" },
     { "path": "packages/platform-orchestration" },
     { "path": "packages/source-runtime" },
+    { "path": "packages/code-mode" },
     { "path": "packages/cli" }
   ]
 }

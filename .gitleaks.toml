@@ -11,4 +11,8 @@ regexes = [
   '''s3cr3t-sentinel-abc123''',
   # source-runtime verify-credential secret-discipline test sentinel (inc 28.9).
   '''sentinel-verify-secret-xyz789''',
+  # code-mode leak-test sentinel (inc 33, quickjs-executor.test.ts) — the current
+  # source assembles it from parts at runtime, but an earlier commit in-range held
+  # the literal, and gitleaks-action scans PR history. Never a real key.
+  '''sk_live_PLANTED_SECRET_[0-9a-f]+''',
 ]

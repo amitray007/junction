@@ -28,11 +28,52 @@ import {
   type AuditPrincipal,
   type AuditSink,
   emitToolCall,
+  type OnDescriptionDriftFn,
+  type OnPinStoreWarningFn,
   parseWireName,
   type ResultAsync,
   type UpstreamError,
 } from "@junction/core"
 import type { McpServerHandlers } from "@junction/mcp-server"
+
+// ---------------------------------------------------------------------------
+// makeProxyWarnCallbacks — the standard createProfileProxy drift/pin warns
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the two structured warn callbacks every CLI command passes to
+ * createProfileProxy: `onDescriptionDrift` (tool-poisoning sanitize +
+ * hash-pin rug-pull detection, discriminated by info.reason) and
+ * `onPinStoreWarning` (pin-STORE degradation — a corrupt/failed pins file
+ * that would otherwise silently disable rug-pull detection).
+ *
+ * Shared by `junction run`, `junction mcp serve`, and `junction serve`, which
+ * previously inlined byte-identical closures. The single difference — WHERE
+ * the structured line goes — is injected as `emit`: run/serve use
+ * consola.warn (stderr, human/JSON), `mcp serve` uses process.stderr.write
+ * (stdout is the MCP protocol channel there). Metadata only: never the
+ * (possibly-injected) description text, never old/new hashes.
+ */
+export function makeProxyWarnCallbacks(emit: (event: Record<string, unknown>) => void): {
+  onDescriptionDrift: OnDescriptionDriftFn
+  onPinStoreWarning: OnPinStoreWarningFn
+} {
+  return {
+    onDescriptionDrift: (info) => {
+      emit({
+        event: info.reason === "pin-drift" ? "tool_pin_drift" : "description_sanitized",
+        namespace: info.namespace,
+        tool: info.tool,
+        strippedSuspicious: info.strippedSuspicious,
+        truncated: info.truncated,
+        reason: info.reason,
+      })
+    },
+    onPinStoreWarning: (info) => {
+      emit({ event: "tool_pin_store_degraded", op: info.op, detail: info.detail })
+    },
+  }
+}
 
 // ---------------------------------------------------------------------------
 // adaptToMcpHandlers — ResultAsync proxy → Promise-based McpServerHandlers

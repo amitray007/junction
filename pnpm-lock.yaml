@@ -66,6 +66,9 @@ importers:
       '@clack/prompts':
         specifier: ^1.7.0
         version: 1.7.0
+      '@junction/code-mode':
+        specifier: workspace:*
+        version: link:../code-mode
       '@junction/core':
         specifier: workspace:*
         version: link:../core
@@ -118,6 +121,28 @@ importers:
       ink-testing-library:
         specifier: ^4.0.0
         version: 4.0.0(@types/react@19.2.17)
+      neverthrow:
+        specifier: 'catalog:'
+        version: 8.2.0
+
+  packages/code-mode:
+    dependencies:
+      '@jitl/quickjs-singlefile-mjs-release-asyncify':
+        specifier: 0.31.0
+        version: 0.31.0
+      '@junction/core':
+        specifier: workspace:*
+        version: link:../core
+      neverthrow:
+        specifier: 'catalog:'
+        version: 8.2.0
+      quickjs-emscripten-core:
+        specifier: 0.31.0
+        version: 0.31.0
+    devDependencies:
+      '@types/node':
+        specifier: ^26.1.0
+        version: 26.1.0
 
   packages/core:
     dependencies:
@@ -1014,6 +1039,12 @@ packages:
     peerDependenciesMeta:
       '@types/node':
         optional: true
+
+  '@jitl/quickjs-ffi-types@0.31.0':
+    resolution: {integrity: sha512-1yrgvXlmXH2oNj3eFTrkwacGJbmM0crwipA3ohCrjv52gBeDaD7PsTvFYinlAnqU8iPME3LGP437yk05a2oejw==}
+
+  '@jitl/quickjs-singlefile-mjs-release-asyncify@0.31.0':
+    resolution: {integrity: sha512-usrttM3cCk6lrykUp1jdRI3I3j5zDZlJsq7QjHeJbcujqhqJriPH1GKjEWZuQr+LU53gUw6ZkX4z00TC04yXSw==}
 
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
@@ -3972,6 +4003,9 @@ packages:
   quick-format-unescaped@4.0.4:
     resolution: {integrity: sha512-tYC1Q1hgyRuHgloV/YXs2w15unPVh8qfu/qCTfhTYamaw7fyhumKa2yGpdSo87vY32rIclj+4fWYQXUMs9EHvg==}
 
+  quickjs-emscripten-core@0.31.0:
+    resolution: {integrity: sha512-oQz8p0SiKDBc1TC7ZBK2fr0GoSHZKA0jZIeXxsnCyCs4y32FStzCW4d1h6E1sE0uHDMbGITbk2zhNaytaoJwXQ==}
+
   range-parser@1.2.1:
     resolution: {integrity: sha512-Hrgsx+orqoygnmhFbKaHE6c296J+HTAQXoxEF6gNupROmmGJRoyzfG3ccAveqCBrwr/2yxQ5BVd/GTl5agOwSg==}
     engines: {node: '>= 0.6'}
@@ -5389,6 +5423,12 @@ snapshots:
       iconv-lite: 0.7.2
     optionalDependencies:
       '@types/node': 26.1.0
+
+  '@jitl/quickjs-ffi-types@0.31.0': {}
+
+  '@jitl/quickjs-singlefile-mjs-release-asyncify@0.31.0':
+    dependencies:
+      '@jitl/quickjs-ffi-types': 0.31.0
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
@@ -7998,6 +8038,10 @@ snapshots:
   queue-microtask@1.2.3: {}
 
   quick-format-unescaped@4.0.4: {}
+
+  quickjs-emscripten-core@0.31.0:
+    dependencies:
+      '@jitl/quickjs-ffi-types': 0.31.0
 
   range-parser@1.2.1: {}
 

@@ -4,6 +4,7 @@
   "include": ["src"],
   "exclude": ["**/*.test.ts", "**/*.test.tsx"],
   "references": [
+    { "path": "../code-mode" },
     { "path": "../core" },
     { "path": "../mcp/client" },
     { "path": "../mcp/server" },

@@ -43,7 +43,8 @@ import { makeResolveProvider } from "@junction/source-runtime"
 import { defineCommand } from "citty"
 import { consola } from "consola"
 import { createFileAuditSink } from "../audit-sink.js"
-import { adaptToMcpHandlers } from "../providers.js"
+import { adaptToMcpHandlers, makeProxyWarnCallbacks } from "../providers.js"
+import { buildRunCodeHandlers, mergeHandlers } from "../synthetic-tool.js"
 
 // ---------------------------------------------------------------------------
 // serve command
@@ -198,29 +199,16 @@ export const serveCommand = defineCommand({
         const profile = profileResult.value
         // Tool-poisoning mitigation (increment 32.5) + hash-pinning / rug-pull detection
         // (increment 32.11): sanitize and TOFU pin-comparison are always applied inside
-        // createProfileProxy; onDescriptionDrift only SURFACES either signal, discriminated
-        // by info.reason ("sanitized" | "pin-drift") — one structured warn, metadata only,
-        // never the (possibly-injected) description text, never old/new hashes.
-        // onPinStoreWarning surfaces pin-STORE degradation (corrupt file / failed write)
-        // so a broken pins file can never silently disable rug-pull detection; detail is
-        // an error code/kind only, never file content.
+        // createProfileProxy; the two warn callbacks (shared via makeProxyWarnCallbacks —
+        // see providers.ts) only SURFACE either signal — metadata only, never the
+        // (possibly-injected) description text, never old/new hashes, never file content.
+        const warns = makeProxyWarnCallbacks((event) => consola.warn(event))
         const proxy = createProfileProxy(
           profile.sources,
           resolveProvider,
-          (info) => {
-            consola.warn({
-              event: info.reason === "pin-drift" ? "tool_pin_drift" : "description_sanitized",
-              namespace: info.namespace,
-              tool: info.tool,
-              strippedSuspicious: info.strippedSuspicious,
-              truncated: info.truncated,
-              reason: info.reason,
-            })
-          },
+          warns.onDescriptionDrift,
           toolPinStore,
-          (info) => {
-            consola.warn({ event: "tool_pin_store_degraded", op: info.op, detail: info.detail })
-          },
+          warns.onPinStoreWarning,
         )
         entries.push({ profileName: profile.name, proxy })
       }
@@ -234,7 +222,30 @@ export const serveCommand = defineCommand({
         label: record.label,
         profiles: entries.map((e) => e.profileName),
       }
-      return adaptToMcpHandlers(scoped, { principal, sink: auditSink, prefixed })
+      const realHandlers = adaptToMcpHandlers(scoped, { principal, sink: auditSink, prefixed })
+
+      // ── Synthetic junction__run_code tool (increment 33 Slice C) ─────────
+      // One tool per routed profile, arity-matched to the key's scope
+      // (unprefixed for scope:"profile", `<profile>__junction__run_code`
+      // otherwise) — mirrors createScopedProxy's own arity contract exactly.
+      // A refused-collision warning (guard point 2 — see synthetic-tool.ts)
+      // uses consola (this command's stdout is NOT the MCP channel — see the
+      // file-level note above).
+      const runCodeHandlers = await buildRunCodeHandlers({
+        entries,
+        prefixed,
+        principal,
+        sink: auditSink,
+        onReservedNamespaceCollision: (info) => {
+          consola.warn({
+            event: "reserved_namespace_collision",
+            profileName: info.profileName,
+            detail:
+              "a legacy 'junction__' tool already exists — junction__run_code was NOT registered",
+          })
+        },
+      })
+      return mergeHandlers(realHandlers, runCodeHandlers)
     }
 
     // ── Start the HTTP endpoint ──────────────────────────────────────────

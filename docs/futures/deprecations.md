@@ -16,6 +16,18 @@ Dependencies / OS APIs junction uses **today** that are deprecated or at end-of-
 
 ---
 
+## quickjs-emscripten-core + @jitl/quickjs-singlefile-mjs-release-asyncify — pre-1.0, self-described unaudited (in use since increment 33)
+
+**What:** the QuickJS-WASM binding + asyncify variant `@junction/code-mode`'s `QuickJsExecutor` uses to run agent-authored JS in-process for Code Mode — the entire in-process isolation boundary (no ambient fetch/process/fs/env/import; a physically separate WASM heap; the credential never crosses into the guest) rests on this library correctly containing guest code.
+
+**Deprecation/risk:** `quickjs-emscripten-core` is **pre-1.0** and **self-described unaudited** upstream — a single-maintainer WASM binding, not a hardened security boundary with a published audit trail. Junction's own inc-33 sandbox-security review (the increment that activates that reviewer) independently confirmed the isolation is sound as *deployed* (adversarial pass: no ambient authority reachable, no credential leak path, no way to escape the facade) — but "sound as deployed" is not the same guarantee as an upstream security audit.
+
+**Why we accept it:** it's the only mature in-process JS-WASM sandbox that avoids the banned `node:vm`/`vm2` (CVSS-10 RCE class) and the maintenance-mode `isolated-vm`, and Code Mode's value proposition (sub-ms/call in-process execution vs ~25ms for a spawned sandbox process) depends on staying in-process. We EXACT-pin `0.31.0` (not a caret range) — `0.32.0` has a separate, confirmed dispose-time crash even on an unused asyncified handle, and pinning exact (not just avoiding 0.32.0) means a future transitive bump can't silently reintroduce it or a new regression.
+
+**Forward path:** the **Deno-subprocess `CodeExecutor` runtime** is the recorded escalation tier (see `revisit-when.md`) — a separate process boundary with OS-level isolation, for when hostile/third-party code needs to run, or when a wedged WASM instance needs a hard kill a signal can't reach inside a single process. It drops in behind the same `CodeExecutor` interface `QuickJsExecutor` implements today, so escalating doesn't require a facade/audit-wiring rewrite.
+
+---
+
 ## isolated-vm — maintenance mode (avoided; not in use)
 
 **What:** a V8-isolate JS sandbox sometimes used for in-process untrusted-code execution.
