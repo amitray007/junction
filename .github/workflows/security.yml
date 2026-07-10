@@ -64,6 +64,10 @@ jobs:
       # increment's build hit a real fullmatch-vs-substring surprise there)
       # and silently change what the rules catch.
       - run: pipx install semgrep==1.136.0
+      # semgrep 1.136.0's opentelemetry-instrumentation imports pkg_resources
+      # (setuptools), which Python 3.12 venvs no longer ship by default —
+      # without this inject the CLI crashes at startup (ModuleNotFoundError).
+      - run: pipx inject semgrep setuptools
       - run: semgrep scan --config tools/semgrep/ --error
 
   no-publish-guard:
