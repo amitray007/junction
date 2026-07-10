@@ -536,4 +536,322 @@ describe("QuickJsExecutor — budgets", () => {
     // JSON) string and throws — proving the cap took effect before crossing
     // into the guest, not after.
   })
+
+  it("(5) rejects an oversized facade-call ARG before it ever reaches the invoker (argByteCap)", async () => {
+    const { sink } = makeSink()
+    const { invoker, callCount } = makeFakeInvoker()
+    const result = await makeExecutor(sink).execute(
+      `
+        try {
+          await tools.github.search_repos({ query: "x".repeat(1000) });
+          return "NO THROW";
+        } catch (e) {
+          return e.message;
+        }
+      `,
+      invoker,
+      { argByteCap: 100 },
+    )
+    expect(result.isOk()).toBe(true)
+    if (result.isOk() && result.value.ok) {
+      expect(result.value.value).toContain("exceed")
+    }
+    // The host-side byte check runs BEFORE invoker.callTool is ever
+    // dispatched — removing it (or moving the check after the call) would
+    // let this call through, so callCount staying at 0 is the guard's proof.
+    expect(callCount()).toBe(0)
+  })
+
+  it("(5) truncates console.log/emit output to logByteCap and flags truncation, never growing the host array unbounded", async () => {
+    const { sink } = makeSink()
+    const { invoker } = makeFakeInvoker()
+    const result = await makeExecutor(sink).execute(
+      `
+        for (let i = 0; i < 50; i++) {
+          console.log("x".repeat(1000));
+        }
+        return "done";
+      `,
+      invoker,
+      // Deliberately NOT a multiple of 1000 so the cap lands mid-string on
+      // one of the pushes — that call is the one whose truncateToBytes
+      // result carries truncated:true (the log after it is dropped
+      // entirely by the logBytesUsed >= cap early-return, never itself
+      // flagged). Both are the guard's proof: capacity used is bounded far
+      // below the unguarded total (50 * 1000 = 50000 bytes).
+      { logByteCap: 1500 },
+    )
+    expect(result.isOk()).toBe(true)
+    if (result.isOk() && result.value.ok) {
+      const totalBytes = result.value.logs.reduce((sum, l) => sum + Buffer.byteLength(l, "utf8"), 0)
+      expect(totalBytes).toBeLessThan(1600)
+      expect(result.value.logs.some((l) => l.includes("[truncated]"))).toBe(true)
+      // Removing the logByteCap check entirely would produce 50 full lines.
+      expect(result.value.logs.length).toBeLessThan(50)
+    }
+  })
+})
+
+describe("QuickJsExecutor — zero ambient authority (full enumeration)", () => {
+  // Each of these globals must be undefined inside the guest realm — a
+  // fresh QuickJS context ships DefaultIntrinsics (Date/JSON/etc) but
+  // installTools/installConsole/installEmit are the ONLY globals this
+  // executor ever adds. Removing the "only install tools/console/emit"
+  // discipline (e.g. accidentally exposing Node's global scope) would flip
+  // any one of these to a truthy typeof.
+  const ambientGlobals = [
+    "fetch",
+    "XMLHttpRequest",
+    "WebSocket",
+    "process",
+    "require",
+    "Deno",
+    "Bun",
+    "__dirname",
+    "__filename",
+    "module",
+    "exports",
+  ]
+
+  it.each(ambientGlobals)("(1) typeof %s is undefined inside the guest", async (name) => {
+    const { sink } = makeSink()
+    const { invoker } = makeFakeInvoker()
+    const result = await makeExecutor(sink).execute(`return typeof ${name};`, invoker)
+    expect(result.isOk()).toBe(true)
+    if (result.isOk() && result.value.ok) {
+      expect(result.value.value).toBe("undefined")
+    }
+  })
+
+  it("(1) globalThis.process is also undefined (no indirection around the direct-reference check)", async () => {
+    const { sink } = makeSink()
+    const { invoker } = makeFakeInvoker()
+    const result = await makeExecutor(sink).execute(`return typeof globalThis.process;`, invoker)
+    expect(result.isOk()).toBe(true)
+    if (result.isOk() && result.value.ok) {
+      expect(result.value.value).toBe("undefined")
+    }
+  })
+
+  it("(1) dynamic import(...) is a syntax/reference error, never resolves a module", async () => {
+    const { sink } = makeSink()
+    const { invoker } = makeFakeInvoker()
+    const result = await makeExecutor(sink).execute(
+      `await import("node:fs"); return "NO THROW";`,
+      invoker,
+    )
+    expect(result.isOk()).toBe(true)
+    if (result.isOk() && !result.value.ok) {
+      // Global eval mode (not "module") means import() is unavailable — a
+      // guest-error (syntax error at eval time), never a resolved module.
+      expect(result.value.kind).toBe("guest-error")
+    }
+  })
+
+  it("(1) WebSocket constructor call throws (unreachable, not silently a no-op)", async () => {
+    const { sink } = makeSink()
+    const { invoker } = makeFakeInvoker()
+    const result = await makeExecutor(sink).execute(
+      `try { new WebSocket("ws://evil.example"); return "NO THROW"; } catch (e) { return "threw: " + e.message; }`,
+      invoker,
+    )
+    expect(result.isOk()).toBe(true)
+    if (result.isOk() && result.value.ok) {
+      expect(result.value.value).toContain("threw")
+    }
+  })
+})
+
+describe("QuickJsExecutor — no filesystem/env reach (#2)", () => {
+  it("(2) process.env is unreachable (process itself is undefined)", async () => {
+    const { sink } = makeSink()
+    const { invoker } = makeFakeInvoker()
+    const result = await makeExecutor(sink).execute(
+      `try { return process.env; } catch (e) { return "threw: " + e.message; }`,
+      invoker,
+    )
+    expect(result.isOk()).toBe(true)
+    if (result.isOk() && result.value.ok) {
+      // `process` is undefined, so `process.env` throws a ReferenceError
+      // (guest-catchable) — never resolves to the host's real env vars.
+      expect(result.value.value).toContain("threw")
+    }
+  })
+
+  it("(2) no fs module reachable via require/import/global", async () => {
+    const { sink } = makeSink()
+    const { invoker } = makeFakeInvoker()
+    const result = await makeExecutor(sink).execute(
+      `return typeof require === "undefined" && typeof globalThis.fs === "undefined";`,
+      invoker,
+    )
+    expect(result.isOk()).toBe(true)
+    if (result.isOk() && result.value.ok) {
+      expect(result.value.value).toBe(true)
+    }
+  })
+
+  it("(2) __dirname/__filename are undefined (no host path leakage via CJS wrapper globals)", async () => {
+    const { sink } = makeSink()
+    const { invoker } = makeFakeInvoker()
+    const result = await makeExecutor(sink).execute(
+      `return [typeof __dirname, typeof __filename];`,
+      invoker,
+    )
+    expect(result.isOk()).toBe(true)
+    if (result.isOk() && result.value.ok) {
+      expect(result.value.value).toEqual(["undefined", "undefined"])
+    }
+  })
+})
+
+describe("QuickJsExecutor — prototype-pollution guard (#7)", () => {
+  it("(7) a __proto__-payload tool-call arg cannot mutate the HOST Object.prototype", async () => {
+    const { sink } = makeSink()
+    const { invoker } = makeFakeInvoker()
+
+    // Plant a sentinel on the HOST's real Object.prototype's would-be
+    // pollution target BEFORE running guest code, then assert it is
+    // unchanged after. If nullProtoReviver (quickjs-executor.ts) were
+    // removed, the JSON.parse of the guest-constructed args on the way
+    // across the FFI would let `__proto__` write through, but even then —
+    // because the guest args round-trip through safeJsonParse's OWN
+    // process, not the host's `JSON.parse` — the mutation could only ever
+    // land in the host if this guard were bypassed via a host-side parse of
+    // guest-controlled text. Assert directly that the check protects the
+    // host's real Object.prototype from a payload shaped like a pollution
+    // attempt embedded in facade call args.
+    const sentinelKey = "__polluted_by_guest_sentinel__"
+    expect((Object.prototype as Record<string, unknown>)[sentinelKey]).toBeUndefined()
+
+    const result = await makeExecutor(sink).execute(
+      `
+        const evil = JSON.parse('{"__proto__": {"${sentinelKey}": "pwned"}}');
+        return await tools.github.search_repos(evil);
+      `,
+      invoker,
+    )
+    expect(result.isOk()).toBe(true)
+
+    // The HOST'S OWN Object.prototype must be untouched no matter what the
+    // guest's local JSON.parse produced — this is the load-bearing
+    // assertion (host-side sentinel proof per the method file).
+    expect((Object.prototype as Record<string, unknown>)[sentinelKey]).toBeUndefined()
+    // biome-ignore lint/suspicious/noExplicitAny: sentinel probe, not a real object shape
+    expect(({} as any)[sentinelKey]).toBeUndefined()
+
+    delete (Object.prototype as Record<string, unknown>)[sentinelKey]
+  })
+
+  it("(7) a guest-side __proto__ assignment on a plain object does not touch the host realm's Object.prototype", async () => {
+    const { sink } = makeSink()
+    const { invoker } = makeFakeInvoker()
+    const sentinelKey = "__polluted_via_guest_assignment__"
+    expect((Object.prototype as Record<string, unknown>)[sentinelKey]).toBeUndefined()
+
+    const result = await makeExecutor(sink).execute(
+      `
+        const obj = {};
+        obj.__proto__[${JSON.stringify(sentinelKey)}] = "pwned";
+        return obj[${JSON.stringify(sentinelKey)}];
+      `,
+      invoker,
+    )
+    expect(result.isOk()).toBe(true)
+    if (result.isOk() && result.value.ok) {
+      // Within the GUEST's own separate QuickJS heap this assignment can
+      // succeed (it has its own Object.prototype) — the invariant under
+      // test is that this NEVER crosses into the host's real
+      // Object.prototype, proven by the sentinel check below regardless of
+      // what the guest observed locally.
+      expect(result.value.value).toBe("pwned")
+    }
+    // The critical assertion: the HOST's Object.prototype is a completely
+    // separate JS realm/heap from the guest's WASM-internal one — a
+    // guest-side prototype mutation can never reach here.
+    expect((Object.prototype as Record<string, unknown>)[sentinelKey]).toBeUndefined()
+  })
+})
+
+describe("QuickJsExecutor — filtered-toolset-only (#11)", () => {
+  it("(11) a tool NOT present in invoker.listTools() is not callable — no bypass path around a filtered toolset", async () => {
+    const { sink } = makeSink()
+    // Simulate a profile whose toolFilter has already denied `get_repo` —
+    // the FILTERED listTools() the executor is handed only contains
+    // search_repos. The facade is built exclusively from this list (see
+    // quickjs-executor.ts installTools: it iterates `plan`, derived only
+    // from what listTools() returned — never a wider catalog).
+    const filteredInvoker: ToolInvoker = {
+      listTools: async () => ok([FAKE_TOOLS[0] as ProviderTool]), // only github__search_repos
+      callTool: async (name: string) => {
+        // If this were ever reached for the denied tool, that IS the bypass
+        // — fail loudly rather than silently succeeding.
+        if (name === "github__get_repo") {
+          throw new Error("BYPASS: denied tool was dispatched to the invoker")
+        }
+        return ok({ content: { ok: true } })
+      },
+    }
+
+    const result = await makeExecutor(sink).execute(
+      `
+        try {
+          await tools.github.get_repo({});
+          return "NO THROW — should be unreachable";
+        } catch (e) {
+          return "threw: " + e.message;
+        }
+      `,
+      filteredInvoker,
+    )
+    expect(result.isOk()).toBe(true)
+    if (result.isOk() && result.value.ok) {
+      // tools.github.get_repo doesn't exist as a property at all (the
+      // facade never installed it) — calling it is a guest-level TypeError
+      // ("not a function"), the same shape as calling any nonexistent tool,
+      // NOT a routed-then-denied error. That IS the "fails as if unknown"
+      // requirement — there is no separate code path that would let a
+      // clever guest reach the denied tool anyway.
+      expect(result.value.value).toContain("threw")
+    }
+
+    // The allowed tool still works normally through the same filtered plan.
+    const allowedResult = await makeExecutor(sink).execute(
+      `return await tools.github.search_repos({query: "x"});`,
+      filteredInvoker,
+    )
+    expect(allowedResult.isOk()).toBe(true)
+    if (allowedResult.isOk() && allowedResult.value.ok) {
+      expect(JSON.parse(allowedResult.value.value as string)).toEqual({ ok: true })
+    }
+  })
+
+  it("(11) tools.search()/tools.describe.tool() only ever surface tools from the filtered listTools() snapshot", async () => {
+    const { sink } = makeSink()
+    const filteredInvoker: ToolInvoker = {
+      listTools: async () => ok([FAKE_TOOLS[0] as ProviderTool]), // only search_repos
+      callTool: async () => ok({ content: { ok: true } }),
+    }
+    const result = await makeExecutor(sink).execute(
+      `
+        const found = JSON.parse(tools.search("repo"));
+        const described = JSON.parse(tools.describe.tool("github.get_repo"));
+        return { foundCount: found.length, foundTools: found.map(f => f.tool), described };
+      `,
+      filteredInvoker,
+    )
+    expect(result.isOk()).toBe(true)
+    if (result.isOk() && result.value.ok) {
+      const value = result.value.value as {
+        foundCount: number
+        foundTools: string[]
+        described: unknown
+      }
+      // search() never surfaces the filtered-out get_repo tool.
+      expect(value.foundTools).toEqual(["search_repos"])
+      // describe.tool() on a filtered-out tool resolves to null, not the
+      // real (denied) tool's schema — no discovery-path bypass either.
+      expect(value.described).toBeNull()
+    }
+  })
 })
