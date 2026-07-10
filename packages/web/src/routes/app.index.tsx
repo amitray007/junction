@@ -49,6 +49,8 @@ interface AppCardData {
   /** Real oauth signal from AppMeta.auth (a {mode:"oauth2"} entry) — preferred
    *  over the "empty supportedKinds" heuristic for the Method=oauth facet. */
   hasOauth: boolean
+  /** Curated help.category labels (may be several); absent/empty = uncategorized. */
+  category?: string[]
 }
 
 const OTHER_APP: AppCardData = {
@@ -78,13 +80,34 @@ const METHOD_OPTIONS = [
   { value: "oauth", label: "oauth" },
 ]
 
+// Category facet sentinel for apps with no help.category (e.g. the synthetic
+// "Other" card, or a catalog app not yet curated). Lowercase to stay out of
+// the real Title-Case category namespace ("Productivity", "Developer", …).
+const UNCATEGORIZED_FILTER = "uncategorized"
+
+/**
+ * Pure Category-facet predicate — exported for direct unit coverage (happy-dom
+ * cannot drive the Radix Select portal open, so the open→choose→filter UI path
+ * can't be tested there; see the header comment in -app.index.test.tsx).
+ */
+export function matchesCategory(
+  app: { readonly category?: readonly string[] },
+  filter: string,
+): boolean {
+  if (filter === ALL_FILTER) return true
+  if (filter === UNCATEGORIZED_FILTER) {
+    return app.category === undefined || app.category.length === 0
+  }
+  return app.category?.includes(filter) ?? false
+}
+
 function AppCard({ app }: { readonly app: AppCardData }) {
   const connected = app.connectedCount > 0
   return (
     <Link
       to="/app/$id"
       params={{ id: app.id }}
-      className="no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue-700)] focus-visible:ring-offset-1 rounded-[var(--radius-12)]"
+      className="block no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--blue-700)] focus-visible:ring-offset-1 rounded-[var(--radius-12)]"
     >
       <Card className="h-full transition-colors duration-[var(--motion-fast)] hover:bg-[var(--gray-100)]">
         <CardHeader className="flex flex-row items-start justify-between gap-2">
@@ -140,6 +163,7 @@ function AppsIndexPage() {
       iconSlug: app.iconSlug,
       aliases: app.aliases,
       hasOauth: app.auth?.some((a) => a.mode === "oauth2") ?? app.supportedKinds.length === 0,
+      category: app.category,
     }))
     const hasOther = (connectedCounts.get("other") ?? 0) > 0
     return hasOther
@@ -149,6 +173,28 @@ function AppsIndexPage() {
 
   const [statusFilter, setStatusFilter] = useState(ALL_FILTER)
   const [methodFilter, setMethodFilter] = useState(ALL_FILTER)
+  const [categoryFilter, setCategoryFilter] = useState(ALL_FILTER)
+
+  // Category options are DERIVED from the loaded catalog (unique, sorted) so a
+  // future catalog category shows up without a code change, plus a fixed
+  // Uncategorized bucket for apps with no help.category.
+  const categoryOptions = useMemo(() => {
+    const values = new Set<string>()
+    for (const app of cards) {
+      for (const c of app.category ?? []) {
+        // Guard the sentinel namespace: core's schema allows any non-empty
+        // string, so a curated category literally named "Uncategorized"/"All"
+        // must not collide with the synthetic all/uncategorized options.
+        const lower = c.toLowerCase()
+        if (lower === UNCATEGORIZED_FILTER || lower === ALL_FILTER) continue
+        values.add(c)
+      }
+    }
+    return [
+      ...[...values].sort((a, b) => a.localeCompare(b)).map((v) => ({ value: v, label: v })),
+      { value: UNCATEGORIZED_FILTER, label: "Uncategorized" },
+    ]
+  }, [cards])
   // A–Z toggle: false = ascending (default), true = descending. Connected-first
   // stays the primary sort key regardless of direction (see nameCompare below).
   const [reverseAlpha, setReverseAlpha] = useState(false)
@@ -161,9 +207,10 @@ function AppsIndexPage() {
       const methodOk =
         methodFilter === ALL_FILTER ||
         (methodFilter === "oauth" ? app.hasOauth : app.supportedKinds.includes(methodFilter))
-      return statusOk && methodOk
+      const categoryOk = matchesCategory(app, categoryFilter)
+      return statusOk && methodOk && categoryOk
     },
-    [statusFilter, methodFilter],
+    [statusFilter, methodFilter, categoryFilter],
   )
 
   // Default order: connected-first, then A–Z (or Z–A when toggled). Connected
@@ -191,7 +238,10 @@ function AppsIndexPage() {
   const visibleCards = filteredSortedRows
 
   const isFiltered =
-    search.trim().length > 0 || statusFilter !== ALL_FILTER || methodFilter !== ALL_FILTER
+    search.trim().length > 0 ||
+    statusFilter !== ALL_FILTER ||
+    methodFilter !== ALL_FILTER ||
+    categoryFilter !== ALL_FILTER
 
   return (
     <div>
@@ -226,6 +276,14 @@ function AppsIndexPage() {
               value={methodFilter}
               onValueChange={setMethodFilter}
               options={METHOD_OPTIONS}
+            />
+            <FacetSelect
+              ariaLabel="Filter by category"
+              allLabel="All categories"
+              allValue={ALL_FILTER}
+              value={categoryFilter}
+              onValueChange={setCategoryFilter}
+              options={categoryOptions}
             />
             <button
               type="button"

@@ -82,6 +82,50 @@ function makeStubRepo(): CredentialsRepo {
 }
 
 /**
+ * A CredentialsRepo stub whose `forPlatform` reports NO existing credentials
+ * (so the app-level 30.12 guard lets the call through), but whose `create`
+ * always fails with a "constraint-violation" DbError — simulating a
+ * duplicate that slipped past the guard and hit the DB-level unique index
+ * from migration 0010 (increment 32.9).
+ */
+function makeConstraintViolatingRepo(): CredentialsRepo {
+  return {
+    create: (): ResultAsync<Credential, DbError> =>
+      errAsync({ kind: "constraint-violation", cause: new Error("UNIQUE constraint failed") }),
+    get: () => errAsync({ kind: "not-found", entity: "credential", id: "unused" } as DbError),
+    forPlatform: () => okAsync([]),
+    list: () => okAsync([]),
+    setSecretRef: (): ResultAsync<Credential, DbError> =>
+      errAsync({ kind: "not-found", entity: "credential", id: "unused" } as DbError),
+    delete: () => okAsync(undefined),
+    setVerifyState: () => okAsync(undefined),
+  } as unknown as CredentialsRepo
+}
+
+/** A store whose .set() and .delete() both record calls, so tests can assert cleanup ran. */
+function makeCleanupSpyStore(): {
+  store: CredentialStore
+  setCalls: Array<{ ref: string; secret: string }>
+  deleteCalls: string[]
+} {
+  const setCalls: Array<{ ref: string; secret: string }> = []
+  const deleteCalls: string[] = []
+  const store: CredentialStore = {
+    backend: "encrypted-file",
+    get: () => okAsync(null),
+    set: (ref: string, secret: string) => {
+      setCalls.push({ ref, secret })
+      return okAsync(undefined)
+    },
+    delete: (ref: string) => {
+      deleteCalls.push(ref)
+      return okAsync(undefined)
+    },
+  }
+  return { store, setCalls, deleteCalls }
+}
+
+/**
  * A CredentialsRepo stub whose `forPlatform` returns a fixed set of existing
  * credentials, and whose `create` records every call in `createCalls` so
  * tests can assert nothing was written on a duplicate-account rejection.
@@ -316,5 +360,35 @@ describe("addCredential — duplicate-account guard (increment 30.12)", () => {
     expect(result.isOk()).toBe(true)
     expect(setCalls).toHaveLength(1)
     expect(createCalls).toHaveLength(1)
+  })
+})
+
+describe("addCredential — DB-level unique-index backstop (increment 32.9)", () => {
+  it("a constraint-violation from repo.create() surfaces as typed duplicate-account, AND the just-set store secret is cleaned up", async () => {
+    const platform = cliPlatform()
+    const { store, setCalls, deleteCalls } = makeCleanupSpyStore()
+    const repo = makeConstraintViolatingRepo()
+
+    const result = await addCredential(
+      { platformId: String(platform.id), account: "work", kind: "bearer", secret: "tok" },
+      platform,
+      store,
+      repo,
+    )
+
+    expect(result.isErr()).toBe(true)
+    if (result.isErr()) {
+      expect(result.error.kind).toBe("duplicate-account")
+      if (result.error.kind === "duplicate-account") {
+        expect(result.error.platformId).toBe(String(platform.id))
+        expect(result.error.account).toBe("work")
+      }
+    }
+
+    // The secret WAS written to the store (the app-level guard didn't catch
+    // it — only the DB index did), and cleanup must have deleted it: no
+    // stranded fresh secret.
+    expect(setCalls).toHaveLength(1)
+    expect(deleteCalls).toEqual([setCalls[0]?.ref])
   })
 })
