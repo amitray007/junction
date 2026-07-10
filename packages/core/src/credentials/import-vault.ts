@@ -1019,6 +1019,31 @@ async function addOAuthImportedCredential(
     })
   }
 
+  // Best-effort carry over the verify state — mirrors the non-oauth
+  // addImportedCredential path above (33.1 fix 1: this call was previously
+  // missing here, so every imported oauth2 credential showed never-verified
+  // regardless of what the source vault recorded, forcing a spurious
+  // reconnect/re-verify prompt). A formatting-only field, never load-bearing
+  // to the import's correctness, so a failure here is swallowed (matches the
+  // non-oauth path's contract exactly).
+  //
+  // STRICT-MODE COMPENSATION: setVerifyState is a plain UPDATE on the row
+  // `credentials.create()` just journaled above (repos here may be the
+  // strict-mode journalCredentialsRepo decorator, which journals `create`
+  // only) — it never mints a new id/row. If a LATER item in this import
+  // fails and strict's compensate() deletes this credential by the
+  // journaled id, the delete removes the ENTIRE row (verify-state fields
+  // included), so the verify-state write is rolled back transitively
+  // without needing its own journal entry. Verified by
+  // import-vault.test.ts's strict-mode oauth2 verify-state compensation test.
+  if (mc.lastVerifyResult !== undefined && mc.lastVerifiedAt !== undefined) {
+    await repos.credentials.setVerifyState(
+      createResult.value.id,
+      mc.lastVerifyResult,
+      mc.lastVerifiedAt,
+    )
+  }
+
   return ok(createResult.value)
 }
 
