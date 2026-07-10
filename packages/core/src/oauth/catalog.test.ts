@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Provider catalog tests — pure data + pure dispatchers, no HTTP/I/O. Reduced
 // to github/github-app/generic in increment 35 (catalog strip-down); slack was
-// reintroduced in increment 37 alongside its app catalog entry.
+// reintroduced in increment 37, google in increment 39, each alongside its
+// app catalog entry.
 
 import { describe, expect, it } from "vitest"
 import {
@@ -18,9 +19,9 @@ describe("getProvider / listProviders", () => {
     expect(getProvider("nope")).toBeUndefined()
   })
 
-  it("listProviders returns exactly github/github-app/slack/generic", () => {
+  it("listProviders returns exactly github/github-app/slack/google/generic", () => {
     const ids = listProviders().map((p) => p.id)
-    expect(ids).toEqual(["github", "github-app", "slack", "generic"])
+    expect(ids).toEqual(["github", "github-app", "slack", "google", "generic"])
   })
 })
 
@@ -37,6 +38,17 @@ describe("tuned provider overrides", () => {
     const p = getProvider("github-app")
     expect(p).toBeDefined()
     if (!p) return
+    expect(p.supportsRefresh).toBe(true)
+    expect(p.expiryStrategy).toBe("expires_in")
+  })
+
+  it("google: authorizationParams requests offline access + consent, ephemeral redirect, device-code", () => {
+    const p = getProvider("google")
+    expect(p).toBeDefined()
+    if (!p) return
+    expect(p.authorizationParams).toEqual({ access_type: "offline", prompt: "consent" })
+    expect(p.redirectMode).toBe("loopback-ephemeral")
+    expect(p.deviceAuthorizationUrl).toBeDefined()
     expect(p.supportsRefresh).toBe(true)
     expect(p.expiryStrategy).toBe("expires_in")
   })
@@ -60,22 +72,25 @@ describe("tuned provider overrides", () => {
 describe("resolveScopeString", () => {
   it("uses the provider's separator", () => {
     const slack = getProvider("slack")
+    const google = getProvider("google")
     const github = getProvider("github")
     expect(slack).toBeDefined()
+    expect(google).toBeDefined()
     expect(github).toBeDefined()
-    if (!slack || !github) return
+    if (!slack || !google || !github) return
     expect(resolveScopeString(slack, ["a", "b"])).toBe("a,b")
+    expect(resolveScopeString(google, ["a", "b"])).toBe("a b")
     expect(resolveScopeString(github, ["a", "b"])).toBe("a b")
   })
 })
 
 describe("buildAuthorizationParams", () => {
   it("merges catalog authorizationParams with the assembled scope string", () => {
-    const github = getProvider("github")
-    expect(github).toBeDefined()
-    if (!github) return
-    const params = buildAuthorizationParams(github, ["a", "b"])
-    expect(params).toEqual({ scope: "a b" })
+    const google = getProvider("google")
+    expect(google).toBeDefined()
+    if (!google) return
+    const params = buildAuthorizationParams(google, ["a", "b"])
+    expect(params).toEqual({ access_type: "offline", prompt: "consent", scope: "a b" })
   })
 
   it("prepends provider defaultScopes and dedupes a scope that is ALSO a defaultScope", () => {
@@ -184,6 +199,7 @@ describe("userinfoUrl (OAuth-native Test Connection)", () => {
     expect(getProvider("github")?.userinfoUrl).toBe("https://api.github.com/user")
     expect(getProvider("github-app")?.userinfoUrl).toBe("https://api.github.com/user")
     expect(getProvider("slack")?.userinfoUrl).toBe("https://slack.com/api/auth.test")
+    expect(getProvider("google")?.userinfoUrl).toBe("https://www.googleapis.com/oauth2/v3/userinfo")
   })
 
   it("github requires a User-Agent header (GitHub rejects UA-less requests)", () => {

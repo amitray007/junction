@@ -288,6 +288,220 @@ export const CATALOG_ENTRIES: readonly AppCatalogEntry[] = [
     },
   },
   {
+    id: "gmail",
+    displayName: "Gmail",
+    supportedKinds: ["http"],
+    auth: [
+      {
+        mode: "oauth2",
+        providerId: "google",
+      },
+    ],
+    iconSlug: "gmail",
+    surfaces: [
+      {
+        kind: "http",
+        displayName: "Gmail (HTTP)",
+        connection: {
+          kind: "http",
+          baseUrl: "https://gmail.googleapis.com",
+        },
+        auth: [
+          {
+            mode: "oauth2",
+            providerId: "google",
+          },
+        ],
+        build: {
+          platformIdTemplate: "{app}-{kind}",
+          via: "descriptor",
+          credential: {
+            kind: "bearer",
+            from: "auth",
+          },
+        },
+        verify: {
+          kind: "none",
+        },
+        docs: "https://developers.google.com/gmail/api/reference/rest",
+        agentGuidance:
+          "Hand-authored, stable pinned operations covering the Gmail agent core: search/read messages, send, modify (archive/read/label), list labels, and get the account profile. Prefer these over ad-hoc calls — they are junction-owned and author-verified against Gmail's own API reference.",
+        starterTools: [
+          {
+            name: "list_messages",
+            description:
+              "List messages in the authenticated user's mailbox (GET /gmail/v1/users/me/messages). Supports Gmail's search-box query syntax for filtering.",
+            method: "GET",
+            path: "/gmail/v1/users/me/messages",
+            params: [
+              {
+                name: "q",
+                in: "query",
+                type: "string",
+                required: false,
+                description:
+                  'Only return messages matching this query, using the same syntax as the Gmail search box (e.g. "from:someone@example.com is:unread").',
+              },
+              {
+                name: "maxResults",
+                in: "query",
+                type: "number",
+                required: false,
+                description:
+                  "Maximum number of messages to return. Defaults to 100; the maximum allowed value is 500.",
+              },
+              {
+                name: "pageToken",
+                in: "query",
+                type: "string",
+                required: false,
+                description:
+                  "Page token to retrieve a specific page of results, from a previous list_messages response's nextPageToken.",
+              },
+              {
+                name: "labelIds",
+                in: "query",
+                type: "string",
+                required: false,
+                description:
+                  "Only return messages with labels matching this label ID (e.g. INBOX, UNREAD, IMPORTANT, or a custom label id from list_labels).",
+              },
+            ],
+            responseHint: "{ messages: [{id, threadId}], nextPageToken?, resultSizeEstimate }",
+          },
+          {
+            name: "get_message",
+            description: "Get a single message by id (GET /gmail/v1/users/me/messages/{id}).",
+            method: "GET",
+            path: "/gmail/v1/users/me/messages/{id}",
+            params: [
+              {
+                name: "id",
+                in: "path",
+                type: "string",
+                required: true,
+                description: "The message id, as returned by list_messages.",
+              },
+              {
+                name: "format",
+                in: "query",
+                type: "enum",
+                required: false,
+                description:
+                  "The format to return the message in. full = parsed headers/body in payload; metadata = headers only, no body; minimal = id/labels only; raw = full RFC 2822 message base64url-encoded in the raw field. Defaults to full.",
+                enum: ["full", "metadata", "minimal", "raw"],
+              },
+            ],
+            responseHint: "A Message resource — shape depends on the format param.",
+          },
+          {
+            name: "send_message",
+            description:
+              'Send an email (POST /gmail/v1/users/me/messages/send). The request body must be JSON of the shape {"raw":"<base64url RFC-2822 MIME>"} — the agent is responsible for building a valid RFC 2822 MIME message (headers: To/Subject/From/Content-Type as needed, plus body) and base64url-encoding it into the raw field. Requires the gmail.send scope.',
+            method: "POST",
+            path: "/gmail/v1/users/me/messages/send",
+            params: [
+              {
+                name: "body",
+                in: "body",
+                type: "string",
+                required: true,
+                description:
+                  'JSON object of the shape {"raw":"<base64url RFC-2822 MIME>"} — a full RFC 2822 email (headers + body), base64url-encoded. The agent builds the MIME message itself; junction does not construct it.',
+              },
+            ],
+            responseHint: "{ id, threadId, labelIds }",
+            confirm: true,
+          },
+          {
+            name: "modify_message",
+            description:
+              "Add or remove labels on a message (POST /gmail/v1/users/me/messages/{id}/modify). Use this to archive (remove INBOX), mark read (remove UNREAD), mark unread (add UNREAD), or apply/remove any label. Requires the gmail.modify scope.",
+            method: "POST",
+            path: "/gmail/v1/users/me/messages/{id}/modify",
+            params: [
+              {
+                name: "id",
+                in: "path",
+                type: "string",
+                required: true,
+                description: "The message id to modify.",
+              },
+              {
+                name: "body",
+                in: "body",
+                type: "string",
+                required: true,
+                description:
+                  'JSON object of the shape {"addLabelIds":["..."],"removeLabelIds":["..."]} — both arrays are optional but at least one should be non-empty. Label ids are system labels (INBOX, UNREAD, IMPORTANT, STARRED, ...) or custom label ids from list_labels.',
+              },
+            ],
+            responseHint: "The updated Message resource: { id, threadId, labelIds }",
+          },
+          {
+            name: "list_labels",
+            description:
+              "List all labels in the authenticated user's mailbox, both system (INBOX, UNREAD, ...) and user-created (GET /gmail/v1/users/me/labels).",
+            method: "GET",
+            path: "/gmail/v1/users/me/labels",
+            params: [],
+            responseHint: "{ labels: [{id, name, type}] }",
+          },
+          {
+            name: "get_profile",
+            description:
+              "Get the authenticated user's Gmail profile (GET /gmail/v1/users/me/profile) — email address, message/thread counts, history id. The cheapest identity/connectivity probe for this surface.",
+            method: "GET",
+            path: "/gmail/v1/users/me/profile",
+            params: [],
+            responseHint: "{ emailAddress, messagesTotal, threadsTotal, historyId }",
+          },
+        ],
+        notes: [
+          "Hand-authored templates covering the Gmail agent core (users.messages + users.labels) — a curated subset, not full API coverage.",
+          "send_message/modify_message require the gmail.send/gmail.modify scopes; a read-only grant (gmail.readonly) will 403 them (honest scope note).",
+          "Full REST coverage awaits a Discovery->OpenAPI adapter (see docs/futures/revisit-when.md).",
+        ],
+      },
+    ],
+    help: {
+      category: ["communication", "email"],
+      homepage: "https://workspace.google.com/gmail/",
+      statusPage: "https://www.google.com/appsstatus/dashboard/",
+      description:
+        "Google's email service — messages, threads, labels, and search, accessed via the Gmail REST API.",
+      agentGuidance:
+        "Covers reading, searching, sending, and labeling email. The HTTP surface's templates are stable pinned operations (search/read/send/modify/label) — prefer them over exploratory calls.",
+      oauthApp: {
+        registerUrl: "https://console.cloud.google.com/apis/credentials",
+        callbackPath: "/oauth/callback/google",
+      },
+      provenance: {
+        authoredBy: "junction",
+        researchedFrom: [
+          "https://developers.google.com/workspace/gmail/api/reference/rest",
+          "https://developers.google.com/workspace/gmail/api/auth/scopes",
+          "https://developers.google.com/identity/protocols/oauth2",
+          "https://gmail.googleapis.com/$discovery/rest?version=v1",
+          "https://console.cloud.google.com/apis/credentials",
+          "https://www.google.com/appsstatus/dashboard/",
+        ],
+        lastReviewed: "2026-07-11",
+      },
+      authSetup: {
+        interactive:
+          "create a project + OAuth client (type: Desktop app) in the Google Cloud Console, enable the Gmail API for the project, then request Gmail scopes (gmail.readonly / gmail.send / gmail.modify / gmail.labels) during connect",
+        env: "n/a — Google issues no static token; OAuth (with refresh) is the only auth mode",
+      },
+      notes: [
+        "Gmail's machine-readable API description is a Google Discovery document, not an OpenAPI 3.x spec — junction's openapi-client can't parse it, so no openapi surface ships. Full REST coverage awaits a Discovery->OpenAPI adapter (see docs/futures/revisit-when.md).",
+        "No CLI surface: there is no officially-supported Gmail user-data CLI (the unofficial @googleworkspace/cli 'gws' explicitly states it is not an official Google product, so junction doesn't ship it).",
+        "Google ships an official remote Gmail MCP server (gmailmcp.googleapis.com/mcp/v1, OAuth-protected) but it is Developer Preview (pre-GA), and junction's catalog build recipe can't yet bind an oauth2 credential to a remote mcp/http surface (the connect flow would present a Connect button that can't complete). Omitted for now — the HTTP surface is the supported programmatic path meanwhile. See docs/futures/revisit-when.md.",
+        "No GraphQL API exists for Gmail.",
+      ],
+    },
+  },
+  {
     id: "slack",
     displayName: "Slack",
     supportedKinds: ["openapi", "mcp"],

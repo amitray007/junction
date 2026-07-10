@@ -225,6 +225,34 @@ const PROVIDERS: readonly OAuthProvider[] = [
     userinfoUrl: "https://slack.com/api/auth.test",
   },
   {
+    id: "google",
+    displayName: "Google",
+    authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+    tokenUrl: "https://oauth2.googleapis.com/token",
+    deviceAuthorizationUrl: "https://oauth2.googleapis.com/device/code",
+    pkce: "S256",
+    scopeSeparator: " ",
+    // access_type:offline + prompt:consent are REQUIRED or Google never issues
+    // a refresh token (only on first consent otherwise).
+    authorizationParams: { access_type: "offline", prompt: "consent" },
+    tokenAuthMethod: "client_secret_basic",
+    bodyFormat: "form",
+    expiryStrategy: "expires_in",
+    // Desktop-app pattern: no fixed registered redirect, a per-flow ephemeral
+    // loopback port (RFC 8252).
+    redirectMode: "loopback-ephemeral",
+    supportsRefresh: true,
+    registrationHint: {
+      redirectUri: "http://127.0.0.1:<ephemeral-port>/",
+      scopes: "offline access requires access_type=offline + prompt=consent (handled by junction)",
+      docsUrl: "https://developers.google.com/identity/protocols/oauth2",
+    },
+    // Google's OpenID Connect userinfo endpoint — a plain bearer GET, no
+    // extra headers. Dogfooded this session: a stored Google token
+    // authenticated against it with a 200.
+    userinfoUrl: "https://www.googleapis.com/oauth2/v3/userinfo",
+  },
+  {
     // The escape hatch: user supplies authorizationUrl/tokenUrl (and scopes)
     // when registering a generic-oauth2 platform; the catalog entry carries
     // sensible defaults and placeholder (empty) endpoints — the connection

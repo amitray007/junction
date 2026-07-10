@@ -259,13 +259,16 @@ describe("data.server", () => {
     expect(github?.registrationHint.redirectUri).toBe("http://127.0.0.1:4321/oauth/callback")
     expect(github?.supportsDeviceCode).toBe(false)
 
-    // No surviving provider carries a deviceAuthorizationUrl since the inc 35
-    // catalog strip-down (google, the device-code example, was removed) — the
-    // supportsDeviceCode:true derivation returns to coverage with a
-    // device-code provider's own increment (36+). derivation itself (=
-    // deviceAuthorizationUrl !== undefined) is still exercised: every
-    // surviving provider correctly reports supportsDeviceCode:false.
-    expect(providers.every((p) => p.supportsDeviceCode === false)).toBe(true)
+    // google (the device-code example) was removed in the inc 35 catalog
+    // strip-down and restored in increment 39 (gmail) — supportsDeviceCode:true
+    // derivation coverage returns with it. Every OTHER surviving provider still
+    // correctly reports supportsDeviceCode:false.
+    const google = providers.find((p) => p.id === "google")
+    expect(google).toBeDefined()
+    expect(google?.supportsDeviceCode).toBe(true)
+    expect(
+      providers.filter((p) => p.id !== "google").every((p) => p.supportsDeviceCode === false),
+    ).toBe(true)
   })
 
   // ---------------------------------------------------------------------------

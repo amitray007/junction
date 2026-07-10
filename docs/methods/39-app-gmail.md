@@ -37,18 +37,22 @@ per-service, only OAuth is shared. `core` authoring increment; no web change.
 
 ## Surfaces to author (VERIFIED + Fable-decided)
 
-> **⚠️ DECISION 2 was REVERSED by Fable's final analysis** (verified in code):
-> the official remote MCP is **OMITTED**, not shipped, because junction's catalog
-> **build recipe cannot bind an oauth2 credential to a remote mcp/http surface**
-> (`build-recipe.ts` `planConnect` routes `oauth2` → `oauth-handoff` only —
-> mints a credential, emits NO mcp platform input; the mcp branch carries only a
-> STATIC `authHeader`/`tokenEnvVar`). So a catalog-authored oauth2 remote-MCP
-> surface would leave NO connected MCP source — a surface that doesn't connect,
-> violating the executable-connect-promise rule. (The RUNTIME could inject the
-> token — `resolve-provider.ts` refreshes+injects kind-agnostically — but the
-> AUTHORING layer can't create the row. A static bearer can't rescue it: OAuth
-> tokens expire ~1h and need vault refresh.) **So the HTTP surface is the PRIMARY
-> programmatic surface; the remote MCP is documented-omitted.**
+> **⚠️ UPDATED post-inc-38.** Inc 38 (inline OAuth catalog-connect bind) FIXED
+> the "oauth2 mints a credential but binds no source" gap for surfaces that
+> `planConnect` produces a `PlatformInput` for — which now INCLUDES the **http**
+> kind (with `{scheme:"bearer"}` so the refreshed oauth2 token is injected). **So
+> Gmail's HTTP surface (below) is now GENUINELY CONNECTABLE via oauth2** — it is
+> the PRIMARY programmatic surface, no longer a stub.
+>
+> **The official remote MCP stays OMITTED**, on TWO grounds: (1) it is Google
+> **Developer Preview** (pre-GA — the wrong bet for a curated "we pre-solved it"
+> surface), and (2) `buildPlatformInput`'s mcp branch carries only
+> `authHeader`/`tokenEnvVar` and does NOT set the `{scheme:"bearer"}` auth field
+> that the openapi/graphql/http kinds get (verified `build-recipe.ts:333,337-345`
+> — the inc-38 correctness review flagged this exact residual), so whether the
+> vaulted oauth2 token reaches a remote-MCP `authHeader` is unproven for the mcp
+> kind. Omit + `revisit-when` (trigger: GA **and** a proven oauth2→mcp-authHeader
+> bearer path). The HTTP surface carries the programmatic promise meanwhile.
 
 ### Shared Google OAuth provider — RESTORE from git (dogfood-verified original)
 
@@ -72,10 +76,12 @@ programmatic promise. It is honest, fully junction-owned, and genuinely connects
 (the Google OAuth provider already feeds bearer auth to http sources at runtime).
 
 - `kind:"http"`, `connection:{ kind:"http", baseUrl:"https://gmail.googleapis.com" }`.
-- `auth:[{mode:"oauth2", providerId:"google"}, {mode:"token"}]` (a token also
-  works — NOTE: oauth2 here goes through the shipped oauth-handoff to mint the
-  Google credential, then the http surface's bearer is fed from it at runtime;
-  this DOES work for http surfaces, unlike the remote-MCP case — the http connect
+- `auth:[{mode:"oauth2", providerId:"google"}]` (Google issues no static token,
+  so a token mode would be a broken ~1h promise — do NOT offer it; oauth2 only.
+  Post-inc-38, oauth2 now BINDS the http source: the guided dialog collects BYO
+  Google client creds once, the server re-derives the http `PlatformInput` from
+  this catalog surface (`{scheme:"bearer"}`), and the refreshed Google token is
+  injected as the bearer at runtime — the http connect
   path binds the vaulted credential. token/byo → bearer directly.)
 - `build:{ platformIdTemplate:"{app}-{kind}", via:"descriptor", credential:{kind:"bearer", from:"auth"} }`
   (http = descriptor path, like GitHub's http surface).
