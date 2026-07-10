@@ -22,8 +22,18 @@ import pino from "pino"
 
 /** A file-backed AuditSink plus the explicit flush hooks its callers need at shutdown. */
 export interface FileAuditSink extends AuditSink {
-  /** Async flush — safe to call from a normal shutdown path. */
-  flush(): void
+  /**
+   * Async flush — safe to call from a normal shutdown path. Returns a
+   * Promise that resolves once the pending writes are actually durable on
+   * disk (best-effort — a flush failure resolves rather than rejects, see
+   * the body's comment), so a SHORT-LIVED process (`junction run`, which
+   * exits right after formatting output — unlike serve/mcp serve, which
+   * stay alive well past flush()) can await it before its own last output
+   * write, rather than racing an unresolved write against process exit.
+   * Existing callers (serve.ts/mcp.ts) that don't await it are unaffected —
+   * a non-awaited Promise-returning call is still valid.
+   */
+  flush(): Promise<void>
   /** Synchronous flush — ONLY from an exit/signal handler (never the hot path). */
   flushSync(): void
 }
@@ -54,12 +64,36 @@ export function createFileAuditSink(paths: JunctionPaths): FileAuditSink {
         // Swallow — an audit failure must never break or slow the tool call.
       }
     },
-    flush(): void {
-      try {
-        dest.flush()
-      } catch {
-        // best-effort shutdown flush — swallow (e.g. sonic-boom not-ready).
-      }
+    flush(): Promise<void> {
+      return new Promise((resolve) => {
+        // IMPORTANT: sonic-boom's flush(cb) is NOT what its name suggests —
+        // in the default (unbatched, minLength<=0) mode it invokes `cb`
+        // IMMEDIATELY/synchronously without performing (or waiting for) any
+        // write at all (see sonic-boom's flush(): `if (this.minLength <= 0)
+        // { cb?.(); return }`). Empirically confirmed (8/8 repro): calling
+        // it right after emit() reliably produces a 0-byte file. The
+        // primitive that actually guarantees durability is flushSync() (a
+        // real fs.writeSync + fsyncSync) — but it throws "sonic boom is not
+        // ready yet" until the destination's ASYNC file open lands. sonic-
+        // boom's public .d.ts doesn't expose the internal `fd` field to
+        // check readiness up front, so: try flushSync() directly (the
+        // common case — the file has usually opened by the time execute()
+        // finishes); on the "not ready" throw, fall back to the one-time
+        // 'ready' event, then retry.
+        try {
+          dest.flushSync()
+          resolve()
+        } catch {
+          dest.once("ready", () => {
+            try {
+              dest.flushSync()
+            } catch {
+              // best-effort — swallow (mirrors flushSync()'s own catch below).
+            }
+            resolve()
+          })
+        }
+      })
     },
     flushSync(): void {
       try {

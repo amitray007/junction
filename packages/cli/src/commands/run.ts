@@ -220,7 +220,13 @@ export const runCommand = defineCommand({
       opts: timeoutMs === undefined ? undefined : { timeoutMs },
     })
 
-    auditSink.flush()
+    // AWAITED (unlike serve.ts/mcp.ts's fire-and-forget flush()) — `run` is
+    // a short-lived process that exits right after formatting output below,
+    // with no long-lived server loop to give the async SonicBoom write time
+    // to land before exit. process "exit"'s flushSync() is still the
+    // belt-and-suspenders backstop (SIGINT/SIGTERM/an unexpected early
+    // return), but the normal-completion path awaits the real flush.
+    await auditSink.flush()
 
     // ── Format the result ───────────────────────────────────────────────────
     if (result.isErr()) {
