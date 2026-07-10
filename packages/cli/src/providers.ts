@@ -16,60 +16,23 @@
 // 31-audit.md §2. The hook is OPT-IN via the optional `principal`/`sink`/
 // `prefixed` params: a caller that omits them (or the HTTP failed-resolve
 // fallback) gets the unaudited behavior unchanged.
+//
+// AUDIT-EMIT EXTRACTION (increment 33 Slice A): the entry-building logic that
+// used to live inline here moved to core's emitToolCall (core/src/audit/
+// emit.ts) so a later code-mode package can emit BYTE-IDENTICAL tool_call
+// lines through the same seam. `parseWireName` moved with it (core/src/audit/
+// wire-name.ts) — both are re-exported from @junction/core; this file now
+// only derives the AuditTarget and calls emitToolCall. No behavior change.
 
 import {
-  type AuditEntry,
   type AuditPrincipal,
   type AuditSink,
-  type AuditTarget,
-  argKeys,
-  hashArgs,
+  emitToolCall,
+  parseWireName,
   type ResultAsync,
-  splitNamespacedName,
   type UpstreamError,
 } from "@junction/core"
 import type { McpServerHandlers } from "@junction/mcp-server"
-
-// ---------------------------------------------------------------------------
-// parseWireName — arity-aware split of the FULL wire tool name (audit only)
-// ---------------------------------------------------------------------------
-
-/**
- * Split the wire-format tool name into `{ profile, namespace, tool }` for the
- * AUDIT target — NOT used for routing (the proxy itself already routes the
- * call; this just re-derives the same split for the audit line).
- *
- * LOAD-BEARING (docs/methods/31-audit.md §2 B3-name-parse): the shape of
- * `name` depends on arity:
- *   - unprefixed (`prefixed:false` — single-profile stdio / scope:"profile"):
- *     `name` is `<namespace>__<tool>` → `splitNamespacedName` alone is
- *     correct; `profile` comes from the principal's single profile.
- *   - prefixed (`prefixed:true` — scope:"profiles"|"global"): `name` is
- *     `<profileName>__<namespace>__<tool>`. Calling `splitNamespacedName`
- *     directly would WRONGLY read `namespace = <profileName>`. So: split ONCE
- *     on the FIRST `__` to peel `<profileName>` (charset contract — profile
- *     names carry no `_`, namespaces carry no `__` — scoped-proxy.ts), THEN
- *     `splitNamespacedName` the remainder for `{namespace, tool}`.
- */
-// Exported for the arity-split unit test (audit-only pure helper; the arity
-// split was a doc-review blocker — locked by a table test in providers.test.ts).
-export function parseWireName(name: string, prefixed: boolean, singleProfile: string): AuditTarget {
-  if (!prefixed) {
-    const { namespace, tool } = splitNamespacedName(name)
-    return { profile: singleProfile, namespace, tool }
-  }
-
-  const idx = name.indexOf("__")
-  if (idx === -1) {
-    // No separator at all — shouldn't happen for a validly-routed prefixed
-    // name, but stay fail-safe rather than throw from an audit-only path.
-    return { profile: "", namespace: "", tool: name }
-  }
-  const profile = name.slice(0, idx)
-  const remainder = name.slice(idx + 2)
-  const { namespace, tool } = splitNamespacedName(remainder)
-  return { profile, namespace, tool }
-}
 
 // ---------------------------------------------------------------------------
 // adaptToMcpHandlers — ResultAsync proxy → Promise-based McpServerHandlers
@@ -127,26 +90,18 @@ export function adaptToMcpHandlers(
       const result = await proxy.callTool(name, callArgs)
 
       if (audit !== undefined) {
-        try {
-          const singleProfile = audit.principal.profiles[0] ?? ""
-          const target = parseWireName(name, audit.prefixed, singleProfile)
-          const entry: AuditEntry = {
-            v: 1,
-            ts: new Date().toISOString(),
-            event: "tool_call",
-            correlationId,
-            principal: audit.principal,
-            target,
-            argKeys: argKeys(callArgs),
-            argHash: hashArgs(callArgs),
-            durationMs: performance.now() - start,
-            outcome: result.isErr() ? "error" : "ok",
-            errorKind: result.isErr() ? result.error.kind : null,
-          }
-          audit.sink.emit(entry)
-        } catch {
-          // Audit failure must NEVER break or delay the tool call.
-        }
+        const singleProfile = audit.principal.profiles[0] ?? ""
+        const target = parseWireName(name, audit.prefixed, singleProfile)
+        emitToolCall({
+          sink: audit.sink,
+          principal: audit.principal,
+          target,
+          args: callArgs,
+          outcome: result.isErr() ? "error" : "ok",
+          durationMs: performance.now() - start,
+          errorKind: result.isErr() ? result.error.kind : null,
+          correlationId,
+        })
       }
 
       if (result.isErr()) {
