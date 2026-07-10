@@ -37,6 +37,7 @@ import {
   getPaths,
   type Profile,
   ProfileIdSchema,
+  rotateAuditLogIfOversized,
   sweepStaleCredDirs,
 } from "@junction/core"
 import { makeResolveProvider } from "@junction/source-runtime"
@@ -200,6 +201,17 @@ const serveCommand = defineCommand({
         })}\n`,
       )
     })
+
+    // Rotate BEFORE the sink opens its fd (increment 32.8) — see rotate.ts's
+    // header for the rotate-before-open design rationale. A rotation failure
+    // never blocks startup; it's just a stderr warn (stdout carries the MCP
+    // protocol — see the file-level note above).
+    const rotate = await rotateAuditLogIfOversized(paths.auditLogFile)
+    if (rotate.kind === "failed") {
+      process.stderr.write(
+        `junction mcp serve: audit-log rotation failed (${rotate.code}), continuing\n`,
+      )
+    }
 
     // ── Audit sink (increment 31 Slice B) ─────────────────────────────────
     // One pino-backed file sink per process. stdio is always single-profile
