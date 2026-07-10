@@ -119,6 +119,28 @@ importers:
         specifier: ^4.0.0
         version: 4.0.0(@types/react@19.2.17)
 
+  packages/code-mode:
+    dependencies:
+      '@jitl/quickjs-singlefile-mjs-release-asyncify':
+        specifier: ^0.32.0
+        version: 0.32.0
+      '@junction/core':
+        specifier: workspace:*
+        version: link:../core
+      '@junction/mcp-server':
+        specifier: workspace:*
+        version: link:../mcp/server
+      neverthrow:
+        specifier: 'catalog:'
+        version: 8.2.0
+      quickjs-emscripten-core:
+        specifier: ^0.32.0
+        version: 0.32.0
+    devDependencies:
+      '@types/node':
+        specifier: ^26.1.0
+        version: 26.1.0
+
   packages/core:
     dependencies:
       '@napi-rs/keyring':
@@ -1014,6 +1036,12 @@ packages:
     peerDependenciesMeta:
       '@types/node':
         optional: true
+
+  '@jitl/quickjs-ffi-types@0.32.0':
+    resolution: {integrity: sha512-v9T+GQpmk43VDJ7d72sf0Nexhk+ArvtUihW27dy7lqAl0zBObFKtSBBIm5RBjwIhE8VwsPPm9PNuvPvNqLWUEg==}
+
+  '@jitl/quickjs-singlefile-mjs-release-asyncify@0.32.0':
+    resolution: {integrity: sha512-i5o5tV5JTItMqWAlxydlfFySyg4LpcGtOYk8e1vcVzTvGMKasrMKlJSjrleNdcIeDvi1KuPGrX49UV79MEbNzw==}
 
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
@@ -3972,6 +4000,9 @@ packages:
   quick-format-unescaped@4.0.4:
     resolution: {integrity: sha512-tYC1Q1hgyRuHgloV/YXs2w15unPVh8qfu/qCTfhTYamaw7fyhumKa2yGpdSo87vY32rIclj+4fWYQXUMs9EHvg==}
 
+  quickjs-emscripten-core@0.32.0:
+    resolution: {integrity: sha512-QFnPfjFey8EqknSrSxe1hZrf1/8z7/6s1QzGOmKo6++02r7QRRX7ZoyNaZh7JuVjWsVW87KnQrbZqnHkOAzUyg==}
+
   range-parser@1.2.1:
     resolution: {integrity: sha512-Hrgsx+orqoygnmhFbKaHE6c296J+HTAQXoxEF6gNupROmmGJRoyzfG3ccAveqCBrwr/2yxQ5BVd/GTl5agOwSg==}
     engines: {node: '>= 0.6'}
@@ -5389,6 +5420,12 @@ snapshots:
       iconv-lite: 0.7.2
     optionalDependencies:
       '@types/node': 26.1.0
+
+  '@jitl/quickjs-ffi-types@0.32.0': {}
+
+  '@jitl/quickjs-singlefile-mjs-release-asyncify@0.32.0':
+    dependencies:
+      '@jitl/quickjs-ffi-types': 0.32.0
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
@@ -7998,6 +8035,10 @@ snapshots:
   queue-microtask@1.2.3: {}
 
   quick-format-unescaped@4.0.4: {}
+
+  quickjs-emscripten-core@0.32.0:
+    dependencies:
+      '@jitl/quickjs-ffi-types': 0.32.0
 
   range-parser@1.2.1: {}
 

@@ -9,6 +9,7 @@
     { "path": "packages/http-client/tsconfig.typecheck.json" },
     { "path": "packages/platform-orchestration/tsconfig.typecheck.json" },
     { "path": "packages/source-runtime/tsconfig.typecheck.json" },
+    { "path": "packages/code-mode/tsconfig.typecheck.json" },
     { "path": "packages/cli/tsconfig.typecheck.json" }
   ]
 }
