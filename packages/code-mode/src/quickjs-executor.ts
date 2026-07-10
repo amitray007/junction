@@ -736,8 +736,17 @@ function installTools(
             const parsed = safeJsonParse(argsJson)
             args = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {}
           } catch {
-            using errHandle = context.newError("invalid arguments: not valid JSON")
+            // NOTE: explicit create/reject/dispose rather than `using` here.
+            // Every other error-handle in this file uses `using`, but oxc (the
+            // tsdown/rolldown transform) does NOT downlevel a `using`
+            // declaration sitting directly inside a `catch {}` block — it ships
+            // the raw `using` keyword, which is a SyntaxError under the repo's
+            // Node 20/22 floor (native ERM lands only in Node 24). The manual
+            // dispose is equivalent (reject reads the handle synchronously) and
+            // sidesteps that oxc gap. See docs/futures/gotchas.md.
+            const errHandle = context.newError("invalid arguments: not valid JSON")
             deferred.reject(errHandle)
+            errHandle.dispose()
             return deferred.handle
           }
 
