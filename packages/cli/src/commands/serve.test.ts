@@ -208,7 +208,10 @@ describe.skipIf(!builtBinReady)("junction serve — HTTP /mcp endpoint", () => {
     try {
       const client = await makeClient(handle.port, minted.value.plaintext)
       const tools = await client.listTools()
-      expect(tools.tools).toEqual([])
+      // Zero proxied (real) tools — but the synthetic junction__run_code tool
+      // (increment 33 Slice C) is always registered per routed profile,
+      // unprefixed for a single-profile key (passthrough arity).
+      expect(tools.tools.map((t) => t.name)).toEqual(["junction__run_code"])
       await client.close()
     } finally {
       handle.kill()
@@ -232,7 +235,13 @@ describe.skipIf(!builtBinReady)("junction serve — HTTP /mcp endpoint", () => {
     try {
       const client = await makeClient(handle.port, minted.value.plaintext)
       const tools = await client.listTools()
-      expect(tools.tools).toEqual([]) // both profiles have zero sources
+      // Zero proxied (real) tools (both profiles have zero sources) — but a
+      // synthetic junction__run_code tool is registered PER routed profile,
+      // 3-seg prefixed (increment 33 Slice C) — mirrors the real-tool arity.
+      expect(tools.tools.map((t) => t.name).sort()).toEqual([
+        "personal__junction__run_code",
+        "work__junction__run_code",
+      ])
       await client.close()
     } finally {
       handle.kill()
@@ -570,12 +579,18 @@ describe.skipIf(!builtBinReady)("junction serve — HTTP /mcp endpoint", () => {
     try {
       const client = await makeClient(handle.port, minted.value.plaintext)
       // Both profiles are in scope (global resolves live to ALL profiles).
-      // The broken source resolves to zero tools (skipped, per-source
+      // The broken source resolves to zero REAL tools (skipped, per-source
       // resilience) and the fine profile has zero sources — so the aggregate
-      // list is empty, but the KEY ASSERTION is that initialize + tools/list
-      // both SUCCEED (no 500, no thrown error) despite the broken source.
+      // REAL-tool list is empty, but the KEY ASSERTION is that initialize +
+      // tools/list both SUCCEED (no 500, no thrown error) despite the broken
+      // source. Each routed profile still gets its synthetic
+      // junction__run_code tool (increment 33 Slice C) — that registration
+      // does not depend on the profile's sources resolving.
       const tools = await client.listTools()
-      expect(tools.tools).toEqual([])
+      expect(tools.tools.map((t) => t.name).sort()).toEqual([
+        "broken-src__junction__run_code",
+        "fine__junction__run_code",
+      ])
       await client.close()
     } finally {
       handle.kill()

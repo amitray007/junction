@@ -45,6 +45,7 @@ import { makeResolveProvider } from "@junction/source-runtime"
 import { defineCommand } from "citty"
 import { createFileAuditSink } from "../audit-sink.js"
 import { adaptToMcpHandlers } from "../providers.js"
+import { buildRunCodeHandlers, mergeHandlers } from "../synthetic-tool.js"
 
 // ---------------------------------------------------------------------------
 // Default (synthetic) profile — used when no DB is available
@@ -263,7 +264,30 @@ const serveCommand = defineCommand({
 
     // ── Adapt proxy ResultAsync → Promise handlers for mcp/server ─────────
     // Shared with `junction serve` (commands/serve.ts) via providers.ts.
-    const handlers = adaptToMcpHandlers(proxy, { principal, sink: auditSink, prefixed: false })
+    const realHandlers = adaptToMcpHandlers(proxy, { principal, sink: auditSink, prefixed: false })
+
+    // ── Synthetic junction__run_code tool (increment 33 Slice C) ──────────
+    // stdio is always single-profile, unprefixed — one entry, unprefixed
+    // wire name `junction__run_code`. A refused-collision warning (guard
+    // point 2 — see synthetic-tool.ts) goes to stderr ONLY (stdout carries
+    // the MCP protocol — see the file-level note above), never consola.
+    const runCodeHandlers = await buildRunCodeHandlers({
+      entries: [{ profileName: profile.name, proxy }],
+      prefixed: false,
+      principal,
+      sink: auditSink,
+      onReservedNamespaceCollision: (info) => {
+        process.stderr.write(
+          `${JSON.stringify({
+            event: "reserved_namespace_collision",
+            profileName: info.profileName,
+            detail:
+              "a legacy 'junction__' tool already exists — junction__run_code was NOT registered",
+          })}\n`,
+        )
+      },
+    })
+    const handlers = mergeHandlers(realHandlers, runCodeHandlers)
 
     // ── Serve ─────────────────────────────────────────────────────────────
     // serveStdio resolves on the CLEAN shutdown path (transport onclose /
