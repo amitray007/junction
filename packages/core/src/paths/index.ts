@@ -16,8 +16,11 @@ export type JunctionPaths = {
   masterKeyFile: string
   /**
    * Append-only JSONL audit log (increment 31) — one structured line per
-   * `tool_call`. Never a secret/arg-value artifact; safe to keep indefinitely
-   * (rotation/retention deferred, see docs/futures/revisit-when.md).
+   * `tool_call`. Never a secret/arg-value artifact. Size-based rotation runs
+   * at serve/mcp-serve startup (increment 32.8, see audit/rotate.ts) —
+   * `audit.log` rotates to `.1..5` (default 8MiB threshold); readers
+   * (`junction audit`, web `/audit`) read this CURRENT file only, the
+   * rotated generations are on-disk history for manual inspection.
    */
   auditLogFile: string
   /**

@@ -116,8 +116,11 @@ async function isPrecedingByteNewline(
 
 /**
  * Bounded tail-read for the web loader: read at most the last `maxBytes` of
- * the log, then parse. Keeps the web page's read bounded on a large log
- * (full rotation deferred — see docs/futures/revisit-when.md).
+ * the log, then parse. Keeps the web page's read bounded on a large log —
+ * size-based rotation now runs at serve/mcp-serve startup (increment 32.8,
+ * see audit/rotate.ts), but readers stay on the CURRENT file only by design
+ * (rotated `.1..keep` generations are on-disk history, not queried here), so
+ * this cap still matters for a long-lived session between rotations.
  *
  * - Whole file ≤ `maxBytes` → equivalent to `readAuditLog` (nothing dropped,
  *   `truncated: false`).
