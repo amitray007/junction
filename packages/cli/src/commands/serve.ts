@@ -24,6 +24,7 @@
 import {
   type AuditPrincipal,
   createCredentialStore,
+  createFileToolPinStore,
   createProfileProxy,
   createRepositories,
   createScopedProxy,
@@ -124,6 +125,11 @@ export const serveCommand = defineCommand({
       log: (msg: string) => consola.warn(msg),
     })
 
+    // Hash-pinning / rug-pull detection (increment 32.11): ONE file-backed pin store for
+    // this process, injected into every buildHandlers() call's per-profile proxies below —
+    // mirrors auditSink's one-per-process construction.
+    const toolPinStore = createFileToolPinStore(paths)
+
     // Rotate BEFORE the sink opens its fd (increment 32.8) — see rotate.ts's
     // header for the rotate-before-open design rationale. A rotation failure
     // never blocks startup; it's just a warn in this file's own idiom.
@@ -190,18 +196,26 @@ export const serveCommand = defineCommand({
         const profileResult = await repos.profiles.get(profileId)
         if (profileResult.isErr()) continue // absent → skip, fail-safe shrink
         const profile = profileResult.value
-        // Tool-poisoning mitigation (increment 32.5): sanitize is always applied inside
-        // createProfileProxy; onDescriptionDrift only SURFACES it — one structured warn,
-        // metadata only, never the (possibly-injected) description text.
-        const proxy = createProfileProxy(profile.sources, resolveProvider, (info) => {
-          consola.warn({
-            event: "description_sanitized",
-            namespace: info.namespace,
-            tool: info.tool,
-            strippedSuspicious: info.strippedSuspicious,
-            truncated: info.truncated,
-          })
-        })
+        // Tool-poisoning mitigation (increment 32.5) + hash-pinning / rug-pull detection
+        // (increment 32.11): sanitize and TOFU pin-comparison are always applied inside
+        // createProfileProxy; onDescriptionDrift only SURFACES either signal, discriminated
+        // by info.reason ("sanitized" | "pin-drift") — one structured warn, metadata only,
+        // never the (possibly-injected) description text, never old/new hashes.
+        const proxy = createProfileProxy(
+          profile.sources,
+          resolveProvider,
+          (info) => {
+            consola.warn({
+              event: info.reason === "pin-drift" ? "tool_pin_drift" : "description_sanitized",
+              namespace: info.namespace,
+              tool: info.tool,
+              strippedSuspicious: info.strippedSuspicious,
+              truncated: info.truncated,
+              reason: info.reason,
+            })
+          },
+          toolPinStore,
+        )
         entries.push({ profileName: profile.name, proxy })
       }
 

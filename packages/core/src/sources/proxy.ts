@@ -54,7 +54,7 @@ import { err, ok, type Result, ResultAsync } from "../result/index.js"
 import { namespaceToolName, splitNamespacedName } from "./naming.js"
 import type { ProviderTool, ToolProvider, ToolResult } from "./provider.js"
 import { sanitizeDescription } from "./sanitize-description.js"
-import { pinKeyString, type ToolPinStore } from "./tool-pins.js"
+import { type PinChange, pinKeyString, type ToolPinStore } from "./tool-pins.js"
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -245,11 +245,7 @@ export function createProfileProxy(
         // self-heals on the next successful putMany. A caller wanting store-health visibility
         // reads its own stderr/log around toolPinStore construction — out of scope here.
         const existingPins = toolPinStore ? await toolPinStore.getAll() : undefined
-        const pinChanges: Array<{
-          key: { toolNamespace: string; rawName: string }
-          hash: string
-          now: string
-        }> = []
+        const pinChanges: PinChange[] = []
         const nowIso = new Date().toISOString()
 
         // Fan out to all sources concurrently. allSettled ensures one source's failure
