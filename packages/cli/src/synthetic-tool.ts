@@ -109,11 +109,15 @@ const RUN_CODE_TOOL_NAME = "junction__run_code" as const
 const RUN_CODE_DESCRIPTION =
   "Execute JavaScript against this profile's brokered tools instead of calling them " +
   "one-by-one. Inside your code, a `tools` facade is available: `tools.search({query})` " +
-  'finds tools by keyword, `tools.describe("<namespace>.<tool>")` returns a tool\'s full ' +
-  "schema, and `tools.<namespace>.<tool>(args)` calls it directly and returns its result " +
-  "(await it). The facade exposes ONLY the tools already visible to you in this session's " +
-  "tool list — nothing broader. A tool call's result is ALREADY UNWRAPPED to a usable " +
-  "value: a JSON response body comes back as the parsed object/array (e.g. " +
+  'finds tools by keyword and returns an array of matches, `tools.describe.tool("<namespace>.<tool>")` ' +
+  "returns a tool's full schema, and `tools.<namespace>.<tool>(args)` calls it directly and " +
+  "returns its result (await it). ALL THREE already return usable objects/arrays — " +
+  "`tools.search(...)` and `tools.describe.tool(...)` are pre-parsed just like a direct tool " +
+  'call\'s result (e.g. `(await tools.search({query:"repo"}))[0].name`, ' +
+  '`(await tools.describe.tool("github.search_repos")).inputSchema`) — you never need to ' +
+  "JSON.parse any of them yourself. The facade exposes ONLY the tools already visible to you " +
+  "in this session's tool list — nothing broader. A tool call's result is ALREADY UNWRAPPED to " +
+  "a usable value: a JSON response body comes back as the parsed object/array (e.g. " +
   "`(await tools.qa.greet({name})).greeting`), plain-text output comes back as a string, " +
   "and a multi-part response comes back as an array — never the raw MCP content envelope, " +
   "so you never need to hand-parse it. A tool call that fails (upstream error, or the " +

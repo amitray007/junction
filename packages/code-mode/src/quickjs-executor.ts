@@ -649,6 +649,23 @@ const TOOLS_PROXY_BOOTSTRAP = `
       has(target, key) { return key in target; },
     });
   }
+  // GUEST-SIDE null-proto reviver (prototype-pollution guard, 33.1 fix 3) —
+  // mirrors the HOST's nullProtoReviver (quickjs-executor.ts) exactly: drop
+  // any "__proto__" key before it can influence the parsed object's
+  // prototype chain. This only touches the GUEST's own isolated QuickJS
+  // heap/Object.prototype (a completely separate realm from the host's —
+  // see the prototype-pollution guard tests) — it is NOT the
+  // host-trust-boundary JSON.parse the null-proto reviver guards (that
+  // already ran host-side, in unwrapToolResult/safeJsonParse, before this
+  // text was ever built). Applied uniformly to every JSON.parse below
+  // (direct tool-call results AND search()/describe.tool() results) so a
+  // malicious/buggy upstream tool result or facade payload can't pollute
+  // the guest's OWN Object.prototype either, as defense-in-depth alongside
+  // the host-side guarantee.
+  function reviveNullProto(key, value) {
+    if (key === "__proto__") return undefined;
+    return value;
+  }
   // Each tool bridge function (installed host-side as a sync newFunction,
   // see installTools) resolves its Promise with a JSON-TEXT STRING — the
   // host cannot construct an arbitrary QuickJS value handle (object/array)
@@ -657,21 +674,33 @@ const TOOLS_PROXY_BOOTSTRAP = `
   // that JSON text into the parsed value/array/object the guest's
   // \`await tools.<ns>.<tool>(...)\` expression observes — this is the fix
   // for the ergonomics bug (33f): before this wrap, guest code had to
-  // hand-parse the resolved string itself. A guest-side JSON.parse here
-  // only touches the GUEST's own isolated QuickJS heap/Object.prototype
-  // (a completely separate realm from the host's — see the
-  // prototype-pollution guard tests) — it is NOT the host-trust-boundary
-  // JSON.parse the null-proto reviver guards (that already ran host-side,
-  // in unwrapToolResult/safeJsonParse, before this text was ever built).
+  // hand-parse the resolved string itself.
   function wrapToolFn(fn) {
     return function (...args) {
       return fn.apply(null, args).then(function (text) {
         try {
-          return JSON.parse(text);
+          return JSON.parse(text, reviveNullProto);
         } catch (e) {
           return text;
         }
       });
+    };
+  }
+  // search()/describe.tool() are SYNC bridge functions (installTools) that
+  // also resolve a JSON-TEXT STRING (searchFacade/describeFacadeTool,
+  // JSON.stringify'd host-side) — 33.1 fix 3: previously left un-parsed
+  // (guest code had to JSON.parse the result itself), unlike the 33f
+  // direct-call unwrap above. Parse it here too, through the SAME
+  // reviveNullProto guard, so tools.search()/describe.tool() return usable
+  // objects/arrays directly, matching the 33f ergonomics.
+  function wrapJsonFn(fn) {
+    return function (...args) {
+      const text = fn.apply(null, args);
+      try {
+        return JSON.parse(text, reviveNullProto);
+      } catch (e) {
+        return text;
+      }
     };
   }
   const raw = globalThis.__rawTools;
@@ -683,6 +712,8 @@ const TOOLS_PROXY_BOOTSTRAP = `
     }
     raw[ns] = guard(nsObj);
   }
+  raw.search = wrapJsonFn(raw.search);
+  raw.describe.tool = wrapJsonFn(raw.describe.tool);
   globalThis.tools = guard(raw);
   delete globalThis.__rawTools;
 })();
