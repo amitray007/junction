@@ -56,7 +56,7 @@ vi.mock("@junction/source-runtime", async (importOriginal) => {
   }
 })
 
-const { connectCommand } = await import("./connect.js")
+const { connectCommand, formatOAuthConnectError } = await import("./connect.js")
 
 // ---------------------------------------------------------------------------
 // Test helpers — mirrors credential.test.ts's ctx()/captureStdout()/setup pattern.
@@ -559,5 +559,32 @@ describe("junction connect (unit)", () => {
         expect.objectContaining({ clientSecret: "SUPER-SECRET-SENTINEL-VALUE" }),
       )
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// formatOAuthConnectError — 32.13 Slice B1: duplicate-account surfaces as a
+// specific, non-misleading message (not the generic "persist-failed").
+// ---------------------------------------------------------------------------
+
+describe("formatOAuthConnectError — duplicate-account (32.13 Slice B1)", () => {
+  it("surfaces a typed duplicate-account message naming the account, not generic persist-failed text", () => {
+    const message = formatOAuthConnectError({
+      kind: "duplicate-account",
+      platformId: "github",
+      account: "work",
+    })
+    expect(message).toContain("work")
+    expect(message).toContain("already connected")
+    expect(message).not.toContain("persist-failed")
+    expect(message).not.toContain("failed to persist")
+  })
+
+  it("still formats persist-failed distinctly (unchanged sibling branch)", () => {
+    const message = formatOAuthConnectError({
+      kind: "persist-failed",
+      cause: { kind: "query-failed", cause: "boom" },
+    })
+    expect(message).toContain("failed to persist tokens")
   })
 })

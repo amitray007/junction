@@ -271,5 +271,9 @@ function exchangeErrorReason(error: OAuthConnectError): string {
 
 function persistErrorReason(error: OAuthConnectError): string {
   if (error.kind === "persist-failed") return "persist-failed"
+  // 32.13 Slice B1: explicit branch (rather than relying on the `return
+  // error.kind` fallback) so the duplicate-account reason string is a
+  // deliberate, reviewed choice — not an accident of the fallback shape.
+  if (error.kind === "duplicate-account") return "duplicate-account"
   return error.kind
 }

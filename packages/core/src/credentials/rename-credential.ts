@@ -31,10 +31,22 @@ export interface RenameCredentialInput {
 /**
  * Rename a credential's account label (profileName) in place.
  *
- * Validates the new label (non-empty after trim) and writes it via the repo's
- * setProfileName (read-before-write, so a missing credential surfaces as
- * not-found). Returns the updated Credential (metadata only — no secret ever
- * enters this path).
+ * Validates the new label (non-empty after trim), then reads the credential
+ * (to learn its platformId, so the duplicate-account guard below can scope
+ * correctly) before writing via the repo's setProfileName (read-before-write,
+ * so a missing credential surfaces as not-found). Returns the updated
+ * Credential (metadata only — no secret ever enters this path).
+ *
+ * DUPLICATE-ACCOUNT GUARD (32.13 Slice B2): mirrors addCredential's
+ * forPlatform pre-check, but EXCLUDES the credential's OWN id from the
+ * collision set — renaming a credential to its EXISTING label must be a
+ * no-op success, not a false "duplicate" (it always collides with itself).
+ * Without this guard, the rename write would fall through to the DB's
+ * `credentials_platform_profile_unique` index (32.9) and surface the
+ * generic/wrong "constraint violation (check that referenced
+ * platform/credential/profile exists)" — actively misleading, since nothing
+ * referenced is missing; the real cause is a sibling credential already
+ * holding that label.
  */
 export function renameCredential(
   input: RenameCredentialInput,
@@ -47,5 +59,23 @@ export function renameCredential(
       reason: "account label must not be empty",
     })
   }
-  return credentialsRepo.setProfileName(input.credentialId, account)
+  return credentialsRepo.get(input.credentialId).andThen((current) => {
+    // Rename-to-own-label is always a no-op success — never a false collision.
+    if (current.profileName === account) {
+      return credentialsRepo.setProfileName(input.credentialId, account)
+    }
+    return credentialsRepo
+      .forPlatform(current.platformId)
+      .andThen((existing): ResultAsync<Credential, CredentialError | DbError> => {
+        const duplicate = existing.some((c) => c.id !== current.id && c.profileName === account)
+        if (duplicate) {
+          return errAsync({
+            kind: "duplicate-account" as const,
+            platformId: String(current.platformId),
+            account,
+          })
+        }
+        return credentialsRepo.setProfileName(input.credentialId, account)
+      })
+  })
 }

@@ -457,6 +457,24 @@ describe("completeOAuthCallback", () => {
     }
   })
 
+  it("32.13 Slice B1: a duplicate-account persist failure -> error outcome with reason 'duplicate-account' (not generic 'persist-failed')", async () => {
+    await seedPendingCreate("state-dup-account")
+    exchangeCodeMock.mockResolvedValue({
+      isErr: () => false,
+      value: { accessToken: "tok-access" },
+    })
+    persistOAuthTokensMock.mockReturnValue(
+      errAsync({ kind: "duplicate-account", platformId: "github-platform", account: "work" }),
+    )
+
+    const result = await completeOAuthCallback("code-123", "state-dup-account")
+    expect(result.outcome).toBe("error")
+    if (result.outcome === "error") {
+      expect(result.reason).toBe("duplicate-account")
+      expect(result.reason).not.toBe("persist-failed")
+    }
+  })
+
   it("the sentinel client secret never appears in any completeOAuthCallback outcome (adversarial sweep)", async () => {
     await seedPendingCreate("state-sweep")
     exchangeCodeMock.mockResolvedValue({

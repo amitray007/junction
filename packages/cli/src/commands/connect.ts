@@ -95,6 +95,8 @@ export function formatOAuthConnectError(e: OAuthConnectError): string {
       return `invalid input: ${e.reason}`
     case "persist-failed":
       return `failed to persist tokens: ${e.cause.kind}`
+    case "duplicate-account":
+      return `an account named "${e.account}" is already connected to this platform`
     default: {
       const _: never = e
       return _
