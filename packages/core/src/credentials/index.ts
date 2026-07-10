@@ -12,7 +12,7 @@ import { resolveMasterKey } from "./master-key.js"
 import { recoverInterruptedRekey } from "./rotate-master-key.js"
 import type { CredentialStore } from "./store.js"
 
-export { type AddCredentialInput, addCredential } from "./add-credential.js"
+export { type AddCredentialInput, addCredential, FILE_SECRET_MAX_BYTES } from "./add-credential.js"
 export { type ExportVaultInput, type ExportVaultResult, exportVault } from "./export-vault.js"
 export {
   type ImportSummary,

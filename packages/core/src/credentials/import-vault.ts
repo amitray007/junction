@@ -39,7 +39,7 @@ import { type Credential, CredentialSchema } from "../schema/credential.js"
 import type { Platform } from "../schema/platform.js"
 import { PlatformIdSchema } from "../schema/primitives.js"
 import { ProfileSchema } from "../schema/profile.js"
-import { addCredential } from "./add-credential.js"
+import { addCredential, FILE_SECRET_MAX_BYTES } from "./add-credential.js"
 import { isKindAccepted } from "./kind-compat.js"
 import { removeCredential } from "./remove-credential.js"
 import type { CredentialStore } from "./store.js"
@@ -542,10 +542,9 @@ async function prevalidateStrict(
       }
       if (mc.kind === "file") {
         const byteLength = Buffer.byteLength(mc.secret, "utf8")
-        // keep in sync with add-credential.ts's FILE_SECRET_MAX_BYTES — NOT
-        // extracted because add-credential.ts is owned by a parallel increment
-        // (32.9); extraction is a follow-up once both land.
-        const FILE_SECRET_MAX_BYTES = 32 * 1024
+        // FILE_SECRET_MAX_BYTES imported from add-credential.js (33.1 fix 4) —
+        // was a locally-duplicated literal ("keep in sync" comment); now one
+        // exported const both enforcement points import.
         if (byteLength > FILE_SECRET_MAX_BYTES) {
           return err({
             kind: "import-failed",

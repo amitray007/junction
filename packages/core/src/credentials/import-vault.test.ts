@@ -12,7 +12,7 @@ import { newPlatformId } from "../ids/index.js"
 import { ensureHome, getPaths } from "../paths/index.js"
 import type { Repositories } from "../repositories/index.js"
 import { createRepositories } from "../repositories/index.js"
-import { addCredential } from "./add-credential.js"
+import { addCredential, FILE_SECRET_MAX_BYTES } from "./add-credential.js"
 import { createEncryptedFileStore } from "./encrypted-file-store.js"
 import { exportVault } from "./export-vault.js"
 import { importVault } from "./import-vault.js"
@@ -287,6 +287,73 @@ describe("importVault", () => {
 
       const dstPlatforms = (await dst.repos.platforms.list())._unsafeUnwrap()
       expect(dstPlatforms).toHaveLength(2)
+    })
+
+    it("import path enforces the same FILE_SECRET_MAX_BYTES cap as addCredential (33.1 fix 4 — shared const, not a duplicated literal)", async () => {
+      // A "cli" platform is the only kind whose kind-compat matrix accepts
+      // "file" (kind-compat.ts). Hand-build a raw manifest (bypasses
+      // exportVault, which can never produce oversized content by
+      // construction) carrying a "file" secret one byte over the shared
+      // FILE_SECRET_MAX_BYTES cap.
+      const platform = await src.repos.platforms.create({
+        id: newPlatformId(),
+        kind: "cli" as const,
+        displayName: "CLI File-Secret Platform",
+        cli: {
+          tools: [
+            {
+              name: "greet",
+              argv: [{ kind: "literal", value: "/bin/echo" }],
+              args: [],
+              policy: {
+                cwd: "/tmp",
+                readPaths: ["/tmp"],
+                writePaths: [],
+                allowNet: [],
+                timeoutMs: 5000,
+                envAllow: {},
+              },
+            },
+          ],
+          credentialEnvVar: "CLI_FILE_SECRET_CRED",
+        },
+      })
+      if (platform.isErr()) throw platform.error
+
+      const oversized = "x".repeat(FILE_SECRET_MAX_BYTES + 1)
+      const manifest: VaultManifest = {
+        v: 1,
+        exportedAt: new Date().toISOString(),
+        platforms: [platform.value],
+        credentials: [
+          {
+            platformId: String(platform.value.id),
+            account: "oversized-file",
+            kind: "file",
+            secret: oversized,
+            _srcId: "src-oversized-file-1",
+          },
+        ],
+      }
+      const archive = await buildRawArchive(manifest, "file-secret-cap-pass")
+
+      const result = await importVault({
+        repos: dst.repos,
+        store: dst.store,
+        archive,
+        passphrase: "file-secret-cap-pass",
+      })
+      // Non-strict: the oversized credential fails, but the import itself
+      // still completes (per-credential failures land in summary.failed).
+      expect(result.isOk()).toBe(true)
+      if (result.isOk()) {
+        expect(result.value.credentials.added).toBe(0)
+        expect(result.value.credentials.failed).toHaveLength(1)
+        expect(result.value.credentials.failed[0]?.reason).toContain("32 KiB")
+      }
+      // Zero writes for the rejected credential — never reaches the store.
+      const dstCreds = (await dst.repos.credentials.list())._unsafeUnwrap()
+      expect(dstCreds).toHaveLength(0)
     })
 
     it("wrong passphrase → import-failed, ZERO writes", async () => {
@@ -1283,6 +1350,89 @@ describe("importVault", () => {
         if (result.isErr()) expect(result.error.kind).toBe("import-failed")
         expect(setCalls).toBe(0)
 
+        const dstCreds = (await dst.repos.credentials.list())._unsafeUnwrap()
+        expect(dstCreds).toHaveLength(0)
+      })
+
+      it("oversized file-secret in manifest → phase-1 abort via the SAME FILE_SECRET_MAX_BYTES cap (33.1 fix 4 — prevalidateStrict's own enforcement point), store NEVER touched", async () => {
+        const platform = await src.repos.platforms.create({
+          id: newPlatformId(),
+          kind: "cli" as const,
+          displayName: "CLI File-Secret Platform (strict)",
+          cli: {
+            tools: [
+              {
+                name: "greet",
+                argv: [{ kind: "literal", value: "/bin/echo" }],
+                args: [],
+                policy: {
+                  cwd: "/tmp",
+                  readPaths: ["/tmp"],
+                  writePaths: [],
+                  allowNet: [],
+                  timeoutMs: 5000,
+                  envAllow: {},
+                },
+              },
+            ],
+            credentialEnvVar: "CLI_FILE_SECRET_CRED_STRICT",
+          },
+        })
+        if (platform.isErr()) throw platform.error
+
+        const oversized = "y".repeat(FILE_SECRET_MAX_BYTES + 1)
+        const manifest: VaultManifest = {
+          v: 1,
+          exportedAt: new Date().toISOString(),
+          platforms: [platform.value],
+          credentials: [
+            {
+              platformId: String(platform.value.id),
+              account: "oversized-file-strict",
+              kind: "file",
+              secret: oversized,
+              _srcId: "src-oversized-file-strict-1",
+            },
+          ],
+        }
+        const archive = await buildRawArchive(manifest, "strict-file-secret-cap-pass")
+
+        let setCalls = 0
+        const spyStore: CredentialStore = {
+          ...dst.store,
+          set: (ref, value) => {
+            setCalls++
+            return dst.store.set(ref, value)
+          },
+        }
+
+        const result = await importVault({
+          repos: dst.repos,
+          store: spyStore,
+          archive,
+          passphrase: "strict-file-secret-cap-pass",
+          strict: true,
+        })
+        expect(result.isErr()).toBe(true)
+        if (result.isErr()) {
+          expect(result.error.kind).toBe("import-failed")
+          expect(result.error.kind === "import-failed" && result.error.reason).toContain("32 KiB")
+          // Must be the DIRECT phase-1 prevalidation message, NOT phase-2's
+          // "strict import aborted: ... mid-import ..." compensation wrapper
+          // (runStrictImport's fallback path) — that wrapper would ALSO
+          // eventually reject an oversized secret (addCredential's own cap
+          // enforces it independently in phase 2), so asserting only
+          // isErr()+"32 KiB" cannot distinguish "prevalidateStrict's cap
+          // check is correctly wired to the shared constant" from "some
+          // other later check happened to catch it". Pinning "does NOT
+          // contain the phase-2 wrapper text" proves THIS test exercises
+          // prevalidateStrict's own FILE_SECRET_MAX_BYTES import specifically.
+          expect(result.error.kind === "import-failed" && result.error.reason).not.toContain(
+            "strict import aborted",
+          )
+        }
+        // Phase-1 prevalidation caught it — zero writes, store never touched.
+        expect(setCalls).toBe(0)
         const dstCreds = (await dst.repos.credentials.list())._unsafeUnwrap()
         expect(dstCreds).toHaveLength(0)
       })
