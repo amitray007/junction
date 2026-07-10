@@ -19,8 +19,16 @@
 > **Reconciled 2026-07-10 (post-backlog-burn-down):** the full §1 PENDING list above was burned down in
 > one autonomous session — 7 increments, 7 PRs (#128–#134): 30.14 (UI completion), 32.7 (small debts),
 > 32.8 (audit rotation), 32.9 (DB unique index), 32.10 (strict import), 32.11 (hash-pinning), 32.12
-> (heavy-analyzers CI). **§1 now contains only the two Tier-1 increments (33 Code-mode, 34
-> Distribution)** — every other row is checked. See `docs/STATE.md` §7 for the full session narrative.
+> (heavy-analyzers CI). See `docs/STATE.md` §7 for the full session narrative.
+>
+> **Reconciled 2026-07-10 (post-audit + Code Mode):** three more increments shipped after the burn-down —
+> an **extensive 6-agent codebase audit** (strong shape, 0 critical / 1 high) whose fix-worthy findings all
+> landed in **32.13 audit remediation** (PR #136, incl. the HIGH encrypted-store lost-update race), and
+> **33 Code Mode** (PR #138 — sandboxed QuickJS-WASM JS over the ToolProvider proxy: `junction__run_code`
+> MCP tool + `junction run` CLI; sandbox-security LEAD gate caught+fixed a HIGH dispose-crash DoS).
+> **§1 now: 33.1 (audit/Code-Mode follow-ups, in flight) + 34 Distribution (still excluded/gated).** The
+> three trigger-gated audit follow-ups (store split-brain, per-keyId session cap, probe fan-out cache)
+> stay in §2 / `revisit-when.md` — their triggers have not fired.
 >
 > Three lists, kept deliberately separate:
 > - **§1 PENDING** — actionable *now*: unfinished work, real bugs/gaps found by dogfooding, and
@@ -54,7 +62,9 @@
 | ☑ | Tool-description hash-pinning (rug-pull detection; 32.5 deferred) | heavier debt | core/sec | M |
 | ☑ | 32.4 strict all-or-nothing import (temp-DB swap) | heavier debt | core | M |
 | ☑ | 32.2 heavy-analyzers CI (knip / semgrep / CodeQL) | heavier debt | ci | M |
-| ☐ | **33 — Code-mode** (QuickJS over the proxy) | big Tier-1 | core/sec | L (fresh session) |
+| ☑ | **Extensive codebase audit** (6 agents) + **32.13 audit remediation** (HIGH store race + more) | audit | core/sec | L |
+| ☑ | **33 — Code-mode** (QuickJS over the proxy) | big Tier-1 | core/sec | L |
+| ◐ | **33.1 — audit/Code-Mode follow-ups** (oauth2 verify-state · resolve-provider all-kinds · facade discovery unwrap · FILE_SECRET DRY) | follow-up | core/sec | S (in flight) |
 | ☐ | **34 — Distribution** (npm publish; gated + pre-req migration-0003 fix) | big Tier-1 | packaging | L (fresh session) |
 
 **✅ Done since the last reconcile:** app-page CTAs (32.6a) · `/audit` page (32.6b) · surfaces backfill for the curated set (32.6c + 30.13, 54 apps) · 30.5 parts (a) Test-Connection refresh + (c) per-app icons · stale "inc 29" comments.
@@ -116,10 +126,25 @@ Activity link (30.14) · `removeCredential` warn-on-orphan + `cred-*` reaper + d
 
 ### 1c. Remaining Tier-1 increments (the roadmap tail)
 
-- [ ] **33 — Code-mode (QuickJS-WASM over the `ToolProvider` proxy).** The fast execution path: an
-      agent runs sandboxed JS against the tools in-process instead of N MCP round-trips. "Base is solid"
-      trigger has plausibly fired (29/31/32 done). Needs a QuickJS-WASM sandbox design + the proxy
-      binding + a security pass (untrusted code over credentials). **Largest remaining increment.**
+- [x] **33 — Code-mode (QuickJS-WASM over the `ToolProvider` proxy).** **DONE (PR #138).** Sandboxed
+      agent JS runs in-process (QuickJS-WASM, asyncify, behind a `CodeExecutor` interface) with an async
+      `tools.<ns>.<tool>()` facade over the profile's FILTERED brokered tools — collapses N MCP round-trips
+      into one execution. Surfaces: synthetic `junction__run_code` MCP tool (per-profile, arity-correct,
+      reserved-namespace guarded) + `junction run <file.js> --profile --json`. Built as a 6-slice mode-A
+      wave (audit-emit seam + `code_exec` event → package → MCP surface → CLI → adversarial tests → result
+      unwrap). **junction-sandbox-security (activation increment) verified the isolation adversarially +
+      caught/fixed a HIGH process-DoS** (uncatchable WASM abort on dispose); credential-security + data-migration
+      + mcp-contract + boundary all clean. Runtime exact-pinned `quickjs-emscripten` 0.31.0 (unaudited-lib
+      entry in `deprecations.md`; Deno-subprocess recorded as the escalation runtime). CI caught a `using`
+      ESM-transpile bug on the Node 20/22 floor (invisible on newer local Node) — root-caused + fixed.
+- [ ] **33.1 — audit + Code-Mode follow-ups (IN FLIGHT).** 4 confirmed small items, one increment:
+      (a) **oauth2-verify-state-drop on vault import** — real pre-existing bug (`addOAuthImportedCredential`
+      never calls `setVerifyState` → imported OAuth creds show a false never-verified); (b) **widen
+      `resolve-provider` kind-gate mcp/openapi → all 5** (unblocks code-mode/probe over graphql/http/cli);
+      (c) **unwrap `tools.search()`/`describe.tool()` facade results** into usable objects (completes inc-33
+      Slice F's ergonomics — direct tool calls already unwrap, discovery calls still returned raw JSON strings);
+      (d) **extract shared `FILE_SECRET_MAX_BYTES`** (now rule-of-three across add-credential + import-vault).
+      Method file: `33.1-followups.md`.
 - [ ] **34 — Distribution (LAST, local-proof-gated).** Publish `junction` to npm + `junction install`;
       `publint`/`attw` packaging gates; bin/exports; decide `@junction/web` bundled vs separate.
       **Gated (user decision):** do NOT publish until the full connect-once → use → audit flow is
@@ -184,6 +209,26 @@ Activity link (30.14) · `removeCredential` warn-on-orphan + `cred-*` reaper + d
       **DONE inc 32.7 (PR #131):** `resolveStaticFile` exported + a `baseDir` param, a realpath-hardened
       main-guard proven spawn-only across all 4 launchers, + a leakcheck `--dir` flag + 4-fixture self-test.
 
+### 1e. Extensive codebase audit + its remediation (2026-07-10)
+
+> A post-backlog **6-agent read-only Opus audit** (credentials · serving/auth · sandbox/egress ·
+> web-boundary · data/migrations · correctness/perf) — verdict **strong shape: 0 critical, 1 high**.
+> Every fix-worthy finding landed in **32.13 audit remediation (PR #136)**; the rest are trigger-gated (§2).
+
+- [x] **32.13 audit remediation (PR #136).** **HIGH:** EncryptedFileStore lost-update race (the vault
+      lock was held only inside `saveEncFile`, not across load→mutate→save → two concurrent `store.set`
+      could silently drop a secret's ciphertext) — fixed via `withCredentialsLock`, orchestrator-QA'd with
+      8 concurrent writes on the real store. Plus: duplicate-account error surfacing in oauth-connect create
+      + `renameCredential`; an MCP-client response byte cap; the argv[0] SBPL-metachar central-check gap +
+      3 provider-parity schema guards; `credentials.delete` not-found symmetry; **CSRF-control honesty**
+      (the loopback-Host check stops DNS-rebinding, NOT CSRF — added an explicit Origin allowlist +
+      corrected 6 misleading comments); serve.mjs `lstat` symlink-reject; `requireSecretString` (untrimmed).
+      All 5 reviewers CLEAN (credential-security LEAD reverted the race fix to prove the regression test).
+- [ ] **oauth2-verify-state-drop on import** — pre-existing bug found by the audit → folded into **inc 33.1**
+      (in flight; see §1c).
+- [ ] The trigger-gated audit deferrals (**store-backend split-brain**, **per-keyId session sub-cap**,
+      **`readAppDetail` probe fan-out cache**) stay in §2 / `revisit-when.md` — none of their triggers has fired.
+
 ---
 
 ## §2 — FUTURE (trigger-gated — parked until the trigger fires)
@@ -246,6 +291,7 @@ Activity link (30.14) · `removeCredential` warn-on-orphan + `cred-*` reaper + d
 - [ ] **better-auth** (remote/multi-device web login) — trigger: remote web login is needed.
 - [ ] **Origin/SameSite enforcement on web mutation POSTs** — trigger: a web *session cookie* is introduced.
 - [ ] **HTTP `/mcp` session-map idle-eviction** (beyond the 256 cap) — trigger: long-running sessions accumulate.
+- [ ] **Per-keyId session sub-cap** (`serve-http.ts`) — trigger: one API key opens enough concurrent sessions to matter for fairness/DoS on a shared box (today only the global `MAX_SESSIONS=256` cap exists). LOW; raised inc 32.13 audit.
 - [ ] **Live config reload** (source toggles take effect without reconnect) — trigger: mid-session updates wanted.
 
 ### 2b. Sandbox / execution isolation
@@ -280,6 +326,7 @@ Activity link (30.14) · `removeCredential` warn-on-orphan + `cred-*` reaper + d
 - [ ] **tsgo** (TS7 native compiler) — trigger: GA + stable.
 - [ ] **libsql** (from better-sqlite3) — trigger: whole-DB at-rest encryption wanted.
 - [ ] **Valibot at the web edge** — trigger: web bundle size becomes a *measured* constraint.
+- [ ] **`readAppDetail` probe fan-out cache/coalesce** — trigger: `/app/:id` latency becomes measurable as an app's connected-surface count grows (today one live `probeSurface` per surface per page load, no cache). Raised inc 32.13 audit.
 
 ### 2g. Web / UI infra
 - [ ] **Tailwind CSS** — trigger: web UI grows beyond the minimal dashboard.
@@ -306,6 +353,7 @@ Activity link (30.14) · `removeCredential` warn-on-orphan + `cred-*` reaper + d
 - [ ] **In-place OAuth `client_id` editing** — trigger: a lighter standalone client_id edit is wanted (must force `needsReauth`; today "swap OAuth app" = reconnect handles it).
 - [ ] **Profile rename + multi-profile key tool-name drift** — trigger: a profile-rename feature is added (would silently change every multi-profile key's tool names → breaks agent prompts; pin name at mint or forbid renaming referenced profiles).
 - [ ] **Concurrent-boot-during-rotation availability** — trigger: master-key rotation gets long enough (very large vault) that a concurrent boot failing during rotation is a real UX wrinkle. (Safe fail-closed today.)
+- [ ] **Store-backend split-brain guard** — trigger: an operator's `JUNCTION_STORE`/keyring availability changes between runs so a secret written under one backend is read under the other → a silent `Ok(null)` (looks like data loss). Forward path: a persisted active-backend marker + a typed `store-backend-mismatch` error. Raised inc 32.13 audit; not observed yet.
 
 ---
 
