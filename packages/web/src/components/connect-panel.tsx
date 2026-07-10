@@ -28,6 +28,7 @@ import type {
   SurfaceConnectable,
   SurfaceView,
 } from "../server/data.functions.js"
+import { startConnectFn } from "../server/oauth-connect.functions.js"
 import {
   Button,
   Dialog,
@@ -230,6 +231,19 @@ export function ConnectPanelDialog({
   )?.providerId
   const provider = oauthProviders.find((p) => p.id === oauthProviderId)
 
+  // Increment 38 D2 — guided oauth2 mode's BYO client-app fields (the
+  // one-time OAuth-app registration inc-36 already explains above these
+  // fields; this is the actual input collection that was missing). Scopes
+  // default from the provider's defaultScopes (space-separated, editable) —
+  // matches the raw /credentials ConnectOAuthDialog's own default.
+  const [oauthClientId, setOAuthClientId] = useState("")
+  const [oauthClientSecret, setOAuthClientSecret] = useState("")
+  const [oauthScopes, setOAuthScopes] = useState(provider?.defaultScopes.join(" ") ?? "")
+  const [oauthClientIdError, setOAuthClientIdError] = useState<string | undefined>(undefined)
+  const [oauthClientSecretError, setOAuthClientSecretError] = useState<string | undefined>(
+    undefined,
+  )
+
   function reset() {
     setMode("fast")
     setAuthMode(defaultAuthMode(modes))
@@ -238,6 +252,11 @@ export function ConnectPanelDialog({
     setSubmitting(false)
     setError(undefined)
     setAccountError(undefined)
+    setOAuthClientId("")
+    setOAuthClientSecret("")
+    setOAuthScopes(provider?.defaultScopes.join(" ") ?? "")
+    setOAuthClientIdError(undefined)
+    setOAuthClientSecretError(undefined)
   }
 
   function handleOpenChange(next: boolean) {
@@ -256,10 +275,28 @@ export function ConnectPanelDialog({
     if (accountError !== undefined) setAccountError(undefined)
   }
 
+  function handleOAuthClientIdChange(value: string) {
+    setOAuthClientId(value)
+    if (oauthClientIdError !== undefined) setOAuthClientIdError(undefined)
+  }
+
+  function handleOAuthClientSecretChange(value: string) {
+    setOAuthClientSecret(value)
+    if (oauthClientSecretError !== undefined) setOAuthClientSecretError(undefined)
+  }
+
   async function handleConfirm() {
     if (isOAuth) {
-      handleOpenChange(false)
-      window.location.href = "/credentials"
+      // Fast mode's oauth2 tab stays the pre-inc-38 deep-link (no BYO fields
+      // shown there — "register an OAuth app on the Credentials page"). Only
+      // guided mode collects clientId/clientSecret/scopes inline (inc 36's
+      // approved design) and drives the new bind-across-the-round-trip flow.
+      if (mode !== "guided") {
+        handleOpenChange(false)
+        window.location.href = "/credentials"
+        return
+      }
+      await handleGuidedOAuthConfirm()
       return
     }
 
@@ -294,10 +331,88 @@ export function ConnectPanelDialog({
     }
   }
 
+  /**
+   * Post-38 trust-boundary fix — guided oauth2 confirm: re-run
+   * connectSurfaceFn server-side (NEVER trust a client-built plan) just to
+   * get `providerId` + confirm this surface really is an oauth2 handoff, then
+   * call startConnectFn with the user's BYO clientId/clientSecret/scopes +
+   * a minimal `surfaceSelector` ({appId, surfaceKind, authMode}) — NOT an
+   * assembled platformInput. `startConnect` re-derives platformInput/
+   * platformId/displayName from the catalog itself server-side (the SAME
+   * planConnect path connectSurfaceFn uses), and pre-checks the platform-kind
+   * collision BEFORE the redirect. Then navigate the BROWSER to the
+   * provider's authorize URL — a top-level nav (off-origin consent page),
+   * not a client-side router transition.
+   */
+  async function handleGuidedOAuthConfirm() {
+    const clientId = oauthClientId.trim()
+    const clientSecret = oauthClientSecret
+    let hasFieldError = false
+    if (clientId === "") {
+      setOAuthClientIdError("Client ID is required")
+      hasFieldError = true
+    }
+    if (clientSecret === "") {
+      setOAuthClientSecretError("Client secret is required")
+      hasFieldError = true
+    }
+    if (hasFieldError) return
+
+    const submittedAccount = account.trim() || "default"
+    if (existingAccounts.includes(submittedAccount)) {
+      setAccountError(duplicateAccountMessage(submittedAccount))
+      return
+    }
+
+    setSubmitting(true)
+    setError(undefined)
+    setAccountError(undefined)
+    try {
+      const planResult: ConnectFnResult = await connectSurfaceFn({
+        data: { appId, surfaceKind: surface.kind, authMode: "oauth2", account: submittedAccount },
+      })
+      if (!("handoff" in planResult)) {
+        handleConnectResult(planResult)
+        return
+      }
+
+      const scopes = oauthScopes.split(/\s+/).filter((s) => s.length > 0)
+      const startResult = await startConnectFn({
+        data: {
+          providerId: planResult.providerId,
+          clientId,
+          clientSecret,
+          scopes,
+          account: submittedAccount,
+          surfaceSelector: { appId, surfaceKind: surface.kind, authMode: "oauth2" },
+        },
+      })
+      if (!startResult.ok) {
+        if ("conflict" in startResult) {
+          setError(
+            `A ${startResult.conflict.existingKind} platform already uses this id; connecting this surface would overwrite it.`,
+          )
+        } else {
+          setError(startResult.error)
+        }
+        setSubmitting(false)
+        return
+      }
+      handleOpenChange(false)
+      window.location.href = startResult.authorizeUrl
+    } catch {
+      setError("Failed to start connect.")
+      setSubmitting(false)
+    }
+  }
+
   function handleConnectResult(result: ConnectFnResult) {
     if ("handoff" in result) {
+      // Fast-mode oauth2 result (guided mode never reaches connectSurfaceFn's
+      // oauth-handoff branch through THIS path — see handleGuidedOAuthConfirm,
+      // which inspects the handoff payload directly instead).
       handleOpenChange(false)
-      window.location.href = result.handoff
+      window.location.href = "/credentials"
       return
     }
     if ("ok" in result) {
@@ -335,6 +450,15 @@ export function ConnectPanelDialog({
   const honestyNote = connectable.verifiable
     ? `junction will verify this against ${appDisplayName} before saving — nothing is stored if verification fails.`
     : "junction can't automatically verify this surface; it will be saved as you confirm."
+
+  // Increment 38 D2 — guided oauth2 now writes inline (BYO clientId/
+  // clientSecret + account required); fast-mode oauth2 stays the deep-link
+  // fallback (no inline fields shown there, nothing to validate/disable on).
+  const isGuidedOAuth = isOAuth && mode === "guided"
+  const isConfirmDisabled = isGuidedOAuth
+    ? oauthClientId.trim() === "" || oauthClientSecret === "" || account.trim() === ""
+    : !isOAuth && (secret.trim() === "" || account.trim() === "")
+  const confirmLabel = isGuidedOAuth ? "Connect" : isOAuth ? "Continue to Credentials" : "Connect"
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -418,10 +542,20 @@ export function ConnectPanelDialog({
               />
 
               {isOAuth ? (
-                <p style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)", margin: 0 }}>
-                  Once your OAuth app is registered, continue to the Credentials page to finish
-                  connecting.
-                </p>
+                <GuidedOAuthConnectFields
+                  account={account}
+                  onAccountChange={handleAccountChange}
+                  accountError={accountError}
+                  clientId={oauthClientId}
+                  onClientIdChange={handleOAuthClientIdChange}
+                  clientIdError={oauthClientIdError}
+                  clientSecret={oauthClientSecret}
+                  onClientSecretChange={handleOAuthClientSecretChange}
+                  clientSecretError={oauthClientSecretError}
+                  scopes={oauthScopes}
+                  onScopesChange={setOAuthScopes}
+                  error={error}
+                />
               ) : (
                 <CredentialFields
                   account={account}
@@ -444,10 +578,10 @@ export function ConnectPanelDialog({
           <Button
             type="button"
             variant="primary"
-            disabled={submitting || (!isOAuth && (secret.trim() === "" || account.trim() === ""))}
+            disabled={submitting || isConfirmDisabled}
             onClick={() => void handleConfirm()}
           >
-            {submitting ? "Connecting…" : isOAuth ? "Continue to Credentials" : "Connect"}
+            {submitting ? "Connecting…" : confirmLabel}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -498,6 +632,93 @@ function CredentialFields({
       </Field>
       <p style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)", margin: 0 }}>
         {honestyNote}
+      </p>
+    </>
+  )
+}
+
+/**
+ * Guided oauth2 mode's inline field set (increment 38 D2) — account + the
+ * BYO client-app fields (`GuidedOAuth`'s explainer above already tells the
+ * user to "come back here and paste the client ID/secret"; this is that
+ * paste target). Confirm calls startConnectFn with these + the surface's
+ * server-assembled platformInput, then navigates to the OAuth provider.
+ */
+function GuidedOAuthConnectFields({
+  account,
+  onAccountChange,
+  accountError,
+  clientId,
+  onClientIdChange,
+  clientIdError,
+  clientSecret,
+  onClientSecretChange,
+  clientSecretError,
+  scopes,
+  onScopesChange,
+  error,
+}: {
+  readonly account: string
+  readonly onAccountChange: (value: string) => void
+  readonly accountError: string | undefined
+  readonly clientId: string
+  readonly onClientIdChange: (value: string) => void
+  readonly clientIdError: string | undefined
+  readonly clientSecret: string
+  readonly onClientSecretChange: (value: string) => void
+  readonly clientSecretError: string | undefined
+  readonly scopes: string
+  readonly onScopesChange: (value: string) => void
+  readonly error: string | undefined
+}) {
+  return (
+    <>
+      <Field id="connect-oauth-account" label="Account" error={accountError}>
+        <Input
+          id="connect-oauth-account"
+          value={account}
+          onChange={(e) => onAccountChange(e.target.value)}
+          hasError={accountError !== undefined}
+        />
+      </Field>
+      <Field id="connect-oauth-client-id" label="Client ID" error={clientIdError}>
+        <Input
+          id="connect-oauth-client-id"
+          value={clientId}
+          onChange={(e) => onClientIdChange(e.target.value)}
+          hasError={clientIdError !== undefined}
+          aria-required="true"
+        />
+      </Field>
+      <Field id="connect-oauth-client-secret" label="Client secret" error={clientSecretError}>
+        <Input
+          id="connect-oauth-client-secret"
+          type="password"
+          autoComplete="new-password"
+          value={clientSecret}
+          onChange={(e) => onClientSecretChange(e.target.value)}
+          hasError={clientSecretError !== undefined}
+          aria-required="true"
+          placeholder="Paste your OAuth app's client secret"
+        />
+      </Field>
+      <Field id="connect-oauth-scopes" label="Scopes (space-separated)">
+        <Input
+          id="connect-oauth-scopes"
+          value={scopes}
+          onChange={(e) => onScopesChange(e.target.value)}
+        />
+      </Field>
+      {error !== undefined && (
+        <p
+          role="alert"
+          style={{ fontSize: "var(--text-caption)", color: "var(--status-error-fg)", margin: 0 }}
+        >
+          {error}
+        </p>
+      )}
+      <p style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)", margin: 0 }}>
+        You'll be redirected to authorize, then brought back here connected.
       </p>
     </>
   )

@@ -38,6 +38,48 @@ describe("pending-auth.server — put/take single-use", () => {
     expect(entry?.providerId).toBe("github")
   })
 
+  it("increment 38 D2: the create-intent's OPTIONAL surfacePlatform round-trips through put/take", () => {
+    const mcpInput = {
+      kind: "mcp" as const,
+      transport: "http" as const,
+      url: "https://example.com/mcp",
+      authHeader: undefined,
+      command: undefined,
+      args: undefined,
+      tokenEnvVar: undefined,
+      env: undefined,
+    }
+    putPending(
+      "state-surface",
+      makeEntry({
+        intent: {
+          mode: "create",
+          platformId: "github-mcp",
+          account: "work",
+          surfacePlatform: { platformInput: mcpInput, displayName: "GitHub MCP" },
+        },
+      }),
+    )
+    const entry = takePending("state-surface")
+    expect(entry?.intent).toEqual({
+      mode: "create",
+      platformId: "github-mcp",
+      account: "work",
+      surfacePlatform: { platformInput: mcpInput, displayName: "GitHub MCP" },
+    })
+  })
+
+  it("surfacePlatform ABSENT on the create-intent is still a valid entry (must-stay-working: raw /credentials + CLI)", () => {
+    putPending("state-no-surface", makeEntry())
+    const entry = takePending("state-no-surface")
+    expect(entry?.intent).toEqual({
+      mode: "create",
+      platformId: "github-platform",
+      account: "work",
+    })
+    expect(entry?.intent && "surfacePlatform" in entry.intent).toBe(false)
+  })
+
   it("a second takePending for the same state returns undefined (single-use)", () => {
     putPending("state-1", makeEntry())
     takePending("state-1")

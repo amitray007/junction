@@ -22,7 +22,16 @@ export type {
   ConnectResult,
   VerifyThenAddArgs,
 } from "./connect-from-catalog.js"
-export { confirmThenAdd, verifyThenAdd } from "./connect-from-catalog.js"
+// assemblePlatform + checkCollision (increment 38 D1/D2) — exported so the
+// web layer can assemble a catalog surface's Platform + pre-check a
+// collision for the inline oauth2 catalog-connect bind, reusing the SAME
+// primitives confirmThenAdd/verifyThenAdd already build on.
+export {
+  assemblePlatform,
+  checkCollision,
+  confirmThenAdd,
+  verifyThenAdd,
+} from "./connect-from-catalog.js"
 export { formatUpstreamError } from "./format-error.js"
 // OAuth connect flows (increment 29, slice B) — the arctic/fetch-touching
 // composition the CLI (D) and web (C) build `junction connect` / "Connect" on.

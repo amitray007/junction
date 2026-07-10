@@ -96,8 +96,15 @@ export type ConfirmThenAddArgs = Omit<VerifyThenAddArgs, "paths">
  *     between preview and confirm). Returns the EXISTING platform — the
  *     caller must NOT re-upsert its connection, only add the credential.
  *   - exists, DIFFERENT kind -> refuse, zero writes.
+ *
+ * Exported (increment 38 D2) so the web layer can run the SAME collision
+ * check at `startConnect`, BEFORE redirecting to the OAuth provider — a
+ * platform-kind conflict must fail early, never stranding a completed OAuth
+ * grant with nowhere to bind. The callback path re-checks (state may change
+ * during the round-trip); this function is the ONE collision-detection
+ * implementation both call sites share.
  */
-function checkCollision(
+export function checkCollision(
   repos: Pick<Repositories, "platforms">,
   platformId: string,
   requestedKind: string,
@@ -129,8 +136,15 @@ function checkCollision(
   })
 }
 
-/** Assemble a Platform via the matching orchestration add* call, unwrapping `.platform`. */
-function assemblePlatform(
+/**
+ * Assemble a Platform via the matching orchestration add* call, unwrapping
+ * `.platform`. PURE + credential-independent (no store/DB write) — exported
+ * (increment 38 D1) so the web layer's `completeOAuthCallback` can assemble
+ * the catalog surface's Platform in memory and pass it into
+ * `persistOAuthTokens`'s optional `platformBuild` arg, which does the actual
+ * `platforms.upsert` (FK-ordered, before `credentials.create`).
+ */
+export function assemblePlatform(
   platformId: string,
   displayName: string,
   input: PlatformInput,

@@ -892,6 +892,282 @@ describe("persistOAuthTokens", () => {
       expect(result.value.oauthMeta?.expiresAt ?? null).toBeNull()
     })
   })
+
+  // -------------------------------------------------------------------------
+  // Increment 38 D1/D3 — the catalog-connect BIND: optional platformBuild
+  // upserts the platform BEFORE credentials.create (FK-ordered), and a
+  // best-effort orphan-platform cleanup fires ONLY when this call created the
+  // platform (never a pre-existing one).
+  // -------------------------------------------------------------------------
+
+  function stubStore(seed: Record<string, string> = {}) {
+    const storeMap = new Map<string, string>(Object.entries(seed))
+    return {
+      map: storeMap,
+      store: {
+        backend: "encrypted-file" as const,
+        get: (ref: string) =>
+          new ResultAsync(
+            Promise.resolve(coreOk(storeMap.has(ref) ? (storeMap.get(ref) as string) : null)),
+          ),
+        set: (ref: string, value: string) => {
+          storeMap.set(ref, value)
+          return new ResultAsync(Promise.resolve(coreOk(undefined)))
+        },
+        delete: (ref: string) => {
+          storeMap.delete(ref)
+          return new ResultAsync(Promise.resolve(coreOk(undefined)))
+        },
+      },
+    }
+  }
+
+  // FAILING-FIRST regression (this is the new bind behavior inc 38 adds —
+  // written to prove the platform did NOT exist before persistOAuthTokens
+  // ran, and DOES exist afterward, with the credential correctly FK-pointing
+  // at it).
+  it("[inc 38 D1] mode create + platformBuild present: upserts the platform BEFORE creating the credential — a platform absent beforehand exists afterward, FK-consistent", async () => {
+    await withTempHome(async () => {
+      const paths = getPaths()
+      const dbResult = await getDatabase(paths)
+      expect(dbResult.isOk()).toBe(true)
+      if (dbResult.isErr()) return
+      const repos = createRepositories(dbResult.value)
+
+      // Prove the platform does NOT exist before the call — this is the
+      // whole point of the bind: the catalog-connect create branch had NO
+      // platform row before inc 38.
+      const beforeResult = await repos.platforms.get("bind-platform")
+      expect(beforeResult.isErr()).toBe(true)
+
+      const { store } = stubStore()
+      const platform = {
+        id: "bind-platform",
+        kind: "graphql" as const,
+        displayName: "Bind Test",
+        graphql: { endpoint: "https://example.com/graphql", auth: { scheme: "bearer" as const } },
+      }
+
+      const result = await persistOAuthTokens({
+        repos,
+        store,
+        tokens: { accessToken: SENTINEL_ACCESS, refreshToken: SENTINEL_REFRESH },
+        providerId: "github-app",
+        authMode: "authorization_code",
+        clientId: "cid",
+        clientSecret: SENTINEL_CLIENT_SECRET,
+        now: Date.now(),
+        mode: "create",
+        platformId: "bind-platform",
+        account: "work",
+        platformBuild: { platform, preExisting: false },
+      })
+
+      expect(result.isOk()).toBe(true)
+      if (!result.isOk()) return
+      expect(result.value.platformId).toBe("bind-platform")
+
+      // The platform now exists — bound, FK-consistent with the credential.
+      const afterResult = await repos.platforms.get("bind-platform")
+      expect(afterResult.isOk()).toBe(true)
+      if (afterResult.isOk()) {
+        expect(afterResult.value.displayName).toBe("Bind Test")
+        expect(afterResult.value.kind).toBe("graphql")
+      }
+
+      // The credential row's platformId FK-points at the just-created platform.
+      const credentials = await repos.credentials.forPlatform("bind-platform" as never)
+      expect(credentials.isOk()).toBe(true)
+      if (credentials.isOk()) {
+        expect(credentials.value).toHaveLength(1)
+        expect(credentials.value[0]?.kind).toBe("oauth2")
+      }
+    })
+  })
+
+  it("[inc 38 D1] platformBuild ABSENT: create branch is byte-identical to pre-inc-38 — no platforms.upsert call, existing-platform-required semantics unchanged (must-stay-working: raw /credentials + CLI connect)", async () => {
+    await withTempHome(async () => {
+      const paths = getPaths()
+      const dbResult = await getDatabase(paths)
+      expect(dbResult.isOk()).toBe(true)
+      if (dbResult.isErr()) return
+      const repos = createRepositories(dbResult.value)
+
+      // The raw /credentials flow (and CLI connect) require the platform to
+      // ALREADY exist — persistOAuthTokens never creates one when
+      // platformBuild is absent. Prove that a MISSING platform still fails
+      // exactly as it did pre-inc-38 (a credentials.create FK failure), NOT
+      // a silent platform creation.
+      const { store } = stubStore()
+      const result = await persistOAuthTokens({
+        repos,
+        store,
+        tokens: { accessToken: "tok", refreshToken: "reftok" },
+        providerId: "github-app",
+        authMode: "authorization_code",
+        clientId: "cid",
+        clientSecret: "csecret",
+        now: Date.now(),
+        mode: "create",
+        platformId: "never-created-platform",
+        account: "work",
+        // platformBuild OMITTED entirely.
+      })
+
+      expect(result.isErr()).toBe(true)
+      // The platform was never created as a side effect of this call.
+      const platformResult = await repos.platforms.get("never-created-platform")
+      expect(platformResult.isErr()).toBe(true)
+    })
+  })
+
+  it("[inc 38 D3] credentials.create failure AFTER platformBuild upsert, platformWasCreatedHere=true: best-effort deletes the just-created platform (orphan cleanup)", async () => {
+    await withTempHome(async () => {
+      const paths = getPaths()
+      const dbResult = await getDatabase(paths)
+      expect(dbResult.isOk()).toBe(true)
+      if (dbResult.isErr()) return
+      const repos = createRepositories(dbResult.value)
+
+      const { store } = stubStore()
+      const platform = {
+        id: "orphan-platform",
+        kind: "mcp" as const,
+        displayName: "Orphan Test",
+        connection: { transport: "http" as const, url: "https://example.com/mcp" },
+      }
+
+      // platformId "" makes CredentialSchema validation fail (PlatformIdSchema
+      // .min(1)) — but the platformBuild.platform.id "orphan-platform" is
+      // VALID and distinct, so the upsert succeeds BEFORE the credential
+      // validation fails. This reproduces "platform bound, credential
+      // rejected" without needing a raw DB-layer failure mock.
+      const result = await persistOAuthTokens({
+        repos,
+        store,
+        tokens: { accessToken: "tok", refreshToken: "reftok" },
+        providerId: "github-app",
+        authMode: "authorization_code",
+        clientId: "cid",
+        clientSecret: "csecret",
+        now: Date.now(),
+        mode: "create",
+        platformId: "", // invalid -> credentialParse fails AFTER the platform upsert
+        account: "work",
+        platformBuild: { platform, preExisting: false },
+      })
+
+      expect(result.isErr()).toBe(true)
+
+      // Best-effort cleanup: the just-created platform is gone.
+      const platformResult = await repos.platforms.get("orphan-platform")
+      expect(platformResult.isErr()).toBe(true)
+    })
+  })
+
+  it("[inc 38 D3] credentials.create failure, platformWasCreatedHere=false (preExisting:true): the PRE-EXISTING platform is NOT deleted", async () => {
+    await withTempHome(async () => {
+      const paths = getPaths()
+      const dbResult = await getDatabase(paths)
+      expect(dbResult.isOk()).toBe(true)
+      if (dbResult.isErr()) return
+      const repos = createRepositories(dbResult.value)
+
+      // Seed a PRE-EXISTING platform (mirrors a real collision: checkCollision
+      // found a same-kind platform already there).
+      const preExistingPlatform = {
+        id: "pre-existing-platform",
+        kind: "mcp" as const,
+        displayName: "Pre-existing",
+        connection: { transport: "http" as const, url: "https://example.com/mcp" },
+      }
+      await repos.platforms.upsert(preExistingPlatform)
+
+      const { store } = stubStore()
+
+      const result = await persistOAuthTokens({
+        repos,
+        store,
+        tokens: { accessToken: "tok", refreshToken: "reftok" },
+        providerId: "github-app",
+        authMode: "authorization_code",
+        clientId: "cid",
+        clientSecret: "csecret",
+        now: Date.now(),
+        mode: "create",
+        platformId: "", // invalid -> credentialParse fails AFTER the (no-op-ish) upsert
+        account: "work",
+        // preExisting: true — this call did NOT create the platform.
+        platformBuild: { platform: preExistingPlatform, preExisting: true },
+      })
+
+      expect(result.isErr()).toBe(true)
+
+      // The pre-existing platform is UNTOUCHED — still there, not deleted.
+      const platformResult = await repos.platforms.get("pre-existing-platform")
+      expect(platformResult.isOk()).toBe(true)
+      if (platformResult.isOk()) {
+        expect(platformResult.value.displayName).toBe("Pre-existing")
+      }
+    })
+  })
+
+  it("[inc 38 D3] orphan-platform delete failure never masks the original persist-failed error (best-effort, log-and-continue)", async () => {
+    await withTempHome(async () => {
+      const paths = getPaths()
+      const dbResult = await getDatabase(paths)
+      expect(dbResult.isOk()).toBe(true)
+      if (dbResult.isErr()) return
+      const repos = createRepositories(dbResult.value)
+
+      const { store } = stubStore()
+      // A platform id that, once upserted, we immediately delete out from
+      // under persistOAuthTokens so its OWN cleanup delete fails (not-found).
+      // This proves the cleanup failure doesn't escape as a DIFFERENT error
+      // shape than plain persist-failed.
+      const platform = {
+        id: "flaky-orphan-platform",
+        kind: "mcp" as const,
+        displayName: "Flaky",
+        connection: { transport: "http" as const, url: "https://example.com/mcp" },
+      }
+
+      const flakyRepos = {
+        ...repos,
+        platforms: {
+          ...repos.platforms,
+          upsert: async (p: typeof platform) => {
+            const upserted = await repos.platforms.upsert(p)
+            // Delete it out from under the caller immediately after upsert
+            // succeeds, so the LATER cleanup delete (inside persistOAuthTokens)
+            // hits a genuine not-found.
+            await repos.platforms.delete(p.id)
+            return upserted
+          },
+        },
+      }
+
+      const result = await persistOAuthTokens({
+        repos: flakyRepos,
+        store,
+        tokens: { accessToken: "tok", refreshToken: "reftok" },
+        providerId: "github-app",
+        authMode: "authorization_code",
+        clientId: "cid",
+        clientSecret: "csecret",
+        now: Date.now(),
+        mode: "create",
+        platformId: "", // invalid -> credentialParse fails, triggers cleanup
+        account: "work",
+        platformBuild: { platform, preExisting: false },
+      })
+
+      // Still a clean, typed persist-failed-shaped error — the cleanup's own
+      // (already-deleted) failure never escapes as a throw/different kind.
+      expect(result.isErr()).toBe(true)
+      if (result.isErr()) expect(result.error.kind).toBe("invalid-input")
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------

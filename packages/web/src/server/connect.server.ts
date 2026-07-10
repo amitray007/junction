@@ -75,7 +75,24 @@ function recipeErrorMessage(error: RecipeError): string {
 // ---------------------------------------------------------------------------
 
 export type ConnectFnResult =
-  | { handoff: string; providerId: string }
+  | {
+      /**
+       * Increment 38 D2 — the oauth2 handoff carries `providerId` so the
+       * client can drive the browser to `/credentials` (the deep-link
+       * fallback) OR call `startConnectFn` directly with a `surfaceSelector`
+       * (post-38 fix: NOT an assembled platformInput — see
+       * oauth-connect.server.ts's `StartConnectInput.surfaceSelector` doc
+       * comment). `startConnect` re-derives platformInput/platformId/
+       * displayName from the catalog itself, keyed by the SAME
+       * {appId, surfaceKind, authMode} the client already has locally from
+       * the connect-panel's own props — so this result no longer needs to
+       * echo the assembled platformInput/displayName/platformId back to the
+       * client at all (narrower client-exposed surface; nothing here is
+       * trusted downstream regardless).
+       */
+      handoff: string
+      providerId: string
+    }
   | { ok: true; checkedAt: number }
   | { ok: true; unverified: true }
   | { verifyFailed: "auth-failed" | "unreachable"; detail?: string }
@@ -104,7 +121,10 @@ export async function connectSurface(input: {
   }
 
   if (plan.path === "oauth-handoff") {
-    return { handoff: "/credentials", providerId: plan.providerId }
+    return {
+      handoff: "/credentials",
+      providerId: plan.providerId,
+    }
   }
 
   // credential path — defense in depth (I5): reject an empty secret BEFORE
