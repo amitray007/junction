@@ -18,6 +18,7 @@
 
 import {
   createCredentialStore,
+  createFileToolPinStore,
   createProfileProxy,
   createRepositories,
   getPaths,
@@ -84,18 +85,33 @@ async function buildSingleSourceProxy(repos: Repositories, sourceRef: SourceRef)
   const storeResult = await createCredentialStore(paths)
   const store = storeResult.isOk() ? storeResult.value : null
   const resolveProvider = makeResolveProvider(repos, store, paths, { logPrefix: "probe" })
-  // Tool-poisoning mitigation (increment 32.5): sanitize is always applied inside
-  // createProfileProxy; onDescriptionDrift only SURFACES it as a structured warn —
-  // metadata only, never the (possibly-injected) description text.
-  return createProfileProxy([sourceRef], resolveProvider, (info) => {
-    console.warn({
-      event: "description_sanitized",
-      namespace: info.namespace,
-      tool: info.tool,
-      strippedSuspicious: info.strippedSuspicious,
-      truncated: info.truncated,
-    })
-  })
+  // Tool-poisoning mitigation (increment 32.5) + hash-pinning / rug-pull detection
+  // (increment 32.11): sanitize and TOFU pin-comparison are always applied inside
+  // createProfileProxy; onDescriptionDrift only SURFACES either signal, discriminated by
+  // info.reason ("sanitized" | "pin-drift") as a structured warn — metadata only, never
+  // the (possibly-injected) description text, never old/new hashes. onPinStoreWarning
+  // surfaces pin-STORE degradation (corrupt file / failed write) so a broken pins file
+  // can never silently disable rug-pull detection; detail is an error code/kind only.
+  // Same warn channel (console.warn) this probe surface already used pre-32.11.
+  const toolPinStore = createFileToolPinStore(paths)
+  return createProfileProxy(
+    [sourceRef],
+    resolveProvider,
+    (info) => {
+      console.warn({
+        event: info.reason === "pin-drift" ? "tool_pin_drift" : "description_sanitized",
+        namespace: info.namespace,
+        tool: info.tool,
+        strippedSuspicious: info.strippedSuspicious,
+        truncated: info.truncated,
+        reason: info.reason,
+      })
+    },
+    toolPinStore,
+    (info) => {
+      console.warn({ event: "tool_pin_store_degraded", op: info.op, detail: info.detail })
+    },
+  )
 }
 
 // ---------------------------------------------------------------------------
