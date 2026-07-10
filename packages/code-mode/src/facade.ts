@@ -110,12 +110,28 @@ export function searchFacade(plan: FacadePlan, query: string): SearchResult[] {
     .map((e) => ({ namespace: e.namespace, tool: e.tool, description: e.description }))
 }
 
+/**
+ * Static guidance on what `await tools.<namespace>.<tool>(args)` actually
+ * returns (33f — the facade unwraps the raw MCP content envelope before the
+ * guest ever sees it): identical for every tool regardless of provider kind
+ * (mcp/openapi/graphql/http/cli), so it's a constant rather than something
+ * describeFacadeTool derives per entry — see quickjs-executor.ts's
+ * unwrapToolResult for the exact per-kind unwrap rules.
+ */
+export const RESULT_SHAPE_GUIDANCE =
+  "A JSON response body resolves to the parsed value (object/array/etc) — never the raw " +
+  "MCP content envelope. Plain-text output resolves to a string. A multi-part response " +
+  "resolves to an array. A failed call (upstream error, or the tool's own response " +
+  "signaling failure) throws a JS exception instead of resolving."
+
 /** Describe result shape served by `tools.describe.tool({path})` — path is `<namespace>.<tool>`. */
 export interface DescribeResult {
   namespace: string
   tool: string
   description: string | undefined
   inputSchema: object
+  /** See RESULT_SHAPE_GUIDANCE — what calling this tool actually returns. */
+  resultShape: string
 }
 
 export function describeFacadeTool(plan: FacadePlan, path: string): DescribeResult | undefined {
@@ -125,5 +141,11 @@ export function describeFacadeTool(plan: FacadePlan, path: string): DescribeResu
   const tool = path.slice(dot + 1)
   const entry = plan.byNamespace.get(namespace)?.get(tool)
   if (!entry) return undefined
-  return { namespace, tool, description: entry.description, inputSchema: entry.inputSchema }
+  return {
+    namespace,
+    tool,
+    description: entry.description,
+    inputSchema: entry.inputSchema,
+    resultShape: RESULT_SHAPE_GUIDANCE,
+  }
 }

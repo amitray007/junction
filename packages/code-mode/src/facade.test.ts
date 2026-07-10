@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import type { ProviderTool } from "@junction/core"
 import { describe, expect, it } from "vitest"
-import { buildFacadePlan, describeFacadeTool, searchFacade } from "./facade.js"
+import {
+  buildFacadePlan,
+  describeFacadeTool,
+  RESULT_SHAPE_GUIDANCE,
+  searchFacade,
+} from "./facade.js"
 
 const TOOLS: ProviderTool[] = [
   {
@@ -97,6 +102,12 @@ describe("describeFacadeTool", () => {
     const found = describeFacadeTool(plan, "github.search_repos")
     expect(found?.description).toBe("Search repositories")
     expect(found?.inputSchema).toEqual({ type: "object" })
+  })
+
+  it("documents the result-unwrap contract (33f) on every describe() result", () => {
+    const found = describeFacadeTool(plan, "github.search_repos")
+    expect(found?.resultShape).toBe(RESULT_SHAPE_GUIDANCE)
+    expect(found?.resultShape).toMatch(/throws a JS exception/)
   })
 
   it("returns undefined for an unknown path", () => {

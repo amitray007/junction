@@ -177,13 +177,15 @@ describe("junction run", () => {
       const { paths } = await seedProfileWithOpenApiSource(home, "work")
 
       const file = join(home, "demo.js")
+      // 33f: the facade unwraps the OpenAPI provider's raw
+      // "<status> <statusText>\n<body>" MCP content envelope into the
+      // parsed JSON body BEFORE the guest ever sees it — no more hand-
+      // parsing the envelope or splitting off the status line. This is the
+      // exact real-`junction run` reproduction of the orchestrator's QA
+      // finding (docs/methods/33f-result-unwrap.md): `tools.pub_api
+      // .getGreeting(...).greeting` is directly usable.
       const guestCode = [
-        "const res = await tools.pub_api.getGreeting({});",
-        "const content = JSON.parse(res);",
-        // http.ts's OpenAPI provider text is `<status> <statusText>\n<body>` —
-        // split off the status line before parsing the JSON body.
-        "const bodyText = content[0].text.slice(content[0].text.indexOf('\\n') + 1);",
-        "const body = JSON.parse(bodyText);",
+        "const body = await tools.pub_api.getGreeting({});",
         "return { shout: body.greeting.toUpperCase(), len: body.greeting.length };",
       ].join("\n")
       await writeFile(file, guestCode, "utf8")

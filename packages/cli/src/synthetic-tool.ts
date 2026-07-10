@@ -112,13 +112,20 @@ const RUN_CODE_DESCRIPTION =
   'finds tools by keyword, `tools.describe("<namespace>.<tool>")` returns a tool\'s full ' +
   "schema, and `tools.<namespace>.<tool>(args)` calls it directly and returns its result " +
   "(await it). The facade exposes ONLY the tools already visible to you in this session's " +
-  "tool list — nothing broader. Prefer this over many separate tool calls when you need to " +
-  "loop, filter, transform, or combine results across several calls: one run_code call with " +
-  "a few tool invocations inside it costs far fewer tokens than the same work done as " +
-  "separate top-level tool calls, because intermediate results never round-trip through your " +
-  "context. Return a JSON-serializable value from your code (the last expression, or an " +
-  "explicit `return`) — it becomes this call's result. console.log/emit() output is captured " +
-  "and returned as logs. Runs sandboxed with a wall-clock timeout; every tool call your code " +
+  "tool list — nothing broader. A tool call's result is ALREADY UNWRAPPED to a usable " +
+  "value: a JSON response body comes back as the parsed object/array (e.g. " +
+  "`(await tools.qa.greet({name})).greeting`), plain-text output comes back as a string, " +
+  "and a multi-part response comes back as an array — never the raw MCP content envelope, " +
+  "so you never need to hand-parse it. A tool call that fails (upstream error, or the " +
+  "tool's own response signaling failure) throws a JS exception — wrap calls in try/catch " +
+  "if you need to handle a failure without aborting the whole script. Prefer this over " +
+  "many separate tool calls when you need to loop, filter, transform, or combine results " +
+  "across several calls: one run_code call with a few tool invocations inside it costs far " +
+  "fewer tokens than the same work done as separate top-level tool calls, because " +
+  "intermediate results never round-trip through your context. Return a JSON-serializable " +
+  "value from your code (the last expression, or an explicit `return`) — it becomes this " +
+  "call's result. console.log/emit() output is captured and returned as logs. Runs " +
+  "sandboxed with a wall-clock timeout; every tool call your code " +
   "makes is individually audited exactly like a direct call."
 
 const RUN_CODE_INPUT_SCHEMA = {

@@ -20,7 +20,12 @@ import type {
 export type { ProxyLike } from "./audited-invoker.js"
 export { createAuditedInvoker } from "./audited-invoker.js"
 export type { DescribeResult, FacadePlan, FacadeToolEntry, SearchResult } from "./facade.js"
-export { buildFacadePlan, describeFacadeTool, searchFacade } from "./facade.js"
+export {
+  buildFacadePlan,
+  describeFacadeTool,
+  RESULT_SHAPE_GUIDANCE,
+  searchFacade,
+} from "./facade.js"
 export { QuickJsExecutor, type QuickJsExecutorOptions } from "./quickjs-executor.js"
 export {
   type CodeExecutor,

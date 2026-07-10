@@ -104,7 +104,7 @@ describe("QuickJsExecutor — tool round-trip", () => {
     const result = await makeExecutor(sink).execute(
       `
         const r = await tools.github.search_repos({query: "foo"});
-        return JSON.parse(r);
+        return r;
       `,
       invoker,
     )
@@ -117,6 +117,22 @@ describe("QuickJsExecutor — tool round-trip", () => {
         emitted: 0,
         toolCallCount: 1,
       })
+    }
+  })
+
+  it("(33f) a tool call's result is ALREADY unwrapped — no guest-side JSON.parse needed, field access works directly", async () => {
+    const { sink } = makeSink()
+    const { invoker } = makeFakeInvoker()
+    const result = await makeExecutor(sink).execute(
+      `
+        const r = await tools.github.search_repos({query: "foo"});
+        return r.results[0];
+      `,
+      invoker,
+    )
+    expect(result.isOk()).toBe(true)
+    if (result.isOk() && result.value.ok) {
+      expect(result.value.value).toBe("repo-for-foo")
     }
   })
 
@@ -822,7 +838,7 @@ describe("QuickJsExecutor — filtered-toolset-only (#11)", () => {
     )
     expect(allowedResult.isOk()).toBe(true)
     if (allowedResult.isOk() && allowedResult.value.ok) {
-      expect(JSON.parse(allowedResult.value.value as string)).toEqual({ ok: true })
+      expect(allowedResult.value.value).toEqual({ ok: true })
     }
   })
 
@@ -853,5 +869,218 @@ describe("QuickJsExecutor — filtered-toolset-only (#11)", () => {
       // real (denied) tool's schema — no discovery-path bypass either.
       expect(value.described).toBeNull()
     }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// unwrapToolResult (33f) — the facade result-ergonomics fix, exercised
+// end-to-end through the real bridge for each provider kind's actual
+// ToolResult.content shape (see quickjs-executor.ts's unwrapToolResult doc
+// comment + the provider source files it was read against):
+//   - openapi-client / http-client: content is [{type:"text", text:
+//     "<3-digit-status> <reason>\n<body>"}] (openapi-client/src/http.ts)
+//   - graphql-client: content is [{type:"text", text:"<raw JSON body>"}],
+//     no status-line prefix (graphql-client/src/http.ts)
+//   - cli provider: content is [{type:"text", text:"exit <n>\n<stdout+
+//     stderr>"}] — often NOT JSON (core/src/sources/cli/provider.ts)
+//   - mcp provider: content is whatever the upstream MCP server returned,
+//     passed through verbatim (mcp/client/src/session.ts) — usually a
+//     single JSON or plain-text {type:"text"} part, but may be multi-part
+//     or a non-text part (image/resource/etc)
+// ---------------------------------------------------------------------------
+
+function makeSingleToolInvoker(content: unknown, isError?: boolean): ToolInvoker {
+  return {
+    listTools: async () => ok([FAKE_TOOLS[0] as ProviderTool]),
+    callTool: async () => ok({ content, isError }),
+  }
+}
+
+describe("QuickJsExecutor — unwrapToolResult (33f result-ergonomics fix)", () => {
+  it("openapi/http shape: strips the '<status> <reason>\\n' line and parses the JSON body — field access works directly", async () => {
+    const { sink } = makeSink()
+    const invoker = makeSingleToolInvoker([
+      { type: "text", text: '200 OK\n{"greeting":"hi code-mode"}' },
+    ])
+    const result = await makeExecutor(sink).execute(
+      `return (await tools.github.search_repos({})).greeting;`,
+      invoker,
+    )
+    expect(result.isOk()).toBe(true)
+    if (result.isOk() && result.value.ok) {
+      expect(result.value.value).toBe("hi code-mode")
+    }
+  })
+
+  it("openapi/http shape: a non-200 status line is stripped identically (404 Not Found)", async () => {
+    const { sink } = makeSink()
+    const invoker = makeSingleToolInvoker(
+      [{ type: "text", text: '404 Not Found\n{"error":"missing"}' }],
+      true,
+    )
+    const result = await makeExecutor(sink).execute(
+      `
+        try {
+          await tools.github.search_repos({});
+          return "NO THROW";
+        } catch (e) {
+          return e.message;
+        }
+      `,
+      invoker,
+    )
+    expect(result.isOk()).toBe(true)
+    if (result.isOk() && result.value.ok) {
+      // isError:true rejects with the UNWRAPPED (status-line-stripped,
+      // JSON-parsed-then-restringified) content — never the raw envelope.
+      expect(result.value.value).toBe('{"error":"missing"}')
+    }
+  })
+
+  it("graphql shape: no status-line prefix — the raw JSON body parses directly", async () => {
+    const { sink } = makeSink()
+    const invoker = makeSingleToolInvoker([
+      { type: "text", text: '{"data":{"viewer":{"login":"octocat"}}}' },
+    ])
+    const result = await makeExecutor(sink).execute(
+      `return (await tools.github.search_repos({})).data.viewer.login;`,
+      invoker,
+    )
+    expect(result.isOk()).toBe(true)
+    if (result.isOk() && result.value.ok) {
+      expect(result.value.value).toBe("octocat")
+    }
+  })
+
+  it("cli shape: 'exit N\\n<output>' is NOT JSON and NOT an HTTP status line — returned as the raw string, not misparsed", async () => {
+    const { sink } = makeSink()
+    const invoker = makeSingleToolInvoker([{ type: "text", text: "exit 0\nbuild succeeded" }])
+    const result = await makeExecutor(sink).execute(
+      `return await tools.github.search_repos({});`,
+      invoker,
+    )
+    expect(result.isOk()).toBe(true)
+    if (result.isOk() && result.value.ok) {
+      // "exit 0" does NOT match the 3-digit HTTP-status-line pattern (starts
+      // with a word, not digits) — the full text survives unstripped, and
+      // since it isn't valid JSON it comes back as a plain string.
+      expect(result.value.value).toBe("exit 0\nbuild succeeded")
+    }
+  })
+
+  it("cli shape: a non-zero exit with isError:true rejects with the raw exit+output text", async () => {
+    const { sink } = makeSink()
+    const invoker = makeSingleToolInvoker(
+      [{ type: "text", text: "exit 1\ncommand not found: frobnicate" }],
+      true,
+    )
+    const result = await makeExecutor(sink).execute(
+      `
+        try {
+          await tools.github.search_repos({});
+          return "NO THROW";
+        } catch (e) {
+          return e.message;
+        }
+      `,
+      invoker,
+    )
+    expect(result.isOk()).toBe(true)
+    if (result.isOk() && result.value.ok) {
+      expect(result.value.value).toBe("exit 1\ncommand not found: frobnicate")
+    }
+  })
+
+  it("mcp plain-text shape: a single non-JSON text part returns the string, not the envelope", async () => {
+    const { sink } = makeSink()
+    const invoker = makeSingleToolInvoker([{ type: "text", text: "plain upstream text, not JSON" }])
+    const result = await makeExecutor(sink).execute(
+      `return await tools.github.search_repos({});`,
+      invoker,
+    )
+    expect(result.isOk()).toBe(true)
+    if (result.isOk() && result.value.ok) {
+      expect(result.value.value).toBe("plain upstream text, not JSON")
+    }
+  })
+
+  it("mcp multi-part shape: a multi-part content array is returned as a structured array, never lossy", async () => {
+    const { sink } = makeSink()
+    const invoker = makeSingleToolInvoker([
+      { type: "text", text: '{"a":1}' },
+      { type: "text", text: "plain text part" },
+      { type: "image", data: "base64...", mimeType: "image/png" },
+    ])
+    const result = await makeExecutor(sink).execute(
+      `return await tools.github.search_repos({});`,
+      invoker,
+    )
+    expect(result.isOk()).toBe(true)
+    if (result.isOk() && result.value.ok) {
+      // Each text part is unwrapped the same way a single-part result would
+      // be; a non-text part (image/resource/etc) passes through opaquely —
+      // no data lost, no crash on an unrecognized MCP content type.
+      expect(result.value.value).toEqual([
+        { a: 1 },
+        "plain text part",
+        { type: "image", data: "base64...", mimeType: "image/png" },
+      ])
+    }
+  })
+
+  it("a raw (non-array) content value — e.g. a hand-built test fake — passes through unchanged", async () => {
+    const { sink } = makeSink()
+    const invoker = makeSingleToolInvoker({ results: ["already-an-object"] })
+    const result = await makeExecutor(sink).execute(
+      `return (await tools.github.search_repos({})).results[0];`,
+      invoker,
+    )
+    expect(result.isOk()).toBe(true)
+    if (result.isOk() && result.value.ok) {
+      expect(result.value.value).toBe("already-an-object")
+    }
+  })
+
+  it("isError:true still respects the resultByteCap on the unwrapped/rejected text", async () => {
+    const { sink } = makeSink()
+    const invoker = makeSingleToolInvoker(
+      [{ type: "text", text: `500 Internal Server Error\n${"x".repeat(10_000)}` }],
+      true,
+    )
+    const result = await makeExecutor(sink).execute(
+      `
+        try {
+          await tools.github.search_repos({});
+          return "NO THROW";
+        } catch (e) {
+          return e.message.length;
+        }
+      `,
+      invoker,
+      { resultByteCap: 100 },
+    )
+    expect(result.isOk()).toBe(true)
+    if (result.isOk() && result.value.ok) {
+      expect(result.value.value as number).toBeLessThanOrEqual(100)
+    }
+  })
+
+  it("unwrapping never reintroduces a secret — the PLANTED_SECRET adversarial proof still holds through the unwrap path", async () => {
+    const { sink, entries } = makeSink()
+    const { invoker } = makeFakeInvoker()
+    const result = await makeExecutor(sink).execute(
+      `
+        try {
+          await tools.github.get_repo({});
+          return "NO THROW";
+        } catch (e) {
+          return e.message;
+        }
+      `,
+      invoker,
+    )
+    expect(result.isOk()).toBe(true)
+    expect(JSON.stringify(result)).not.toContain(PLANTED_SECRET)
+    expect(JSON.stringify(entries)).not.toContain(PLANTED_SECRET)
   })
 })

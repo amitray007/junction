@@ -71,6 +71,107 @@ function safeJsonParse(text: string): unknown {
   return JSON.parse(text, nullProtoReviver)
 }
 
+/**
+ * Best-effort JSON.parse that returns `undefined` instead of throwing —
+ * used by unwrapToolResult, where a parse failure is a normal, expected
+ * outcome (plain-text tool output) rather than an error condition. Always
+ * goes through the null-proto reviver (prototype-pollution guard) since the
+ * text originates from an upstream source, not host-trusted code.
+ */
+function tryParseJson(text: string): unknown {
+  try {
+    return safeJsonParse(text)
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * A single MCP content part, as returned by any of the 5 provider kinds
+ * (mcp/openapi/graphql/http/cli — see provider.ts's `ToolResult.content`,
+ * documented as "follows MCP spec format"). Only the shape this file
+ * actually inspects is modeled; other MCP content types (image/resource/
+ * etc, reachable only via a raw MCP passthrough) pass through opaquely.
+ */
+interface McpTextContentPart {
+  type: "text"
+  text: string
+}
+
+function isTextContentPart(part: unknown): part is McpTextContentPart {
+  return (
+    part !== null &&
+    typeof part === "object" &&
+    (part as { type?: unknown }).type === "text" &&
+    typeof (part as { text?: unknown }).text === "string"
+  )
+}
+
+/**
+ * An openapi/http-provider content string is `"<3-digit-status> <reason
+ * phrase>\n<body>"` (see openapi-client/src/http.ts, http-client's provider
+ * reuses the same engine) — e.g. "200 OK\n{\"greeting\":\"hi\"}". Detected
+ * structurally (a leading 3-digit code + space, before the first newline)
+ * rather than hardcoded to any one status/phrase, so any status line is
+ * stripped correctly (404 Not Found, 500 Internal Server Error, ...). This
+ * does NOT match cli-provider's "exit <n>[, output truncated...]" prefix
+ * (starts with a word, not 3 digits), so cli output is never mistaken for an
+ * HTTP status line and passed through untouched.
+ */
+const HTTP_STATUS_LINE = /^\d{3} [^\n]*\n/
+
+/**
+ * Strip a leading HTTP status line, if present. Returns the text unchanged
+ * for every other provider kind's content (graphql's raw JSON body, mcp's
+ * raw text, cli's "exit N\n<output>" — none of these match the pattern).
+ */
+function stripHttpStatusLine(text: string): string {
+  const match = HTTP_STATUS_LINE.exec(text)
+  return match ? text.slice(match[0].length) : text
+}
+
+/**
+ * Unwrap one MCP text-content part's `text` into a usable guest value: try
+ * an HTTP-status-line strip (openapi/http provider shape) then a JSON parse
+ * (covers openapi/http bodies, graphql's raw JSON body, and any MCP source
+ * whose single text part is JSON) — falling back to the raw string when the
+ * text isn't JSON (cli's exit+stdout/stderr, plain-text MCP tool output,
+ * etc). Every parse goes through the null-proto reviver.
+ */
+function unwrapTextPart(text: string): unknown {
+  const stripped = stripHttpStatusLine(text)
+  const parsed = tryParseJson(stripped)
+  return parsed !== undefined ? parsed : stripped
+}
+
+/**
+ * unwrapToolResult — turn an upstream ToolResult.content envelope into the
+ * value the guest actually gets back from `await tools.<ns>.<tool>(...)`.
+ * Per the method file's proof-of-done:
+ *   1. A single {type:"text"} part whose text is JSON → the parsed value.
+ *   2. A single {type:"text"} part whose text is NOT JSON → the raw string.
+ *   3. Anything else (multi-part content, non-text parts, or content that
+ *      isn't an MCP content array at all — e.g. a hand-built test fake) →
+ *      returned as-is, never reshaped/lossy. A multi-part MCP array already
+ *      IS a usable, documented array value once each part's own text (if
+ *      any) has been unwrapped the same way as the single-part case, so
+ *      guest code can do `parts[0]` / `parts.map(...)` without its own
+ *      hand-parsing.
+ *
+ * PURE — no I/O, no QuickJS handles; operates on the already-marshaled,
+ * already-byte-capped value (byte capping still happens at the caller after
+ * this returns, via truncateToBytes on the re-stringified result).
+ */
+function unwrapToolResult(content: unknown): unknown {
+  if (!Array.isArray(content)) return content
+
+  if (content.length === 1 && isTextContentPart(content[0])) {
+    return unwrapTextPart(content[0].text)
+  }
+
+  return content.map((part) => (isTextContentPart(part) ? unwrapTextPart(part.text) : part))
+}
+
 function byteLength(s: string): number {
   return Buffer.byteLength(s, "utf8")
 }
@@ -535,10 +636,39 @@ const TOOLS_PROXY_BOOTSTRAP = `
       has(target, key) { return key in target; },
     });
   }
+  // Each tool bridge function (installed host-side as a sync newFunction,
+  // see installTools) resolves its Promise with a JSON-TEXT STRING — the
+  // host cannot construct an arbitrary QuickJS value handle (object/array)
+  // directly from installTools' JS side, only primitives/strings via the
+  // newFunction return. Wrapping here (guest-side) is what actually turns
+  // that JSON text into the parsed value/array/object the guest's
+  // \`await tools.<ns>.<tool>(...)\` expression observes — this is the fix
+  // for the ergonomics bug (33f): before this wrap, guest code had to
+  // hand-parse the resolved string itself. A guest-side JSON.parse here
+  // only touches the GUEST's own isolated QuickJS heap/Object.prototype
+  // (a completely separate realm from the host's — see the
+  // prototype-pollution guard tests) — it is NOT the host-trust-boundary
+  // JSON.parse the null-proto reviver guards (that already ran host-side,
+  // in unwrapToolResult/safeJsonParse, before this text was ever built).
+  function wrapToolFn(fn) {
+    return function (...args) {
+      return fn.apply(null, args).then(function (text) {
+        try {
+          return JSON.parse(text);
+        } catch (e) {
+          return text;
+        }
+      });
+    };
+  }
   const raw = globalThis.__rawTools;
   for (const ns of Object.keys(raw)) {
     if (ns === "search" || ns === "describe") continue;
-    raw[ns] = guard(raw[ns]);
+    const nsObj = raw[ns];
+    for (const toolName of Object.keys(nsObj)) {
+      nsObj[toolName] = wrapToolFn(nsObj[toolName]);
+    }
+    raw[ns] = guard(nsObj);
   }
   globalThis.tools = guard(raw);
   delete globalThis.__rawTools;
@@ -565,6 +695,16 @@ const TOOLS_PROXY_BOOTSTRAP = `
  * execute()'s pendingDeferreds comment). Sync-reject paths (arg-cap /
  * JSON-parse) settle before returning, so they are never in-flight at
  * dispose and need not be tracked.
+ *
+ * RESULT SHAPE (33f): a successful call resolves with unwrapToolResult's
+ * output (parsed JSON body / plain string / structured array — see its doc
+ * comment), JSON-text-stringified across the FFI and JSON.parsed back by the
+ * guest-side wrapToolFn (TOOLS_PROXY_BOOTSTRAP) — so `await
+ * tools.<ns>.<tool>(args)` returns the usable value directly, not the raw
+ * MCP content envelope. `isError:true` results reject the SAME way an
+ * upstream Err does (a thrown guest Error), with the unwrapped content as
+ * the message — never a raw host cause/secret (that's still exclusively
+ * safeUpstreamMessage's job, on the isErr() branch above).
  */
 function installTools(
   context: QuickJSAsyncContext,
@@ -626,7 +766,40 @@ function installTools(
                 deferred.reject(errHandle)
                 return
               }
-              const resultJson = JSON.stringify(result.value.content) ?? "null"
+              // unwrapToolResult turns the raw MCP content envelope into a
+              // usable value (parsed JSON body / plain string / structured
+              // multi-part array — see unwrapToolResult's doc comment for
+              // the per-provider-kind shapes).
+              const unwrapped = unwrapToolResult(result.value.content)
+              if (result.value.isError === true) {
+                // isError:true — the TRANSPORT succeeded but the tool's own
+                // response signals an application-level failure (e.g. an
+                // openapi 4xx/5xx body, a GraphQL errors-only response, a
+                // non-zero CLI exit). This is content the tool itself
+                // returned for the caller to see (same content that would
+                // have resolved had isError been false) — NOT a host-side
+                // cause/secret, so surfacing it verbatim (bounded, unwrapped,
+                // human-readable — not re-JSON-stringified into a quoted
+                // blob) carries no more risk than the resolve path already
+                // does. Surfaced via the SAME guest error channel as an
+                // upstream Err (a thrown Error) for a single, consistent
+                // contract: "a tool call failure is always a thrown/rejected
+                // guest error", never a silently-ok value the guest could
+                // forget to check.
+                const displayText =
+                  typeof unwrapped === "string" ? unwrapped : (JSON.stringify(unwrapped) ?? "null")
+                const { text: boundedError } = truncateToBytes(displayText, opts.resultByteCap)
+                using errHandle = context.newError(boundedError)
+                deferred.reject(errHandle)
+                return
+              }
+              // Re-stringified so the SAME byte-cap + FFI-string-crossing
+              // mechanics apply as before — only WHAT gets capped changed
+              // (the unwrapped value instead of the raw content array),
+              // never the cap itself. The guest side's wrapToolFn
+              // (TOOLS_PROXY_BOOTSTRAP) JSON.parses this text back into the
+              // value the guest's `await` observes.
+              const resultJson = JSON.stringify(unwrapped) ?? "null"
               const { text: bounded } = truncateToBytes(resultJson, opts.resultByteCap)
               using strHandle = context.newString(bounded)
               deferred.resolve(strHandle)
