@@ -37,10 +37,11 @@ export type JunctionPaths = {
   /**
    * Tool description/schema hash-pin store (increment 32.11 — TOFU rug-pull
    * detection). A plain JSON file (NOT a DB table — deliberate; see
-   * tool-pins.ts header) mapping source-local `(toolNamespace, rawName)` →
-   * `{ hash, firstSeenAt, updatedAt }`. Written 0600, lockfile-guarded batch
-   * write via `createFileToolPinStore`. Never holds description/schema TEXT —
-   * hashes and names only.
+   * tool-pins.ts header) mapping the stable upstream identity
+   * `(platformId, rawName)` → `{ hash, firstSeenAt, updatedAt }`. Written
+   * 0600, lockfile-guarded batch write via `createFileToolPinStore`; a write
+   * is REFUSED over a corrupt-but-present file (kept for inspection). Never
+   * holds description/schema TEXT — hashes and names only.
    */
   pinsFile: string
 }

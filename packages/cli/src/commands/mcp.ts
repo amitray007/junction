@@ -189,10 +189,13 @@ const serveCommand = defineCommand({
     // Tool-poisoning mitigation (increment 32.5) + hash-pinning / rug-pull detection
     // (increment 32.11): sanitize and TOFU pin-comparison are always applied inside
     // createProfileProxy; onDescriptionDrift only SURFACES either signal, discriminated
-    // by info.reason ("sanitized" | "pin-drift"). stdout IS the MCP channel here
-    // (file-level note above) — the drift warn goes to stderr ONLY, via
+    // by info.reason ("sanitized" | "pin-drift"). onPinStoreWarning surfaces pin-STORE
+    // degradation (corrupt file / failed write — event "tool_pin_store_degraded") so a
+    // broken pins file can never silently disable rug-pull detection. stdout IS the MCP
+    // channel here (file-level note above) — both warns go to stderr ONLY, via
     // process.stderr.write (never consola, which writes to stdout). Metadata only —
-    // never the (possibly-injected) description text, never old/new hashes.
+    // never the (possibly-injected) description text, never old/new hashes, never file
+    // content (detail is an error code/kind).
     const toolPinStore = createFileToolPinStore(paths)
     const proxy = createProfileProxy(
       profile.sources,
@@ -210,6 +213,15 @@ const serveCommand = defineCommand({
         )
       },
       toolPinStore,
+      (info) => {
+        process.stderr.write(
+          `${JSON.stringify({
+            event: "tool_pin_store_degraded",
+            op: info.op,
+            detail: info.detail,
+          })}\n`,
+        )
+      },
     )
 
     // Rotate BEFORE the sink opens its fd (increment 32.8) — see rotate.ts's

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// createFileToolPinStore tests — round-trip, corrupt-file fail-open, 0600, batch semantics.
+// createFileToolPinStore tests — round-trip, corrupt-file fail-open (read AND the
+// refuse-to-overwrite write guard), 0600, batch semantics, version gating.
 
-import { stat, writeFile } from "node:fs/promises"
+import { readFile, stat, writeFile } from "node:fs/promises"
 import { describe, expect, it } from "vitest"
 import { ensureHome } from "../paths/index.js"
 import { withTempHome } from "../testing/index.js"
@@ -24,7 +25,7 @@ describe("createFileToolPinStore", () => {
       const paths = (await ensureHome())._unsafeUnwrap()
       const store = createFileToolPinStore(paths)
 
-      const key = { toolNamespace: "gh", rawName: "list_issues" }
+      const key = { platformId: "github", rawName: "list_issues" }
       const now = new Date().toISOString()
       await store.putMany([{ key, hash: "abc123", now }])
 
@@ -43,7 +44,7 @@ describe("createFileToolPinStore", () => {
       const paths = (await ensureHome())._unsafeUnwrap()
       const store = createFileToolPinStore(paths)
 
-      const key = { toolNamespace: "gh", rawName: "list_issues" }
+      const key = { platformId: "github", rawName: "list_issues" }
       const firstSeen = "2026-01-01T00:00:00.000Z"
       const later = "2026-02-01T00:00:00.000Z"
 
@@ -58,7 +59,7 @@ describe("createFileToolPinStore", () => {
     })
   })
 
-  it("corrupt (invalid JSON) pins file → getAll returns empty map WITH warning (fail-open, no throw)", async () => {
+  it("corrupt (invalid JSON) pins file → getAll returns empty map WITH warning + detail (fail-open, no throw)", async () => {
     await withTempHome(async () => {
       const paths = (await ensureHome())._unsafeUnwrap()
       await writeFile(paths.pinsFile, "{ not valid json", "utf-8")
@@ -66,6 +67,7 @@ describe("createFileToolPinStore", () => {
 
       const result = await store.getAll()
       expect(result.warning).toBe(true)
+      expect(result.detail).toBe("parse-failed")
       expect(result.pins.size).toBe(0)
     })
   })
@@ -79,6 +81,51 @@ describe("createFileToolPinStore", () => {
       const result = await store.getAll()
       expect(result.warning).toBe(true)
       expect(result.pins.size).toBe(0)
+    })
+  })
+
+  it("old-version (v:1) pins file → treated as empty-with-warning (pre-release key re-scope, no migration)", async () => {
+    await withTempHome(async () => {
+      const paths = (await ensureHome())._unsafeUnwrap()
+      await writeFile(
+        paths.pinsFile,
+        JSON.stringify({
+          v: 1,
+          pins: { "ns tool": { hash: "h", firstSeenAt: "x", updatedAt: "x" } },
+        }),
+        "utf-8",
+      )
+      const store = createFileToolPinStore(paths)
+
+      const result = await store.getAll()
+      expect(result.warning).toBe(true)
+      expect(result.detail).toBe("parse-failed")
+      expect(result.pins.size).toBe(0)
+    })
+  })
+
+  it("REFUSES to overwrite a corrupt pins file: putMany leaves the bytes untouched and warns", async () => {
+    await withTempHome(async () => {
+      const paths = (await ensureHome())._unsafeUnwrap()
+      const corruptContent = "{ definitely not json — keep me for inspection"
+      await writeFile(paths.pinsFile, corruptContent, "utf-8")
+      const store = createFileToolPinStore(paths)
+
+      const putResult = await store.putMany([
+        {
+          key: { platformId: "github", rawName: "list_issues" },
+          hash: "h1",
+          now: new Date().toISOString(),
+        },
+      ])
+
+      // Write refused + surfaced — never clobber a file we couldn't parse.
+      expect(putResult.warning).toBe(true)
+      expect(putResult.detail).toBe("refused-corrupt-file")
+
+      // File bytes are UNCHANGED (kept on disk for operator inspection).
+      const after = await readFile(paths.pinsFile, "utf-8")
+      expect(after).toBe(corruptContent)
     })
   })
 
@@ -105,7 +152,7 @@ describe("createFileToolPinStore", () => {
 
       await store.putMany([
         {
-          key: { toolNamespace: "gh", rawName: "get_issue" },
+          key: { platformId: "github", rawName: "get_issue" },
           hash: "h1",
           now: new Date().toISOString(),
         },
@@ -122,8 +169,8 @@ describe("createFileToolPinStore", () => {
       const store = createFileToolPinStore(paths)
 
       const now = new Date().toISOString()
-      const keyA = { toolNamespace: "gh", rawName: "list_issues" }
-      const keyB = { toolNamespace: "gh", rawName: "get_pull_request" }
+      const keyA = { platformId: "github", rawName: "list_issues" }
+      const keyB = { platformId: "github", rawName: "get_pull_request" }
       await store.putMany([
         { key: keyA, hash: "hash-a", now },
         { key: keyB, hash: "hash-b", now },
@@ -142,8 +189,8 @@ describe("createFileToolPinStore", () => {
       const store = createFileToolPinStore(paths)
 
       const now = new Date().toISOString()
-      const keyA = { toolNamespace: "gh", rawName: "list_issues" }
-      const keyB = { toolNamespace: "gh", rawName: "get_pull_request" }
+      const keyA = { platformId: "github", rawName: "list_issues" }
+      const keyB = { platformId: "gitlab", rawName: "get_pull_request" }
 
       await store.putMany([{ key: keyA, hash: "hash-a", now }])
       await store.putMany([{ key: keyB, hash: "hash-b", now }])
@@ -155,9 +202,9 @@ describe("createFileToolPinStore", () => {
     })
   })
 
-  it("pinKeyString distinguishes different namespaces for the same raw tool name", () => {
-    const a = pinKeyString({ toolNamespace: "gh", rawName: "list_issues" })
-    const b = pinKeyString({ toolNamespace: "gitlab", rawName: "list_issues" })
+  it("pinKeyString distinguishes different platforms for the same raw tool name", () => {
+    const a = pinKeyString({ platformId: "github", rawName: "list_issues" })
+    const b = pinKeyString({ platformId: "gitlab", rawName: "list_issues" })
     expect(a).not.toBe(b)
   })
 })

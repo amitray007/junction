@@ -85,13 +85,20 @@ export type ResolveProviderFn = (
  *     multi-line sources.
  *   - "pin-drift"  (increment 32.11) — a previously-pinned tool's SANITIZED description +
  *     inputSchema hash no longer matches the recorded pin ("rug pull" detection, TOFU +
- *     warn-and-serve v1 — see tool-pins.ts). Fired ONCE per changed hash (the pin is then
- *     updated to the new hash), not on every subsequent identical listing.
+ *     warn-and-serve v1 — see tool-pins.ts). Fired once per changed hash on a BEST-EFFORT
+ *     basis: the pin is updated to the new hash by the batch write at the end of the pass,
+ *     so a subsequent identical listing normally does not re-fire — but if that write FAILS
+ *     (surfaced via OnPinStoreWarningFn below), the pin keeps the old hash and the same
+ *     change re-fires on the next listing until a write succeeds.
  *
  * METADATA ONLY: never passed the raw or sanitized description text, nor the old/new hash —
  * the (possibly-injected) text must never reach a log, and hashes alone are enough to prove
  * a change occurred without needing to diff/reveal content. Same injection pattern as
  * resolveProvider; the pure proxy never imports a logger.
+ *
+ * `namespace` on a "pin-drift" fire is OPERATOR CONTEXT only (which mount surfaced the
+ * drift) — the pin itself is keyed by `(platformId, rawName)`, not the namespace (see
+ * tool-pins.ts's file header for why).
  */
 export type OnDescriptionDriftFn = (info: {
   namespace: string
@@ -100,6 +107,20 @@ export type OnDescriptionDriftFn = (info: {
   truncated: boolean
   reason: "sanitized" | "pin-drift"
 }) => void
+
+/**
+ * Injected callback (increment 32.11 review-gate fix): fired when the pin STORE itself is
+ * degraded — a corrupt/unreadable pins file on read, or a failed/refused batch write. This
+ * is deliberately a separate channel from OnDescriptionDriftFn: a store-health problem has
+ * no per-tool identity and must not masquerade as a tool finding, but it also must not be
+ * SILENT (a corrupt pins file or a persistently failing write would otherwise disable
+ * rug-pull detection forever with no operator signal).
+ *
+ * Fired at most once per listTools pass per op ("read" | "write"). `detail` is a
+ * content-free error CODE/kind (e.g. "parse-failed", "refused-corrupt-file", an errno like
+ * "EACCES") — never file content or description text.
+ */
+export type OnPinStoreWarningFn = (info: { op: "read" | "write"; detail: string }) => void
 
 /** Multi-source proxy for a profile's aggregated MCP tools. */
 export interface ProfileProxy {
@@ -190,6 +211,14 @@ function stableStringify(value: unknown): string {
  * injection payload must never influence a persisted hash's provenance) + inputSchema.
  * `description` is the value ALREADY assigned to the outgoing ProviderTool (post-sanitize),
  * so this is called after sanitizeDescription, never before.
+ *
+ * LOCK-STEP COUPLING (do not let these drift): the hash covers exactly description +
+ * inputSchema because that is ALL the mcp session forwards today — mcp/client session.ts's
+ * listTools maps each upstream tool to only { name, description, inputSchema }, stripping
+ * every other field. If the session (or any other provider) ever starts forwarding more
+ * agent-visible tool metadata (annotations, outputSchema, title, …), the pin hash MUST grow
+ * to cover it in the same change — otherwise a rug pull hidden in the new field goes
+ * undetected.
  */
 function hashToolIdentity(description: string | undefined, inputSchema: object): string {
   return sha256Hex(stableStringify({ description: description ?? null, inputSchema }))
@@ -213,6 +242,10 @@ function hashToolIdentity(description: string | undefined, inputSchema: object):
  *   same way resolveProvider is (proxy.ts does NO file I/O itself). Absent store → NO pinning
  *   at all — zero behavior change from pre-32.11 (no reads, no writes, no drift fires for
  *   "pin-drift"). See tool-pins.ts for the store's shape and on-disk format.
+ * @param onPinStoreWarning   - Optional (increment 32.11 review-gate fix): fired at most once
+ *   per listTools pass per op when the pin store itself is degraded (corrupt file on read,
+ *   failed/refused batch write) — see OnPinStoreWarningFn. Absent callback → the store still
+ *   fails open, just without the operator signal (tests/paths that opt out).
  *
  * The returned proxy applies namespacing (namespaceToolName / ≤64 guard), toolFilter,
  * description sanitization (increment 32.5 — tool-poisoning mitigation), and hash-pinning
@@ -226,6 +259,7 @@ export function createProfileProxy(
   resolveProvider: ResolveProviderFn,
   onDescriptionDrift?: OnDescriptionDriftFn,
   toolPinStore?: ToolPinStore,
+  onPinStoreWarning?: OnPinStoreWarningFn,
 ): ProfileProxy {
   const enabledSources = sources.filter((s) => s.enabled)
 
@@ -236,15 +270,19 @@ export function createProfileProxy(
         // documented contract). Absent store → skip entirely (zero behavior change: no reads,
         // no writes, no "pin-drift" fires below).
         //
-        // FAIL-OPEN ON STORE ERRORS: a corrupt/unreadable pins file resolves to an empty map
-        // with `warning: true` (tool-pins.ts never throws). This is NOT the same signal as a
-        // per-tool "pin-drift" — it means "we couldn't read prior pins", not "this tool's
-        // contract changed" — so it is intentionally NOT routed through onDescriptionDrift
-        // (that channel is reserved for per-tool findings with a namespace+tool identity).
-        // Pinning simply degrades to "every tool looks newly-seen" for this pass; the file
-        // self-heals on the next successful putMany. A caller wanting store-health visibility
-        // reads its own stderr/log around toolPinStore construction — out of scope here.
+        // FAIL-OPEN ON STORE ERRORS, NEVER SILENT: a corrupt/unreadable pins file resolves to
+        // an empty map with `warning: true` (tool-pins.ts never throws) — pinning degrades to
+        // "every tool looks newly-seen" for this pass and listing proceeds. The degraded state
+        // is surfaced through onPinStoreWarning (once per pass per op), NOT through
+        // onDescriptionDrift: a store-health problem has no per-tool identity and must not
+        // masquerade as a tool finding — but it must reach the operator, because a corrupt
+        // file or persistently failing write would otherwise disable rug-pull detection
+        // forever with no signal. Note the write side does NOT self-heal over corruption:
+        // putMany REFUSES to overwrite a file it couldn't parse (see tool-pins.ts).
         const existingPins = toolPinStore ? await toolPinStore.getAll() : undefined
+        if (existingPins?.warning && onPinStoreWarning) {
+          onPinStoreWarning({ op: "read", detail: existingPins.detail ?? "read-failed" })
+        }
         const pinChanges: PinChange[] = []
         const nowIso = new Date().toISOString()
 
@@ -305,8 +343,13 @@ export function createProfileProxy(
                 // HASH-PINNING / RUG-PULL DETECTION (increment 32.11): compute the pin hash
                 // over the SANITIZED description (never raw) + inputSchema. Only when a store
                 // was injected — otherwise this is a complete no-op (no hashing, no compare).
+                // Keyed by the stable upstream identity (platformId, rawName) — NOT the
+                // profile-local namespace, which is only unique per profile while the pins
+                // file is global (two profiles binding the same namespace to different
+                // platforms would ping-pong one namespace-keyed pin into perpetual false
+                // drift). The namespace goes into the WARN payload only (operator context).
                 if (toolPinStore && existingPins) {
-                  const key = { toolNamespace, rawName: t.name }
+                  const key = { platformId: sourceRef.platformId, rawName: t.name }
                   const hash = hashToolIdentity(description, t.inputSchema)
                   const existing = existingPins.pins.get(pinKeyString(key))
                   if (existing === undefined) {
@@ -351,9 +394,15 @@ export function createProfileProxy(
         // batch-write contract — proof-of-done #3: unchanged tools never trigger a rewrite,
         // enforced by pinChanges only containing new/changed entries). Fire-and-handled here
         // (not fire-and-forget): a write failure fails OPEN — it must never fail the listing
-        // that triggered it, which is why putMany itself never throws/rejects.
+        // that triggered it, which is why putMany itself never throws/rejects — but it is
+        // SURFACED via onPinStoreWarning (a persistently failing write, e.g. read-only home
+        // or a refused-corrupt-file, would otherwise silently disable pinning forever, and
+        // pin-drift would re-fire on every listing with no visible cause).
         if (toolPinStore && pinChanges.length > 0) {
-          await toolPinStore.putMany(pinChanges)
+          const putResult = await toolPinStore.putMany(pinChanges)
+          if (putResult.warning && onPinStoreWarning) {
+            onPinStoreWarning({ op: "write", detail: putResult.detail ?? "write-failed" })
+          }
         }
 
         // Always Ok: per-source resilience means partial results are valid.

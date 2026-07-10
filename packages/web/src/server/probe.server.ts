@@ -89,8 +89,10 @@ async function buildSingleSourceProxy(repos: Repositories, sourceRef: SourceRef)
   // (increment 32.11): sanitize and TOFU pin-comparison are always applied inside
   // createProfileProxy; onDescriptionDrift only SURFACES either signal, discriminated by
   // info.reason ("sanitized" | "pin-drift") as a structured warn — metadata only, never
-  // the (possibly-injected) description text, never old/new hashes. Same warn channel
-  // (console.warn) this probe surface already used pre-32.11.
+  // the (possibly-injected) description text, never old/new hashes. onPinStoreWarning
+  // surfaces pin-STORE degradation (corrupt file / failed write) so a broken pins file
+  // can never silently disable rug-pull detection; detail is an error code/kind only.
+  // Same warn channel (console.warn) this probe surface already used pre-32.11.
   const toolPinStore = createFileToolPinStore(paths)
   return createProfileProxy(
     [sourceRef],
@@ -106,6 +108,9 @@ async function buildSingleSourceProxy(repos: Repositories, sourceRef: SourceRef)
       })
     },
     toolPinStore,
+    (info) => {
+      console.warn({ event: "tool_pin_store_degraded", op: info.op, detail: info.detail })
+    },
   )
 }
 

@@ -1016,7 +1016,7 @@ function makeFakePinStore(): {
     async putMany(changes) {
       putManyCalls++
       for (const change of changes) {
-        const key = `${change.key.toolNamespace} ${change.key.rawName}`
+        const key = `${change.key.platformId} ${change.key.rawName}`
         const existing = pins.get(key)
         pins.set(key, {
           hash: change.hash,
@@ -1049,7 +1049,8 @@ describe("createProfileProxy — hash-pinning (rug-pull detection, increment 32.
     expect(result.isOk()).toBe(true)
     expect(drifts).toHaveLength(0)
     expect(snapshot().size).toBe(1)
-    expect(snapshot().get("ns get_weather")?.hash).toBeDefined()
+    // Keyed by (platformId, rawName) — makeSourceRef's platformId is "test-platform".
+    expect(snapshot().get("test-platform get_weather")?.hash).toBeDefined()
   })
 
   it("second listing, unchanged: no drift fire, no putMany write", async () => {
@@ -1257,7 +1258,7 @@ describe("createProfileProxy — hash-pinning (rug-pull detection, increment 32.
     expect(drifts).toHaveLength(0)
   })
 
-  it("pin keys are source-local (toolNamespace, rawName) — never the prefixed namespaced name", async () => {
+  it("pin keys are platform-scoped (platformId, rawName) — never the namespace or the prefixed name", async () => {
     const { provider } = makeDescribedProvider([
       { name: "list_issues", description: "List open issues." },
     ])
@@ -1272,9 +1273,219 @@ describe("createProfileProxy — hash-pinning (rug-pull detection, increment 32.
     await proxy.listTools()
 
     const keys = [...snapshot().keys()]
-    expect(keys).toEqual(["gh list_issues"])
-    // NOT the prefixed "gh__list_issues" form.
+    // makeSourceRef's platformId is "test-platform"; the "gh" NAMESPACE must not appear
+    // in the key (it is profile-local — see tool-pins.ts), nor the prefixed wire name.
+    expect(keys).toEqual(["test-platform list_issues"])
+    expect(keys).not.toContain("gh list_issues")
     expect(keys).not.toContain("gh__list_issues")
+  })
+
+  it("same platform under two different namespaces shares ONE pin — no false drift (cross-profile fix)", async () => {
+    // Two mounts of the SAME upstream platform (same platformId via makeSourceRef) under
+    // different namespaces — e.g. two profiles, or one profile with two routes. Before the
+    // review-gate fix, namespace-keyed pins would ping-pong between the two mounts and fire
+    // perpetual false pin-drift. Platform-keyed pins must record ONE pin and stay silent.
+    const description = "List open issues."
+    const { store, snapshot } = makeFakePinStore()
+    const drifts: unknown[] = []
+    const onDrift = (info: unknown) => drifts.push(info)
+
+    // Listing through mount #1 (namespace "work").
+    const { provider: p1 } = makeDescribedProvider([{ name: "list_issues", description }])
+    const proxyWork = createProfileProxy(
+      [makeSourceRef("work")],
+      resolveOk("work", p1),
+      onDrift,
+      store,
+    )
+    await proxyWork.listTools()
+
+    // Listing through mount #2 (namespace "personal") — same platform, same tool identity.
+    const { provider: p2 } = makeDescribedProvider([{ name: "list_issues", description }])
+    const proxyPersonal = createProfileProxy(
+      [makeSourceRef("personal")],
+      resolveOk("personal", p2),
+      onDrift,
+      store,
+    )
+    await proxyPersonal.listTools()
+
+    // And back through mount #1 again — the old ping-pong trigger.
+    const { provider: p3 } = makeDescribedProvider([{ name: "list_issues", description }])
+    const proxyWorkAgain = createProfileProxy(
+      [makeSourceRef("work")],
+      resolveOk("work", p3),
+      onDrift,
+      store,
+    )
+    await proxyWorkAgain.listTools()
+
+    expect(drifts).toHaveLength(0) // zero false drift across alternating mounts
+    expect(snapshot().size).toBe(1) // ONE shared pin, not one per namespace
+    expect([...snapshot().keys()]).toEqual(["test-platform list_issues"])
+  })
+
+  it("DETERMINISM REGRESSION: same logical inputSchema in reversed key insertion order at every nesting level → same hash, zero drift", async () => {
+    // The property the whole feature hinges on: hashing must be insensitive to JSON key
+    // order, or every upstream that serializes its schema in a different order between
+    // sessions fires false pin-drift. Build the SAME logical schema twice with reversed
+    // insertion order at every nesting level and drive it through the real pipeline.
+    const { store, putManyCalls } = makeFakePinStore()
+    const drifts: unknown[] = []
+    const onDrift = (info: unknown) => drifts.push(info)
+
+    function makeSchemaProvider(schema: object) {
+      return {
+        listTools: () =>
+          Promise.resolve({
+            isErr: () => false as const,
+            isOk: () => true as const,
+            value: [{ name: "search", description: "Search records.", inputSchema: schema }],
+          }) as unknown as ReturnType<import("./provider.js").ToolProvider["listTools"]>,
+        callTool: () => {
+          throw new Error("not used in this test")
+        },
+        close: async () => {},
+      }
+    }
+
+    // Forward insertion order at every level.
+    const schemaForward = {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "search text", minLength: 1 },
+        filters: {
+          type: "object",
+          properties: {
+            status: { type: "string", enum: ["open", "closed"] },
+            labels: { type: "array", items: { type: "string" } },
+          },
+        },
+      },
+      required: ["query"],
+    }
+    // REVERSED insertion order at every nesting level — logically identical.
+    const schemaReversed = {
+      required: ["query"],
+      properties: {
+        filters: {
+          properties: {
+            labels: { items: { type: "string" }, type: "array" },
+            status: { enum: ["open", "closed"], type: "string" },
+          },
+          type: "object",
+        },
+        query: { minLength: 1, description: "search text", type: "string" },
+      },
+      type: "object",
+    }
+
+    const proxy1 = createProfileProxy(
+      [makeSourceRef("ns")],
+      resolveOk("ns", makeSchemaProvider(schemaForward)),
+      onDrift,
+      store,
+    )
+    await proxy1.listTools()
+    expect(putManyCalls()).toBe(1) // first sighting recorded
+
+    const proxy2 = createProfileProxy(
+      [makeSourceRef("ns")],
+      resolveOk("ns", makeSchemaProvider(schemaReversed)),
+      onDrift,
+      store,
+    )
+    const result2 = await proxy2.listTools()
+
+    expect(result2.isOk()).toBe(true)
+    expect(drifts).toHaveLength(0) // same hash — key order MUST not matter
+    expect(putManyCalls()).toBe(1) // and no rewrite either (nothing new/changed)
+  })
+
+  it("degraded pin store READ fires onPinStoreWarning once (op: read) — never onDescriptionDrift", async () => {
+    const { provider } = makeDescribedProvider([
+      { name: "get_weather", description: "Fetch current weather for a city." },
+      { name: "get_forecast", description: "Fetch the 7-day forecast." },
+    ])
+    // Store whose read is degraded (corrupt file) — mirrors the real store's fail-open shape.
+    const store: import("./tool-pins.js").ToolPinStore = {
+      async getAll() {
+        return { pins: new Map(), warning: true, detail: "parse-failed" }
+      },
+      async putMany() {
+        return { warning: false }
+      },
+    }
+
+    const drifts: unknown[] = []
+    const storeWarnings: Array<{ op: string; detail: string }> = []
+    const proxy = createProfileProxy(
+      [makeSourceRef("ns")],
+      resolveOk("ns", provider),
+      (info) => drifts.push(info),
+      store,
+      (info) => storeWarnings.push(info),
+    )
+
+    const result = await proxy.listTools()
+    expect(result.isOk()).toBe(true) // fail-open: listing still succeeds
+    expect(drifts).toHaveLength(0) // store health is NOT a per-tool finding
+    // Fired exactly ONCE per pass (not once per tool) with the store's detail code.
+    expect(storeWarnings).toEqual([{ op: "read", detail: "parse-failed" }])
+  })
+
+  it("failed pin store WRITE fires onPinStoreWarning once (op: write) — listing still succeeds", async () => {
+    const { provider } = makeDescribedProvider([
+      { name: "get_weather", description: "Fetch current weather for a city." },
+    ])
+    const store: import("./tool-pins.js").ToolPinStore = {
+      async getAll() {
+        return { pins: new Map(), warning: false }
+      },
+      async putMany() {
+        return { warning: true, detail: "refused-corrupt-file" }
+      },
+    }
+
+    const storeWarnings: Array<{ op: string; detail: string }> = []
+    const proxy = createProfileProxy(
+      [makeSourceRef("ns")],
+      resolveOk("ns", provider),
+      undefined,
+      store,
+      (info) => storeWarnings.push(info),
+    )
+
+    const result = await proxy.listTools()
+    expect(result.isOk()).toBe(true)
+    expect(result._unsafeUnwrap().map((t) => t.name)).toEqual(["ns__get_weather"])
+    expect(storeWarnings).toEqual([{ op: "write", detail: "refused-corrupt-file" }])
+  })
+
+  it("absent onPinStoreWarning callback: degraded store still fails open, no throw", async () => {
+    const { provider } = makeDescribedProvider([
+      { name: "get_weather", description: "Fetch current weather for a city." },
+    ])
+    const store: import("./tool-pins.js").ToolPinStore = {
+      async getAll() {
+        return { pins: new Map(), warning: true, detail: "parse-failed" }
+      },
+      async putMany() {
+        return { warning: true, detail: "write-failed" }
+      },
+    }
+
+    // No 5th argument — the degraded store must not crash the listing.
+    const proxy = createProfileProxy(
+      [makeSourceRef("ns")],
+      resolveOk("ns", provider),
+      undefined,
+      store,
+    )
+
+    const result = await proxy.listTools()
+    expect(result.isOk()).toBe(true)
+    expect(result._unsafeUnwrap()).toHaveLength(1)
   })
 })
 

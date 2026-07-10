@@ -201,6 +201,9 @@ export const serveCommand = defineCommand({
         // createProfileProxy; onDescriptionDrift only SURFACES either signal, discriminated
         // by info.reason ("sanitized" | "pin-drift") — one structured warn, metadata only,
         // never the (possibly-injected) description text, never old/new hashes.
+        // onPinStoreWarning surfaces pin-STORE degradation (corrupt file / failed write)
+        // so a broken pins file can never silently disable rug-pull detection; detail is
+        // an error code/kind only, never file content.
         const proxy = createProfileProxy(
           profile.sources,
           resolveProvider,
@@ -215,6 +218,9 @@ export const serveCommand = defineCommand({
             })
           },
           toolPinStore,
+          (info) => {
+            consola.warn({ event: "tool_pin_store_degraded", op: info.op, detail: info.detail })
+          },
         )
         entries.push({ profileName: profile.name, proxy })
       }

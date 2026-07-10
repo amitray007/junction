@@ -286,7 +286,12 @@ export { rejectControlCharacters } from "./sources/arg-validation.js"
 export { createCliProvider } from "./sources/cli/provider.js"
 export { namespaceToolName, splitNamespacedName } from "./sources/naming.js"
 export type { ProviderTool, ToolProvider, ToolResult } from "./sources/provider.js"
-export type { OnDescriptionDriftFn, ProfileProxy, ResolveProviderFn } from "./sources/proxy.js"
+export type {
+  OnDescriptionDriftFn,
+  OnPinStoreWarningFn,
+  ProfileProxy,
+  ResolveProviderFn,
+} from "./sources/proxy.js"
 export { createProfileProxy } from "./sources/proxy.js"
 export type { SanitizedDescription } from "./sources/sanitize-description.js"
 // Tool-poisoning mitigation (inc 32.5) — pure description sanitizer, the ONE
