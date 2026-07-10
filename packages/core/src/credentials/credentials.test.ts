@@ -263,6 +263,106 @@ describe("EncryptedFileStore", () => {
       expect(keyStat.mode & 0o777).toBe(0o600)
     })
   })
+
+  // ---------------------------------------------------------------------------
+  // CONCURRENCY (32.13 Slice A, HIGH) — the lost-update race regression.
+  //
+  // Before the fix: set/delete each did an UNLOCKED load, then a locked save.
+  // Two concurrent `store.set()` calls against a fresh store each loaded the
+  // SAME empty map, then serialized their saves under the lock — the second
+  // writer's save clobbered the first writer's just-written ref with a
+  // snapshot that never saw it. This test fires two `store.set()` calls via
+  // Promise.all and asserts BOTH refs decrypt afterward — it FAILS (one ref
+  // resolves to null) without the withCredentialsLock fix.
+  // ---------------------------------------------------------------------------
+
+  it("CONCURRENCY: two parallel store.set() calls both persist — neither ref is lost", async () => {
+    await withTempHome(async () => {
+      await ensureHome()
+      const paths = getPaths()
+      const keyResult = await resolveMasterKey(paths, process.env)
+      expect(keyResult.isOk()).toBe(true)
+      if (!keyResult.isOk()) return
+
+      const store = createEncryptedFileStore(paths, keyResult.value)
+      const refA = `concurrent-ref-a-${randomBytes(4).toString("hex")}`
+      const refB = `concurrent-ref-b-${randomBytes(4).toString("hex")}`
+
+      const [resultA, resultB] = await Promise.all([
+        store.set(refA, "secret-a"),
+        store.set(refB, "secret-b"),
+      ])
+      expect(resultA.isOk()).toBe(true)
+      expect(resultB.isOk()).toBe(true)
+
+      // BOTH refs must decrypt — the load-bearing assertion. Without the fix,
+      // whichever writer's save landed first is silently dropped by the
+      // second writer's stale-snapshot save.
+      const gotA = await store.get(refA)
+      const gotB = await store.get(refB)
+      expect(gotA.isOk()).toBe(true)
+      expect(gotB.isOk()).toBe(true)
+      if (gotA.isOk()) expect(gotA.value).toBe("secret-a")
+      if (gotB.isOk()) expect(gotB.value).toBe("secret-b")
+    })
+  })
+
+  it("CONCURRENCY: many parallel store.set() calls (10-way) all persist", async () => {
+    await withTempHome(async () => {
+      await ensureHome()
+      const paths = getPaths()
+      const keyResult = await resolveMasterKey(paths, process.env)
+      expect(keyResult.isOk()).toBe(true)
+      if (!keyResult.isOk()) return
+
+      const store = createEncryptedFileStore(paths, keyResult.value)
+      const refs = Array.from(
+        { length: 10 },
+        (_, i) => `concurrent-many-${i}-${randomBytes(4).toString("hex")}`,
+      )
+
+      const setResults = await Promise.all(refs.map((ref, i) => store.set(ref, `secret-${i}`)))
+      for (const r of setResults) expect(r.isOk()).toBe(true)
+
+      const getResults = await Promise.all(refs.map((ref) => store.get(ref)))
+      getResults.forEach((r, i) => {
+        expect(r.isOk()).toBe(true)
+        if (r.isOk()) expect(r.value).toBe(`secret-${i}`)
+      })
+    })
+  })
+
+  it("CONCURRENCY: a parallel set + delete of DIFFERENT refs both take effect", async () => {
+    await withTempHome(async () => {
+      await ensureHome()
+      const paths = getPaths()
+      const keyResult = await resolveMasterKey(paths, process.env)
+      expect(keyResult.isOk()).toBe(true)
+      if (!keyResult.isOk()) return
+
+      const store = createEncryptedFileStore(paths, keyResult.value)
+      const refToDelete = `concurrent-del-${randomBytes(4).toString("hex")}`
+      const refToSet = `concurrent-set-${randomBytes(4).toString("hex")}`
+
+      // Seed the ref that will be deleted, BEFORE the concurrent phase.
+      const seed = await store.set(refToDelete, "will-be-deleted")
+      expect(seed.isOk()).toBe(true)
+
+      const [delResult, setResult] = await Promise.all([
+        store.delete(refToDelete),
+        store.set(refToSet, "new-secret"),
+      ])
+      expect(delResult.isOk()).toBe(true)
+      expect(setResult.isOk()).toBe(true)
+
+      const gotDeleted = await store.get(refToDelete)
+      const gotSet = await store.get(refToSet)
+      expect(gotDeleted.isOk()).toBe(true)
+      if (gotDeleted.isOk()) expect(gotDeleted.value).toBeNull()
+      expect(gotSet.isOk()).toBe(true)
+      if (gotSet.isOk()) expect(gotSet.value).toBe("new-secret")
+    })
+  })
 })
 
 // ---- Master-key scrypt path (exercises real params including maxmem) ----

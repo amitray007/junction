@@ -25,8 +25,13 @@ import { OpenApiAuthSchema } from "./openapi-connection.js"
  * heuristic, not a full safe-regex analysis (that needs an RE2/AST engine, out of
  * scope for a data-only core schema); `maxLength`-with-`pattern` remains the
  * input-bound defence-in-depth. (inc-30.7 CodeRabbit #502/#511.)
+ *
+ * Exported (32.13 Slice D3) — reused verbatim by schema/cli-connection.ts's
+ * CliArgSchema.pattern refine, the SAME heuristic applied to a second
+ * author-time regex-pattern surface. Second use, not a new file: DRY per
+ * docs/principles/dry.md §3 (a stable, single-meaning primitive).
  */
-function looksLikeCatastrophicRegex(pattern: string): boolean {
+export function looksLikeCatastrophicRegex(pattern: string): boolean {
   // group content ending in `*` or `+` (optionally lazy `*?`/`+?`), then `)`,
   // then another `*` or `+`. Bounded `{n,m}` and optional `?` quantifiers on the
   // outer group are NOT flagged (they don't cause the exponential blowup).

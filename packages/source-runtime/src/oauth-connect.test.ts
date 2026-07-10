@@ -419,6 +419,232 @@ describe("persistOAuthTokens", () => {
     })
   })
 
+  // -------------------------------------------------------------------------
+  // 32.13 Slice B1 — duplicate-account guard on mode:"create"
+  // -------------------------------------------------------------------------
+
+  it("mode create: a duplicate {platformId, account} -> typed duplicate-account, NOTHING written to the store", async () => {
+    await withTempHome(async () => {
+      const paths = getPaths()
+      const dbResult = await getDatabase(paths)
+      expect(dbResult.isOk()).toBe(true)
+      if (dbResult.isErr()) return
+      const repos = createRepositories(dbResult.value)
+
+      const platform = {
+        id: "dup-platform",
+        kind: "mcp" as const,
+        displayName: "Dup Test",
+        connection: { transport: "http" as const, url: "https://example.com/mcp" },
+      }
+      await repos.platforms.upsert(platform)
+
+      // Seed an EXISTING credential with account "work" on this platform.
+      await repos.credentials.create({
+        id: "existing-cred-id",
+        platformId: "dup-platform",
+        profileName: "work",
+        kind: "oauth2",
+        secretRef: "existing-access-ref",
+        oauthMeta: {
+          providerId: "github-app",
+          authMode: "authorization_code",
+          needsReauth: false,
+        },
+      })
+
+      const storeMap = new Map<string, string>()
+      const setCalls: string[] = []
+      const store = {
+        backend: "encrypted-file" as const,
+        get: (ref: string) =>
+          new ResultAsync(
+            Promise.resolve(coreOk(storeMap.has(ref) ? (storeMap.get(ref) as string) : null)),
+          ),
+        set: (ref: string, value: string) => {
+          setCalls.push(ref)
+          storeMap.set(ref, value)
+          return new ResultAsync(Promise.resolve(coreOk(undefined)))
+        },
+        delete: (ref: string) => {
+          storeMap.delete(ref)
+          return new ResultAsync(Promise.resolve(coreOk(undefined)))
+        },
+      }
+
+      const result = await persistOAuthTokens({
+        repos,
+        store,
+        tokens: { accessToken: SENTINEL_ACCESS, refreshToken: SENTINEL_REFRESH },
+        providerId: "github-app",
+        authMode: "authorization_code",
+        clientId: "cid",
+        clientSecret: SENTINEL_CLIENT_SECRET,
+        now: Date.now(),
+        mode: "create",
+        platformId: "dup-platform",
+        account: "work", // SAME account label as the seeded credential
+      })
+
+      expect(result.isErr()).toBe(true)
+      if (!result.isErr()) return
+      expect(result.error.kind).toBe("duplicate-account")
+      if (result.error.kind === "duplicate-account") {
+        expect(result.error.platformId).toBe("dup-platform")
+        expect(result.error.account).toBe("work")
+      }
+
+      // The store must NEVER be touched — the guard runs BEFORE any store write.
+      expect(setCalls).toEqual([])
+      expect(storeMap.size).toBe(0)
+
+      // Only the originally-seeded credential exists — no second row created.
+      const all = await repos.credentials.list()
+      expect(all.isOk()).toBe(true)
+      if (all.isOk()) {
+        expect(all.value.filter((c) => String(c.platformId) === "dup-platform").length).toBe(1)
+      }
+    })
+  })
+
+  it("mode create: a DIFFERENT account label on the same platform is NOT a duplicate", async () => {
+    await withTempHome(async () => {
+      const paths = getPaths()
+      const dbResult = await getDatabase(paths)
+      expect(dbResult.isOk()).toBe(true)
+      if (dbResult.isErr()) return
+      const repos = createRepositories(dbResult.value)
+
+      const platform = {
+        id: "dup-platform-2",
+        kind: "mcp" as const,
+        displayName: "Dup Test 2",
+        connection: { transport: "http" as const, url: "https://example.com/mcp" },
+      }
+      await repos.platforms.upsert(platform)
+
+      await repos.credentials.create({
+        id: "existing-cred-id-2",
+        platformId: "dup-platform-2",
+        profileName: "work",
+        kind: "oauth2",
+        secretRef: "existing-access-ref-2",
+        oauthMeta: {
+          providerId: "github-app",
+          authMode: "authorization_code",
+          needsReauth: false,
+        },
+      })
+
+      const storeMap = new Map<string, string>()
+      const store = {
+        backend: "encrypted-file" as const,
+        get: (ref: string) =>
+          new ResultAsync(
+            Promise.resolve(coreOk(storeMap.has(ref) ? (storeMap.get(ref) as string) : null)),
+          ),
+        set: (ref: string, value: string) => {
+          storeMap.set(ref, value)
+          return new ResultAsync(Promise.resolve(coreOk(undefined)))
+        },
+        delete: (ref: string) => {
+          storeMap.delete(ref)
+          return new ResultAsync(Promise.resolve(coreOk(undefined)))
+        },
+      }
+
+      const result = await persistOAuthTokens({
+        repos,
+        store,
+        tokens: { accessToken: SENTINEL_ACCESS, refreshToken: SENTINEL_REFRESH },
+        providerId: "github-app",
+        authMode: "authorization_code",
+        clientId: "cid",
+        clientSecret: SENTINEL_CLIENT_SECRET,
+        now: Date.now(),
+        mode: "create",
+        platformId: "dup-platform-2",
+        account: "personal", // DIFFERENT account label — must succeed
+      })
+
+      expect(result.isOk()).toBe(true)
+      if (result.isOk()) expect(result.value.profileName).toBe("personal")
+    })
+  })
+
+  it("mode update: reconnecting an EXISTING credential never triggers the duplicate-account guard (self-collision is expected + fine)", async () => {
+    await withTempHome(async () => {
+      const paths = getPaths()
+      const dbResult = await getDatabase(paths)
+      expect(dbResult.isOk()).toBe(true)
+      if (dbResult.isErr()) return
+      const repos = createRepositories(dbResult.value)
+
+      const platform = {
+        id: "dup-platform-3",
+        kind: "mcp" as const,
+        displayName: "Dup Test 3",
+        connection: { transport: "http" as const, url: "https://example.com/mcp" },
+      }
+      await repos.platforms.upsert(platform)
+
+      await repos.credentials.create({
+        id: "reconnect-cred-id",
+        platformId: "dup-platform-3",
+        profileName: "work",
+        kind: "oauth2",
+        secretRef: "old-access-ref-3",
+        oauthMeta: {
+          providerId: "github-app",
+          authMode: "authorization_code",
+          needsReauth: true,
+          clientIdRef: "old-client-id-ref-3",
+          clientSecretRef: "old-client-secret-ref-3",
+        },
+      })
+
+      const storeMap = new Map<string, string>([
+        ["old-access-ref-3", "old-access"],
+        ["old-client-id-ref-3", "old-client-id"],
+        ["old-client-secret-ref-3", "old-client-secret"],
+      ])
+      const store = {
+        backend: "encrypted-file" as const,
+        get: (ref: string) =>
+          new ResultAsync(
+            Promise.resolve(coreOk(storeMap.has(ref) ? (storeMap.get(ref) as string) : null)),
+          ),
+        set: (ref: string, value: string) => {
+          storeMap.set(ref, value)
+          return new ResultAsync(Promise.resolve(coreOk(undefined)))
+        },
+        delete: (ref: string) => {
+          storeMap.delete(ref)
+          return new ResultAsync(Promise.resolve(coreOk(undefined)))
+        },
+      }
+
+      // Reconnect the SAME credential (mode:"update") — its OWN existing
+      // {platformId,account="work"} row would "collide with itself" under a
+      // naive forPlatform check, but mode:"update" never runs that guard.
+      const result = await persistOAuthTokens({
+        repos,
+        store,
+        tokens: { accessToken: "new-access" },
+        providerId: "github-app",
+        authMode: "authorization_code",
+        clientId: "new-cid",
+        clientSecret: "new-csecret",
+        now: Date.now(),
+        mode: "update",
+        credentialId: "reconnect-cred-id",
+      })
+
+      expect(result.isOk()).toBe(true)
+      if (result.isOk()) expect(result.value.oauthMeta?.needsReauth).toBe(false)
+    })
+  })
+
   it("mode update: repoints an existing credential's refs and best-effort deletes the OLD refs (not the new ones)", async () => {
     await withTempHome(async () => {
       const paths = getPaths()

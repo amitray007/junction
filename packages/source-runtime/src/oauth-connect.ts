@@ -24,6 +24,7 @@ import {
   normalizeTokenResponse,
   type OAuthProvider,
   ok,
+  PlatformIdSchema,
   type Repositories,
   type Result,
   ResultAsync,
@@ -59,6 +60,13 @@ export type OAuthConnectError =
   | { kind: "device-not-supported" }
   | { kind: "invalid-input"; reason: string }
   | { kind: "persist-failed"; cause: DbError }
+  /**
+   * A credential with the same `{platformId, account}` already exists
+   * (increment 32.13 Slice B1) — mirrors core's addCredential duplicate-
+   * account guard (30.12). ONLY reachable on `mode: "create"`; `mode:
+   * "update"` repoints an EXISTING credential by id and never collides.
+   */
+  | { kind: "duplicate-account"; platformId: string; account: string }
 
 // ---------------------------------------------------------------------------
 // buildAuthorizeUrl — browser auth-code + PKCE
@@ -426,6 +434,38 @@ export function persistOAuthTokens(
   const written: string[] = []
 
   const work = async (): Promise<Result<Credential, OAuthConnectError>> => {
+    // Duplicate-account guard (32.13 Slice B1) — BEFORE any store write,
+    // mirroring core's addCredential (30.12): a same-{platformId,account}
+    // collision must surface as a typed duplicate-account error, not the
+    // generic/misleading persist-failed a DB constraint hit produces (the
+    // 32.9 unique index now backstops this at the DB layer too). Checked
+    // ONLY on mode:"create" — mode:"update" repoints an EXISTING credential
+    // by id and can never collide with itself.
+    if (args.mode === "create") {
+      // Brand-validate platformId before it reaches forPlatform (which requires
+      // the branded PlatformId type) — an invalid id surfaces here rather than
+      // later at CredentialSchema.safeParse, but the check is identical.
+      const platformIdParse = PlatformIdSchema.safeParse(args.platformId)
+      if (!platformIdParse.success) {
+        return err({
+          kind: "invalid-input",
+          reason: `invalid platformId: ${platformIdParse.error.issues.map((i) => i.message).join(", ")}`,
+        })
+      }
+      const existingResult = await repos.credentials.forPlatform(platformIdParse.data)
+      if (existingResult.isErr()) {
+        return err({ kind: "persist-failed", cause: existingResult.error })
+      }
+      const duplicate = existingResult.value.some((c) => c.profileName === args.account)
+      if (duplicate) {
+        return err({
+          kind: "duplicate-account",
+          platformId: args.platformId,
+          account: args.account,
+        })
+      }
+    }
+
     const accessRef = newCredentialId()
     const refreshRef = tokens.refreshToken !== undefined ? newCredentialId() : undefined
     const clientIdRef = newCredentialId()

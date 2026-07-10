@@ -5,15 +5,17 @@
 // Routes MUST NOT import @junction/core, @junction/source-runtime, or
 // oauth-connect.server.ts / pending-auth.server.ts directly.
 //
-// Every POST handler: (1) assertLocalHost() — DNS-rebinding / CSRF guard, and
-// (2) validates input before touching core/source-runtime.
+// Every POST handler: (1) assertLocalHost() — loopback Host check (DNS-
+// rebinding) PLUS an explicit Origin allowlist (the actual CSRF control —
+// see fn-guards.server.ts's assertLocalHost doc comment), and (2) validates
+// input before touching core/source-runtime.
 //
 // The client_secret is an INPUT only — it is NEVER echoed back in any return
 // value (startConnect/startReconnect return {authorizeUrl} only).
 
 import { redirect } from "@tanstack/react-router"
 import { createServerFn } from "@tanstack/react-start"
-import { assertLocalHost, requireString } from "./fn-guards.server.js"
+import { assertLocalHost, requireSecretString, requireString } from "./fn-guards.server.js"
 import { completeOAuthCallback, startConnect, startReconnect } from "./oauth-connect.server.js"
 
 function requireStringArray(value: unknown, name: string): string[] {
@@ -36,7 +38,10 @@ export const startConnectFn = createServerFn({ method: "POST" })
     return {
       providerId: requireString(d.providerId, "providerId"),
       clientId: requireString(d.clientId, "clientId"),
-      clientSecret: requireString(d.clientSecret, "clientSecret"),
+      // requireSecretString (32.13 Slice E4) — NOT requireString: an OAuth
+      // app's client_secret must not be silently trimmed (same rationale as
+      // mutations.functions.ts's credential secret).
+      clientSecret: requireSecretString(d.clientSecret, "clientSecret"),
       scopes: requireStringArray(d.scopes, "scopes"),
       account: requireString(d.account, "account"),
       platformId: requireString(d.platformId, "platformId"),

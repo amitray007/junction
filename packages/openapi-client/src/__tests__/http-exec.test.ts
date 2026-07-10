@@ -378,6 +378,46 @@ describe("path-injection guard", () => {
 })
 
 // ---------------------------------------------------------------------------
+// Header/query control-char guard (32.13 Slice D2) — defense-in-depth parity
+// with http-client's validateHttpArgs, applied to the SHARED request engine
+// so OpenAPI (which never calls validateHttpArgs) gets the same guard.
+// ---------------------------------------------------------------------------
+
+describe("header/query control-char guard (32.13 Slice D2)", () => {
+  it("rejects a header arg containing \\r\\n BEFORE the request is built", async () => {
+    const schema = await getSchema()
+    const result = await callOperation(schema, makeConnection(), null, "echoPost", {
+      "x-custom": "value\r\nX-Injected: evil",
+      body: { msg: "test" },
+    })
+    expect(result.isErr()).toBe(true)
+    if (!result.isErr()) return
+    expect(result.error.kind).toBe("invalid-args")
+  })
+
+  it("rejects a query arg containing a NUL byte", async () => {
+    const schema = await getSchema()
+    const result = await callOperation(schema, makeConnection(), null, "echoPost", {
+      q: `value${String.fromCharCode(0)}injected`,
+      body: { msg: "test" },
+    })
+    expect(result.isErr()).toBe(true)
+    if (!result.isErr()) return
+    expect(result.error.kind).toBe("invalid-args")
+  })
+
+  it("accepts a normal header/query arg (no false positive)", async () => {
+    const schema = await getSchema()
+    const result = await callOperation(schema, makeConnection(), null, "echoPost", {
+      "x-custom": "normal-value",
+      q: "hello world",
+      body: { msg: "test" },
+    })
+    expect(result.isOk()).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Byte cap
 // ---------------------------------------------------------------------------
 

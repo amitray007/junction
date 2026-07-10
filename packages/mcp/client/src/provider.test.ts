@@ -16,7 +16,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import { okAsync } from "neverthrow"
 import { afterEach, describe, expect, it } from "vitest"
 import type { UpstreamSession } from "./session.js"
-import { createSession } from "./session.js"
+import { createSession, RESPONSE_BYTE_CAP } from "./session.js"
 
 // ---------------------------------------------------------------------------
 // Helper: stand up an in-memory MCP server and return a connected session
@@ -141,6 +141,85 @@ describe("McpToolProvider adapter (via createSession) — raw names", () => {
 
     // Just verify close() resolves without throwing
     await expect(session.close()).resolves.toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// (c) Response byte cap (32.13 Slice C) — a hostile/compromised MCP source
+// returning an over-cap content blob must be rejected with response-too-large,
+// not buffered through to the caller.
+// ---------------------------------------------------------------------------
+
+/** Like makeInMemorySession, but the call handler controls the RAW content array
+ *  returned by callTool directly (no JSON.stringify wrapping) — needed to hand
+ *  back an oversized text blob for the byte-cap test. */
+async function makeInMemorySessionWithRawContent(
+  tools: Array<{ name: string }>,
+  content: Array<{ type: "text"; text: string }>,
+): Promise<{ session: UpstreamSession; close: () => Promise<void> }> {
+  const server = new Server(
+    { name: "in-memory-upstream-raw", version: "0.0.0" },
+    { capabilities: { tools: {} } },
+  )
+
+  server.setRequestHandler(ListToolsRequestSchema, () => ({
+    tools: tools.map((t) => ({
+      name: t.name,
+      description: "",
+      inputSchema: { type: "object" as const, properties: {} },
+    })),
+  }))
+
+  server.setRequestHandler(CallToolRequestSchema, () => ({ content }))
+
+  const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair()
+  const client = new Client({ name: "test-client", version: "0.0.0" })
+  await server.connect(serverTransport)
+  await client.connect(clientTransport)
+
+  const session = createSession(client, () => client.close())
+  return { session, close: () => client.close() }
+}
+
+describe("response byte cap (32.13 Slice C)", () => {
+  const cleanups: Array<() => Promise<void>> = []
+  afterEach(async () => {
+    for (const c of cleanups) await c()
+    cleanups.length = 0
+  })
+
+  it("callTool rejects an over-cap content blob with response-too-large, not a buffered pass-through", async () => {
+    // One text block comfortably over RESPONSE_BYTE_CAP (1 MB).
+    const oversized = "x".repeat(RESPONSE_BYTE_CAP + 1024)
+    const { session, close } = await makeInMemorySessionWithRawContent(
+      [{ name: "big_tool" }],
+      [{ type: "text", text: oversized }],
+    )
+    cleanups.push(close)
+
+    const result = await session.callTool("big_tool", {})
+    expect(result.isErr()).toBe(true)
+    if (result.isErr()) {
+      expect(result.error.kind).toBe("response-too-large")
+      if (result.error.kind === "response-too-large") {
+        expect(result.error.limit).toBe(RESPONSE_BYTE_CAP)
+      }
+    }
+  })
+
+  it("callTool passes through a comfortably UNDER-cap content blob unchanged", async () => {
+    const small = "small payload"
+    const { session, close } = await makeInMemorySessionWithRawContent(
+      [{ name: "small_tool" }],
+      [{ type: "text", text: small }],
+    )
+    cleanups.push(close)
+
+    const result = await session.callTool("small_tool", {})
+    expect(result.isOk()).toBe(true)
+    if (result.isOk()) {
+      expect(JSON.stringify(result.value.content)).toContain(small)
+    }
   })
 })
 

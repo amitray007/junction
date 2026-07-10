@@ -2,8 +2,10 @@
 // Server function wrappers — the ONLY entry point that route loaders import.
 // Routes MUST NOT import @junction/core or data.server.ts directly.
 //
-// Host guard: every handler rejects requests whose Host is not 127.0.0.1 or
-// localhost, closing DNS-rebinding / CSRF against the loopback server.
+// Guard: every handler rejects requests whose Host is not 127.0.0.1 or
+// localhost (DNS-rebinding defense) AND whose Origin (if present) is not
+// loopback (the actual CSRF control — see fn-guards.server.ts's
+// assertLocalHost doc comment for why the Host check alone is not enough).
 
 import { createServerFn } from "@tanstack/react-start"
 import { getRequest } from "@tanstack/react-start/server"

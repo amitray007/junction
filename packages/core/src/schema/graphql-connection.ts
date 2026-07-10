@@ -26,8 +26,17 @@ export { OpenApiAuthSchema }
  * introspect on demand (or a clear message if the endpoint disables it).
  */
 export const GraphQlConnectionSchema = z.object({
-  /** GraphQL endpoint URL (single pinned endpoint — no path substitution). */
-  endpoint: z.string().url(),
+  /**
+   * GraphQL endpoint URL (single pinned endpoint — no path substitution).
+   * Enforced http/https at the trust boundary (32.13 Slice D4) — z.string().url()
+   * alone accepts file://, ftp://, gopher:// etc.; reject non-http schemes at
+   * add-time rather than store-then-fail-per-call. Mirrors the HTTP schema's
+   * identical baseUrl refine (inc-30.7 SSRF review).
+   */
+  endpoint: z
+    .string()
+    .url()
+    .refine((u) => /^https?:\/\//i.test(u), { message: "endpoint must be an http or https URL" }),
   /** How to authenticate outbound requests. Reuses the OpenAPI auth model (same HTTP POST). */
   auth: OpenApiAuthSchema.optional(),
   /** Extra headers added to every outbound request. */

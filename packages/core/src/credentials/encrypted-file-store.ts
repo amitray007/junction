@@ -6,7 +6,7 @@
 import { randomBytes } from "node:crypto"
 import { chmod, readFile, rename, unlink, writeFile } from "node:fs/promises"
 import path from "node:path"
-import { err, ok, okAsync, ResultAsync } from "neverthrow"
+import { err, ok, ResultAsync } from "neverthrow"
 import type { CredentialError } from "../errors/index.js"
 import type { JunctionPaths } from "../paths/index.js"
 import type { CredentialStore } from "./store.js"
@@ -43,13 +43,16 @@ async function loadEncFile(credentialsFile: string): Promise<EncFile> {
   }
 }
 
-async function saveEncFile(paths: JunctionPaths, data: EncFile): Promise<void> {
-  const { lock } = await import("proper-lockfile")
-  const lockfilePath = path.join(paths.home, ".credentials.lock")
+/**
+ * Write `data` to disk atomically. NEVER acquires the lock itself — every
+ * caller (withCredentialsLock below, and rotate-master-key.ts's OWN direct
+ * writeFile0600/rename sequence) is responsible for holding
+ * `.credentials.lock` for the entire load→mutate→save critical section. This
+ * function only performs the write half.
+ */
+async function writeEncFile(paths: JunctionPaths, data: EncFile): Promise<void> {
   const tmp = path.join(paths.home, `.credentials.${randomBytes(8).toString("hex")}.tmp`)
-  let release: (() => Promise<void>) | undefined
   try {
-    release = await lock(paths.home, { lockfilePath })
     // FIX 1: create the tmp file at 0600 immediately so the ciphertext is never briefly
     // world-readable between writeFile and chmod (lower-stakes than master-key, but same
     // pattern — belt-and-suspenders with the post-write chmod below).
@@ -59,7 +62,6 @@ async function saveEncFile(paths: JunctionPaths, data: EncFile): Promise<void> {
     await rename(tmp, paths.credentialsFile)
   } finally {
     await unlink(tmp).catch(() => {})
-    if (release) await release().catch(() => {})
   }
 }
 
@@ -73,10 +75,58 @@ function loadOrIoFailed(credentialsFile: string): ResultAsync<EncFile, Credentia
   )
 }
 
-/** Persist the enc-file, mapping any write failure to an io-failed Err. */
-function saveOrIoFailed(paths: JunctionPaths, data: EncFile): ResultAsync<void, CredentialError> {
+/**
+ * LOST-UPDATE FIX (32.13 Slice A, HIGH): acquire the home-dir lock ONCE, then
+ * load → mutate → save entirely INSIDE the critical section, releasing in
+ * `finally`. Mirrors tool-pins.ts's savePinFile / config's saveConfig
+ * re-read-under-lock-and-merge pattern.
+ *
+ * Before this fix, `set`/`delete` each called loadOrIoFailed (unlocked) then
+ * saveEncFile (which acquired the lock only around its OWN write). Two
+ * concurrent writers each loaded the SAME pre-mutation map, then each saved
+ * their own snapshot serially under the lock — the second writer's save
+ * clobbered the first writer's ref with a snapshot that never saw it, so a
+ * concurrent `credentials.create` could report success while its ciphertext
+ * silently vanished from disk (an un-decryptable/missing credential).
+ *
+ * `mutate` receives the CURRENT on-disk map (re-read under the lock, not a
+ * stale snapshot from before the lock was acquired) and returns the new map
+ * to persist. Uses the SAME lockfile path (`.credentials.lock`) as
+ * rotate-master-key.ts's `acquireLock` — mutually exclusive with an in-flight
+ * rotation. Do NOT call this from rotate-master-key.ts: that path
+ * deliberately bypasses this locked read-mutate-write (writes directly via
+ * writeFile0600/rename under its OWN acquireLock) because its multi-step
+ * sequence must hold the lock across steps this function doesn't know about
+ * — see rotate-master-key.ts's file header.
+ *
+ * RETRIES: proper-lockfile's default is `retries: 0` — a second concurrent
+ * `lock()` call fails immediately with ELOCKED instead of waiting for the
+ * first to release. Two in-process `store.set()` calls firing concurrently
+ * (the exact scenario this fix targets) would otherwise have one caller's
+ * lock() reject outright. Retry with bounded exponential backoff (matches
+ * this store's writes being fast, sub-10ms critical sections) so a
+ * concurrent caller waits for the lock instead of failing.
+ */
+function withCredentialsLock(
+  paths: JunctionPaths,
+  mutate: (data: EncFile) => EncFile,
+): ResultAsync<void, CredentialError> {
   return ResultAsync.fromPromise(
-    saveEncFile(paths, data),
+    (async () => {
+      const { lock } = await import("proper-lockfile")
+      const lockfilePath = path.join(paths.home, ".credentials.lock")
+      const release = await lock(paths.home, {
+        lockfilePath,
+        retries: { retries: 10, factor: 1.5, minTimeout: 10, maxTimeout: 200 },
+      })
+      try {
+        const current = await loadEncFile(paths.credentialsFile)
+        const next = mutate(current)
+        await writeEncFile(paths, next)
+      } finally {
+        await release().catch(() => {})
+      }
+    })(),
     (cause): CredentialError => ({ kind: "io-failed", cause }),
   )
 }
@@ -99,17 +149,17 @@ export function createEncryptedFileStore(paths: JunctionPaths, key: Buffer): Cre
     },
 
     set(secretRef: string, secret: string): ResultAsync<void, CredentialError> {
-      return loadOrIoFailed(paths.credentialsFile).andThen((data) => {
+      return withCredentialsLock(paths, (data) => {
         data.entries[secretRef] = gcmEncrypt(key, Buffer.from(secretRef), secret)
-        return saveOrIoFailed(paths, data)
+        return data
       })
     },
 
     delete(secretRef: string): ResultAsync<void, CredentialError> {
-      return loadOrIoFailed(paths.credentialsFile).andThen((data) => {
-        if (!(secretRef in data.entries)) return okAsync<void, CredentialError>(undefined)
+      return withCredentialsLock(paths, (data) => {
+        if (!(secretRef in data.entries)) return data
         const { [secretRef]: _removed, ...rest } = data.entries
-        return saveOrIoFailed(paths, { v: 1, entries: rest })
+        return { v: 1, entries: rest }
       })
     },
   }

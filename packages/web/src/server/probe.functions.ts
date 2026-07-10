@@ -5,9 +5,11 @@
 //
 // Every handler: (1) PURE validator (requireString on profileId/namespace/
 // toolName; argsJson is a plain string, default "{}") → (2) assertLocalHost()
-// (DNS-rebinding / CSRF guard) → (3) the server helper, referenced INSIDE the
-// handler body (never at module scope — the inc-27 client-graph-leak trap:
-// createServerFn only strips the handler body from the client bundle).
+// (loopback Host check for DNS-rebinding PLUS an explicit Origin allowlist —
+// the actual CSRF control; see fn-guards.server.ts's assertLocalHost doc
+// comment) → (3) the server helper, referenced INSIDE the handler body
+// (never at module scope — the inc-27 client-graph-leak trap: createServerFn
+// only strips the handler body from the client bundle).
 //
 // These are READS — no persisted state changes, so the route never calls
 // router.invalidate() after them.

@@ -14,7 +14,7 @@
 // main-guard at the bottom.
 
 import { createReadStream, realpathSync } from "node:fs"
-import { stat } from "node:fs/promises"
+import { lstat, stat } from "node:fs/promises"
 import { createServer } from "node:http"
 import { dirname, join, normalize, sep } from "node:path"
 import { Readable } from "node:stream"
@@ -65,6 +65,14 @@ export async function resolveStaticFile(reqPath, baseDir = CLIENT_DIR) {
   if (candidate !== baseDir && !candidate.startsWith(baseDir + sep)) return null
 
   try {
+    // Symlink-reject (32.13 Slice E3, defense-in-depth): lstat (does NOT
+    // follow symlinks) BEFORE stat (which DOES). A symlink placed under
+    // CLIENT_DIR pointing outside it would pass the traversal guard above
+    // (the symlink's OWN path is under baseDir) yet stat() would happily
+    // resolve + serve whatever it points to. Non-remote threat (the operator
+    // owns the box and controls the build output) — belt-and-suspenders.
+    const linkStat = await lstat(candidate)
+    if (linkStat.isSymbolicLink()) return null
     const s = await stat(candidate)
     if (!s.isFile()) return null
     const ext = candidate.slice(candidate.lastIndexOf("."))

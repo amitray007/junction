@@ -5,7 +5,7 @@ import os from "node:os"
 import path from "node:path"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { validatePolicy } from "../sandbox/index.js"
-import { CliConnectionSchema, CliToolSchema } from "./cli-connection.js"
+import { CliArgSchema, CliConnectionSchema, CliToolSchema } from "./cli-connection.js"
 
 const basePolicy = {
   cwd: "/work",
@@ -65,6 +65,98 @@ describe("CliToolSchema — every argv arg must be declared refine", () => {
       policy: basePolicy,
     })
     expect(r.success).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 32.13 Slice D1 — argv[0] SBPL-metachar refine
+// ---------------------------------------------------------------------------
+
+describe("CliToolSchema — argv[0] metachar refine (32.13 Slice D1)", () => {
+  it('REJECTS argv[0] containing a double-quote (") — SBPL string-terminator injection', () => {
+    const r = CliToolSchema.safeParse({
+      name: "echo",
+      argv: [{ kind: "literal", value: '/bin/echo") (allow file-read* (subpath "/' }],
+      args: [],
+      policy: basePolicy,
+    })
+    expect(r.success).toBe(false)
+  })
+
+  it("REJECTS argv[0] containing a backslash", () => {
+    const r = CliToolSchema.safeParse({
+      name: "echo",
+      argv: [{ kind: "literal", value: "/bin/ec\\ho" }],
+      args: [],
+      policy: basePolicy,
+    })
+    expect(r.success).toBe(false)
+  })
+
+  it("REJECTS argv[0] containing parens", () => {
+    const r = CliToolSchema.safeParse({
+      name: "echo",
+      argv: [{ kind: "literal", value: "/bin/ec(ho)" }],
+      args: [],
+      policy: basePolicy,
+    })
+    expect(r.success).toBe(false)
+  })
+
+  it("still ACCEPTS a clean absolute argv[0] (no false positive)", () => {
+    const r = CliToolSchema.safeParse({
+      name: "echo",
+      argv: [{ kind: "literal", value: "/usr/local/bin/my-tool" }],
+      args: [],
+      policy: basePolicy,
+    })
+    expect(r.success).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 32.13 Slice D3 — CliArgSchema.pattern ReDoS guard
+// ---------------------------------------------------------------------------
+
+describe("CliArgSchema — pattern ReDoS guard (32.13 Slice D3)", () => {
+  it("REJECTS the classic catastrophic-backtracking shape (\\w+)+$", () => {
+    const r = CliArgSchema.safeParse({
+      name: "arg1",
+      type: "string",
+      pattern: "(\\w+)+$",
+      maxLength: 100,
+    })
+    expect(r.success).toBe(false)
+  })
+
+  it("REJECTS (a+)+ nested-unbounded-quantifier shape", () => {
+    const r = CliArgSchema.safeParse({
+      name: "arg1",
+      type: "string",
+      pattern: "(a+)+",
+      maxLength: 100,
+    })
+    expect(r.success).toBe(false)
+  })
+
+  it("still ACCEPTS a safe bounded pattern (no false positive)", () => {
+    const r = CliArgSchema.safeParse({
+      name: "arg1",
+      type: "string",
+      pattern: "\\d{1,3}(\\.\\d{1,3}){3}",
+      maxLength: 15,
+    })
+    expect(r.success).toBe(true)
+  })
+
+  it("still ACCEPTS an optional-group pattern (no false positive)", () => {
+    const r = CliArgSchema.safeParse({
+      name: "arg1",
+      type: "string",
+      pattern: "(\\d+)?",
+      maxLength: 20,
+    })
+    expect(r.success).toBe(true)
   })
 })
 

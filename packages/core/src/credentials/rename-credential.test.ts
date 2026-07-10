@@ -174,4 +174,72 @@ describe("renameCredential", () => {
     expect(reread.profileName).toBe("work-renamed")
     expect(reread.oauthMeta).toEqual(created.oauthMeta)
   })
+
+  // ---------------------------------------------------------------------------
+  // (f)/(g) 32.13 Slice B2 — duplicate-account guard (excludes own id)
+  // ---------------------------------------------------------------------------
+
+  it("(f) renaming to a SIBLING credential's existing label -> typed duplicate-account, nothing written", async () => {
+    const idA = await seedCredential("work")
+    const idB = await seedCredential("personal")
+
+    const result = await renameCredential({ credentialId: idB, account: "work" }, repos.credentials)
+    expect(result.isErr()).toBe(true)
+    const err = result._unsafeUnwrapErr()
+    expect(err.kind).toBe("duplicate-account")
+    if (err.kind === "duplicate-account") {
+      expect(err.account).toBe("work")
+    }
+
+    // idA/idB unchanged.
+    const rereadA = (await repos.credentials.get(idA))._unsafeUnwrap()
+    const rereadB = (await repos.credentials.get(idB))._unsafeUnwrap()
+    expect(rereadA.profileName).toBe("work")
+    expect(rereadB.profileName).toBe("personal")
+  })
+
+  it("(g) renaming a credential to its OWN existing label is a no-op success, not a false duplicate", async () => {
+    const id = await seedCredential("work")
+
+    const result = await renameCredential({ credentialId: id, account: "work" }, repos.credentials)
+    expect(result.isOk()).toBe(true)
+    if (result.isOk()) {
+      expect(result.value.profileName).toBe("work")
+    }
+  })
+
+  it("(h) two DIFFERENT platforms may each have a credential labeled the same — no cross-platform false collision", async () => {
+    // Seed a second platform + credential sharing the SAME label as an
+    // existing credential on the FIRST platform.
+    const platform2Id = newPlatformId()
+    await repos.platforms.create({
+      id: platform2Id,
+      kind: "mcp" as const,
+      displayName: "Second Platform",
+    })
+    const platform2 = (await repos.platforms.get(platform2Id))._unsafeUnwrap()
+
+    const idOnPlatform1 = await seedCredential("work")
+    const otherCredResult = await addCredential(
+      { platformId: String(platform2Id), account: "personal", kind: "bearer", secret: "s2" },
+      platform2,
+      store,
+      repos.credentials,
+    )
+    if (otherCredResult.isErr()) throw otherCredResult.error
+    const idOnPlatform2 = String(otherCredResult.value.id)
+
+    // Rename the platform-2 credential to "work" — same label as platform-1's
+    // credential, but a DIFFERENT platformId, so this must succeed.
+    const result = await renameCredential(
+      { credentialId: idOnPlatform2, account: "work" },
+      repos.credentials,
+    )
+    expect(result.isOk()).toBe(true)
+    if (result.isOk()) expect(result.value.profileName).toBe("work")
+
+    // platform-1's credential is untouched.
+    const reread1 = (await repos.credentials.get(idOnPlatform1))._unsafeUnwrap()
+    expect(reread1.profileName).toBe("work")
+  })
 })
