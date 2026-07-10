@@ -35,6 +35,14 @@ jobs:
         with:
           node-version: 22
       - run: pnpm install --frozen-lockfile
+      # Generate web's TanStack route tree BEFORE knip: routeTree.gen.ts is
+      # gitignored codegen output (absent on a fresh checkout), and
+      # packages/web/src/router.tsx imports it — without this step knip fails
+      # with "Unresolved imports: ./routeTree.gen". Mirrors the type-coverage
+      # job below and packages/web's own typecheck script (`tsr generate &&
+      # tsc`). Generation over a knip ignore: an ignore would also mask a
+      # genuinely broken import of the route tree.
+      - run: pnpm --filter @junction/web exec tsr generate
       - run: pnpm run knip
 
   semgrep:
@@ -47,15 +55,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      # Pinned to the exact version these rules were authored + proven
-      # against locally — an unpinned `pip install semgrep` could drift to a
-      # version with different metavariable-regex/pattern semantics (this
+      # pipx (preinstalled on ubuntu runners) gives semgrep an ISOLATED venv:
+      # a plain `pip install` into the runner's shared site-packages crashed
+      # semgrep at startup on a broken transitive opentelemetry set (PR #133's
+      # first CI run). Version stays pinned to the exact one these rules were
+      # authored + proven against locally — an unpinned install could drift to
+      # a version with different metavariable-regex/pattern semantics (this
       # increment's build hit a real fullmatch-vs-substring surprise there)
       # and silently change what the rules catch.
-      - run: pip install semgrep==1.136.0
+      - run: pipx install semgrep==1.136.0
       - run: semgrep scan --config tools/semgrep/ --error
 
   no-publish-guard:
