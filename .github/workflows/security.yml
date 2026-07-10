@@ -18,6 +18,46 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  knip:
+    # Increment 32.12 — dead-code/unused-dependency gate. knip.jsonc is tuned
+    # to zero false positives on this monorepo (see docs/methods/32.12-heavy-
+    # analyzers.md for the triage): every ignore carries a one-line reason,
+    # no blanket suppressions. Lands BLOCKING (a fully clean baseline was
+    # reachable in-increment — no report-only `|| true` fallback needed).
+    name: knip
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          cache: true
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run knip
+
+  semgrep:
+    # Increment 32.12 — targeted semgrep with LOCAL committed rules only
+    # (tools/semgrep/*.yml). No registry, no login, deterministic — every
+    # rule proven against a deliberate local violation before landing (see
+    # docs/methods/32.12-heavy-analyzers.md). Blocking: the rules are ours
+    # and precise, tuned to zero false positives on current main.
+    name: semgrep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      # Pinned to the exact version these rules were authored + proven
+      # against locally — an unpinned `pip install semgrep` could drift to a
+      # version with different metavariable-regex/pattern semantics (this
+      # increment's build hit a real fullmatch-vs-substring surprise there)
+      # and silently change what the rules catch.
+      - run: pip install semgrep==1.136.0
+      - run: semgrep scan --config tools/semgrep/ --error
+
   no-publish-guard:
     # Locks in the publish-disabled invariant (increment 0.75): junction
     # must never gain an npm-publish path until deliberately enabled.
