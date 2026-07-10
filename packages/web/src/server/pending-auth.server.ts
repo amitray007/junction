@@ -74,12 +74,22 @@ export function takePending(state: string): PendingAuth | undefined {
 }
 
 // Test-only escape hatch — no other module may reach into `pending` directly.
-/** @internal test-only */
+/**
+ * @internal test-only
+ * @public Used by pending-auth.server.test.ts and oauth-connect.server.test.ts
+ * (both are *.test.ts, excluded from knip's project scan by knip.jsonc's
+ * `ignore: ["**\/*.test.ts"]` — a detection gap, not dead code).
+ */
 export function _clearPendingForTests(): void {
   pending.clear()
 }
 
-/** @internal test-only */
+/**
+ * @internal test-only
+ * @public Used by pending-auth.server.test.ts and oauth-connect.server.test.ts
+ * (both are *.test.ts, excluded from knip's project scan by knip.jsonc's
+ * `ignore: ["**\/*.test.ts"]` — a detection gap, not dead code).
+ */
 export function _pendingSizeForTests(): number {
   return pending.size
 }

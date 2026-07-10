@@ -80,6 +80,12 @@ function buildDenoArgv(
   return args
 }
 
+/**
+ * @public Called from sandbox.ts via a dynamic `import("./deno.js")` +
+ * namespace-object property access (`denoMod.runWithDeno(...)`, sandbox.ts:234)
+ * to break the sandbox↔seatbelt/bubblewrap/deno static import cycle — knip's
+ * static analysis does not trace that pattern and false-flags this as unused.
+ */
 export function runWithDeno(
   script: { file: string } | { code: string },
   policy: SandboxPolicy,
