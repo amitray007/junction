@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.7.0",
+    "@junction/code-mode": "workspace:*",
     "@junction/core": "workspace:*",
     "@junction/graphql-client": "workspace:*",
     "@junction/mcp-client": "workspace:*",

@@ -66,6 +66,9 @@ importers:
       '@clack/prompts':
         specifier: ^1.7.0
         version: 1.7.0
+      '@junction/code-mode':
+        specifier: workspace:*
+        version: link:../code-mode
       '@junction/core':
         specifier: workspace:*
         version: link:../core
