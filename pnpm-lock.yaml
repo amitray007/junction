@@ -66,6 +66,9 @@ importers:
       '@clack/prompts':
         specifier: ^1.7.0
         version: 1.7.0
+      '@junction/code-mode':
+        specifier: workspace:*
+        version: link:../code-mode
       '@junction/core':
         specifier: workspace:*
         version: link:../core
@@ -118,6 +121,9 @@ importers:
       ink-testing-library:
         specifier: ^4.0.0
         version: 4.0.0(@types/react@19.2.17)
+      neverthrow:
+        specifier: 'catalog:'
+        version: 8.2.0
 
   packages/code-mode:
     dependencies:

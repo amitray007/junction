@@ -257,6 +257,34 @@ describe("charset contracts (load-bearing for multi-profile tool-name parsing)",
 })
 
 // ---------------------------------------------------------------------------
+// RESERVED NAMESPACE — `junction` is reserved for the synthetic
+// junction__run_code tool (increment 33 Slice C, code-mode). Guard point 1 of
+// 2 (schema, for NEW sources) — guard point 2 is the serve-time read-guard
+// against a LEGACY `junction__*` proxy tool (cli's synthetic-tool wiring,
+// not schema-testable here).
+// ---------------------------------------------------------------------------
+
+describe("reserved namespace 'junction' (increment 33 Slice C, code-mode guard point 1 of 2)", () => {
+  it("ToolNamespaceSchema rejects 'junction'", () => {
+    expect(ToolNamespaceSchema.safeParse("junction").success).toBe(false)
+  })
+
+  it("ToolNamespaceSchema still accepts every other charset-valid namespace", () => {
+    expect(ToolNamespaceSchema.safeParse("junction_work").success).toBe(true)
+    expect(ToolNamespaceSchema.safeParse("github").success).toBe(true)
+  })
+
+  it("ProfileNameSchema rejects 'junction'", () => {
+    expect(ProfileNameSchema.safeParse("junction").success).toBe(false)
+  })
+
+  it("ProfileNameSchema still accepts every other charset-valid profile name", () => {
+    expect(ProfileNameSchema.safeParse("junction-work").success).toBe(true)
+    expect(ProfileNameSchema.safeParse("work").success).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // ID GENERATORS
 // ---------------------------------------------------------------------------
 

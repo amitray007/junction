@@ -44,6 +44,7 @@ import { defineCommand } from "citty"
 import { consola } from "consola"
 import { createFileAuditSink } from "../audit-sink.js"
 import { adaptToMcpHandlers } from "../providers.js"
+import { buildRunCodeHandlers, mergeHandlers } from "../synthetic-tool.js"
 
 // ---------------------------------------------------------------------------
 // serve command
@@ -234,7 +235,30 @@ export const serveCommand = defineCommand({
         label: record.label,
         profiles: entries.map((e) => e.profileName),
       }
-      return adaptToMcpHandlers(scoped, { principal, sink: auditSink, prefixed })
+      const realHandlers = adaptToMcpHandlers(scoped, { principal, sink: auditSink, prefixed })
+
+      // ── Synthetic junction__run_code tool (increment 33 Slice C) ─────────
+      // One tool per routed profile, arity-matched to the key's scope
+      // (unprefixed for scope:"profile", `<profile>__junction__run_code`
+      // otherwise) — mirrors createScopedProxy's own arity contract exactly.
+      // A refused-collision warning (guard point 2 — see synthetic-tool.ts)
+      // uses consola (this command's stdout is NOT the MCP channel — see the
+      // file-level note above).
+      const runCodeHandlers = await buildRunCodeHandlers({
+        entries,
+        prefixed,
+        principal,
+        sink: auditSink,
+        onReservedNamespaceCollision: (info) => {
+          consola.warn({
+            event: "reserved_namespace_collision",
+            profileName: info.profileName,
+            detail:
+              "a legacy 'junction__' tool already exists — junction__run_code was NOT registered",
+          })
+        },
+      })
+      return mergeHandlers(realHandlers, runCodeHandlers)
     }
 
     // ── Start the HTTP endpoint ──────────────────────────────────────────
