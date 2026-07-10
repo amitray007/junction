@@ -7,7 +7,7 @@
 // Uses node:child_process spawn — NOT node:http/https, so this stays inside
 // core's "no HTTP" boundary (enforced by the core-not-http depcruise rule).
 
-// nosemgrep: no-child-process-outside-sandbox -- opens the system default browser via a fixed OS binary + a validated URL arg, never a user-controlled command string (see file header)
+// nosemgrep: no-child-process-outside-sandbox -- fixed OS binary (open/cmd/xdg-open); callers pass internally-constructed URLs (cli connect's authorize URL, web's localhost URL), never a user-controlled command string
 import { spawn } from "node:child_process"
 
 /** Open a URL in the system default browser. No new dependency. */

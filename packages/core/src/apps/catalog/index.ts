@@ -15,7 +15,7 @@ function validateEntries(): typeof CATALOG_ENTRIES {
     if (!result.success) {
       const issues = result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")
       // Module-load-time integrity check on a committed, codegen'd file (never user/request input).
-      // nosemgrep: no-bare-throw-in-core -- module-load-time integrity check, fails fast on a committed codegen'd file
+      // nosemgrep: no-bare-throw-in-core -- category 1 (module-load-time integrity check): fails fast on a committed codegen'd file
       throw new Error(
         `catalog: generated entry "${(entry as { id?: string }).id}" failed AppCatalogEntrySchema ` +
           `re-validation at load time: ${issues}`,

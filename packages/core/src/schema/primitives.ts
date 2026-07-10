@@ -109,7 +109,7 @@ export function namespacedTool(namespace: string, tool: string): string {
     const result = ToolNamespaceSchema.safeParse(value)
     if (!result.success) {
       // Documented @throws contract above: a sync validation-assertion helper, not a Result-boundary op.
-      // nosemgrep: no-bare-throw-in-core -- documented @throws assertion helper; callers needing a typed error use ToolNamespaceSchema.safeParse directly
+      // nosemgrep: no-bare-throw-in-core -- category 4 (documented-@throws contract): assertion helper; callers needing a typed error use ToolNamespaceSchema.safeParse directly
       throw new Error(
         `Invalid tool ${label} "${value}": ${result.error.issues.map((i) => i.message).join(", ")}`,
       )

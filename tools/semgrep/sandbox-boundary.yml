@@ -7,6 +7,12 @@
 # legitimately shells out to run a user-configured CLI tool as its whole
 # purpose). Anywhere else in packages/, spawning a subprocess bypasses the
 # sandbox capability model entirely.
+#
+# Trade-off: this rule matches at the IMPORT level, so a nosemgrep on the
+# import greenlights the whole file — a future, unrelated spawn added to an
+# already-suppressed file won't retrigger. Acceptable for now (the two
+# suppressed files are tiny and single-purpose); tighten to call-site
+# matching if those files ever grow.
 rules:
   - id: no-child-process-outside-sandbox
     languages: [typescript]
