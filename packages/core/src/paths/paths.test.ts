@@ -61,6 +61,13 @@ describe("paths", () => {
     })
   })
 
+  it("pinsFile is tool-pins.json inside home", async () => {
+    await withTempHome(async (home) => {
+      const p = getPaths()
+      expect(p.pinsFile).toBe(path.join(home, "tool-pins.json"))
+    })
+  })
+
   it("cacheDir resolves to a non-empty string", async () => {
     await withTempHome(async () => {
       const p = getPaths()

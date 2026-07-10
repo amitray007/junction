@@ -40,12 +40,21 @@
 //   calls provider.close() in every finally block. See docs/futures/revisit-when.md.
 //
 // SOURCE-AGNOSTIC: zero vendor code. Works with any ToolProvider (MCP now; OpenAPI/GraphQL later).
+//
+// HASH-PINNING (increment 32.11):
+//   listTools optionally hashes each tool's SANITIZED description + inputSchema and compares
+//   it to a prior pin (TOFU + warn-and-serve — see tool-pins.ts). The ToolPinStore is INJECTED
+//   and OPTIONAL, same DI shape as resolveProvider: its absence is a complete no-op (zero
+//   behavior change, no reads/writes). callTool never touches pins — descriptions/schemas
+//   never flow through the call path.
 
+import { sha256Hex } from "../api-keys/hash.js"
 import type { SourceRef, ToolFilter, UpstreamError } from "../index.js"
 import { err, ok, type Result, ResultAsync } from "../result/index.js"
 import { namespaceToolName, splitNamespacedName } from "./naming.js"
 import type { ProviderTool, ToolProvider, ToolResult } from "./provider.js"
 import { sanitizeDescription } from "./sanitize-description.js"
+import { pinKeyString, type ToolPinStore } from "./tool-pins.js"
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -65,16 +74,23 @@ export type ResolveProviderFn = (
 >
 
 /**
- * Injected callback (increment 32.5): fired when a tool DESCRIPTION was
- * sanitized in a way that indicates a real injection attempt — a
- * control/format character was stripped, or the description was truncated
- * for excessive length. NOT fired for cosmetic-only changes (NFKC
- * normalization or whitespace collapse alone) — that would drown the real
- * signal on nearly every listTools call for many honest, non-English or
- * multi-line sources.
+ * Injected callback (increment 32.5, extended 32.11): fired from listTools for two
+ * DISTINCT reasons, discriminated by `reason`:
  *
- * METADATA ONLY: never passed the raw or sanitized description text — the
- * (possibly-injected) text must never reach a log. Same injection pattern as
+ *   - "sanitized"  (increment 32.5, original behavior) — a tool DESCRIPTION was sanitized
+ *     in a way that indicates a real injection attempt: a control/format character was
+ *     stripped, or the description was truncated for excessive length. NOT fired for
+ *     cosmetic-only changes (NFKC normalization or whitespace collapse alone) — that would
+ *     drown the real signal on nearly every listTools call for many honest, non-English or
+ *     multi-line sources.
+ *   - "pin-drift"  (increment 32.11) — a previously-pinned tool's SANITIZED description +
+ *     inputSchema hash no longer matches the recorded pin ("rug pull" detection, TOFU +
+ *     warn-and-serve v1 — see tool-pins.ts). Fired ONCE per changed hash (the pin is then
+ *     updated to the new hash), not on every subsequent identical listing.
+ *
+ * METADATA ONLY: never passed the raw or sanitized description text, nor the old/new hash —
+ * the (possibly-injected) text must never reach a log, and hashes alone are enough to prove
+ * a change occurred without needing to diff/reveal content. Same injection pattern as
  * resolveProvider; the pure proxy never imports a logger.
  */
 export type OnDescriptionDriftFn = (info: {
@@ -82,6 +98,7 @@ export type OnDescriptionDriftFn = (info: {
   tool: string
   strippedSuspicious: boolean
   truncated: boolean
+  reason: "sanitized" | "pin-drift"
 }) => void
 
 /** Multi-source proxy for a profile's aggregated MCP tools. */
@@ -143,6 +160,42 @@ function isToolAllowed(rawName: string, filter: ToolFilter | undefined): boolean
 }
 
 // ---------------------------------------------------------------------------
+// Hash-pinning helpers (increment 32.11)
+// ---------------------------------------------------------------------------
+
+/**
+ * Deterministic JSON serialization — sorts object keys recursively so the same logical
+ * value always serializes identically regardless of upstream key order. Mirrors the
+ * sorted-keys idiom in audit/redact.ts's hashArgs; not shared because that helper is
+ * args-shaped (Record<string, unknown> only) while this must also walk arrays and the
+ * description string. Arrays keep their order (order is semantically meaningful there);
+ * only object keys are sorted.
+ */
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((v) => stableStringify(v)).join(",")}]`
+  }
+  if (value !== null && typeof value === "object") {
+    const keys = Object.keys(value as Record<string, unknown>).sort()
+    const entries = keys.map(
+      (k) => `${JSON.stringify(k)}:${stableStringify((value as Record<string, unknown>)[k])}`,
+    )
+    return `{${entries.join(",")}}`
+  }
+  return JSON.stringify(value)
+}
+
+/**
+ * Hash a tool's identity for pinning: the SANITIZED description (never raw — a raw
+ * injection payload must never influence a persisted hash's provenance) + inputSchema.
+ * `description` is the value ALREADY assigned to the outgoing ProviderTool (post-sanitize),
+ * so this is called after sanitizeDescription, never before.
+ */
+function hashToolIdentity(description: string | undefined, inputSchema: object): string {
+  return sha256Hex(stableStringify({ description: description ?? null, inputSchema }))
+}
+
+// ---------------------------------------------------------------------------
 // createProfileProxy
 // ---------------------------------------------------------------------------
 
@@ -152,26 +205,53 @@ function isToolAllowed(rawName: string, filter: ToolFilter | undefined): boolean
  * @param sources             - The profile's SourceRef list. Only enabled ones are used.
  * @param resolveProvider     - Injected by the cli: maps a SourceRef to its ToolProvider +
  *   namespace. Must NOT import from the credential store here — injection keeps core pure.
- * @param onDescriptionDrift  - Optional (increment 32.5): fired from listTools only, once per
- *   tool whose description sanitization stripped a suspicious char or truncated it for length.
- *   Absent callback → sanitize is still applied, just not surfaced (no-op, never throws).
+ * @param onDescriptionDrift  - Optional (increment 32.5, extended 32.11): fired from listTools
+ *   only, for a sanitize-drift signal (`reason: "sanitized"`) or a hash-pin mismatch
+ *   (`reason: "pin-drift"`). Absent callback → sanitize/pinning are still applied, just not
+ *   surfaced (no-op, never throws).
+ * @param toolPinStore        - Optional (increment 32.11): TOFU hash-pin store, injected the
+ *   same way resolveProvider is (proxy.ts does NO file I/O itself). Absent store → NO pinning
+ *   at all — zero behavior change from pre-32.11 (no reads, no writes, no drift fires for
+ *   "pin-drift"). See tool-pins.ts for the store's shape and on-disk format.
  *
- * The returned proxy applies namespacing (namespaceToolName / ≤64 guard), toolFilter, and
- * description sanitization (increment 32.5 — tool-poisoning mitigation) on top of each
- * provider's raw output. Per-source resilience: a failing source is skipped on listTools and
- * propagated as Err on callTool. callTool needs no sanitization — descriptions never flow
- * through the call path.
+ * The returned proxy applies namespacing (namespaceToolName / ≤64 guard), toolFilter,
+ * description sanitization (increment 32.5 — tool-poisoning mitigation), and hash-pinning
+ * (increment 32.11 — rug-pull detection) on top of each provider's raw output. Per-source
+ * resilience: a failing source is skipped on listTools and propagated as Err on callTool.
+ * callTool needs no sanitization or pinning — descriptions/schemas never flow through the
+ * call path.
  */
 export function createProfileProxy(
   sources: SourceRef[],
   resolveProvider: ResolveProviderFn,
   onDescriptionDrift?: OnDescriptionDriftFn,
+  toolPinStore?: ToolPinStore,
 ): ProfileProxy {
   const enabledSources = sources.filter((s) => s.enabled)
 
   return {
     listTools(): ResultAsync<ProviderTool[], UpstreamError> {
       const work = async (): Promise<Result<ProviderTool[], UpstreamError>> => {
+        // Load the pin map ONCE per listTools call (read-once/batch-write — tool-pins.ts's
+        // documented contract). Absent store → skip entirely (zero behavior change: no reads,
+        // no writes, no "pin-drift" fires below).
+        //
+        // FAIL-OPEN ON STORE ERRORS: a corrupt/unreadable pins file resolves to an empty map
+        // with `warning: true` (tool-pins.ts never throws). This is NOT the same signal as a
+        // per-tool "pin-drift" — it means "we couldn't read prior pins", not "this tool's
+        // contract changed" — so it is intentionally NOT routed through onDescriptionDrift
+        // (that channel is reserved for per-tool findings with a namespace+tool identity).
+        // Pinning simply degrades to "every tool looks newly-seen" for this pass; the file
+        // self-heals on the next successful putMany. A caller wanting store-health visibility
+        // reads its own stderr/log around toolPinStore construction — out of scope here.
+        const existingPins = toolPinStore ? await toolPinStore.getAll() : undefined
+        const pinChanges: Array<{
+          key: { toolNamespace: string; rawName: string }
+          hash: string
+          now: string
+        }> = []
+        const nowIso = new Date().toISOString()
+
         // Fan out to all sources concurrently. allSettled ensures one source's failure
         // does not abort the others, and each source's try/finally guarantees its
         // provider is closed even if a sibling rejects.
@@ -221,8 +301,36 @@ export function createProfileProxy(
                       tool: t.name,
                       strippedSuspicious: sanitized.strippedSuspicious,
                       truncated: sanitized.truncated,
+                      reason: "sanitized",
                     })
                   }
+                }
+
+                // HASH-PINNING / RUG-PULL DETECTION (increment 32.11): compute the pin hash
+                // over the SANITIZED description (never raw) + inputSchema. Only when a store
+                // was injected — otherwise this is a complete no-op (no hashing, no compare).
+                if (toolPinStore && existingPins) {
+                  const key = { toolNamespace, rawName: t.name }
+                  const hash = hashToolIdentity(description, t.inputSchema)
+                  const existing = existingPins.pins.get(pinKeyString(key))
+                  if (existing === undefined) {
+                    // TOFU: first sighting — record silently, no drift fire.
+                    pinChanges.push({ key, hash, now: nowIso })
+                  } else if (existing.hash !== hash) {
+                    // Rug pull: a previously-pinned tool's identity changed. Warn-and-serve —
+                    // the tool below is still pushed to `namespaced` (v1 never blocks).
+                    pinChanges.push({ key, hash, now: nowIso })
+                    if (onDescriptionDrift) {
+                      onDescriptionDrift({
+                        namespace: toolNamespace,
+                        tool: t.name,
+                        strippedSuspicious: false,
+                        truncated: false,
+                        reason: "pin-drift",
+                      })
+                    }
+                  }
+                  // existing.hash === hash: unchanged — no write, no fire (proof-of-done #3).
                 }
 
                 namespaced.push({ ...t, name: nameResult.value, description })
@@ -241,6 +349,15 @@ export function createProfileProxy(
             allTools.push(...result.value)
           }
           // "rejected": unexpected throw inside the per-source logic — skip (per-source resilience)
+        }
+
+        // ONE putMany for all new/changed pins across every source (tool-pins.ts's documented
+        // batch-write contract — proof-of-done #3: unchanged tools never trigger a rewrite,
+        // enforced by pinChanges only containing new/changed entries). Fire-and-handled here
+        // (not fire-and-forget): a write failure fails OPEN — it must never fail the listing
+        // that triggered it, which is why putMany itself never throws/rejects.
+        if (toolPinStore && pinChanges.length > 0) {
+          await toolPinStore.putMany(pinChanges)
         }
 
         // Always Ok: per-source resilience means partial results are valid.

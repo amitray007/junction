@@ -294,3 +294,7 @@ export type { SanitizedDescription } from "./sources/sanitize-description.js"
 export { DESCRIPTION_MAX_CHARS, sanitizeDescription } from "./sources/sanitize-description.js"
 export type { ScopedProxy, ScopedProxyEntry } from "./sources/scoped-proxy.js"
 export { createScopedProxy } from "./sources/scoped-proxy.js"
+// Tool description/schema hash-pinning (inc 32.11) — TOFU rug-pull detection.
+// Injected into createProfileProxy the same way resolveProvider is; absent = no-op.
+export type { PinChange, PinKey, PinMap, PinRecord, ToolPinStore } from "./sources/tool-pins.js"
+export { createFileToolPinStore, pinKeyString } from "./sources/tool-pins.js"

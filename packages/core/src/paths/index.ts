@@ -34,6 +34,15 @@ export type JunctionPaths = {
    * could expose it. Created lazily at 0700 by `ensureRuntimeDir`.
    */
   runtimeDir: string
+  /**
+   * Tool description/schema hash-pin store (increment 32.11 — TOFU rug-pull
+   * detection). A plain JSON file (NOT a DB table — deliberate; see
+   * tool-pins.ts header) mapping source-local `(toolNamespace, rawName)` →
+   * `{ hash, firstSeenAt, updatedAt }`. Written 0600, lockfile-guarded batch
+   * write via `createFileToolPinStore`. Never holds description/schema TEXT —
+   * hashes and names only.
+   */
+  pinsFile: string
 }
 
 export function resolveHome(): string {
@@ -53,6 +62,7 @@ export function getPaths(): JunctionPaths {
     masterKeyFile: path.join(home, "master.key"),
     auditLogFile: path.join(home, "audit.log"),
     runtimeDir: path.join(home, "run"),
+    pinsFile: path.join(home, "tool-pins.json"),
   }
 }
 
