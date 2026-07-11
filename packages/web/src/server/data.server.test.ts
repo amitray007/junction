@@ -259,9 +259,16 @@ describe("data.server", () => {
     expect(github?.registrationHint.redirectUri).toBe("http://127.0.0.1:4321/oauth/callback")
     expect(github?.supportsDeviceCode).toBe(false)
 
+    // google (the device-code example) was removed in the inc 35 catalog
+    // strip-down and restored in increment 39 (gmail) — supportsDeviceCode:true
+    // derivation coverage returns with it. Every OTHER surviving provider still
+    // correctly reports supportsDeviceCode:false.
     const google = providers.find((p) => p.id === "google")
+    expect(google).toBeDefined()
     expect(google?.supportsDeviceCode).toBe(true)
-    expect(google?.redirectMode).toBe("loopback-ephemeral")
+    expect(
+      providers.filter((p) => p.id !== "google").every((p) => p.supportsDeviceCode === false),
+    ).toBe(true)
   })
 
   // ---------------------------------------------------------------------------
@@ -552,10 +559,11 @@ describe("data.server", () => {
       expect(detail.app.authModes.length).toBeGreaterThan(0)
     })
 
-    it("a none-only auth app (anilist) carries authModes: ['none']", async () => {
-      const detail = await readAppDetail("anilist")
-      expect(detail.app.authModes).toEqual(["none"])
-    })
+    // "a none-only auth app carries authModes: ['none']" (formerly anilist)
+    // removed in increment 35's catalog strip-down — the catalog has no
+    // 'none'-only-auth app until one is reintroduced (36+); the case it
+    // proved is otherwise a duplicate of the "unknown id" test below (both
+    // fall back to authModes: [] once the catalog entry is gone).
 
     it("an unknown id with no catalog entry falls back to authModes: []", async () => {
       const detail = await readAppDetail("totally-unknown-app-id")
@@ -603,23 +611,17 @@ describe("data.server", () => {
       expect(openapiSurface?.connections[0]?.tools.status).toBe("error")
     })
 
-    it("thin/undefined-catalog app (no authored surfaces) falls back honestly — surfaces empty, connections preserved", async () => {
-      const dbResult = await getDatabase(getPaths())
-      if (dbResult.isErr()) throw new Error(String(dbResult.error))
-      const repos = createRepositories(dbResult.value)
-
-      // "spotify" has no authored surfaces in the catalog (thin entry).
-      await repos.platforms.create({
-        id: PlatformIdSchema.parse("spotify"),
-        kind: "mcp",
-        displayName: "Spotify (public)",
-      })
-
-      const detail = await readAppDetail("spotify")
-      expect(detail.surfaces).toEqual([])
-      expect(detail.otherConnections).toHaveLength(1)
-      expect(detail.otherConnections[0]?.platformId).toBe("spotify")
-    })
+    // "thin/undefined-catalog app (no authored surfaces) falls back honestly
+    // — surfaces empty, connections preserved" (formerly spotify) removed in
+    // increment 35's catalog strip-down. It required a REAL catalog app with
+    // zero authored surfaces so a platform whose id exact-matches it (via
+    // appIdForConnection) groups under that app id rather than "other" — the
+    // catalog is github-only now and github IS fully surfaced, so there's no
+    // thin-but-cataloged app left to exercise this against. Returns to
+    // coverage once a thin app is reintroduced (36+) before its surfaces are
+    // authored. The DIFFERENT "id === 'other'" thin-fallback path (connections
+    // preserved via the synthetic 'other' bucket) stays covered by the test
+    // below.
 
     it("an unknown id with no catalog entry and no connections falls back to an honest empty DTO (never throws)", async () => {
       const detail = await readAppDetail("totally-unknown-app-id")

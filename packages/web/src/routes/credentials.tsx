@@ -561,7 +561,12 @@ function ConnectOAuthDialog({ open, onOpenChange, platforms, oauthProviders }: C
         },
       })
       if (!result.ok) {
-        toast.error(`Failed to start connect: ${result.error}`)
+        // This flow never sends a surfaceSelector, so startConnect's
+        // collision pre-check never runs here — the `conflict` variant is
+        // unreachable from this caller, but the union is still handled
+        // honestly rather than assuming `.error` is always present.
+        const message = "error" in result ? result.error : "a platform conflict was detected"
+        toast.error(`Failed to start connect: ${message}`)
         setSubmitting(false)
         return
       }

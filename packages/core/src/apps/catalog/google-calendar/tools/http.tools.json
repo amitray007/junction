@@ -1,0 +1,171 @@
+[
+  {
+    "name": "list_events",
+    "description": "List events on a calendar (GET /calendars/{calendarId}/events). Supports time-range filtering and free-text search.",
+    "method": "GET",
+    "path": "/calendars/{calendarId}/events",
+    "params": [
+      {
+        "name": "calendarId",
+        "in": "path",
+        "type": "string",
+        "required": true,
+        "description": "The calendar id to list events from. Use \"primary\" for the authenticated user's main calendar, or an id from list_calendars."
+      },
+      {
+        "name": "timeMin",
+        "in": "query",
+        "type": "string",
+        "required": false,
+        "description": "RFC3339 timestamp — only return events that end on or after this time (e.g. \"2026-07-11T00:00:00Z\")."
+      },
+      {
+        "name": "timeMax",
+        "in": "query",
+        "type": "string",
+        "required": false,
+        "description": "RFC3339 timestamp — only return events that start before this time (e.g. \"2026-07-18T00:00:00Z\")."
+      },
+      {
+        "name": "q",
+        "in": "query",
+        "type": "string",
+        "required": false,
+        "description": "Free-text search terms to filter events (matches summary, description, location, attendee names/emails)."
+      },
+      {
+        "name": "maxResults",
+        "in": "query",
+        "type": "number",
+        "required": false,
+        "description": "Maximum number of events to return. Defaults to 250; the maximum allowed value is 2500."
+      },
+      {
+        "name": "singleEvents",
+        "in": "query",
+        "type": "boolean",
+        "required": false,
+        "description": "Whether to expand recurring events into individual instances. Set true to get concrete instances rather than the recurring master event."
+      },
+      {
+        "name": "orderBy",
+        "in": "query",
+        "type": "enum",
+        "required": false,
+        "enum": ["startTime", "updated"],
+        "description": "The order to sort results in. \"startTime\" requires singleEvents=true."
+      }
+    ],
+    "responseHint": "{ items: [Event], nextPageToken? }"
+  },
+  {
+    "name": "get_event",
+    "description": "Get a single event by id (GET /calendars/{calendarId}/events/{eventId}).",
+    "method": "GET",
+    "path": "/calendars/{calendarId}/events/{eventId}",
+    "params": [
+      {
+        "name": "calendarId",
+        "in": "path",
+        "type": "string",
+        "required": true,
+        "description": "The calendar id the event belongs to. Use \"primary\" for the authenticated user's main calendar, or an id from list_calendars."
+      },
+      {
+        "name": "eventId",
+        "in": "path",
+        "type": "string",
+        "required": true,
+        "description": "The event id, as returned by list_events or create_event."
+      }
+    ],
+    "responseHint": "An Event resource: { id, summary, start, end, attendees, status, ... }"
+  },
+  {
+    "name": "create_event",
+    "description": "Create a new event on a calendar (POST /calendars/{calendarId}/events). The request body is a JSON Event resource, minimally {\"summary\":\"...\", \"start\":{\"dateTime\":\"2026-07-11T10:00:00-07:00\"} (or {\"date\":\"2026-07-11\"} for an all-day event), \"end\":{...same shape as start...}}. Optional fields include description, location, and attendees (array of {email}).",
+    "method": "POST",
+    "path": "/calendars/{calendarId}/events",
+    "confirm": true,
+    "params": [
+      {
+        "name": "calendarId",
+        "in": "path",
+        "type": "string",
+        "required": true,
+        "description": "The calendar id to create the event on. Use \"primary\" for the authenticated user's main calendar, or an id from list_calendars."
+      },
+      {
+        "name": "body",
+        "in": "body",
+        "type": "string",
+        "required": true,
+        "description": "JSON Event resource: {\"summary\":\"...\", \"start\":{\"dateTime\"|\"date\":\"...\"}, \"end\":{\"dateTime\"|\"date\":\"...\"}, \"description\"?, \"location\"?, \"attendees\"?:[{\"email\":\"...\"}]}. The agent builds this object itself."
+      }
+    ],
+    "responseHint": "The created Event resource: { id, htmlLink, summary, start, end, ... }"
+  },
+  {
+    "name": "update_event",
+    "description": "Partially update an existing event (PATCH /calendars/{calendarId}/events/{eventId}). Only the fields present in the body are changed; omitted fields are left as-is.",
+    "method": "PATCH",
+    "path": "/calendars/{calendarId}/events/{eventId}",
+    "confirm": true,
+    "params": [
+      {
+        "name": "calendarId",
+        "in": "path",
+        "type": "string",
+        "required": true,
+        "description": "The calendar id the event belongs to. Use \"primary\" for the authenticated user's main calendar, or an id from list_calendars."
+      },
+      {
+        "name": "eventId",
+        "in": "path",
+        "type": "string",
+        "required": true,
+        "description": "The event id to update, as returned by list_events or create_event."
+      },
+      {
+        "name": "body",
+        "in": "body",
+        "type": "string",
+        "required": true,
+        "description": "JSON object containing only the Event fields to change, e.g. {\"summary\":\"New title\"} or {\"start\":{\"dateTime\":\"...\"},\"end\":{\"dateTime\":\"...\"}} to reschedule."
+      }
+    ],
+    "responseHint": "The updated Event resource: { id, summary, start, end, ... }"
+  },
+  {
+    "name": "delete_event",
+    "description": "Delete an event from a calendar (DELETE /calendars/{calendarId}/events/{eventId}). Irreversible.",
+    "method": "DELETE",
+    "path": "/calendars/{calendarId}/events/{eventId}",
+    "confirm": true,
+    "params": [
+      {
+        "name": "calendarId",
+        "in": "path",
+        "type": "string",
+        "required": true,
+        "description": "The calendar id the event belongs to. Use \"primary\" for the authenticated user's main calendar, or an id from list_calendars."
+      },
+      {
+        "name": "eventId",
+        "in": "path",
+        "type": "string",
+        "required": true,
+        "description": "The event id to delete, as returned by list_events or create_event."
+      }
+    ],
+    "responseHint": "No response body on success (204)."
+  },
+  {
+    "name": "list_calendars",
+    "description": "List calendars on the authenticated user's calendar list (GET /users/me/calendarList) — every calendar the user owns or has subscribed to.",
+    "method": "GET",
+    "path": "/users/me/calendarList",
+    "params": [],
+    "responseHint": "{ items: [{id, summary, accessRole, primary?}], nextPageToken? }"
+  }
+]

@@ -83,7 +83,7 @@ describe("oauthRefreshFn — success path", () => {
     })
 
     const result = await oauthRefreshFn({
-      providerId: "google",
+      providerId: "github-app",
       refreshToken: "old-refresh-token",
       clientId: "cid",
       clientSecret: "csecret",
@@ -144,7 +144,7 @@ describe("oauthRefreshFn — success path", () => {
     })
 
     const result = await oauthRefreshFn({
-      providerId: "google",
+      providerId: "github-app",
       refreshToken: "old-refresh-token",
       clientId: "cid",
       clientSecret: "csecret",
@@ -161,7 +161,7 @@ describe("oauthRefreshFn — failure mapping", () => {
     )
 
     const result = await oauthRefreshFn({
-      providerId: "google",
+      providerId: "github-app",
       refreshToken: SENTINEL_REFRESH_TOKEN,
       clientId: "cid",
       clientSecret: "csecret",
@@ -177,7 +177,7 @@ describe("oauthRefreshFn — failure mapping", () => {
     )
 
     const result = await oauthRefreshFn({
-      providerId: "google",
+      providerId: "github-app",
       refreshToken: SENTINEL_REFRESH_TOKEN,
       clientId: "cid",
       clientSecret: "csecret",
@@ -191,7 +191,7 @@ describe("oauthRefreshFn — failure mapping", () => {
     refreshAccessToken.mockRejectedValueOnce(new ArcticFetchError(new Error("ECONNREFUSED")))
 
     const result = await oauthRefreshFn({
-      providerId: "google",
+      providerId: "github-app",
       refreshToken: SENTINEL_REFRESH_TOKEN,
       clientId: "cid",
       clientSecret: "csecret",
@@ -205,7 +205,7 @@ describe("oauthRefreshFn — failure mapping", () => {
     refreshAccessToken.mockRejectedValueOnce("a raw string throw")
 
     const result = await oauthRefreshFn({
-      providerId: "google",
+      providerId: "github-app",
       refreshToken: SENTINEL_REFRESH_TOKEN,
       clientId: "cid",
       clientSecret: "csecret",
@@ -227,7 +227,7 @@ describe("oauthRefreshFn — no-token-leak (adversarial)", () => {
     for (const failure of failures) {
       refreshAccessToken.mockRejectedValueOnce(failure)
       const result = await oauthRefreshFn({
-        providerId: "google",
+        providerId: "github-app",
         refreshToken: SENTINEL_REFRESH_TOKEN,
         clientId: "cid",
         clientSecret: "csecret",

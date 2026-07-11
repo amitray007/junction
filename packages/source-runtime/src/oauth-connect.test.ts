@@ -13,6 +13,8 @@ import {
   getDatabase,
   getPaths,
   getProvider,
+  type NormalizedTokens,
+  type OAuthProvider,
   ResultAsync,
 } from "@junction/core"
 import { withTempHome } from "@junction/core/testing"
@@ -26,6 +28,65 @@ import {
 } from "./oauth-connect.js"
 
 const validateAuthorizationCode = vi.fn()
+
+// Synthetic providers for behavior the surviving catalog (github, github-app,
+// generic) no longer exercises: an offline-access/device-code provider (was
+// "google") and a comma-scope-separator + custom {ok:false}-at-200 parser
+// provider (was "slack"). These mirror the SHAPE of the since-removed catalog
+// entries without depending on catalog data — the removed apps return in inc
+// 37/38 with their own catalog entries; these fixtures just keep the
+// mechanism (device-code flow, non-default scope separator, parseTokenResponse
+// override) under test in the meantime.
+const DEVICE_CODE_PROVIDER: OAuthProvider = {
+  id: "synthetic-device-code",
+  displayName: "Synthetic Device-Code Provider",
+  authorizationUrl: "https://example.com/oauth/authorize",
+  tokenUrl: "https://example.com/oauth/token",
+  deviceAuthorizationUrl: "https://example.com/oauth/device/code",
+  pkce: "S256",
+  scopeSeparator: " ",
+  authorizationParams: { access_type: "offline", prompt: "consent" },
+  tokenAuthMethod: "client_secret_basic",
+  bodyFormat: "form",
+  expiryStrategy: "expires_in",
+  redirectMode: "loopback-ephemeral",
+  supportsRefresh: true,
+  registrationHint: {
+    redirectUri: "http://127.0.0.1:<ephemeral-port>/",
+    scopes: "synthetic fixture — not a real registered app",
+    docsUrl: "",
+  },
+}
+
+function syntheticCommaScopeParser(raw: unknown): NormalizedTokens {
+  const body = raw as { ok?: boolean; error?: string; access_token?: string; scope?: string }
+  if (body.ok === false) throw new Error(`synthetic: ${body.error ?? "unknown error"}`)
+  const accessToken = body.access_token
+  if (typeof accessToken !== "string" || accessToken.length === 0) {
+    throw new Error("synthetic: token response missing access_token")
+  }
+  return { accessToken, scopes: body.scope ? body.scope.split(",") : undefined }
+}
+
+const COMMA_SCOPE_PROVIDER: OAuthProvider = {
+  id: "synthetic-comma-scope",
+  displayName: "Synthetic Comma-Scope Provider",
+  authorizationUrl: "https://example.com/oauth/authorize",
+  tokenUrl: "https://example.com/oauth/token",
+  pkce: "S256",
+  scopeSeparator: ",",
+  tokenAuthMethod: "client_secret_post",
+  bodyFormat: "form",
+  expiryStrategy: "expires_in",
+  parseTokenResponse: syntheticCommaScopeParser,
+  redirectMode: "loopback-fixed",
+  supportsRefresh: true,
+  registrationHint: {
+    redirectUri: "http://127.0.0.1:4321/oauth/callback",
+    scopes: "synthetic fixture — not a real registered app",
+    docsUrl: "",
+  },
+}
 
 vi.mock("arctic", async (importOriginal) => {
   const actual = await importOriginal<typeof import("arctic")>()
@@ -58,10 +119,8 @@ const SENTINEL_CLIENT_SECRET = "sentinel-client-secret-do-not-leak"
 // ---------------------------------------------------------------------------
 
 describe("buildAuthorizeUrl", () => {
-  it("google: produces an S256 PKCE URL with state, code_challenge, offline access_type + consent, and scopes", () => {
-    const provider = getProvider("google")
-    expect(provider).toBeDefined()
-    if (!provider) return
+  it("offline-access provider: produces an S256 PKCE URL with state, code_challenge, offline access_type + consent, and scopes", () => {
+    const provider = DEVICE_CODE_PROVIDER
 
     const result = buildAuthorizeUrl({
       provider,
@@ -89,10 +148,8 @@ describe("buildAuthorizeUrl", () => {
     expect(second.codeVerifier).not.toBe(result.codeVerifier)
   })
 
-  it("slack: uses the comma scope separator", () => {
-    const provider = getProvider("slack")
-    expect(provider).toBeDefined()
-    if (!provider) return
+  it("comma-scope provider: uses the comma scope separator", () => {
+    const provider = COMMA_SCOPE_PROVIDER
     const result = buildAuthorizeUrl({
       provider,
       clientId: "cid",
@@ -153,10 +210,8 @@ describe("exchangeCode", () => {
     }
   })
 
-  it("slack {ok:false}-at-200 is rejected as a typed error, not a fake success", async () => {
-    const provider = getProvider("slack")
-    expect(provider).toBeDefined()
-    if (!provider) return
+  it("custom parseTokenResponse override: {ok:false}-at-200 is rejected as a typed error, not a fake success", async () => {
+    const provider = COMMA_SCOPE_PROVIDER
 
     validateAuthorizationCode.mockResolvedValueOnce({
       data: { ok: false, error: "invalid_code" },
@@ -175,10 +230,8 @@ describe("exchangeCode", () => {
     if (result.isErr()) expect(result.error.kind).toBe("exchange-failed")
   })
 
-  it("slack {ok:true} with a real access_token normalizes correctly", async () => {
-    const provider = getProvider("slack")
-    expect(provider).toBeDefined()
-    if (!provider) return
+  it("custom parseTokenResponse override: {ok:true} with a real access_token normalizes correctly", async () => {
+    const provider = COMMA_SCOPE_PROVIDER
 
     validateAuthorizationCode.mockResolvedValueOnce({
       data: { ok: true, access_token: "xoxb-tok", scope: "channels:read,chat:write" },
@@ -201,7 +254,7 @@ describe("exchangeCode", () => {
   })
 
   it("a thrown OAuth2RequestError(invalid_grant) maps to exchange-failed/invalid_grant, never leaking the sentinel code text", async () => {
-    const provider = getProvider("google")
+    const provider = getProvider("github-app")
     expect(provider).toBeDefined()
     if (!provider) return
     const { OAuth2RequestError } = await import("arctic")
@@ -233,7 +286,7 @@ describe("exchangeCode", () => {
 
 describe("deviceAuthorize / devicePoll", () => {
   it("device-not-supported for a provider without deviceAuthorizationUrl", async () => {
-    const provider = getProvider("slack")
+    const provider = getProvider("github-app")
     expect(provider).toBeDefined()
     if (!provider) return
     const result = await deviceAuthorize({ provider, clientId: "cid", scopes: [] })
@@ -242,16 +295,14 @@ describe("deviceAuthorize / devicePoll", () => {
   })
 
   it("deviceAuthorize parses a valid device response", async () => {
-    const provider = getProvider("google")
-    expect(provider).toBeDefined()
-    if (!provider) return
+    const provider = DEVICE_CODE_PROVIDER
 
     const fetchMock = vi.fn().mockResolvedValueOnce({
       ok: true,
       json: async () => ({
         device_code: "devcode",
         user_code: "ABCD-EFGH",
-        verification_uri: "https://google.com/device",
+        verification_uri: "https://example.com/device",
         interval: 5,
         expires_in: 1800,
       }),
@@ -268,9 +319,7 @@ describe("deviceAuthorize / devicePoll", () => {
   })
 
   it("devicePoll: authorization_pending / slow_down / access_denied / expired_token map to typed device-* errors", async () => {
-    const provider = getProvider("google")
-    expect(provider).toBeDefined()
-    if (!provider) return
+    const provider = DEVICE_CODE_PROVIDER
 
     const cases: Array<[string, string]> = [
       ["authorization_pending", "device-pending"],
@@ -299,9 +348,7 @@ describe("deviceAuthorize / devicePoll", () => {
   })
 
   it("devicePoll: success normalizes tokens", async () => {
-    const provider = getProvider("google")
-    expect(provider).toBeDefined()
-    if (!provider) return
+    const provider = DEVICE_CODE_PROVIDER
 
     const fetchMock = vi.fn().mockResolvedValueOnce({
       status: 200,
@@ -845,6 +892,282 @@ describe("persistOAuthTokens", () => {
       expect(result.value.oauthMeta?.expiresAt ?? null).toBeNull()
     })
   })
+
+  // -------------------------------------------------------------------------
+  // Increment 38 D1/D3 — the catalog-connect BIND: optional platformBuild
+  // upserts the platform BEFORE credentials.create (FK-ordered), and a
+  // best-effort orphan-platform cleanup fires ONLY when this call created the
+  // platform (never a pre-existing one).
+  // -------------------------------------------------------------------------
+
+  function stubStore(seed: Record<string, string> = {}) {
+    const storeMap = new Map<string, string>(Object.entries(seed))
+    return {
+      map: storeMap,
+      store: {
+        backend: "encrypted-file" as const,
+        get: (ref: string) =>
+          new ResultAsync(
+            Promise.resolve(coreOk(storeMap.has(ref) ? (storeMap.get(ref) as string) : null)),
+          ),
+        set: (ref: string, value: string) => {
+          storeMap.set(ref, value)
+          return new ResultAsync(Promise.resolve(coreOk(undefined)))
+        },
+        delete: (ref: string) => {
+          storeMap.delete(ref)
+          return new ResultAsync(Promise.resolve(coreOk(undefined)))
+        },
+      },
+    }
+  }
+
+  // FAILING-FIRST regression (this is the new bind behavior inc 38 adds —
+  // written to prove the platform did NOT exist before persistOAuthTokens
+  // ran, and DOES exist afterward, with the credential correctly FK-pointing
+  // at it).
+  it("[inc 38 D1] mode create + platformBuild present: upserts the platform BEFORE creating the credential — a platform absent beforehand exists afterward, FK-consistent", async () => {
+    await withTempHome(async () => {
+      const paths = getPaths()
+      const dbResult = await getDatabase(paths)
+      expect(dbResult.isOk()).toBe(true)
+      if (dbResult.isErr()) return
+      const repos = createRepositories(dbResult.value)
+
+      // Prove the platform does NOT exist before the call — this is the
+      // whole point of the bind: the catalog-connect create branch had NO
+      // platform row before inc 38.
+      const beforeResult = await repos.platforms.get("bind-platform")
+      expect(beforeResult.isErr()).toBe(true)
+
+      const { store } = stubStore()
+      const platform = {
+        id: "bind-platform",
+        kind: "graphql" as const,
+        displayName: "Bind Test",
+        graphql: { endpoint: "https://example.com/graphql", auth: { scheme: "bearer" as const } },
+      }
+
+      const result = await persistOAuthTokens({
+        repos,
+        store,
+        tokens: { accessToken: SENTINEL_ACCESS, refreshToken: SENTINEL_REFRESH },
+        providerId: "github-app",
+        authMode: "authorization_code",
+        clientId: "cid",
+        clientSecret: SENTINEL_CLIENT_SECRET,
+        now: Date.now(),
+        mode: "create",
+        platformId: "bind-platform",
+        account: "work",
+        platformBuild: { platform, preExisting: false },
+      })
+
+      expect(result.isOk()).toBe(true)
+      if (!result.isOk()) return
+      expect(result.value.platformId).toBe("bind-platform")
+
+      // The platform now exists — bound, FK-consistent with the credential.
+      const afterResult = await repos.platforms.get("bind-platform")
+      expect(afterResult.isOk()).toBe(true)
+      if (afterResult.isOk()) {
+        expect(afterResult.value.displayName).toBe("Bind Test")
+        expect(afterResult.value.kind).toBe("graphql")
+      }
+
+      // The credential row's platformId FK-points at the just-created platform.
+      const credentials = await repos.credentials.forPlatform("bind-platform" as never)
+      expect(credentials.isOk()).toBe(true)
+      if (credentials.isOk()) {
+        expect(credentials.value).toHaveLength(1)
+        expect(credentials.value[0]?.kind).toBe("oauth2")
+      }
+    })
+  })
+
+  it("[inc 38 D1] platformBuild ABSENT: create branch is byte-identical to pre-inc-38 — no platforms.upsert call, existing-platform-required semantics unchanged (must-stay-working: raw /credentials + CLI connect)", async () => {
+    await withTempHome(async () => {
+      const paths = getPaths()
+      const dbResult = await getDatabase(paths)
+      expect(dbResult.isOk()).toBe(true)
+      if (dbResult.isErr()) return
+      const repos = createRepositories(dbResult.value)
+
+      // The raw /credentials flow (and CLI connect) require the platform to
+      // ALREADY exist — persistOAuthTokens never creates one when
+      // platformBuild is absent. Prove that a MISSING platform still fails
+      // exactly as it did pre-inc-38 (a credentials.create FK failure), NOT
+      // a silent platform creation.
+      const { store } = stubStore()
+      const result = await persistOAuthTokens({
+        repos,
+        store,
+        tokens: { accessToken: "tok", refreshToken: "reftok" },
+        providerId: "github-app",
+        authMode: "authorization_code",
+        clientId: "cid",
+        clientSecret: "csecret",
+        now: Date.now(),
+        mode: "create",
+        platformId: "never-created-platform",
+        account: "work",
+        // platformBuild OMITTED entirely.
+      })
+
+      expect(result.isErr()).toBe(true)
+      // The platform was never created as a side effect of this call.
+      const platformResult = await repos.platforms.get("never-created-platform")
+      expect(platformResult.isErr()).toBe(true)
+    })
+  })
+
+  it("[inc 38 D3] credentials.create failure AFTER platformBuild upsert, platformWasCreatedHere=true: best-effort deletes the just-created platform (orphan cleanup)", async () => {
+    await withTempHome(async () => {
+      const paths = getPaths()
+      const dbResult = await getDatabase(paths)
+      expect(dbResult.isOk()).toBe(true)
+      if (dbResult.isErr()) return
+      const repos = createRepositories(dbResult.value)
+
+      const { store } = stubStore()
+      const platform = {
+        id: "orphan-platform",
+        kind: "mcp" as const,
+        displayName: "Orphan Test",
+        connection: { transport: "http" as const, url: "https://example.com/mcp" },
+      }
+
+      // platformId "" makes CredentialSchema validation fail (PlatformIdSchema
+      // .min(1)) — but the platformBuild.platform.id "orphan-platform" is
+      // VALID and distinct, so the upsert succeeds BEFORE the credential
+      // validation fails. This reproduces "platform bound, credential
+      // rejected" without needing a raw DB-layer failure mock.
+      const result = await persistOAuthTokens({
+        repos,
+        store,
+        tokens: { accessToken: "tok", refreshToken: "reftok" },
+        providerId: "github-app",
+        authMode: "authorization_code",
+        clientId: "cid",
+        clientSecret: "csecret",
+        now: Date.now(),
+        mode: "create",
+        platformId: "", // invalid -> credentialParse fails AFTER the platform upsert
+        account: "work",
+        platformBuild: { platform, preExisting: false },
+      })
+
+      expect(result.isErr()).toBe(true)
+
+      // Best-effort cleanup: the just-created platform is gone.
+      const platformResult = await repos.platforms.get("orphan-platform")
+      expect(platformResult.isErr()).toBe(true)
+    })
+  })
+
+  it("[inc 38 D3] credentials.create failure, platformWasCreatedHere=false (preExisting:true): the PRE-EXISTING platform is NOT deleted", async () => {
+    await withTempHome(async () => {
+      const paths = getPaths()
+      const dbResult = await getDatabase(paths)
+      expect(dbResult.isOk()).toBe(true)
+      if (dbResult.isErr()) return
+      const repos = createRepositories(dbResult.value)
+
+      // Seed a PRE-EXISTING platform (mirrors a real collision: checkCollision
+      // found a same-kind platform already there).
+      const preExistingPlatform = {
+        id: "pre-existing-platform",
+        kind: "mcp" as const,
+        displayName: "Pre-existing",
+        connection: { transport: "http" as const, url: "https://example.com/mcp" },
+      }
+      await repos.platforms.upsert(preExistingPlatform)
+
+      const { store } = stubStore()
+
+      const result = await persistOAuthTokens({
+        repos,
+        store,
+        tokens: { accessToken: "tok", refreshToken: "reftok" },
+        providerId: "github-app",
+        authMode: "authorization_code",
+        clientId: "cid",
+        clientSecret: "csecret",
+        now: Date.now(),
+        mode: "create",
+        platformId: "", // invalid -> credentialParse fails AFTER the (no-op-ish) upsert
+        account: "work",
+        // preExisting: true — this call did NOT create the platform.
+        platformBuild: { platform: preExistingPlatform, preExisting: true },
+      })
+
+      expect(result.isErr()).toBe(true)
+
+      // The pre-existing platform is UNTOUCHED — still there, not deleted.
+      const platformResult = await repos.platforms.get("pre-existing-platform")
+      expect(platformResult.isOk()).toBe(true)
+      if (platformResult.isOk()) {
+        expect(platformResult.value.displayName).toBe("Pre-existing")
+      }
+    })
+  })
+
+  it("[inc 38 D3] orphan-platform delete failure never masks the original persist-failed error (best-effort, log-and-continue)", async () => {
+    await withTempHome(async () => {
+      const paths = getPaths()
+      const dbResult = await getDatabase(paths)
+      expect(dbResult.isOk()).toBe(true)
+      if (dbResult.isErr()) return
+      const repos = createRepositories(dbResult.value)
+
+      const { store } = stubStore()
+      // A platform id that, once upserted, we immediately delete out from
+      // under persistOAuthTokens so its OWN cleanup delete fails (not-found).
+      // This proves the cleanup failure doesn't escape as a DIFFERENT error
+      // shape than plain persist-failed.
+      const platform = {
+        id: "flaky-orphan-platform",
+        kind: "mcp" as const,
+        displayName: "Flaky",
+        connection: { transport: "http" as const, url: "https://example.com/mcp" },
+      }
+
+      const flakyRepos = {
+        ...repos,
+        platforms: {
+          ...repos.platforms,
+          upsert: async (p: typeof platform) => {
+            const upserted = await repos.platforms.upsert(p)
+            // Delete it out from under the caller immediately after upsert
+            // succeeds, so the LATER cleanup delete (inside persistOAuthTokens)
+            // hits a genuine not-found.
+            await repos.platforms.delete(p.id)
+            return upserted
+          },
+        },
+      }
+
+      const result = await persistOAuthTokens({
+        repos: flakyRepos,
+        store,
+        tokens: { accessToken: "tok", refreshToken: "reftok" },
+        providerId: "github-app",
+        authMode: "authorization_code",
+        clientId: "cid",
+        clientSecret: "csecret",
+        now: Date.now(),
+        mode: "create",
+        platformId: "", // invalid -> credentialParse fails, triggers cleanup
+        account: "work",
+        platformBuild: { platform, preExisting: false },
+      })
+
+      // Still a clean, typed persist-failed-shaped error — the cleanup's own
+      // (already-deleted) failure never escapes as a throw/different kind.
+      expect(result.isErr()).toBe(true)
+      if (result.isErr()) expect(result.error.kind).toBe("invalid-input")
+    })
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -853,9 +1176,7 @@ describe("persistOAuthTokens", () => {
 
 describe("deviceAuthorize null-body guard", () => {
   it("a 200 response whose JSON body is literal null → typed Err, never a thrown TypeError", async () => {
-    const provider = getProvider("google")
-    expect(provider).toBeDefined()
-    if (!provider) return
+    const provider = DEVICE_CODE_PROVIDER
     const realFetch = globalThis.fetch
     // biome-ignore lint/suspicious/noExplicitAny: minimal fetch stub for the test
     globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => null })) as any

@@ -397,3 +397,37 @@ LEAD review, confirmed in the real-httpbin QA.)
 **Cause:** the pre-push `dup` lefthook does not run the SAME full `jscpd packages` scan the CI `quality` job runs (documented divergence — the hook is scoped/lighter). New code that adds structurally-identical blocks (here: `run.ts`'s audit-sink + stdio-principal + proxy-warn closures duplicating `mcp.ts`/`serve.ts`, and an intra-file eval-vs-rejected error classifier) tips the whole-repo ratio over 0.5% without any local signal.
 
 **Fix / discipline:** before pushing a diff that adds non-trivial CLI/command code, run the FULL `pnpm run quality` (or `npx jscpd packages --reporters console`) locally — don't trust the pre-push `dup` hook as the jscpd gate. Dedup honestly (extract a shared helper at the rule-of-three) rather than bumping the threshold or adding an ignore; a scoped, commented jscpd ignore is only acceptable for a genuinely-irreducible clone (e.g. two structurally-similar tests). (inc 33 CI fix)
+
+## Two literal NUL bytes in `data.server.ts` make it grep-binary (pre-inc-36, still present)
+
+**Symptom:** `grep`/`rg` treat `packages/web/src/server/data.server.ts` as a binary file (must use `grep -a` or the Read tool to inspect it). Two `\x00` bytes sit at ~lines 472/482, inside the `` `${conn.platformId} ${conn.account}` `` cache-key template literal (a corrupted space char).
+
+**Cause:** a corrupted space character committed before inc 36 (confirmed via `git show HEAD:…` during the inc-36 build). Functionally harmless today — both the write and read sides use the same corrupted key consistently, so the cache still hits — but it silently defeats plain grep on a load-bearing server file (the SPDX-header gate already uses `grep -a` for the same reason, per inc 32.1).
+
+**Fix / discipline:** a one-line cleanup commit replacing the two NUL bytes with a normal space is safe and worth doing when next touching this file. NOT fixed in inc 36 (out of that slice's scope — flagged by the builder). Until then, use `grep -a` / Read on `data.server.ts`. (raised inc 36)
+
+## Inline oauth2 catalog-connect accepts an orphan-platform residual by design — not atomic, matches `confirmThenAdd`'s precedent (inc 38 D3)
+
+**Symptom (accepted, not a bug):** in the catalog Connect flow's oauth2 bind, if `platforms.upsert` succeeds but the immediately-following `credentials.create` fails (a same-transaction-window DB error, a validation edge case, etc.), the platform row *this call created* can be left in the DB with no credential pointing at it — a genuine orphan, briefly, until the best-effort cleanup runs.
+
+**Cause:** true cross-table atomicity between `platforms.upsert` and `credentials.create` is unachievable in junction's storage model — the `CredentialStore` (keyring/AES file) is not transactional with the SQLite DB, so there is no single commit that can cover "platform row + credential row + store secrets" together. This mirrors the SAME shape `confirmThenAdd` (`connect-from-catalog.ts`, inc 30.11) already ships with zero platform rollback on a credential-write failure — inc 38 doesn't invent a stronger guarantee for oauth2 than the token-connect path already has.
+
+**Fix (bounded hardening, strictly better than `confirmThenAdd`'s baseline):** `persistOAuthTokens`'s `mode:"create"` branch tracks `platformWasCreatedHere` (true iff `platformBuild.preExisting` was false — i.e. this call's `checkCollision` found no existing same-kind platform). On a `credentials.create` failure, IF `platformWasCreatedHere`, it attempts a **best-effort** `platforms.delete(platformId)` in the SAME guarded closure as the existing store-ref cleanup — log-and-continue (via `getLogger().warn`) on delete failure, NEVER letting the cleanup attempt mask or replace the original `persist-failed` error returned to the caller. A **pre-existing** platform (`preExisting: true`) is NEVER deleted — this call only would have added a credential to it, so deleting it would destroy a platform the user already had.
+
+**Why the residual is acceptable, and self-heals:** the platform id is the catalog's stable deterministic template (`{app}` / `{app}-{kind}`), and `platforms.upsert` is idempotent — so (a) an orphaned platform is INERT (no credential → `resolve-provider.ts`'s per-source skip logic serves no tools from it, informative log line only) and (b) a retried connect on the SAME surface re-upserts the SAME platform id and, on success, attaches a working credential — the orphan self-heals on the very next successful attempt. See `packages/source-runtime/src/oauth-connect.ts`'s `cleanupOrphanPlatform` + the `platformWasCreatedHere` guard, and `docs/methods/38-oauth-connect-bind.md`'s D3 decision. (raised inc 38)
+
+## 0700 home-dir-perms tests flake under full-parallel `pnpm verify` (inc 37/38)
+
+**Symptom:** a full parallel `pnpm verify` intermittently fails ONE test asserting a home dir is mode 0700 — e.g. `mcp.test.ts` "creates the home dir at mode 0700" (`expected 493 to be 448` = got 0o755, wanted 0o700) or, earlier, a `serve.test.ts` over-cap-body case. The SAME test passes in isolation (`vitest run <file> -t "<name>"`) and on the clean base branch.
+
+**Cause:** parallel-run resource contention / umask sensitivity in the ensureHome 0700 chmod path under load — not a code regression. First seen inc 37 (serve.test.ts), again inc 38 (mcp.test.ts), both on diffs that never touched those files.
+
+**Fix / discipline:** if a 0700-perms or serve/mcp test fails in a full parallel verify, re-run it in isolation and on the base branch before treating it as a regression. If it passes isolated + is in a file your diff didn't touch, it's this flake — re-run `pnpm verify`; it clears. (A real fix — serialize the perms tests or make the assertion umask-tolerant — is a deferred test-infra cleanup, not blocking.) (raised inc 37, recurred inc 38)
+
+## `pnpm -r build` web-before-core resolution race under load (inc 40)
+
+**Symptom:** a full `pnpm verify` fails at `packages/web build` with `Rolldown failed to resolve import "@junction/core" from ...web/src/server/*.server.ts` (`ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL`). The SAME `pnpm --filter @junction/web build` succeeds when run directly, and web runs fine.
+
+**Cause:** `pnpm -r build` builds workspace packages concurrently; under resource contention (e.g. a QA server or another verify running in parallel) web's vite/rolldown can start before `@junction/core`'s `dist` is fully written, so the `@junction/core` import doesn't resolve. A transient ordering race, not a code error.
+
+**Fix / discipline:** if `pnpm verify` fails ONLY with a `Rolldown failed to resolve "@junction/core"` (or similar cross-package resolve) error, it's this race — re-run after `pnpm --filter @junction/core build` (prebuild core) and with no competing background process (kill any QA server first). Distinct from the test-timeout parallel-flake above. (raised inc 40)

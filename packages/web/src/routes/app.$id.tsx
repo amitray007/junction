@@ -36,24 +36,26 @@ import { AlertTriangle, Plug, Plus, RefreshCw, TestTube, Trash2 } from "lucide-r
 import type { ReactNode } from "react"
 import { useMemo, useState } from "react"
 import { toast } from "sonner"
+import { AppHelpPanel } from "../components/app-help-panel.js"
+import { ConnectPanelButton } from "../components/connect-panel.js"
 import type { ConnectionTarget } from "../components/connection-dialogs.js"
 import {
   DisconnectDialog,
   EditAccountLabelDialog,
   RotateSecretDialog,
 } from "../components/connection-dialogs.js"
+import { CredentialSovereigntyNote } from "../components/sovereignty-note.js"
+import { authModeLabel } from "../lib/auth-mode-label.js"
 import { formatCheckedAt } from "../lib/format-date.js"
 import { testConnection } from "../lib/test-connection.js"
-import type { ConnectFnResult } from "../server/connect.functions.js"
-import { connectSurfaceFn } from "../server/connect.functions.js"
 import type {
   AppDetail,
   ConnectionMeta,
-  SurfaceConnectable,
+  OAuthProviderMeta,
   SurfaceConnection,
   SurfaceView,
 } from "../server/data.functions.js"
-import { getAppDetail } from "../server/data.functions.js"
+import { getAppDetail, getOAuthProviders } from "../server/data.functions.js"
 import { startReconnectFn } from "../server/oauth-connect.functions.js"
 import {
   Badge,
@@ -68,23 +70,22 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   EmptyState,
-  Field,
-  Input,
   MonoChip,
   MonoCode,
   PageHeader,
   RowActionsMenu,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
   StatusBadge,
 } from "../ui/index.js"
 
+type AppDetailLoaderData = AppDetail & { oauthProviders: OAuthProviderMeta[] }
+
 export const Route = createFileRoute("/app/$id")({
-  loader: async ({ params }): Promise<AppDetail> => {
-    return getAppDetail({ data: { id: params.id } })
+  loader: async ({ params }): Promise<AppDetailLoaderData> => {
+    const [detail, oauthProviders] = await Promise.all([
+      getAppDetail({ data: { id: params.id } }),
+      getOAuthProviders(),
+    ])
+    return { ...detail, oauthProviders }
   },
   component: AppDetailPage,
 })
@@ -134,23 +135,6 @@ function connectionToTarget(connection: ConnectionMeta | null): ConnectionTarget
 // ---------------------------------------------------------------------------
 // Auth mode label — reused for both the empty-app CTA and a surface's auth chip.
 // ---------------------------------------------------------------------------
-
-function authModeLabel(mode: "oauth2" | "token" | "byo" | "none"): string {
-  switch (mode) {
-    case "oauth2":
-      return "Connect via OAuth"
-    case "token":
-      return "Paste a token"
-    case "byo":
-      return "Bring your own connection details"
-    case "none":
-      return "No credential required"
-    default: {
-      const _: never = mode
-      return _
-    }
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Empty state — the catalog CTA (design doc §7 "Empty state"). Used both by
@@ -385,342 +369,23 @@ function ToolsPanel({ tools }: { readonly tools: SurfaceConnection["tools"] }) {
 }
 
 // ---------------------------------------------------------------------------
-// Connect (increment 30.11 + 30.12 B1) — the one-click catalog-driven connect
-// affordance. token/byo modes write through the verify-gated connectSurfaceFn
-// (core's build recipe → source-runtime's verifyThenAdd/confirmThenAdd);
-// oauth2 mode is a deep-link hand-off to /credentials — NO inline write
-// (method file §0 scope decision). The button renders whenever
-// `surface.connectable !== undefined` (SurfaceCard, below) — on an
-// unconnected surface it reads "Connect {app} · {surface}"; once the surface
-// already has ≥1 connection it relabels to "Add account" (multi-account via
-// the same same-kind backend branch, increment 30.12).
-// ---------------------------------------------------------------------------
-
-const AUTH_MODE_ORDER = ["oauth2", "token", "byo", "none"] as const
-
-function ConnectSurfaceButton({
-  appId,
-  appDisplayName,
-  surface,
-  connectable,
-  hasConnections,
-  onConnected,
-}: {
-  readonly appId: string
-  readonly appDisplayName: string
-  readonly surface: SurfaceView
-  readonly connectable: SurfaceConnectable
-  /** True once the surface already has ≥1 connection — relabels the affordance
-   *  to "Add account" (increment 30.12 B1) instead of the first-connect copy. */
-  readonly hasConnections: boolean
-  readonly onConnected: () => void
-}) {
-  const [open, setOpen] = useState(false)
-
-  return (
-    <>
-      <div>
-        <Button type="button" variant="primary" onClick={() => setOpen(true)}>
-          <Plug className="h-4 w-4" aria-hidden="true" />
-          {hasConnections ? "Add account" : `Connect ${appDisplayName} · ${surface.displayName}`}
-        </Button>
-      </div>
-      <ConnectSurfaceDialog
-        open={open}
-        onOpenChange={setOpen}
-        appId={appId}
-        appDisplayName={appDisplayName}
-        surface={surface}
-        connectable={connectable}
-        hasConnections={hasConnections}
-        existingAccounts={surface.connections
-          .map((c) => c.account.trim())
-          .filter((a) => a !== "" && a !== "—")}
-        onConnected={onConnected}
-      />
-    </>
-  )
-}
-
-/** Sort a surface's offered auth modes into a stable, predictable Select order. */
-function sortAuthModes(modes: SurfaceConnectable["authModes"]): SurfaceConnectable["authModes"] {
-  return [...modes].sort((a, b) => AUTH_MODE_ORDER.indexOf(a) - AUTH_MODE_ORDER.indexOf(b))
-}
-
-/**
- * The mode the dialog OPENS in. Prefer the first *inline-writable* mode (token /
- * byo / none) over oauth2 — oauth2 is a deferred deep-link hand-off (§0), so
- * defaulting to it would open a verifiable surface on the one path that does
- * nothing inline and hide the working token flow behind a Select change (3
- * reviewers flagged this). oauth2 stays selectable; it just isn't the default.
- */
-function defaultAuthMode(
-  modes: SurfaceConnectable["authModes"],
-): SurfaceConnectable["authModes"][number] {
-  return modes.find((m) => m !== "oauth2") ?? modes[0] ?? "token"
-}
-
-/** Per-outcome copy for a failed verify (§2a) — never a generic "failed" string. */
-function verifyFailedMessage(outcome: "auth-failed" | "unreachable"): string {
-  if (outcome === "auth-failed") {
-    return "Couldn't verify — authentication failed. Check the token."
-  }
-  return "Couldn't reach this surface — this may be a catalog/base-URL issue, not your token."
-}
-
-/** Per-outcome copy for the duplicate-account guard (§2 B2/B6) — never a generic "failed" string. */
-function duplicateAccountMessage(account: string): string {
-  return `'${account}' is already connected here — pick a different account name.`
-}
-
-function ConnectSurfaceDialog({
-  open,
-  onOpenChange,
-  appId,
-  appDisplayName,
-  surface,
-  connectable,
-  hasConnections,
-  existingAccounts,
-  onConnected,
-}: {
-  readonly open: boolean
-  readonly onOpenChange: (open: boolean) => void
-  readonly appId: string
-  readonly appDisplayName: string
-  readonly surface: SurfaceView
-  readonly connectable: SurfaceConnectable
-  /** True in "add account" mode (the surface already has ≥1 connection) — drives
-   *  the empty-by-default account field (B3) and the multi-mode oauth2 account-field
-   *  hide (B4). */
-  readonly hasConnections: boolean
-  /** Existing account labels on this surface, "—" sentinel already filtered (B2). */
-  readonly existingAccounts: string[]
-  readonly onConnected: () => void
-}) {
-  const modes = useMemo(() => sortAuthModes(connectable.authModes), [connectable.authModes])
-  const [authMode, setAuthMode] = useState<SurfaceConnectable["authModes"][number]>(
-    defaultAuthMode(modes),
-  )
-  // First-connect mode defaults to "default"; add-account mode defaults to ""
-  // so the user must type a distinct label rather than junction guessing one
-  // (guessing can itself collide) — B3.
-  const [account, setAccount] = useState(hasConnections ? "" : "default")
-  const [secret, setSecret] = useState("")
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState<string | undefined>(undefined)
-  const [accountError, setAccountError] = useState<string | undefined>(undefined)
-
-  // In add-account mode, oauth2 is a deep-link hand-off that discards any
-  // typed account label (the label is chosen on /credentials instead) — the
-  // `isOAuth` branch in the JSX below hides the account field + dup-guard
-  // under oauth2 for BOTH first-connect and add-account modes, so the
-  // discard can't happen silently (B4).
-  const isOAuth = authMode === "oauth2"
-
-  function reset() {
-    setAuthMode(defaultAuthMode(modes))
-    setAccount(hasConnections ? "" : "default")
-    setSecret("")
-    setSubmitting(false)
-    setError(undefined)
-    setAccountError(undefined)
-  }
-
-  function handleOpenChange(next: boolean) {
-    if (!next) reset()
-    onOpenChange(next)
-  }
-
-  function handleAuthModeChange(mode: string) {
-    setAuthMode(mode as SurfaceConnectable["authModes"][number])
-    setError(undefined)
-    setAccountError(undefined)
-  }
-
-  function handleAccountChange(value: string) {
-    setAccount(value)
-    if (accountError !== undefined) setAccountError(undefined)
-  }
-
-  async function handleConfirm() {
-    if (isOAuth) {
-      // Deep-link hand-off — no server round-trip needed to navigate; the
-      // provider is resolved server-side too (connectSurfaceFn), but for the
-      // pure navigation case there is nothing to await.
-      handleOpenChange(false)
-      window.location.href = "/credentials"
-      return
-    }
-
-    if (secret.trim() === "") {
-      setError("A secret is required to connect this surface.")
-      return
-    }
-
-    const submittedAccount = account.trim() || "default"
-    // Pre-submit dup-account convenience guard (B2) — the authoritative check
-    // is the server's addCredential guard (A3) via the `duplicateAccount`
-    // branch below (B6); this is a client mirror to avoid an unnecessary
-    // round-trip in the common case. Case-sensitive, exact match — mirrors
-    // the trim/case contract A3 pins.
-    if (existingAccounts.includes(submittedAccount)) {
-      setAccountError(duplicateAccountMessage(submittedAccount))
-      return
-    }
-
-    setSubmitting(true)
-    setError(undefined)
-    setAccountError(undefined)
-    try {
-      const result: ConnectFnResult = await connectSurfaceFn({
-        data: {
-          appId,
-          surfaceKind: surface.kind,
-          authMode,
-          account: submittedAccount,
-          secret,
-        },
-      })
-      handleConnectResult(result)
-    } catch {
-      setError("Failed to connect this surface.")
-      setSubmitting(false)
-    }
-  }
-
-  function handleConnectResult(result: ConnectFnResult) {
-    if ("handoff" in result) {
-      handleOpenChange(false)
-      window.location.href = result.handoff
-      return
-    }
-    if ("ok" in result) {
-      const checkedAt = "checkedAt" in result ? result.checkedAt : undefined
-      toast.success(
-        checkedAt !== undefined
-          ? `Connected · ${formatCheckedAt(checkedAt)}`
-          : "Saved (unverified)",
-      )
-      handleOpenChange(false)
-      onConnected()
-      return
-    }
-    if ("verifyFailed" in result) {
-      setError(verifyFailedMessage(result.verifyFailed))
-      setSubmitting(false)
-      return
-    }
-    if ("conflict" in result) {
-      setError(
-        `A ${result.conflict.existingKind} platform already uses this id; connecting this surface would overwrite it. (Multi-surface-per-app is coming in a later step.)`,
-      )
-      setSubmitting(false)
-      return
-    }
-    if ("duplicateAccount" in result) {
-      // The AUTHORITATIVE guard (A3 + A6) — surfaced on the account field
-      // specifically (mirroring verifyFailedMessage's per-outcome discipline),
-      // not a generic dialog-level error. Reachable even when B2's pre-submit
-      // check is bypassed (e.g. two tabs racing to add the same label) — B6.
-      setAccountError(duplicateAccountMessage(result.duplicateAccount))
-      setSubmitting(false)
-      return
-    }
-    setError(result.error)
-    setSubmitting(false)
-  }
-
-  const honestyNote = connectable.verifiable
-    ? `junction will verify this against ${appDisplayName} before saving — nothing is stored if verification fails.`
-    : "junction can't automatically verify this surface; it will be saved as you confirm."
-
-  return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Connect this surface?</DialogTitle>
-          <DialogDescription>
-            {appDisplayName} · {surface.displayName}
-          </DialogDescription>
-        </DialogHeader>
-        <div className="flex flex-col gap-4">
-          {modes.length > 1 && (
-            <Field id="connect-auth-mode" label="Auth mode">
-              <Select value={authMode} onValueChange={handleAuthModeChange}>
-                <SelectTrigger id="connect-auth-mode">
-                  <SelectValue placeholder="Select an auth mode" />
-                </SelectTrigger>
-                <SelectContent>
-                  {modes.map((mode) => (
-                    <SelectItem key={mode} value={mode}>
-                      {authModeLabel(mode)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
-          )}
-
-          {isOAuth ? (
-            <p style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)", margin: 0 }}>
-              {appDisplayName} uses OAuth — register an OAuth app on the Credentials page.
-            </p>
-          ) : (
-            <>
-              <Field id="connect-account" label="Account" error={accountError}>
-                <Input
-                  id="connect-account"
-                  value={account}
-                  onChange={(e) => handleAccountChange(e.target.value)}
-                  hasError={accountError !== undefined}
-                />
-              </Field>
-              <Field id="connect-secret" label="Secret" error={error}>
-                <Input
-                  id="connect-secret"
-                  type="password"
-                  autoComplete="new-password"
-                  value={secret}
-                  onChange={(e) => setSecret(e.target.value)}
-                  hasError={error !== undefined}
-                  aria-required="true"
-                  placeholder="Paste your token here"
-                />
-              </Field>
-              <p style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)", margin: 0 }}>
-                {honestyNote}
-              </p>
-            </>
-          )}
-        </div>
-        <DialogFooter>
-          <Button type="button" variant="secondary" onClick={() => handleOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button
-            type="button"
-            variant="primary"
-            disabled={submitting || (!isOAuth && (secret.trim() === "" || account.trim() === ""))}
-            onClick={() => void handleConfirm()}
-          >
-            {submitting ? "Connecting…" : isOAuth ? "Continue to Credentials" : "Connect"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-// ---------------------------------------------------------------------------
 // Surface card — kind tag + displayName + state, auth chip, tools panel,
 // catalog details, connection rows. All surfaces render equally (§4.7).
+//
+// Connect (increment 30.11 + 30.12 B1, extended by increment 36's two-mode
+// ConnectPanelButton/ConnectPanelDialog in components/connect-panel.tsx):
+// token/byo modes write through the verify-gated connectSurfaceFn; oauth2
+// mode is a deep-link hand-off to /credentials — NO inline write. Renders
+// whenever `surface.connectable !== undefined`; relabels to "Add account"
+// once the surface already has ≥1 connection (increment 30.12).
 // ---------------------------------------------------------------------------
 
 function SurfaceCard({
   appId,
   appDisplayName,
   surface,
+  help,
+  oauthProviders,
   now,
   onTest,
   onReconnect,
@@ -733,10 +398,13 @@ function SurfaceCard({
   readonly appId: string
   readonly appDisplayName: string
   readonly surface: SurfaceView
+  readonly help: AppDetail["app"]["help"]
+  readonly oauthProviders: OAuthProviderMeta[]
   readonly onConnected: () => void
 }) {
   const primaryAuth = surface.auth[0]
   const hasConnections = surface.connections.length > 0
+  const isConnected = surface.state !== "available"
 
   return (
     <section
@@ -774,13 +442,17 @@ function SurfaceCard({
         </p>
       )}
 
+      {isConnected && <CredentialSovereigntyNote />}
+
       {surface.connectable !== undefined && (
-        <ConnectSurfaceButton
+        <ConnectPanelButton
           appId={appId}
           appDisplayName={appDisplayName}
           surface={surface}
           connectable={surface.connectable}
           hasConnections={hasConnections}
+          help={help}
+          oauthProviders={oauthProviders}
           onConnected={onConnected}
         />
       )}
@@ -825,7 +497,14 @@ function SurfaceCard({
 // ---------------------------------------------------------------------------
 
 function AppDetailPage() {
-  const { app, surfaces, otherConnections }: AppDetail = Route.useLoaderData()
+  const loaderData: AppDetailLoaderData = Route.useLoaderData()
+  const { app, surfaces, otherConnections } = loaderData
+  // Defensive default: existing tests exercise AppDetailPage via a plain
+  // AppDetail fixture (Route.useLoaderData is mocked directly, bypassing the
+  // loader that always attaches oauthProviders in production) — an absent
+  // array degrades to "no provider match" (GuidedOAuth falls back to
+  // help.authSetup), never a crash.
+  const oauthProviders = loaderData.oauthProviders ?? []
   const router = useRouter()
   const [testingId, setTestingId] = useState<string | null>(null)
   const [reconnecting, setReconnecting] = useState<ConnectionMeta | null>(null)
@@ -879,6 +558,8 @@ function AppDetailPage() {
         }
       />
 
+      <AppHelpPanel help={app.help} />
+
       {!hasSurfaces && otherConnections.length === 0 ? (
         <EmptyAppState displayName={app.displayName} authModes={app.authModes} />
       ) : (
@@ -898,6 +579,8 @@ function AppDetailPage() {
                   appId={app.id}
                   appDisplayName={app.displayName}
                   surface={surface}
+                  help={app.help}
+                  oauthProviders={oauthProviders}
                   now={now}
                   onTest={(conn) => void handleTest(conn)}
                   onReconnect={setReconnecting}

@@ -1,0 +1,32 @@
+{
+  "category": ["productivity", "calendar"],
+  "homepage": "https://calendar.google.com/",
+  "statusPage": "https://www.google.com/appsstatus/dashboard/",
+  "description": "Google's calendar and scheduling service — events, calendars, and availability, accessed via the Calendar REST API.",
+  "agentGuidance": "Covers listing/creating/updating/deleting events on a calendar and listing the user's calendars. The HTTP surface's templates are stable pinned operations (list/get/create/update/delete events, list calendars) — prefer them over exploratory calls.",
+  "oauthApp": {
+    "registerUrl": "https://console.cloud.google.com/apis/credentials"
+  },
+  "authSetup": {
+    "interactive": "create a project + OAuth client (type: Desktop app) in the Google Cloud Console, enable the Google Calendar API for the project, then request Calendar scopes (calendar.readonly / calendar.events / calendar.events.readonly / calendar) during connect",
+    "env": "n/a — Google issues no static token; OAuth (with refresh) is the only auth mode"
+  },
+  "provenance": {
+    "authoredBy": "junction",
+    "researchedFrom": [
+      "https://developers.google.com/workspace/calendar/api/v3/reference",
+      "https://developers.google.com/identity/protocols/oauth2/scopes#calendar",
+      "https://developers.google.com/identity/protocols/oauth2",
+      "https://calendar-json.googleapis.com/$discovery/rest?version=v3",
+      "https://console.cloud.google.com/apis/credentials",
+      "https://www.google.com/appsstatus/dashboard/"
+    ],
+    "lastReviewed": "2026-07-11"
+  },
+  "notes": [
+    "Calendar's machine-readable API description is a Google Discovery document, not an OpenAPI 3.x spec — junction's openapi-client can't parse it, so no openapi surface ships. Full REST coverage awaits a Discovery->OpenAPI adapter (see docs/futures/revisit-when.md).",
+    "No CLI surface: there is no officially-supported Google Calendar user-data CLI (the unofficial @googleworkspace/cli 'gws' explicitly states it is not an official Google product, so junction doesn't ship it).",
+    "Google ships an official remote Calendar MCP server (calendarmcp.googleapis.com/mcp/v1, OAuth-protected) but it is Developer Preview (pre-GA), and junction's catalog build recipe can't yet bind an oauth2 credential to a remote mcp/http surface (the connect flow would present a Connect button that can't complete). Omitted for now — the HTTP surface is the supported programmatic path meanwhile. See docs/futures/revisit-when.md.",
+    "No GraphQL API exists for Google Calendar."
+  ]
+}

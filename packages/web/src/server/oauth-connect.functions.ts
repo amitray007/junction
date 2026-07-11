@@ -25,6 +25,41 @@ function requireStringArray(value: unknown, name: string): string[] {
   return value.map((v) => v.trim()).filter((v) => v.length > 0)
 }
 
+const SURFACE_SELECTOR_AUTH_MODES = ["oauth2", "token", "byo"] as const
+
+/**
+ * OPTIONAL (post-38 fix — trust boundary) — validate the MINIMAL surface
+ * selector {appId, surfaceKind, authMode}. `undefined` is valid (the raw
+ * `/credentials` flow never sends this field). This is deliberately NOT a
+ * pass-through of any client-assembled connection data (baseUrl/specUrl/
+ * endpoint/descriptor) — `startConnect` re-derives platformInput/platformId/
+ * displayName from the catalog server-side, keyed by this selector, via the
+ * SAME `planConnect` path `connectSurfaceFn` uses. See oauth-connect.server.ts's
+ * `StartConnectInput.surfaceSelector` doc comment for the full rationale.
+ */
+function requireOptionalSurfaceSelector(
+  raw: unknown,
+): { appId: string; surfaceKind: string; authMode: "oauth2" | "token" | "byo" } | undefined {
+  if (raw === undefined || raw === null) return undefined
+  if (typeof raw !== "object") {
+    throw new Response("Bad Request: surfaceSelector must be an object", { status: 400 })
+  }
+  const d = raw as Record<string, unknown>
+  const appId = requireString(d.appId, "surfaceSelector.appId")
+  const surfaceKind = requireString(d.surfaceKind, "surfaceSelector.surfaceKind")
+  const authMode = d.authMode
+  if (
+    typeof authMode !== "string" ||
+    !(SURFACE_SELECTOR_AUTH_MODES as readonly string[]).includes(authMode)
+  ) {
+    throw new Response(
+      `Bad Request: surfaceSelector.authMode must be one of ${SURFACE_SELECTOR_AUTH_MODES.join(", ")}`,
+      { status: 400 },
+    )
+  }
+  return { appId, surfaceKind, authMode: authMode as "oauth2" | "token" | "byo" }
+}
+
 // ---------------------------------------------------------------------------
 // startConnectFn — begin a browser auth-code+PKCE connect for a NEW credential.
 // Returns {authorizeUrl} metadata only — the browser navigates there directly
@@ -35,6 +70,23 @@ function requireStringArray(value: unknown, name: string): string[] {
 export const startConnectFn = createServerFn({ method: "POST" })
   .validator((raw: unknown) => {
     const d = raw as Record<string, unknown>
+    const surfaceSelector = requireOptionalSurfaceSelector(d.surfaceSelector)
+    // EXACTLY ONE of platformId / surfaceSelector — the raw /credentials flow
+    // sends platformId (an existing platform picked from a dropdown, no
+    // catalog surface to re-derive from); the guided catalog-connect flow
+    // sends surfaceSelector (startConnect re-derives platformId from the
+    // catalog). Reject either both or neither at the boundary rather than
+    // let startConnect silently pick one.
+    const rawPlatformId = d.platformId
+    const platformId =
+      typeof rawPlatformId === "string" && rawPlatformId.trim() !== ""
+        ? rawPlatformId.trim()
+        : undefined
+    if ((platformId === undefined) === (surfaceSelector === undefined)) {
+      throw new Response("Bad Request: supply exactly one of platformId or surfaceSelector", {
+        status: 400,
+      })
+    }
     return {
       providerId: requireString(d.providerId, "providerId"),
       clientId: requireString(d.clientId, "clientId"),
@@ -44,7 +96,8 @@ export const startConnectFn = createServerFn({ method: "POST" })
       clientSecret: requireSecretString(d.clientSecret, "clientSecret"),
       scopes: requireStringArray(d.scopes, "scopes"),
       account: requireString(d.account, "account"),
-      platformId: requireString(d.platformId, "platformId"),
+      ...(platformId !== undefined ? { platformId } : {}),
+      ...(surfaceSelector !== undefined ? { surfaceSelector } : {}),
     }
   })
   .handler(async ({ data }) => {

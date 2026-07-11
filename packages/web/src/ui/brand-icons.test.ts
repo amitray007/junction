@@ -34,18 +34,12 @@ describe("BRAND_ICONS (generated) <-> catalog sync", () => {
     }
   })
 
-  it("slack and microsoft ARE present (available in @thesvg/icons, unlike the removed simple-icons slugs)", () => {
-    // Load-bearing regression: confirms the v2 icon source (@thesvg/icons)
-    // covers brands that the v1 simple-icons source had delisted.
-    expect(BRAND_ICONS.slack).toBeDefined()
-    expect(BRAND_ICONS.microsoft).toBeDefined()
-  })
-
-  it("github/vercel/railway/openai are categorized 'themed' (light+dark), notion is 'mono'", () => {
+  it("github is categorized 'themed' (light+dark)", () => {
+    // The catalog was stripped to github-only in increment 35 (catalog
+    // strip-down, docs/methods/35-catalog-stripdown.md) — the v2 icon source
+    // (@thesvg/icons) vs. delisted-from-v1-simple-icons regression this test
+    // pinned (slack/microsoft/vercel/railway/openai/notion) returns with
+    // those apps' own increments (36+).
     expect(BRAND_ICONS.github?.category).toBe("themed")
-    expect(BRAND_ICONS.vercel?.category).toBe("themed")
-    expect(BRAND_ICONS.railway?.category).toBe("themed")
-    expect(BRAND_ICONS.openai?.category).toBe("themed")
-    expect(BRAND_ICONS.notion?.category).toBe("mono")
   })
 })

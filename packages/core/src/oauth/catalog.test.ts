@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Provider catalog tests — pure data + pure dispatchers, no HTTP/I/O.
+// Provider catalog tests — pure data + pure dispatchers, no HTTP/I/O. Reduced
+// to github/github-app/generic in increment 35 (catalog strip-down); slack was
+// reintroduced in increment 37, google in increment 39, each alongside its
+// app catalog entry.
 
 import { describe, expect, it } from "vitest"
 import {
@@ -7,6 +10,7 @@ import {
   getProvider,
   listProviders,
   normalizeTokenResponse,
+  type OAuthProvider,
   resolveScopeString,
 } from "./catalog.js"
 
@@ -15,76 +19,13 @@ describe("getProvider / listProviders", () => {
     expect(getProvider("nope")).toBeUndefined()
   })
 
-  it("listProviders includes all tuned providers + generic", () => {
+  it("listProviders returns exactly github/github-app/slack/google/generic", () => {
     const ids = listProviders().map((p) => p.id)
-    expect(ids).toEqual(
-      expect.arrayContaining([
-        "google",
-        "github",
-        "github-app",
-        "slack",
-        "microsoft",
-        "notion",
-        "atlassian",
-        "discord",
-        "spotify",
-        "zoom",
-        "dropbox",
-        "linear",
-        "gitlab",
-        "figma",
-        "generic",
-      ]),
-    )
-  })
-})
-
-describe("inc-30 new providers (App catalog OAuth backing)", () => {
-  it.each([
-    "discord",
-    "spotify",
-    "zoom",
-    "dropbox",
-    "linear",
-    "gitlab",
-    "figma",
-  ])("%s: PKCE S256, supports refresh, has authorize/token URLs", (id) => {
-    const p = getProvider(id)
-    expect(p).toBeDefined()
-    if (!p) return
-    expect(p.pkce).toBe("S256")
-    expect(p.supportsRefresh).toBe(true)
-    expect(typeof p.authorizationUrl).toBe("string")
-    expect(p.authorizationUrl).not.toBe("")
-    expect(typeof p.tokenUrl).toBe("string")
-    expect(p.tokenUrl).not.toBe("")
-  })
-
-  it("dropbox: token endpoint is api.dropboxapi.com, not api.dropbox.com", () => {
-    expect(getProvider("dropbox")?.tokenUrl).toBe("https://api.dropboxapi.com/oauth2/token")
-  })
-
-  it("figma: token endpoint is api.figma.com", () => {
-    expect(getProvider("figma")?.tokenUrl).toBe("https://api.figma.com/v1/oauth/token")
-  })
-
-  it("linear: no userinfoUrl (identity is a GraphQL viewer query, not a bearer GET)", () => {
-    expect(getProvider("linear")?.userinfoUrl).toBeUndefined()
+    expect(ids).toEqual(["github", "github-app", "slack", "google", "generic"])
   })
 })
 
 describe("tuned provider overrides", () => {
-  it("google: authorizationParams requests offline access + consent, ephemeral redirect, device-code", () => {
-    const p = getProvider("google")
-    expect(p).toBeDefined()
-    if (!p) return
-    expect(p.authorizationParams).toEqual({ access_type: "offline", prompt: "consent" })
-    expect(p.redirectMode).toBe("loopback-ephemeral")
-    expect(p.deviceAuthorizationUrl).toBeDefined()
-    expect(p.supportsRefresh).toBe(true)
-    expect(p.expiryStrategy).toBe("expires_in")
-  })
-
   it("github (OAuth App): no refresh, tokens never expire", () => {
     const p = getProvider("github")
     expect(p).toBeDefined()
@@ -101,28 +42,15 @@ describe("tuned provider overrides", () => {
     expect(p.expiryStrategy).toBe("expires_in")
   })
 
-  it("microsoft: offline_access is a default scope (not an authorizationParams entry)", () => {
-    const p = getProvider("microsoft")
+  it("google: authorizationParams requests offline access + consent, ephemeral redirect, device-code", () => {
+    const p = getProvider("google")
     expect(p).toBeDefined()
     if (!p) return
-    expect(p.defaultScopes).toContain("offline_access")
+    expect(p.authorizationParams).toEqual({ access_type: "offline", prompt: "consent" })
+    expect(p.redirectMode).toBe("loopback-ephemeral")
     expect(p.deviceAuthorizationUrl).toBeDefined()
-  })
-
-  it("notion: basic token auth, tokens never expire", () => {
-    const p = getProvider("notion")
-    expect(p).toBeDefined()
-    if (!p) return
-    expect(p.tokenAuthMethod).toBe("client_secret_basic")
-    expect(p.expiryStrategy).toBe("none")
-    expect(p.supportsRefresh).toBe(false)
-  })
-
-  it("atlassian: audience + consent authorizationParams", () => {
-    const p = getProvider("atlassian")
-    expect(p).toBeDefined()
-    if (!p) return
-    expect(p.authorizationParams).toEqual({ audience: "api.atlassian.com", prompt: "consent" })
+    expect(p.supportsRefresh).toBe(true)
+    expect(p.expiryStrategy).toBe("expires_in")
   })
 
   it("generic: sensible defaults, empty placeholder endpoints", () => {
@@ -145,11 +73,14 @@ describe("resolveScopeString", () => {
   it("uses the provider's separator", () => {
     const slack = getProvider("slack")
     const google = getProvider("google")
+    const github = getProvider("github")
     expect(slack).toBeDefined()
     expect(google).toBeDefined()
-    if (!slack || !google) return
+    expect(github).toBeDefined()
+    if (!slack || !google || !github) return
     expect(resolveScopeString(slack, ["a", "b"])).toBe("a,b")
     expect(resolveScopeString(google, ["a", "b"])).toBe("a b")
+    expect(resolveScopeString(github, ["a", "b"])).toBe("a b")
   })
 })
 
@@ -162,22 +93,36 @@ describe("buildAuthorizationParams", () => {
     expect(params).toEqual({ access_type: "offline", prompt: "consent", scope: "a b" })
   })
 
-  it("prepends provider defaultScopes (e.g. microsoft's offline_access)", () => {
-    const ms = getProvider("microsoft")
-    expect(ms).toBeDefined()
-    if (!ms) return
-    const params = buildAuthorizationParams(ms, ["User.Read"])
-    expect(params.scope).toBe("offline_access User.Read")
-  })
+  it("prepends provider defaultScopes and dedupes a scope that is ALSO a defaultScope", () => {
+    // No surviving catalog provider carries defaultScopes (microsoft removed
+    // in inc 35) — assert the dedupe mechanism directly against a synthetic
+    // provider rather than lose this coverage entirely.
+    const providerWithDefaultScopes: OAuthProvider = {
+      id: "synthetic-default-scopes",
+      displayName: "Synthetic",
+      authorizationUrl: "https://example.com/authorize",
+      tokenUrl: "https://example.com/token",
+      pkce: "S256",
+      scopeSeparator: " ",
+      tokenAuthMethod: "client_secret_post",
+      bodyFormat: "form",
+      expiryStrategy: "expires_in",
+      redirectMode: "loopback-fixed",
+      defaultScopes: ["offline_access"],
+      supportsRefresh: true,
+      registrationHint: { redirectUri: "", scopes: "", docsUrl: "" },
+    }
 
-  it("dedupes a scope that is ALSO one of the provider's defaultScopes (e.g. explicitly requesting microsoft's offline_access)", () => {
-    const ms = getProvider("microsoft")
-    expect(ms).toBeDefined()
-    if (!ms) return
-    // Caller explicitly asks for "offline_access" too — already a defaultScope.
-    const params = buildAuthorizationParams(ms, ["offline_access", "User.Read"])
+    const params = buildAuthorizationParams(providerWithDefaultScopes, ["User.Read"])
     expect(params.scope).toBe("offline_access User.Read")
-    expect(params.scope?.split(" ").filter((s) => s === "offline_access")).toHaveLength(1)
+
+    // Caller explicitly asks for "offline_access" too — already a defaultScope.
+    const deduped = buildAuthorizationParams(providerWithDefaultScopes, [
+      "offline_access",
+      "User.Read",
+    ])
+    expect(deduped.scope).toBe("offline_access User.Read")
+    expect(deduped.scope?.split(" ").filter((s) => s === "offline_access")).toHaveLength(1)
   })
 })
 
@@ -251,24 +196,17 @@ describe("normalizeTokenResponse", () => {
 
 describe("userinfoUrl (OAuth-native Test Connection)", () => {
   it("tuned providers with a stable identity endpoint carry a userinfoUrl", () => {
-    expect(getProvider("google")?.userinfoUrl).toBe("https://www.googleapis.com/oauth2/v3/userinfo")
     expect(getProvider("github")?.userinfoUrl).toBe("https://api.github.com/user")
     expect(getProvider("github-app")?.userinfoUrl).toBe("https://api.github.com/user")
     expect(getProvider("slack")?.userinfoUrl).toBe("https://slack.com/api/auth.test")
-    expect(getProvider("microsoft")?.userinfoUrl).toBe("https://graph.microsoft.com/v1.0/me")
-    expect(getProvider("notion")?.userinfoUrl).toBe("https://api.notion.com/v1/users/me")
+    expect(getProvider("google")?.userinfoUrl).toBe("https://www.googleapis.com/oauth2/v3/userinfo")
   })
 
   it("github requires a User-Agent header (GitHub rejects UA-less requests)", () => {
     expect(getProvider("github")?.userinfoHeaders?.["User-Agent"]).toBeDefined()
   })
 
-  it("notion requires the Notion-Version header", () => {
-    expect(getProvider("notion")?.userinfoHeaders?.["Notion-Version"]).toBeDefined()
-  })
-
-  it("atlassian + generic have NO userinfoUrl (needs a scope junction can't guarantee / user-supplied)", () => {
-    expect(getProvider("atlassian")?.userinfoUrl).toBeUndefined()
+  it("generic has NO userinfoUrl (user-supplied — no stable endpoint junction can assume)", () => {
     expect(getProvider("generic")?.userinfoUrl).toBeUndefined()
   })
 

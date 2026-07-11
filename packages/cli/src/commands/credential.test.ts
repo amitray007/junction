@@ -67,6 +67,49 @@ vi.mock("@junction/source-runtime", async (importOriginal) => {
   }
 })
 
+// ---------------------------------------------------------------------------
+// Synthetic device-code-capable provider — the catalog is github-only since
+// the inc 35 strip-down (docs/methods/35-catalog-stripdown.md); no surviving
+// provider carries a deviceAuthorizationUrl (google, the prior device-code
+// example, was removed). Injected into getProvider/listProviders below so
+// `credential reconnect`'s device flow stays under real test coverage rather
+// than going untested until a device-code provider is reintroduced. Mirrors
+// connect.test.ts's identical fixture (same shape, kept file-local since
+// these two test files don't share a fixtures module).
+// ---------------------------------------------------------------------------
+
+// Hoisted so the vi.mock factory below (which vitest lifts to the top of the
+// file) can reference it without a TDZ crash — a plain top-level `const` is
+// initialized AFTER the hoisted factory runs.
+const { DEVICE_CODE_PROVIDER_ID } = vi.hoisted(() => ({
+  DEVICE_CODE_PROVIDER_ID: "synthetic-device-code-provider",
+}))
+
+vi.mock("@junction/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@junction/core")>()
+  const syntheticDeviceProvider: import("@junction/core").OAuthProvider = {
+    id: DEVICE_CODE_PROVIDER_ID,
+    displayName: "Synthetic Device-Code Provider",
+    authorizationUrl: "https://example.com/oauth/authorize",
+    tokenUrl: "https://example.com/oauth/token",
+    deviceAuthorizationUrl: "https://example.com/oauth/device/code",
+    pkce: "S256",
+    scopeSeparator: " ",
+    tokenAuthMethod: "client_secret_basic",
+    bodyFormat: "form",
+    expiryStrategy: "expires_in",
+    redirectMode: "loopback-ephemeral",
+    supportsRefresh: true,
+    registrationHint: { redirectUri: "", scopes: "synthetic test fixture", docsUrl: "" },
+  }
+  return {
+    ...actual,
+    getProvider: (id: string) =>
+      id === DEVICE_CODE_PROVIDER_ID ? syntheticDeviceProvider : actual.getProvider(id),
+    listProviders: () => [...actual.listProviders(), syntheticDeviceProvider],
+  }
+})
+
 const execFileAsync = promisify(execFile)
 const distIndex = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../dist/index.js")
 const coreDistMigrations = path.resolve(
@@ -1068,10 +1111,10 @@ describe("credential reconnect (D2, unit)", () => {
     })
   })
 
-  it("reconnect on a device-incapable provider (notion) fails BEFORE persistOAuthTokens — proves it reads the credential's own oauthMeta.providerId, not a hardcoded one", async () => {
+  it("reconnect on a device-incapable provider (github-app) fails BEFORE persistOAuthTokens — proves it reads the credential's own oauthMeta.providerId, not a hardcoded one", async () => {
     await withTempHome(async () => {
-      const notionCred = await seedOAuthCredential("notion", {
-        oauthMeta: { providerId: "notion", needsReauth: true } as Credential["oauthMeta"],
+      const githubAppCred = await seedOAuthCredential("github-app", {
+        oauthMeta: { providerId: "github-app", needsReauth: true } as Credential["oauthMeta"],
       })
 
       fakeStdin()
@@ -1081,7 +1124,7 @@ describe("credential reconnect (D2, unit)", () => {
       const out = await captureStdout(() =>
         reconnect.run?.(
           ctx({
-            id: notionCred.id,
+            id: githubAppCred.id,
             device: true,
             "client-id": "cid",
             "client-secret-stdin": true,
@@ -1098,17 +1141,23 @@ describe("credential reconnect (D2, unit)", () => {
 
   it("mode:update path — device flow success persists via persistOAuthTokens(mode:update, credentialId), clearing needsReauth", async () => {
     await withTempHome(async () => {
-      // google is device-capable (deviceAuthorizationUrl set in the catalog) —
-      // see connect.test.ts's device-flow test for the identical engine shape.
-      const cred = await seedOAuthCredential("google", {
-        oauthMeta: { providerId: "google", needsReauth: true } as Credential["oauthMeta"],
+      // The synthetic provider (injected by the @junction/core mock above) is
+      // device-capable (deviceAuthorizationUrl set) — no surviving real
+      // provider is, since the inc 35 strip-down removed google (the prior
+      // device-code example). See connect.test.ts's device-flow test for the
+      // identical engine shape / fixture.
+      const cred = await seedOAuthCredential(DEVICE_CODE_PROVIDER_ID, {
+        oauthMeta: {
+          providerId: DEVICE_CODE_PROVIDER_ID,
+          needsReauth: true,
+        } as Credential["oauthMeta"],
       })
 
       deviceAuthorizeMock.mockResolvedValue(
         ok({
           deviceCode: "devcode",
           userCode: "RECN-0001",
-          verificationUri: "https://www.google.com/device",
+          verificationUri: "https://example.com/device",
           intervalSeconds: 0,
           expiresInSeconds: 600,
         }),
@@ -1144,7 +1193,7 @@ describe("credential reconnect (D2, unit)", () => {
         expect.objectContaining({
           mode: "update",
           credentialId: cred.id,
-          providerId: "google",
+          providerId: DEVICE_CODE_PROVIDER_ID,
           authMode: "device_code",
         }),
       )
@@ -1156,8 +1205,11 @@ describe("credential reconnect (D2, unit)", () => {
 
   it("rejects a PARTIAL swap (--client-secret-stdin without --client-id) rather than silently reusing", async () => {
     await withTempHome(async () => {
-      const cred = await seedOAuthCredential("google", {
-        oauthMeta: { providerId: "google", needsReauth: true } as Credential["oauthMeta"],
+      const cred = await seedOAuthCredential(DEVICE_CODE_PROVIDER_ID, {
+        oauthMeta: {
+          providerId: DEVICE_CODE_PROVIDER_ID,
+          needsReauth: true,
+        } as Credential["oauthMeta"],
       })
       const reconnect = getCredentialSubCmd("reconnect")
       const out = await captureStdout(() =>
@@ -1177,9 +1229,9 @@ describe("credential reconnect (D2, unit)", () => {
 
   it("REUSES stored client creds when --client-id is omitted (no stdin, no re-typing)", async () => {
     await withTempHome(async () => {
-      const cred = await seedOAuthCredential("google", {
+      const cred = await seedOAuthCredential(DEVICE_CODE_PROVIDER_ID, {
         oauthMeta: {
-          providerId: "google",
+          providerId: DEVICE_CODE_PROVIDER_ID,
           needsReauth: true,
           clientIdRef: "ref-stored-cid",
           clientSecretRef: "ref-stored-csec",
@@ -1195,7 +1247,7 @@ describe("credential reconnect (D2, unit)", () => {
         ok({
           deviceCode: "devcode",
           userCode: "RECN-0002",
-          verificationUri: "https://www.google.com/device",
+          verificationUri: "https://example.com/device",
           intervalSeconds: 0,
           expiresInSeconds: 600,
         }),

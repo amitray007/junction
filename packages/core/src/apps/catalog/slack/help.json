@@ -1,0 +1,31 @@
+{
+  "category": ["communication", "chat"],
+  "homepage": "https://slack.com/",
+  "statusPage": "https://slack-status.com/",
+  "description": "Team messaging — channels, direct messages, and workspace collaboration.",
+  "agentGuidance": "Covers channels, messages, and users. Prefer REST for full coverage; use the community MCP server for curated conversational tools.",
+  "oauthApp": {
+    "registerUrl": "https://api.slack.com/apps",
+    "callbackPath": "/oauth/callback/slack"
+  },
+  "authSetup": {
+    "interactive": "create an app at https://api.slack.com/apps, add scopes under OAuth & Permissions, install to workspace",
+    "env": "SLACK_BOT_TOKEN (xoxb-…)"
+  },
+  "provenance": {
+    "authoredBy": "junction",
+    "researchedFrom": [
+      "https://docs.slack.dev/apis/web-api/",
+      "https://api.slack.com/authentication/oauth-v2",
+      "https://api.slack.com/apps",
+      "https://github.com/slackapi/slack-api-specs",
+      "https://github.com/korotovsky/slack-mcp-server",
+      "https://slack-status.com/"
+    ],
+    "lastReviewed": "2026-07-11"
+  },
+  "notes": [
+    "Slack's official `slack` CLI is app-development/deployment tooling only — it cannot do user-data operations (post a message, list channels), so junction ships no CLI surface for Slack. (Also: the `slack` binary name can collide with other host tools.)",
+    "Slack operates an official hosted MCP server at https://mcp.slack.com/mcp, but restricts MCP to directory-published or internal apps (unlisted apps prohibited) — unavailable to junction's self-hosted custom-app model as of 2026-07-11."
+  ]
+}

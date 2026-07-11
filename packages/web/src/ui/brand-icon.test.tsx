@@ -2,11 +2,17 @@
 // Tests for BrandIcon — the per-app brand glyph (increment 30.5 v2).
 // Proves: a "color" slug renders its real inline markup (non-vacuous — real
 // child elements, not blank); a "themed" slug (github) renders BOTH light and
-// dark <svg> with the CSS-swap classes; the "mono" slug (notion) renders
+// dark <svg> with the CSS-swap classes; a "mono" slug renders
 // fill="currentColor"; an unknown/undefined slug renders the LetterTile
-// fallback; glyphs are aria-hidden; slack/microsoft (removed from
-// simple-icons, present in @thesvg/icons) now render REAL brand markup, not
-// the letter-tile fallback.
+// fallback; glyphs are aria-hidden.
+//
+// The generated catalog is github-only since the inc 35 strip-down (see
+// docs/methods/35-catalog-stripdown.md) — github is the sole surviving
+// BRAND_ICONS entry and it's "themed". The "color"/"mono" category tests
+// below inject a synthetic BRAND_ICONS entry (BRAND_ICONS is a plain runtime
+// object; the `Readonly` wrapper is compile-time only) so BrandIcon's
+// category-dispatch behavior stays under real test coverage rather than
+// going untested until a color/mono app is reintroduced.
 
 import { cleanup, render } from "@testing-library/react"
 import { afterEach, describe, expect, it } from "vitest"
@@ -15,18 +21,35 @@ import { BRAND_ICONS } from "./brand-icons.generated.js"
 
 afterEach(() => cleanup())
 
+const SYNTHETIC_COLOR_SLUG = "synthetic-color-app"
+const SYNTHETIC_MONO_SLUG = "synthetic-mono-app"
+
+// Cast away the `Readonly` type wrapper — BRAND_ICONS is a plain object at
+// runtime, so writing a synthetic test-only entry is safe; deleted in
+// afterEach so it never leaks between tests.
+const mutableBrandIcons = BRAND_ICONS as Record<string, (typeof BRAND_ICONS)[string]>
+
+afterEach(() => {
+  delete mutableBrandIcons[SYNTHETIC_COLOR_SLUG]
+  delete mutableBrandIcons[SYNTHETIC_MONO_SLUG]
+})
+
 // The glyph is DECORATIVE (always beside the visible app name) → aria-hidden,
 // so it is absent from the accessibility tree. Tests assert on the rendered DOM
 // (svg contents / the letter), not on an ARIA role.
 
 describe("BrandIcon", () => {
   it("renders real inline markup for a 'color' category slug (non-vacuous)", () => {
-    expect(BRAND_ICONS.gitlab?.category).toBe("color")
-    const { container } = render(<BrandIcon slug="gitlab" displayName="GitLab" />)
+    mutableBrandIcons[SYNTHETIC_COLOR_SLUG] = {
+      category: "color",
+      viewBox: { color: "0 0 24 24" },
+      render: { color: () => <path d="M0 0h24v24H0z" /> },
+    }
+    const { container } = render(<BrandIcon slug={SYNTHETIC_COLOR_SLUG} displayName="Synthetic" />)
     const svgs = container.querySelectorAll("svg")
     expect(svgs).toHaveLength(1)
     const svg = svgs[0]
-    expect(svg).toHaveAttribute("viewBox", BRAND_ICONS.gitlab?.viewBox.color)
+    expect(svg).toHaveAttribute("viewBox", "0 0 24 24")
     // Non-vacuous: real markup, not an empty <svg>.
     expect(svg?.children.length).toBeGreaterThan(0)
     expect(svg?.querySelector("path")).toBeInTheDocument()
@@ -46,16 +69,25 @@ describe("BrandIcon", () => {
     expect(dark).toHaveAttribute("viewBox", BRAND_ICONS.github?.viewBox.dark)
   })
 
-  it("renders fill=currentColor for a 'mono' category slug (notion)", () => {
-    expect(BRAND_ICONS.notion?.category).toBe("mono")
-    const { container } = render(<BrandIcon slug="notion" displayName="Notion" />)
+  it("renders fill=currentColor for a 'mono' category slug", () => {
+    mutableBrandIcons[SYNTHETIC_MONO_SLUG] = {
+      category: "mono",
+      viewBox: { mono: "0 0 24 24" },
+      render: { mono: () => <path d="M0 0h24v24H0z" /> },
+    }
+    const { container } = render(<BrandIcon slug={SYNTHETIC_MONO_SLUG} displayName="Synthetic" />)
     const svg = container.querySelector("svg")
     expect(svg).toHaveAttribute("fill", "currentColor")
     expect(svg?.querySelector("path")).toBeInTheDocument()
   })
 
   it("marks every glyph aria-hidden (decorative — the app name is visible beside it)", () => {
-    const color = render(<BrandIcon slug="gitlab" displayName="GitLab" />)
+    mutableBrandIcons[SYNTHETIC_COLOR_SLUG] = {
+      category: "color",
+      viewBox: { color: "0 0 24 24" },
+      render: { color: () => <path d="M0 0h24v24H0z" /> },
+    }
+    const color = render(<BrandIcon slug={SYNTHETIC_COLOR_SLUG} displayName="Synthetic" />)
     for (const svg of color.container.querySelectorAll("svg")) {
       expect(svg).toHaveAttribute("aria-hidden", "true")
     }
@@ -78,23 +110,6 @@ describe("BrandIcon", () => {
     const { container } = render(<BrandIcon slug="not-a-real-slug" displayName="Mystery Thing" />)
     expect(container).toHaveTextContent("M")
     expect(container.querySelector("svg")).not.toBeInTheDocument()
-  })
-
-  it("renders REAL brand markup for slack and microsoft (available in @thesvg/icons, unlike simple-icons)", () => {
-    expect(BRAND_ICONS.slack?.category).toBe("color")
-    expect(BRAND_ICONS.microsoft?.category).toBe("color")
-
-    const slack = render(<BrandIcon slug="slack" displayName="Slack" />)
-    expect(slack.container.querySelector("svg")).toBeInTheDocument()
-    expect(slack.container.querySelector("svg path")).toBeInTheDocument()
-    // NOT the letter-tile fallback.
-    expect(slack.container.querySelector("span")).not.toBeInTheDocument()
-    cleanup()
-
-    const ms = render(<BrandIcon slug="microsoft" displayName="Microsoft" />)
-    expect(ms.container.querySelector("svg")).toBeInTheDocument()
-    expect(ms.container.querySelector("svg path")).toBeInTheDocument()
-    expect(ms.container.querySelector("span")).not.toBeInTheDocument()
   })
 
   it("renders in dark mode without throwing", () => {

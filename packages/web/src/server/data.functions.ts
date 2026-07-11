@@ -27,6 +27,7 @@ import { assertLocalHost, requireString } from "./fn-guards.server.js"
 export type {
   AppDetail,
   AppGroupMeta,
+  AppHelp,
   AppMeta,
   AppsData,
   ConnectionMeta,

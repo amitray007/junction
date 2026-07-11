@@ -1,0 +1,46 @@
+{
+  "id": "gmail",
+  "displayName": "Gmail",
+  "supportedKinds": ["http"],
+  "auth": [
+    {
+      "mode": "oauth2",
+      "providerId": "google"
+    }
+  ],
+  "iconSlug": "gmail",
+  "surfaces": [
+    {
+      "kind": "http",
+      "displayName": "Gmail (HTTP)",
+      "connection": {
+        "kind": "http",
+        "baseUrl": "https://gmail.googleapis.com"
+      },
+      "auth": [
+        {
+          "mode": "oauth2",
+          "providerId": "google"
+        }
+      ],
+      "build": {
+        "platformIdTemplate": "{app}-{kind}",
+        "via": "descriptor",
+        "credential": {
+          "kind": "bearer",
+          "from": "auth"
+        }
+      },
+      "verify": {
+        "kind": "none"
+      },
+      "docs": "https://developers.google.com/gmail/api/reference/rest",
+      "agentGuidance": "Hand-authored, stable pinned operations covering the Gmail agent core: search/read messages, send, modify (archive/read/label), list labels, and get the account profile. Prefer these over ad-hoc calls — they are junction-owned and author-verified against Gmail's own API reference.",
+      "notes": [
+        "Hand-authored templates covering the Gmail agent core (users.messages + users.labels) — a curated subset, not full API coverage.",
+        "send_message/modify_message require the gmail.send/gmail.modify scopes; a read-only grant (gmail.readonly) will 403 them (honest scope note).",
+        "Full REST coverage awaits a Discovery->OpenAPI adapter (see docs/futures/revisit-when.md)."
+      ]
+    }
+  ]
+}

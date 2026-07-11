@@ -65,9 +65,24 @@ describe("planConnect — openapi surface (oauth2 + token)", () => {
     }
   })
 
-  it("oauth2 mode → oauth-handoff, no inline write", () => {
+  it("oauth2 mode → oauth-handoff, ALSO carrying the surface's platformInput/platformId/displayName (inc 38 D2 — widened from the pre-38 {path,providerId}-only shape so the web layer can bind inline)", () => {
     const plan = planConnect(entry, openapi, { authMode: "oauth2" })
-    expect(plan).toEqual({ path: "oauth-handoff", providerId: "github" })
+    if (plan.path !== "oauth-handoff") throw new Error("expected oauth-handoff plan")
+    expect(plan.providerId).toBe("github")
+    expect(plan.platformId).toBe("github-openapi")
+    expect(plan.displayName).toBe(openapi.displayName)
+    // The assembled platformInput mints "bearer" auth even though oauth2 is
+    // NOT a "credential" plan's chosen mode — the runtime injects a refreshed
+    // oauth2 token AS a bearer credential kind-agnostically (resolve-
+    // provider.ts), and openapi-client's injectAuth no-ops entirely when
+    // `auth` is undefined, so this is load-bearing: omitting it would mean
+    // the token is never attached to a request even though the credential
+    // exists.
+    if (plan.platformInput?.kind === "openapi") {
+      expect(plan.platformInput.auth).toEqual({ scheme: "bearer" })
+    } else {
+      throw new Error("expected openapi platformInput")
+    }
   })
 
   it("byo mode is unavailable on the openapi surface (only oauth2/token offered)", () => {
@@ -100,9 +115,16 @@ describe("planConnect — graphql surface (oauth2 + token)", () => {
     }
   })
 
-  it("oauth2 mode → oauth-handoff", () => {
+  it("oauth2 mode → oauth-handoff, carrying platformInput with bearer auth (inc 38 D2)", () => {
     const plan = planConnect(entry, graphql, { authMode: "oauth2" })
-    expect(plan).toEqual({ path: "oauth-handoff", providerId: "github" })
+    if (plan.path !== "oauth-handoff") throw new Error("expected oauth-handoff plan")
+    expect(plan.providerId).toBe("github")
+    expect(plan.platformId).toBe("github-graphql")
+    if (plan.platformInput?.kind === "graphql") {
+      expect(plan.platformInput.auth).toEqual({ scheme: "bearer" })
+    } else {
+      throw new Error("expected graphql platformInput")
+    }
   })
 })
 
@@ -120,9 +142,12 @@ describe("planConnect — mcp surface (oauth2 + token)", () => {
     expect(credentialPlan.verifiable).toBe(true)
   })
 
-  it("oauth2 mode → oauth-handoff", () => {
+  it("oauth2 mode → oauth-handoff, carrying platformInput (inc 38 D2) — mcp has no auth field to bearer-ize (auth flows via the header/tokenEnvVar the connection template declares)", () => {
     const plan = planConnect(entry, mcp, { authMode: "oauth2" })
-    expect(plan).toEqual({ path: "oauth-handoff", providerId: "github" })
+    if (plan.path !== "oauth-handoff") throw new Error("expected oauth-handoff plan")
+    expect(plan.providerId).toBe("github")
+    expect(plan.platformId).toBe("github-mcp")
+    expect(plan.platformInput?.kind).toBe("mcp")
   })
 })
 

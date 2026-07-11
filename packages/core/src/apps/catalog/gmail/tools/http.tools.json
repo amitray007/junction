@@ -1,0 +1,119 @@
+[
+  {
+    "name": "list_messages",
+    "description": "List messages in the authenticated user's mailbox (GET /gmail/v1/users/me/messages). Supports Gmail's search-box query syntax for filtering.",
+    "method": "GET",
+    "path": "/gmail/v1/users/me/messages",
+    "params": [
+      {
+        "name": "q",
+        "in": "query",
+        "type": "string",
+        "required": false,
+        "description": "Only return messages matching this query, using the same syntax as the Gmail search box (e.g. \"from:someone@example.com is:unread\")."
+      },
+      {
+        "name": "maxResults",
+        "in": "query",
+        "type": "number",
+        "required": false,
+        "description": "Maximum number of messages to return. Defaults to 100; the maximum allowed value is 500."
+      },
+      {
+        "name": "pageToken",
+        "in": "query",
+        "type": "string",
+        "required": false,
+        "description": "Page token to retrieve a specific page of results, from a previous list_messages response's nextPageToken."
+      },
+      {
+        "name": "labelIds",
+        "in": "query",
+        "type": "string",
+        "required": false,
+        "description": "Only return messages with labels matching this label ID (e.g. INBOX, UNREAD, IMPORTANT, or a custom label id from list_labels)."
+      }
+    ],
+    "responseHint": "{ messages: [{id, threadId}], nextPageToken?, resultSizeEstimate }"
+  },
+  {
+    "name": "get_message",
+    "description": "Get a single message by id (GET /gmail/v1/users/me/messages/{id}).",
+    "method": "GET",
+    "path": "/gmail/v1/users/me/messages/{id}",
+    "params": [
+      {
+        "name": "id",
+        "in": "path",
+        "type": "string",
+        "required": true,
+        "description": "The message id, as returned by list_messages."
+      },
+      {
+        "name": "format",
+        "in": "query",
+        "type": "enum",
+        "required": false,
+        "enum": ["full", "metadata", "minimal", "raw"],
+        "description": "The format to return the message in. full = parsed headers/body in payload; metadata = headers only, no body; minimal = id/labels only; raw = full RFC 2822 message base64url-encoded in the raw field. Defaults to full."
+      }
+    ],
+    "responseHint": "A Message resource — shape depends on the format param."
+  },
+  {
+    "name": "send_message",
+    "description": "Send an email (POST /gmail/v1/users/me/messages/send). The request body must be JSON of the shape {\"raw\":\"<base64url RFC-2822 MIME>\"} — the agent is responsible for building a valid RFC 2822 MIME message (headers: To/Subject/From/Content-Type as needed, plus body) and base64url-encoding it into the raw field. Requires the gmail.send scope.",
+    "method": "POST",
+    "path": "/gmail/v1/users/me/messages/send",
+    "confirm": true,
+    "params": [
+      {
+        "name": "body",
+        "in": "body",
+        "type": "string",
+        "required": true,
+        "description": "JSON object of the shape {\"raw\":\"<base64url RFC-2822 MIME>\"} — a full RFC 2822 email (headers + body), base64url-encoded. The agent builds the MIME message itself; junction does not construct it."
+      }
+    ],
+    "responseHint": "{ id, threadId, labelIds }"
+  },
+  {
+    "name": "modify_message",
+    "description": "Add or remove labels on a message (POST /gmail/v1/users/me/messages/{id}/modify). Use this to archive (remove INBOX), mark read (remove UNREAD), mark unread (add UNREAD), or apply/remove any label. Requires the gmail.modify scope.",
+    "method": "POST",
+    "path": "/gmail/v1/users/me/messages/{id}/modify",
+    "params": [
+      {
+        "name": "id",
+        "in": "path",
+        "type": "string",
+        "required": true,
+        "description": "The message id to modify."
+      },
+      {
+        "name": "body",
+        "in": "body",
+        "type": "string",
+        "required": true,
+        "description": "JSON object of the shape {\"addLabelIds\":[\"...\"],\"removeLabelIds\":[\"...\"]} — both arrays are optional but at least one should be non-empty. Label ids are system labels (INBOX, UNREAD, IMPORTANT, STARRED, ...) or custom label ids from list_labels."
+      }
+    ],
+    "responseHint": "The updated Message resource: { id, threadId, labelIds }"
+  },
+  {
+    "name": "list_labels",
+    "description": "List all labels in the authenticated user's mailbox, both system (INBOX, UNREAD, ...) and user-created (GET /gmail/v1/users/me/labels).",
+    "method": "GET",
+    "path": "/gmail/v1/users/me/labels",
+    "params": [],
+    "responseHint": "{ labels: [{id, name, type}] }"
+  },
+  {
+    "name": "get_profile",
+    "description": "Get the authenticated user's Gmail profile (GET /gmail/v1/users/me/profile) — email address, message/thread counts, history id. The cheapest identity/connectivity probe for this surface.",
+    "method": "GET",
+    "path": "/gmail/v1/users/me/profile",
+    "params": [],
+    "responseHint": "{ emailAddress, messagesTotal, threadsTotal, historyId }"
+  }
+]

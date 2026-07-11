@@ -17,6 +17,8 @@
 // NEVER exported, NEVER returned from a server-fn/loader, and this module is
 // server-only (imported only from *.server.ts / *.functions.ts handlers).
 
+import type { PlatformInput } from "@junction/core"
+
 export interface PendingAuth {
   codeVerifier: string | null
   providerId: string
@@ -26,7 +28,28 @@ export interface PendingAuth {
   createdAt: number
   /** Create a new credential, or reconnect (repoint) an existing one. */
   intent:
-    | { mode: "create"; platformId: string; account: string }
+    | {
+        mode: "create"
+        platformId: string
+        account: string
+        /**
+         * OPTIONAL (increment 38 D2; re-derivation fixed post-38) — a catalog
+         * surface's assembled-platform payload, carried from `startConnect`
+         * through the round-trip so `completeOAuthCallback` can bind the
+         * source (platforms.upsert) alongside the credential. Server-memory
+         * only. SERVER-AUTHORITATIVE end to end: `startConnect` derives this
+         * from `StartConnectInput.surfaceSelector` (appId + surfaceKind +
+         * authMode ONLY) by re-running `planConnect` against the catalog —
+         * the client never supplies platformInput/baseUrl/specUrl/endpoint/
+         * descriptor directly, so there is nothing here for a client to forge.
+         * It is also not re-read from the request at callback time, so it is
+         * trustworthy against tampering across the round-trip too. `undefined`
+         * on the raw `/credentials` flow (ConnectOAuthDialog, an existing
+         * platform selected from a dropdown) and on CLI connect (which never
+         * calls startConnect at all) — both stay byte-identical to pre-38.
+         */
+        surfacePlatform?: { platformInput: PlatformInput; displayName: string }
+      }
     | { mode: "update"; credentialId: string }
 }
 

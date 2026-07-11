@@ -9,14 +9,22 @@
 // ONLY in the pending-auth Map (server memory) and the CredentialStore.
 
 import {
+  type AppSurface,
   createCredentialStore,
   createRepositories,
+  getCatalogEntry,
   getPaths,
   getProvider,
   OAUTH_CALLBACK_URI,
+  type Platform,
+  type PlatformInput,
+  planConnect,
 } from "@junction/core"
 import {
+  assemblePlatform,
   buildAuthorizeUrl,
+  type ConnectError,
+  checkCollision,
   exchangeCode,
   type OAuthConnectError,
   persistOAuthTokens,
@@ -42,15 +50,77 @@ export interface StartConnectInput {
   clientSecret: string
   scopes: string[]
   account: string
-  platformId: string
+  /**
+   * The raw `/credentials` OAuth flow (ConnectOAuthDialog picks an EXISTING
+   * platform from a dropdown — there is no catalog surface to re-derive from)
+   * supplies platformId directly. EXACTLY ONE of `platformId` /
+   * `surfaceSelector` must be present — see the trust-boundary note below.
+   */
+  platformId?: string
+  /**
+   * SECURITY (post-38 fix — trust boundary): a catalog-originated connect
+   * (connect-panel.tsx's guided oauth2 mode) supplies ONLY this minimal
+   * SELECTOR (appId + surfaceKind + authMode) — never an assembled
+   * platformInput. `startConnect` re-runs the SAME server-authoritative
+   * `planConnect` path that `connectSurfaceFn` uses (keyed by this selector)
+   * to RE-DERIVE platformInput/platformId/displayName from the catalog here,
+   * on the server. This is what makes the pending-auth "server-authoritative,
+   * not client-controlled" claim actually true: nothing about the assembled
+   * connection (baseUrl/specUrl/endpoint/descriptor) is ever accepted from
+   * the client at this boundary. When present, `startConnect` pre-checks a
+   * platform-kind collision against the RE-DERIVED platformId BEFORE
+   * redirecting to the OAuth provider — never strand a completed OAuth grant
+   * with nowhere to bind.
+   */
+  surfaceSelector?: { appId: string; surfaceKind: string; authMode: "oauth2" | "token" | "byo" }
 }
 
-export type StartConnectResult = { ok: true; authorizeUrl: string } | { ok: false; error: string }
+export type StartConnectResult =
+  | { ok: true; authorizeUrl: string }
+  | { ok: false; error: string }
+  | { ok: false; conflict: { existingKind: string } }
 
 export async function startConnect(input: StartConnectInput): Promise<StartConnectResult> {
   const provider = getProvider(input.providerId)
   if (provider === undefined) {
     return { ok: false, error: "unknown-provider" }
+  }
+
+  // Re-derive the authoritative platformId/platformInput/displayName from the
+  // catalog — see the surfaceSelector doc comment above for why this can
+  // never be trusted from the client.
+  let platformId: string
+  let surfacePlatform: { platformInput: PlatformInput; displayName: string } | undefined
+
+  if (input.surfaceSelector !== undefined) {
+    const derived = derivePlatformFromSelector(input.surfaceSelector)
+    if (derived === undefined) {
+      return { ok: false, error: "unknown-surface" }
+    }
+    platformId = derived.platformId
+    if (derived.platformInput !== undefined) {
+      surfacePlatform = { platformInput: derived.platformInput, displayName: derived.displayName }
+    }
+  } else if (input.platformId !== undefined) {
+    platformId = input.platformId
+  } else {
+    return { ok: false, error: "platformId or surfaceSelector is required" }
+  }
+
+  // Increment 38 D2 — collision pre-check BEFORE the redirect, when a surface
+  // payload is present. A platform-kind conflict must fail early: sending the
+  // user to the OAuth provider and only discovering the conflict at callback
+  // would strand a completed grant with nowhere to bind (the credential path
+  // already checks at write time; oauth2 needs the SAME guard before the
+  // round-trip, plus a re-check at callback since state may change meanwhile).
+  if (surfacePlatform !== undefined) {
+    const db = await getDb()
+    if (db === null) return { ok: false, error: "Database unavailable" }
+    const repos = createRepositories(db)
+    const collision = await checkCollision(repos, platformId, surfacePlatform.platformInput.kind)
+    if (collision.isErr()) {
+      return mapCollisionError(collision.error)
+    }
   }
 
   const { url, state, codeVerifier } = buildAuthorizeUrl({
@@ -67,12 +137,58 @@ export async function startConnect(input: StartConnectInput): Promise<StartConne
     clientSecret: input.clientSecret,
     scopes: input.scopes,
     createdAt: Date.now(),
-    intent: { mode: "create", platformId: input.platformId, account: input.account },
+    intent: {
+      mode: "create",
+      platformId,
+      account: input.account,
+      ...(surfacePlatform !== undefined ? { surfacePlatform } : {}),
+    },
   })
 
   // Metadata only — state/codeVerifier/clientSecret stay server-side in the
   // pending-auth Map; the browser only ever sees the authorize URL.
   return { ok: true, authorizeUrl: url }
+}
+
+/**
+ * Re-run planConnect server-side (the SAME authoritative path connectSurfaceFn
+ * uses) keyed by the client's minimal selector, to produce the platformId +
+ * (when the recipe supports it) the platformInput/displayName. Returns
+ * undefined for an unknown appId/surfaceKind, or when the selector's authMode
+ * doesn't resolve to an "oauth-handoff" plan (a mismatched/forged authMode —
+ * fail closed rather than trust the client's claim that this is an oauth2
+ * surface).
+ */
+function derivePlatformFromSelector(selector: {
+  appId: string
+  surfaceKind: string
+  authMode: "oauth2" | "token" | "byo"
+}):
+  | { platformId: string; platformInput: PlatformInput | undefined; displayName: string }
+  | undefined {
+  const entry = getCatalogEntry(selector.appId)
+  if (entry === undefined || entry.surfaces === undefined) return undefined
+  const surface: AppSurface | undefined = entry.surfaces.find(
+    (s) => s.kind === selector.surfaceKind,
+  )
+  if (surface === undefined) return undefined
+
+  const plan = planConnect(entry, surface, { authMode: selector.authMode })
+  if (!("path" in plan) || plan.path !== "oauth-handoff") return undefined
+
+  return {
+    platformId: plan.platformId,
+    platformInput: plan.platformInput,
+    displayName: plan.displayName,
+  }
+}
+
+/** Map a checkCollision ConnectError to a StartConnectResult — never a token/secret. */
+function mapCollisionError(error: ConnectError): StartConnectResult {
+  if (error.kind === "platform-kind-conflict") {
+    return { ok: false, conflict: { existingKind: error.existingKind } }
+  }
+  return { ok: false, error: "Failed to check for an existing platform" }
 }
 
 // ---------------------------------------------------------------------------
@@ -227,35 +343,72 @@ export async function completeOAuthCallback(
   if (storeResult.isErr()) return { outcome: "error", reason: "credential store unavailable" }
 
   const now = Date.now()
-  const persistArgs =
-    pendingAuth.intent.mode === "create"
-      ? ({
-          repos,
-          store: storeResult.value,
-          tokens: exchangeResult.value,
-          providerId: pendingAuth.providerId,
-          authMode: "authorization_code" as const,
-          clientId: pendingAuth.clientId,
-          clientSecret: pendingAuth.clientSecret,
-          now,
-          mode: "create" as const,
-          platformId: pendingAuth.intent.platformId,
-          account: pendingAuth.intent.account,
-        } satisfies Parameters<typeof persistOAuthTokens>[0])
-      : ({
-          repos,
-          store: storeResult.value,
-          tokens: exchangeResult.value,
-          providerId: pendingAuth.providerId,
-          authMode: "authorization_code" as const,
-          clientId: pendingAuth.clientId,
-          clientSecret: pendingAuth.clientSecret,
-          now,
-          mode: "update" as const,
-          credentialId: pendingAuth.intent.credentialId,
-        } satisfies Parameters<typeof persistOAuthTokens>[0])
 
-  const persistResult = await persistOAuthTokens(persistArgs)
+  if (pendingAuth.intent.mode === "update") {
+    const persistResult = await persistOAuthTokens({
+      repos,
+      store: storeResult.value,
+      tokens: exchangeResult.value,
+      providerId: pendingAuth.providerId,
+      authMode: "authorization_code" as const,
+      clientId: pendingAuth.clientId,
+      clientSecret: pendingAuth.clientSecret,
+      now,
+      mode: "update" as const,
+      credentialId: pendingAuth.intent.credentialId,
+    })
+    if (persistResult.isErr()) {
+      return { outcome: "error", reason: persistErrorReason(persistResult.error) }
+    }
+    return { outcome: "ok" }
+  }
+
+  // mode === "create" — increment 38 D1: when the pending intent carries a
+  // catalog surface payload, assemble the Platform (pure, credential-
+  // independent) and re-check the collision (state may change during the
+  // authorize→callback round-trip — the startConnect pre-check does not
+  // guarantee the state is still collision-free by the time the user
+  // returns). ABSENT surfacePlatform (raw /credentials flow, CLI) →
+  // platformBuild stays undefined and persistOAuthTokens's create branch is
+  // byte-identical to pre-inc-38 behavior.
+  const { surfacePlatform } = pendingAuth.intent
+  let platformBuild: { platform: Platform; preExisting: boolean } | undefined
+
+  if (surfacePlatform !== undefined) {
+    const collision = await checkCollision(
+      repos,
+      pendingAuth.intent.platformId,
+      surfacePlatform.platformInput.kind,
+    )
+    if (collision.isErr()) {
+      return { outcome: "error", reason: collisionErrorReason(collision.error) }
+    }
+    const preExisting = collision.value.existing !== undefined
+    const assembled = await assemblePlatform(
+      pendingAuth.intent.platformId,
+      surfacePlatform.displayName,
+      surfacePlatform.platformInput,
+    )
+    if (assembled.isErr()) {
+      return { outcome: "error", reason: assembleErrorReason(assembled.error) }
+    }
+    platformBuild = { platform: assembled.value, preExisting }
+  }
+
+  const persistResult = await persistOAuthTokens({
+    repos,
+    store: storeResult.value,
+    tokens: exchangeResult.value,
+    providerId: pendingAuth.providerId,
+    authMode: "authorization_code" as const,
+    clientId: pendingAuth.clientId,
+    clientSecret: pendingAuth.clientSecret,
+    now,
+    mode: "create" as const,
+    platformId: pendingAuth.intent.platformId,
+    account: pendingAuth.intent.account,
+    ...(platformBuild !== undefined ? { platformBuild } : {}),
+  })
   if (persistResult.isErr()) {
     return { outcome: "error", reason: persistErrorReason(persistResult.error) }
   }
@@ -275,5 +428,17 @@ function persistErrorReason(error: OAuthConnectError): string {
   // error.kind` fallback) so the duplicate-account reason string is a
   // deliberate, reviewed choice — not an accident of the fallback shape.
   if (error.kind === "duplicate-account") return "duplicate-account"
+  return error.kind
+}
+
+/** Increment 38 D2 — map the callback-time collision re-check's ConnectError to a redirect reason. */
+function collisionErrorReason(error: ConnectError): string {
+  if (error.kind === "platform-kind-conflict") return "platform-kind-conflict"
+  return error.kind
+}
+
+/** Increment 38 D1 — map an assemblePlatform failure (rare: bad catalog data) to a redirect reason. */
+function assembleErrorReason(error: ConnectError): string {
+  if (error.kind === "assemble-failed") return "assemble-failed"
   return error.kind
 }

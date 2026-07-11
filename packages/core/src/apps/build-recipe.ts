@@ -124,6 +124,17 @@ export type ConnectPlan =
   | {
       path: "oauth-handoff"
       providerId: string
+      /**
+       * The surface's assembled platform shape (increment 38 D2) — carried so
+       * an inline catalog-connect can bind a source across the OAuth
+       * authorize→callback round-trip, instead of only deep-linking to
+       * `/credentials`. `undefined` iff the surface's recipe can't produce a
+       * platformInput at all (a `RecipeError` — see `platformInputError`);
+       * the deep-link-only fallback still works in that case.
+       */
+      platformInput: PlatformInput | undefined
+      platformId: string
+      displayName: string
     }
 
 /** Metadata-only projection for the client — NEVER the secret, NEVER the raw recipe/connection. */
@@ -192,7 +203,28 @@ export function planConnect(
   }
 
   if (matchedAuth.mode === "oauth2") {
-    return { path: "oauth-handoff", providerId: matchedAuth.providerId }
+    // Increment 38 D2 — widen the oauth2 short-circuit to ALSO produce the
+    // surface's platformInput + displayName (previously this returned before
+    // ever calling buildPlatformInput, which is why 30.11 could only
+    // deep-link to /credentials). oauth2 always mints a "bearer" auth shape
+    // on the assembled platform — the runtime injects the (refreshed) oauth2
+    // token as a bearer credential kind-agnostically (resolve-provider.ts),
+    // so the platform's connection.auth must declare `{scheme:"bearer"}` or
+    // the transport layer silently never attaches the token (openapi-client /
+    // graphql-client's injectAuth no-ops when `auth` is undefined).
+    const platformId = resolvePlatformId(surface.build.platformIdTemplate, entry.id, surface.kind)
+    const built = buildPlatformInput(surface, "bearer")
+    return {
+      path: "oauth-handoff",
+      providerId: matchedAuth.providerId,
+      // A RecipeError here (e.g. descriptor-no-starter-tools) is NOT fatal
+      // to the overall oauth-handoff plan — platformInput undefined just
+      // means the inline bind can't happen; the deep-link-only /credentials
+      // fallback (pre-inc-38 behavior) still works.
+      platformInput: isRecipeError(built) ? undefined : built,
+      platformId,
+      displayName: surface.displayName,
+    }
   }
 
   // token / byo / none all mint a "credential" plan. Precedence rule: the

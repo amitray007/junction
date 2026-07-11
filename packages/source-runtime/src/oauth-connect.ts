@@ -19,11 +19,13 @@ import {
   type CredentialStore,
   type DbError,
   err,
+  getLogger,
   type NormalizedTokens,
   newCredentialId,
   normalizeTokenResponse,
   type OAuthProvider,
   ok,
+  type Platform,
   PlatformIdSchema,
   type Repositories,
   type Result,
@@ -380,7 +382,7 @@ export async function devicePoll(
 // ---------------------------------------------------------------------------
 
 export interface PersistOAuthTokensArgs {
-  repos: Pick<Repositories, "credentials">
+  repos: Pick<Repositories, "credentials" | "platforms">
   store: CredentialStore
   tokens: NormalizedTokens
   providerId: string
@@ -392,6 +394,17 @@ export interface PersistOAuthTokensArgs {
   mode: "create"
   platformId: string
   account: string
+  /**
+   * OPTIONAL (increment 38) — when present, the caller has already assembled
+   * a catalog-connect `Platform` in memory (web layer's `completeOAuthCallback`,
+   * via source-runtime's `assemblePlatform`) and wants it bound BEFORE the
+   * credential is created. `preExisting` is the collision-check result: true
+   * iff a same-kind platform row already existed (so this call must NOT
+   * delete it on a later failure — see D3 in the method file). ABSENT (the
+   * raw `/credentials` flow, where the platform already exists) → this
+   * function's create branch is byte-identical to pre-inc-38 behavior.
+   */
+  platformBuild?: { platform: Platform; preExisting: boolean }
 }
 
 export interface PersistOAuthTokensUpdateArgs {
@@ -527,9 +540,36 @@ export function persistOAuthTokens(
         })
       }
 
+      // Increment 38 D1 — when the caller assembled a Platform (catalog
+      // oauth2 connect), upsert it as the FIRST guarded DB step, BEFORE
+      // credentials.create: `credentials.platformId` is a NOT NULL FK into
+      // `platforms.id` (db/schema.ts), so the platform row must exist first.
+      // ABSENT `platformBuild` (the raw /credentials flow, where the platform
+      // already exists) → this branch is skipped entirely, byte-identical to
+      // pre-inc-38 behavior.
+      const platformBuild = args.platformBuild
+      const platformWasCreatedHere = platformBuild !== undefined && !platformBuild.preExisting
+      if (platformBuild !== undefined) {
+        const upsertResult = await args.repos.platforms.upsert(platformBuild.platform)
+        if (upsertResult.isErr()) {
+          await cleanup(store, written)
+          return err({ kind: "persist-failed", cause: upsertResult.error })
+        }
+      }
+
       const createResult = await repos.credentials.create(credentialParse.data)
       if (createResult.isErr()) {
         await cleanup(store, written)
+        // D3 — bounded hardening (match confirmThenAdd's orphan-platform
+        // precedent, strictly better): if THIS call created the platform
+        // (platformWasCreatedHere), best-effort delete it alongside the
+        // store-ref cleanup, in this SAME guarded closure. Never delete a
+        // pre-existing platform (preExisting=true — this call only would
+        // have added a credential to it). Best-effort = log-and-continue on
+        // delete failure; never let cleanup mask the original persist error.
+        if (platformWasCreatedHere && platformBuild !== undefined) {
+          await cleanupOrphanPlatform(args.repos, platformBuild.platform.id)
+        }
         return err({ kind: "persist-failed", cause: createResult.error })
       }
       return ok(createResult.value)
@@ -615,5 +655,36 @@ async function cleanup(store: CredentialStore, refs: readonly string[]): Promise
     } catch {
       // swallow — best-effort cleanup, mirrors rotateCredential/refreshIfExpired
     }
+  }
+}
+
+/**
+ * D3 — best-effort delete of a platform row THIS call created, on a
+ * credentials.create failure. Never throws/rejects; a delete failure is
+ * logged-and-continued (mirrors `cleanup`'s discipline) so it never masks
+ * the original persist-failed error the caller is already returning. Not
+ * called for a pre-existing platform (see the `platformWasCreatedHere` guard
+ * at the call site) — true cross-table atomicity is unachievable (the
+ * CredentialStore is not transactional with SQLite) and disproportionate;
+ * an orphaned platform row is inert (no credential → serves no tools) and
+ * self-healing on retry (idempotent upsert). See docs/futures/gotchas.md.
+ */
+async function cleanupOrphanPlatform(
+  repos: Pick<Repositories, "platforms">,
+  platformId: string,
+): Promise<void> {
+  try {
+    const result = await repos.platforms.delete(platformId)
+    if (result.isErr()) {
+      getLogger().warn(
+        "persistOAuthTokens: credentials.create failed after platform upsert; best-effort orphan-platform delete ALSO failed — platform row orphaned",
+        { platformId, cause: result.error.kind },
+      )
+    }
+  } catch (cause) {
+    getLogger().warn(
+      "persistOAuthTokens: best-effort orphan-platform delete threw unexpectedly — platform row orphaned",
+      { platformId, cause: cause instanceof Error ? cause.constructor.name : "unknown" },
+    )
   }
 }

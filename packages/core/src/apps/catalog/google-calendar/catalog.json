@@ -1,0 +1,46 @@
+{
+  "id": "google-calendar",
+  "displayName": "Google Calendar",
+  "supportedKinds": ["http"],
+  "auth": [
+    {
+      "mode": "oauth2",
+      "providerId": "google"
+    }
+  ],
+  "iconSlug": "google-calendar",
+  "surfaces": [
+    {
+      "kind": "http",
+      "displayName": "Google Calendar (HTTP)",
+      "connection": {
+        "kind": "http",
+        "baseUrl": "https://www.googleapis.com/calendar/v3"
+      },
+      "auth": [
+        {
+          "mode": "oauth2",
+          "providerId": "google"
+        }
+      ],
+      "build": {
+        "platformIdTemplate": "{app}-{kind}",
+        "via": "descriptor",
+        "credential": {
+          "kind": "bearer",
+          "from": "auth"
+        }
+      },
+      "verify": {
+        "kind": "none"
+      },
+      "docs": "https://developers.google.com/workspace/calendar/api/v3/reference",
+      "agentGuidance": "Hand-authored, stable pinned operations covering the Calendar agent core: list/get/create/update/delete events on a calendar, and list the user's calendars. Prefer these over ad-hoc calls — they are junction-owned and author-verified against the Calendar v3 Discovery document.",
+      "notes": [
+        "Hand-authored templates covering the Calendar agent core (events + calendarList) — a curated subset, not full API coverage.",
+        "create_event/update_event/delete_event require the calendar or calendar.events (write) scope; a read-only grant (calendar.readonly / calendar.events.readonly) will 403 them (honest scope note).",
+        "Full REST coverage awaits a Discovery->OpenAPI adapter (see docs/futures/revisit-when.md)."
+      ]
+    }
+  ]
+}

@@ -134,34 +134,6 @@ function parseSlackTokenResponse(raw: unknown): NormalizedTokens {
 
 const PROVIDERS: readonly OAuthProvider[] = [
   {
-    id: "google",
-    displayName: "Google",
-    authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
-    tokenUrl: "https://oauth2.googleapis.com/token",
-    deviceAuthorizationUrl: "https://oauth2.googleapis.com/device/code",
-    pkce: "S256",
-    scopeSeparator: " ",
-    // access_type:offline + prompt:consent are REQUIRED or Google never issues
-    // a refresh token (only on first consent otherwise).
-    authorizationParams: { access_type: "offline", prompt: "consent" },
-    tokenAuthMethod: "client_secret_basic",
-    bodyFormat: "form",
-    expiryStrategy: "expires_in",
-    // Desktop-app pattern: no fixed registered redirect, a per-flow ephemeral
-    // loopback port (RFC 8252).
-    redirectMode: "loopback-ephemeral",
-    supportsRefresh: true,
-    registrationHint: {
-      redirectUri: "http://127.0.0.1:<ephemeral-port>/",
-      scopes: "offline access requires access_type=offline + prompt=consent (handled by junction)",
-      docsUrl: "https://developers.google.com/identity/protocols/oauth2",
-    },
-    // Google's OpenID Connect userinfo endpoint — a plain bearer GET, no
-    // extra headers. Dogfooded this session: a stored Google token
-    // authenticated against it with a 200.
-    userinfoUrl: "https://www.googleapis.com/oauth2/v3/userinfo",
-  },
-  {
     // GitHub OAuth App: token never expires, no refresh — the historical
     // GitHub OAuth flow. GitHub added mandatory PKCE (S256) for OAuth Apps in
     // July 2025 (confirmed against GitHub's OAuth Apps docs, inc 30 research)
@@ -253,237 +225,32 @@ const PROVIDERS: readonly OAuthProvider[] = [
     userinfoUrl: "https://slack.com/api/auth.test",
   },
   {
-    id: "microsoft",
-    displayName: "Microsoft",
-    authorizationUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
-    tokenUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
-    deviceAuthorizationUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/devicecode",
+    id: "google",
+    displayName: "Google",
+    authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+    tokenUrl: "https://oauth2.googleapis.com/token",
+    deviceAuthorizationUrl: "https://oauth2.googleapis.com/device/code",
     pkce: "S256",
     scopeSeparator: " ",
-    tokenAuthMethod: "client_secret_post",
-    bodyFormat: "form",
-    expiryStrategy: "expires_in",
-    redirectMode: "loopback-fixed",
-    supportsRefresh: true,
-    // Microsoft wants offline_access in the SCOPE list (not an authorization
-    // param) or no refresh token is issued — encoded as a default scope
-    // rather than an authorizationParams entry.
-    defaultScopes: ["offline_access"],
-    registrationHint: {
-      redirectUri: OAUTH_CALLBACK_URI,
-      scopes: "offline_access is added automatically by junction",
-      docsUrl: "https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-auth-code-flow",
-    },
-    // Microsoft Graph "me". A plain bearer GET; needs a User.Read-class scope —
-    // if the connected token lacks it this 403s, which the verifier maps to
-    // auth-failed (honest: junction can't confirm the token that way).
-    userinfoUrl: "https://graph.microsoft.com/v1.0/me",
-  },
-  {
-    id: "notion",
-    displayName: "Notion",
-    authorizationUrl: "https://api.notion.com/v1/oauth/authorize",
-    tokenUrl: "https://api.notion.com/v1/oauth/token",
-    pkce: "S256",
-    scopeSeparator: " ",
-    tokenAuthMethod: "client_secret_basic",
-    bodyFormat: "json",
-    // Notion tokens don't currently expire, so there's nothing to refresh.
-    expiryStrategy: "none",
-    redirectMode: "loopback-fixed",
-    supportsRefresh: false,
-    registrationHint: {
-      redirectUri: OAUTH_CALLBACK_URI,
-      scopes: "Notion scopes are configured on the integration itself, not via the authorize URL",
-      docsUrl: "https://developers.notion.com/docs/authorization",
-    },
-    // Notion "get self" — a bearer GET that requires the Notion-Version header
-    // (the API rejects requests without it). Version pinned to a current, stable
-    // release; bump when Notion deprecates it.
-    userinfoUrl: "https://api.notion.com/v1/users/me",
-    userinfoHeaders: { "Notion-Version": "2022-06-28" },
-  },
-  {
-    id: "atlassian",
-    displayName: "Atlassian",
-    authorizationUrl: "https://auth.atlassian.com/authorize",
-    tokenUrl: "https://auth.atlassian.com/oauth/token",
-    pkce: "S256",
-    scopeSeparator: " ",
-    authorizationParams: { audience: "api.atlassian.com", prompt: "consent" },
-    tokenAuthMethod: "client_secret_post",
-    bodyFormat: "json",
-    expiryStrategy: "expires_in",
-    redirectMode: "loopback-fixed",
-    supportsRefresh: true,
-    // The {subdomain}/site connection_config (which Jira/Confluence site to
-    // hit) is a per-connection concern resolved at connect time, not an
-    // endpoint the catalog carries.
-    registrationHint: {
-      redirectUri: OAUTH_CALLBACK_URI,
-      scopes: "read:jira-work offline_access (adjust per product)",
-      docsUrl: "https://developer.atlassian.com/cloud/jira/platform/oauth-2-3lo-apps/",
-    },
-    // NO userinfoUrl: Atlassian's identity endpoint (`api.atlassian.com/me`)
-    // needs the `read:me` scope AND the "User Identity API" enabled in the dev
-    // console — neither of which junction's connect flow requests/guarantees.
-    // A userinfo check that 403s for a validly-connected token would be a
-    // misleading auth-failed, so we omit it and let Test Connection fall
-    // through to the source-verify / not-verifiable (honest > confidently wrong).
-  },
-  {
-    // Discord OAuth2 — standard authorization-code flow, PKCE S256, refresh
-    // supported. Authorize/token URLs confirmed against Discord's OAuth2 docs
-    // (inc 30 research).
-    id: "discord",
-    displayName: "Discord",
-    authorizationUrl: "https://discord.com/oauth2/authorize",
-    tokenUrl: "https://discord.com/api/oauth2/token",
-    pkce: "S256",
-    scopeSeparator: " ",
-    tokenAuthMethod: "client_secret_post",
-    bodyFormat: "form",
-    expiryStrategy: "expires_in",
-    redirectMode: "loopback-fixed",
-    supportsRefresh: true,
-    registrationHint: {
-      redirectUri: OAUTH_CALLBACK_URI,
-      scopes: "identify email (adjust per platform)",
-      docsUrl: "https://discord.com/developers/docs/topics/oauth2",
-    },
-    // Discord's own-identity endpoint — a plain bearer GET.
-    userinfoUrl: "https://discord.com/api/users/@me",
-  },
-  {
-    // Spotify Accounts service — standard authorization-code flow, PKCE S256,
-    // refresh supported. Confirmed against Spotify's Authorization Code docs.
-    id: "spotify",
-    displayName: "Spotify",
-    authorizationUrl: "https://accounts.spotify.com/authorize",
-    tokenUrl: "https://accounts.spotify.com/api/token",
-    pkce: "S256",
-    scopeSeparator: " ",
+    // access_type:offline + prompt:consent are REQUIRED or Google never issues
+    // a refresh token (only on first consent otherwise).
+    authorizationParams: { access_type: "offline", prompt: "consent" },
     tokenAuthMethod: "client_secret_basic",
     bodyFormat: "form",
     expiryStrategy: "expires_in",
-    redirectMode: "loopback-fixed",
+    // Desktop-app pattern: no fixed registered redirect, a per-flow ephemeral
+    // loopback port (RFC 8252).
+    redirectMode: "loopback-ephemeral",
     supportsRefresh: true,
     registrationHint: {
-      redirectUri: OAUTH_CALLBACK_URI,
-      scopes: "user-read-email user-read-private (adjust per platform)",
-      docsUrl: "https://developer.spotify.com/documentation/web-api/tutorials/code-flow",
+      redirectUri: "http://127.0.0.1:<ephemeral-port>/",
+      scopes: "offline access requires access_type=offline + prompt=consent (handled by junction)",
+      docsUrl: "https://developers.google.com/identity/protocols/oauth2",
     },
-    userinfoUrl: "https://api.spotify.com/v1/me",
-  },
-  {
-    // Zoom OAuth2 — standard authorization-code flow, PKCE S256, refresh
-    // supported. Confirmed against Zoom's OAuth docs.
-    id: "zoom",
-    displayName: "Zoom",
-    authorizationUrl: "https://zoom.us/oauth/authorize",
-    tokenUrl: "https://zoom.us/oauth/token",
-    pkce: "S256",
-    scopeSeparator: " ",
-    tokenAuthMethod: "client_secret_basic",
-    bodyFormat: "form",
-    expiryStrategy: "expires_in",
-    redirectMode: "loopback-fixed",
-    supportsRefresh: true,
-    registrationHint: {
-      redirectUri: OAUTH_CALLBACK_URI,
-      scopes: "user:read:user (adjust per platform)",
-      docsUrl: "https://developers.zoom.us/docs/integrations/oauth/",
-    },
-    userinfoUrl: "https://api.zoom.us/v2/users/me",
-  },
-  {
-    // Dropbox OAuth2 — standard authorization-code flow, PKCE S256, refresh
-    // supported. NOTE the token host is api.dropboxapi.com, NOT
-    // api.dropbox.com (confirmed against Dropbox's OAuth guide).
-    id: "dropbox",
-    displayName: "Dropbox",
-    authorizationUrl: "https://www.dropbox.com/oauth2/authorize",
-    tokenUrl: "https://api.dropboxapi.com/oauth2/token",
-    pkce: "S256",
-    scopeSeparator: " ",
-    tokenAuthMethod: "client_secret_basic",
-    bodyFormat: "form",
-    expiryStrategy: "expires_in",
-    redirectMode: "loopback-fixed",
-    supportsRefresh: true,
-    registrationHint: {
-      redirectUri: OAUTH_CALLBACK_URI,
-      scopes: "account_info.read files.content.read (adjust per platform)",
-      docsUrl: "https://developers.dropbox.com/oauth-guide",
-    },
-    userinfoUrl: "https://api.dropboxapi.com/2/users/get_current_account",
-  },
-  {
-    // Linear OAuth 2.1 (DCR) — also accepts a bearer PAT, but this entry
-    // covers the OAuth path. Confirmed against Linear's MCP/OAuth docs.
-    id: "linear",
-    displayName: "Linear",
-    authorizationUrl: "https://linear.app/oauth/authorize",
-    tokenUrl: "https://api.linear.app/oauth/token",
-    pkce: "S256",
-    scopeSeparator: " ",
-    tokenAuthMethod: "client_secret_post",
-    bodyFormat: "form",
-    expiryStrategy: "expires_in",
-    redirectMode: "loopback-fixed",
-    supportsRefresh: true,
-    registrationHint: {
-      redirectUri: OAUTH_CALLBACK_URI,
-      scopes: "read write issues:create (adjust per platform)",
-      docsUrl: "https://linear.app/docs/mcp",
-    },
-    // Linear's GraphQL "viewer" query is the identity check, not a REST GET —
-    // no stable bearer-GET userinfo endpoint to assume here (honest > guessed).
-  },
-  {
-    // GitLab.com OAuth2 — standard authorization-code flow, PKCE S256,
-    // refresh supported. Confirmed against GitLab's OAuth2 docs.
-    id: "gitlab",
-    displayName: "GitLab",
-    authorizationUrl: "https://gitlab.com/oauth/authorize",
-    tokenUrl: "https://gitlab.com/oauth/token",
-    pkce: "S256",
-    scopeSeparator: " ",
-    tokenAuthMethod: "client_secret_post",
-    bodyFormat: "form",
-    expiryStrategy: "expires_in",
-    redirectMode: "loopback-fixed",
-    supportsRefresh: true,
-    registrationHint: {
-      redirectUri: OAUTH_CALLBACK_URI,
-      scopes: "read_user read_api read_repository (adjust per platform)",
-      docsUrl: "https://docs.gitlab.com/ee/api/oauth2.html",
-    },
-    userinfoUrl: "https://gitlab.com/api/v4/user",
-  },
-  {
-    // Figma OAuth2 — standard authorization-code flow, PKCE S256, refresh
-    // supported. Token host is api.figma.com, NOT figma.com (confirmed
-    // against Figma's OAuth docs). NOTE: the Figma Dev Mode MCP server itself
-    // uses NO credential (trusts the local desktop app) — this OAuth entry is
-    // for the REST API vault path, a separate connection from that MCP.
-    id: "figma",
-    displayName: "Figma",
-    authorizationUrl: "https://www.figma.com/oauth",
-    tokenUrl: "https://api.figma.com/v1/oauth/token",
-    pkce: "S256",
-    scopeSeparator: " ",
-    tokenAuthMethod: "client_secret_post",
-    bodyFormat: "form",
-    expiryStrategy: "expires_in",
-    redirectMode: "loopback-fixed",
-    supportsRefresh: true,
-    registrationHint: {
-      redirectUri: OAUTH_CALLBACK_URI,
-      scopes: "file_content:read current_user:read (files:read is deprecated)",
-      docsUrl: "https://www.figma.com/developers/api#oauth2",
-    },
-    userinfoUrl: "https://api.figma.com/v1/me",
+    // Google's OpenID Connect userinfo endpoint — a plain bearer GET, no
+    // extra headers. Dogfooded this session: a stored Google token
+    // authenticated against it with a 200.
+    userinfoUrl: "https://www.googleapis.com/oauth2/v3/userinfo",
   },
   {
     // The escape hatch: user supplies authorizationUrl/tokenUrl (and scopes)
@@ -560,8 +327,8 @@ export function buildAuthorizationParams(
  * parser. This is the ONE place the default-vs-override split lives.
  *
  * @throws {Error} if the response is not a usable token payload (missing
- * access_token, or a provider-signaled in-body error like Slack's
- * `{ok:false}`). This is a documented-throwing contract: the consuming
+ * access_token, or a provider-signaled in-body error via a custom
+ * `parseTokenResponse` override). This is a documented-throwing contract: the consuming
  * wrapper (source-runtime/oauth-connect.ts) catches and converts to a typed
  * Result<Credential, OAuthConnectError>. Any future core-internal caller on
  * a Result-typed path must do the same — wrap the call in try/catch and

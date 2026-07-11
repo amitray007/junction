@@ -356,7 +356,7 @@ describe("makeResolveProvider — oauth2 wiring (inc29-B): the real arctic-backe
           refreshTokenRef: "refresh-ref",
           clientIdRef: "client-id-ref",
           clientSecretRef: "client-secret-ref",
-          providerId: "google",
+          providerId: "github-app",
           authMode: "authorization_code",
           expiresAt: expiredAt,
           needsReauth: false,
