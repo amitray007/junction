@@ -261,22 +261,39 @@ function writeCredential(
  * artifact keyed by platformId, NOT a "connection"; the atomicity guarantee
  * here is DB-row-level, not filesystem-level (method file §3a caveat).
  */
-export function verifyThenAdd(args: VerifyThenAddArgs): ResultAsync<ConnectResult, ConnectError> {
+/**
+ * Shared collision-dispatch skeleton for both connect paths (verifyThenAdd /
+ * confirmThenAdd). Runs `checkCollision`, then routes to `onExisting` for a
+ * same-kind collision (reuse the EXISTING platform, don't touch its connection)
+ * or `onFresh` for a newly-assembled platform. The two callers differ ONLY in
+ * those two callbacks — this factors out the identical check-then-branch shell.
+ */
+function withCollisionDispatch(
+  // ConfirmThenAddArgs = Omit<VerifyThenAddArgs, "paths">, so a VerifyThenAddArgs
+  // is assignable here too — both call sites share the fields this helper reads
+  // (platformInput/displayName/platformId/repos).
+  args: ConfirmThenAddArgs,
+  onExisting: (existing: Platform) => ResultAsync<ConnectResult, ConnectError>,
+  onFresh: (platform: Platform) => ResultAsync<ConnectResult, ConnectError>,
+): ResultAsync<ConnectResult, ConnectError> {
   const { platformInput, displayName, platformId, repos } = args
+  return checkCollision(repos, platformId, platformInput.kind).andThen(({ existing }) =>
+    existing !== undefined
+      ? onExisting(existing)
+      : assemblePlatform(platformId, displayName, platformInput).andThen(onFresh),
+  )
+}
 
-  return checkCollision(repos, platformId, platformInput.kind).andThen(({ existing }) => {
-    if (existing !== undefined) {
-      // Same-kind collision: defensive branch (§3c) — add the credential to
-      // the EXISTING platform, do not touch its connection. Still verify
-      // first, against the EXISTING platform object (not the fresh guess) so
-      // a stale/edited platform is what's actually being proven.
-      return verifyThenWrite(args, existing, /* upsertPlatform */ false)
-    }
-
-    return assemblePlatform(platformId, displayName, platformInput).andThen((platform) =>
-      verifyThenWrite(args, platform, /* upsertPlatform */ true),
-    )
-  })
+export function verifyThenAdd(args: VerifyThenAddArgs): ResultAsync<ConnectResult, ConnectError> {
+  return withCollisionDispatch(
+    args,
+    // Same-kind collision: defensive branch (§3c) — add the credential to the
+    // EXISTING platform, do not touch its connection. Still verify first,
+    // against the EXISTING platform object (not the fresh guess) so a
+    // stale/edited platform is what's actually being proven.
+    (existing) => verifyThenWrite(args, existing, /* upsertPlatform */ false),
+    (platform) => verifyThenWrite(args, platform, /* upsertPlatform */ true),
+  )
 }
 
 function verifyThenWrite(
@@ -330,21 +347,14 @@ function verifyThenWrite(
  * verification on a surface that actually offers it.
  */
 export function confirmThenAdd(args: ConfirmThenAddArgs): ResultAsync<ConnectResult, ConnectError> {
-  const { platformInput, displayName, platformId, repos } = args
-
-  return checkCollision(repos, platformId, platformInput.kind).andThen(({ existing }) => {
-    if (existing !== undefined) {
-      return writeCredential(args, existing).map((): ConnectResult => ({ unverified: true }))
-    }
-
-    return assemblePlatform(platformId, displayName, platformInput)
-      .andThen((platform) =>
-        repos.platforms
-          .upsert(platform)
-          .mapErr((cause): ConnectError => ({ kind: "persist-failed", cause }))
-          .map(() => platform),
-      )
-      .andThen((platform) => writeCredential(args, platform))
-      .map((): ConnectResult => ({ unverified: true }))
-  })
+  return withCollisionDispatch(
+    args,
+    (existing) => writeCredential(args, existing).map((): ConnectResult => ({ unverified: true })),
+    (platform) =>
+      args.repos.platforms
+        .upsert(platform)
+        .mapErr((cause): ConnectError => ({ kind: "persist-failed", cause }))
+        .andThen(() => writeCredential(args, platform))
+        .map((): ConnectResult => ({ unverified: true })),
+  )
 }

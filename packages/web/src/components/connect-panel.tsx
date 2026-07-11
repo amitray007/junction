@@ -81,6 +81,41 @@ function duplicateAccountMessage(account: string): string {
   return `'${account}' is already connected here — pick a different account name.`
 }
 
+/**
+ * The "Auth mode" Select — identical markup in both the fast and guided tabs
+ * (they differ only by the field `id`). Factored out so the two tabs can't
+ * drift. Rendered only when the surface offers >1 mode.
+ */
+function AuthModeField({
+  id,
+  modes,
+  authMode,
+  onAuthModeChange,
+}: {
+  readonly id: string
+  readonly modes: SurfaceConnectable["authModes"]
+  readonly authMode: SurfaceConnectable["authModes"][number]
+  readonly onAuthModeChange: (mode: string) => void
+}) {
+  if (modes.length <= 1) return null
+  return (
+    <Field id={id} label="Auth mode">
+      <Select value={authMode} onValueChange={onAuthModeChange}>
+        <SelectTrigger id={id}>
+          <SelectValue placeholder="Select an auth mode" />
+        </SelectTrigger>
+        <SelectContent>
+          {modes.map((m) => (
+            <SelectItem key={m} value={m}>
+              {authModeLabel(m)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </Field>
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Guided-mode content — per auth type, driven by AppDetail.app.help +
 // OAuthProviderMeta.registrationHint. Purely informational (no write).
@@ -485,22 +520,12 @@ export function ConnectPanelDialog({
 
           <TabsContent value="fast">
             <div className="flex flex-col gap-4 pt-2">
-              {modes.length > 1 && (
-                <Field id="connect-auth-mode" label="Auth mode">
-                  <Select value={authMode} onValueChange={handleAuthModeChange}>
-                    <SelectTrigger id="connect-auth-mode">
-                      <SelectValue placeholder="Select an auth mode" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {modes.map((m) => (
-                        <SelectItem key={m} value={m}>
-                          {authModeLabel(m)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </Field>
-              )}
+              <AuthModeField
+                id="connect-auth-mode"
+                modes={modes}
+                authMode={authMode}
+                onAuthModeChange={handleAuthModeChange}
+              />
 
               {isOAuth ? (
                 <p style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)", margin: 0 }}>
@@ -522,22 +547,12 @@ export function ConnectPanelDialog({
 
           <TabsContent value="guided">
             <div className="flex flex-col gap-4 pt-2">
-              {modes.length > 1 && (
-                <Field id="connect-auth-mode-guided" label="Auth mode">
-                  <Select value={authMode} onValueChange={handleAuthModeChange}>
-                    <SelectTrigger id="connect-auth-mode-guided">
-                      <SelectValue placeholder="Select an auth mode" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {modes.map((m) => (
-                        <SelectItem key={m} value={m}>
-                          {authModeLabel(m)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </Field>
-              )}
+              <AuthModeField
+                id="connect-auth-mode-guided"
+                modes={modes}
+                authMode={authMode}
+                onAuthModeChange={handleAuthModeChange}
+              />
 
               {isCli && <CliSandboxExplainer install={help?.install} notes={surface.notes} />}
 
