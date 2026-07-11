@@ -5,8 +5,7 @@
   "description": "Google's email service — messages, threads, labels, and search, accessed via the Gmail REST API.",
   "agentGuidance": "Covers reading, searching, sending, and labeling email. The HTTP surface's templates are stable pinned operations (search/read/send/modify/label) — prefer them over exploratory calls.",
   "oauthApp": {
-    "registerUrl": "https://console.cloud.google.com/apis/credentials",
-    "callbackPath": "/oauth/callback/google"
+    "registerUrl": "https://console.cloud.google.com/apis/credentials"
   },
   "authSetup": {
     "interactive": "create a project + OAuth client (type: Desktop app) in the Google Cloud Console, enable the Gmail API for the project, then request Gmail scopes (gmail.readonly / gmail.send / gmail.modify / gmail.labels) during connect",

@@ -96,7 +96,14 @@ function GuidedOAuth({
   readonly provider: OAuthProviderMeta | undefined
 }) {
   const registerUrl = help?.oauthApp?.registerUrl
-  const callbackPath = help?.oauthApp?.callbackPath
+  // Prefer the PROVIDER's registrationHint.redirectUri — it is redirect-mode-aware
+  // (a loopback-ephemeral provider like Google uses `http://127.0.0.1:<ephemeral
+  // -port>/`, NOT a fixed callback path), so it tells the user the CORRECT thing
+  // to register. Fall back to the app-level help.oauthApp.callbackPath only when
+  // the provider carries no hint. (Fixes the inherited Gmail/Calendar case where
+  // a fixed "/oauth/callback/google" was advertised for an ephemeral-loopback
+  // provider — inc 40 follow-up.)
+  const callbackHint = provider?.registrationHint.redirectUri ?? help?.oauthApp?.callbackPath
   const scopes = provider?.registrationHint.scopes ?? help?.authSetup?.env
 
   return (
@@ -118,9 +125,9 @@ function GuidedOAuth({
             </a>
           </li>
         )}
-        {callbackPath !== undefined && (
+        {callbackHint !== undefined && (
           <li style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)" }}>
-            Set the callback URL to <MonoCode>{callbackPath}</MonoCode>
+            Set the redirect / callback URL to <MonoCode>{callbackHint}</MonoCode>
           </li>
         )}
         {scopes !== undefined && (

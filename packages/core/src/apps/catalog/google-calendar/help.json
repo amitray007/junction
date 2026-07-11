@@ -5,8 +5,7 @@
   "description": "Google's calendar and scheduling service — events, calendars, and availability, accessed via the Calendar REST API.",
   "agentGuidance": "Covers listing/creating/updating/deleting events on a calendar and listing the user's calendars. The HTTP surface's templates are stable pinned operations (list/get/create/update/delete events, list calendars) — prefer them over exploratory calls.",
   "oauthApp": {
-    "registerUrl": "https://console.cloud.google.com/apis/credentials",
-    "callbackPath": "/oauth/callback/google"
+    "registerUrl": "https://console.cloud.google.com/apis/credentials"
   },
   "authSetup": {
     "interactive": "create a project + OAuth client (type: Desktop app) in the Google Cloud Console, enable the Google Calendar API for the project, then request Calendar scopes (calendar.readonly / calendar.events / calendar.events.readonly / calendar) during connect",

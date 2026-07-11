@@ -135,7 +135,7 @@ describe("ConnectPanelDialog — mode toggle", () => {
     expect(queryByText(/Install it yourself/)).not.toBeInTheDocument()
   })
 
-  it("guided mode for an oauth2-only surface shows the register URL, callback path, and scopes", () => {
+  it("guided mode for an oauth2-only surface shows the register URL, the PROVIDER's redirect URI, and scopes", () => {
     const { getByRole, getByText } = renderDialog({
       surface: openapiSurfaceOAuthOnly,
       connectable: { authModes: ["oauth2"], verifiable: true },
@@ -145,7 +145,12 @@ describe("ConnectPanelDialog — mode toggle", () => {
       "href",
       "https://github.com/settings/applications/new",
     )
-    expect(getByText("/oauth/callback/github")).toBeInTheDocument()
+    // The guided step shows the PROVIDER's redirect-mode-aware registrationHint
+    // .redirectUri (here the mock's http://127.0.0.1:5190/oauth/callback/github),
+    // NOT the app-level help.oauthApp.callbackPath — so a loopback-ephemeral
+    // provider (e.g. Google) advertises the correct loopback URI, not a bogus
+    // fixed path (inc 40 follow-up).
+    expect(getByText("http://127.0.0.1:5190/oauth/callback/github")).toBeInTheDocument()
     expect(getByText("repo, read:user")).toBeInTheDocument()
   })
 })

@@ -474,7 +474,6 @@ export const CATALOG_ENTRIES: readonly AppCatalogEntry[] = [
         "Covers reading, searching, sending, and labeling email. The HTTP surface's templates are stable pinned operations (search/read/send/modify/label) — prefer them over exploratory calls.",
       oauthApp: {
         registerUrl: "https://console.cloud.google.com/apis/credentials",
-        callbackPath: "/oauth/callback/google",
       },
       provenance: {
         authoredBy: "junction",
@@ -746,7 +745,6 @@ export const CATALOG_ENTRIES: readonly AppCatalogEntry[] = [
         "Covers listing/creating/updating/deleting events on a calendar and listing the user's calendars. The HTTP surface's templates are stable pinned operations (list/get/create/update/delete events, list calendars) — prefer them over exploratory calls.",
       oauthApp: {
         registerUrl: "https://console.cloud.google.com/apis/credentials",
-        callbackPath: "/oauth/callback/google",
       },
       provenance: {
         authoredBy: "junction",
