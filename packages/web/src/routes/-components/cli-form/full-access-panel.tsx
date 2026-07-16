@@ -18,7 +18,7 @@ import {
   discoverCliBinaryFn,
 } from "../../../server/platform-mutations.functions.js"
 import { Button, Field, Input } from "../../../ui/index.js"
-import { credentialEnvVarError } from "./cli-connection-form.js"
+import { credentialEnvVarError } from "./credential-env-var.js"
 import type { CliPathFormState, FullAccessFormState } from "./types.js"
 import { emptyPathRow } from "./types.js"
 
@@ -103,11 +103,20 @@ export function FullAccessPanel({ fullAccess, onChange }: FullAccessPanelProps) 
         selectedRealpath: recommended?.realpath ?? "",
         manualPath: candidates.length === 0,
       })
-    } catch {
+    } catch (e) {
+      // Surface the real reason instead of an opaque "try again" — the common
+      // causes are a non-localhost Host/Origin (403 from assertLocalHost) or the
+      // server not seeing the binary on its PATH. Show it so the user can act.
+      const detail =
+        e instanceof Response
+          ? `${e.status} ${e.statusText || "request rejected"}`
+          : e instanceof Error && e.message
+            ? e.message
+            : "unexpected error"
       onChange({
         ...fullAccess,
         discovering: false,
-        discoverError: "Discovery failed — try again or enter the path manually",
+        discoverError: `Discovery failed (${detail}) — check the server is reachable on localhost, or enter the path manually.`,
       })
     }
   }
@@ -116,7 +125,9 @@ export function FullAccessPanel({ fullAccess, onChange }: FullAccessPanelProps) 
   const chosenPath = fullAccess.manualPath
     ? fullAccess.manualPathValue.trim()
     : fullAccess.selectedRealpath
-  const binaryLabel = fullAccess.binaryName.trim() || chosenPath.split("/").pop() || "this binary"
+  const resolvedLabel = fullAccess.binaryName.trim() || chosenPath.split("/").pop() || ""
+  const hasBinaryLabel = resolvedLabel !== ""
+  const binaryLabel = resolvedLabel || "this binary"
 
   return (
     <div className="flex flex-col gap-4">
@@ -212,16 +223,47 @@ export function FullAccessPanel({ fullAccess, onChange }: FullAccessPanelProps) 
         <legend
           style={{ fontSize: "var(--text-label)", fontWeight: 500, color: "var(--gray-1000)" }}
         >
-          Network allowlist
+          Network
         </legend>
-        <p style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)" }}>
-          Empty = no network. Add host:port entries the binary needs to reach (e.g.
-          api.github.com:443).
-        </p>
-        <AllowNetRepeater
-          hosts={fullAccess.allowNet}
-          onChange={(allowNet) => set("allowNet", allowNet)}
-        />
+        <label className="flex items-center gap-2" style={{ fontSize: "var(--text-body)" }}>
+          <input
+            type="radio"
+            name="fa-net-mode"
+            checked={fullAccess.netMode === "denied"}
+            onChange={() => set("netMode", "denied")}
+          />
+          No network
+        </label>
+        <label className="flex items-center gap-2" style={{ fontSize: "var(--text-body)" }}>
+          <input
+            type="radio"
+            name="fa-net-mode"
+            checked={fullAccess.netMode === "allowlist"}
+            onChange={() => set("netMode", "allowlist")}
+          />
+          Only specific hosts
+        </label>
+        <label className="flex items-center gap-2" style={{ fontSize: "var(--text-body)" }}>
+          <input
+            type="radio"
+            name="fa-net-mode"
+            checked={fullAccess.netMode === "full"}
+            onChange={() => set("netMode", "full")}
+          />
+          Full network access
+        </label>
+        {fullAccess.netMode === "allowlist" && (
+          <>
+            <p style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)" }}>
+              Add host:port entries the binary needs (e.g. api.github.com:443). On this OS egress is
+              enforced by port, not host.
+            </p>
+            <AllowNetRepeater
+              hosts={fullAccess.allowNet}
+              onChange={(allowNet) => set("allowNet", allowNet)}
+            />
+          </>
+        )}
       </fieldset>
 
       <Field
@@ -239,28 +281,19 @@ export function FullAccessPanel({ fullAccess, onChange }: FullAccessPanelProps) 
         />
       </Field>
 
-      <div
-        className="rounded-[var(--radius-6)] border px-3 py-3"
-        style={{ borderColor: "var(--alpha-400)", backgroundColor: "var(--gray-100)" }}
-      >
-        <p style={{ fontSize: "var(--text-body)", color: "var(--gray-1000)", margin: 0 }}>
-          <strong>Full CLI access</strong> — Agents connected to this profile can run any{" "}
-          <code style={{ fontFamily: "var(--font-mono)" }}>{binaryLabel}</code> command, always
-          inside the sandbox. Junction learns {binaryLabel}'s commands once at install (by running
-          its <code style={{ fontFamily: "var(--font-mono)" }}>--help</code> — sandboxed, offline,
-          no credentials) so agents know the interface without trial and error. You can still pin
-          named shortcuts for commands you want locked down.
-        </p>
-        {chosenPath && (
-          <p
-            style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)", marginTop: "8px" }}
-          >
-            Junction will run <code style={{ fontFamily: "var(--font-mono)" }}>{binaryLabel}</code>
-            's <code style={{ fontFamily: "var(--font-mono)" }}>--help</code> tree — sandboxed,
-            offline, no credentials — to learn its commands.
-          </p>
-        )}
-      </div>
+      <p style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)", margin: 0 }}>
+        Agents can run any{" "}
+        {hasBinaryLabel ? (
+          <>
+            <code style={{ fontFamily: "var(--font-mono)" }}>{binaryLabel}</code> command
+          </>
+        ) : (
+          "command from this CLI"
+        )}{" "}
+        inside the sandbox. Junction maps its{" "}
+        <code style={{ fontFamily: "var(--font-mono)" }}>--help</code> once at install — sandboxed,
+        offline, no credentials.
+      </p>
 
       {fullAccess.installSummary && (
         <p style={{ fontSize: "var(--text-body)", color: "var(--status-ok-fg)" }}>

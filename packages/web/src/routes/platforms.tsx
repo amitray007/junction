@@ -351,6 +351,16 @@ function PlatformDialog({ mode, platform, open, onOpenChange, onSuccess }: Platf
       return
     }
 
+    // Map the network mode to the allowNet payload the install expects:
+    //  denied → [] (no network); full → ["*"] (any host/port); allowlist → the
+    //  host:port rows (translated to enforceable port scopes server-side).
+    const allowNet =
+      fa.netMode === "full"
+        ? ["*"]
+        : fa.netMode === "allowlist"
+          ? fa.allowNet.map((h) => h.value.trim()).filter(Boolean)
+          : []
+
     setSubmitting(true)
     try {
       const result = await addFullAccessCliPlatformFn({
@@ -359,7 +369,7 @@ function PlatformDialog({ mode, platform, open, onOpenChange, onSuccess }: Platf
           displayName: state.displayName.trim(),
           binaryPath,
           ...(fa.credentialEnvVar.trim() ? { credentialEnvVar: fa.credentialEnvVar.trim() } : {}),
-          allowNet: fa.allowNet.map((h) => h.value.trim()).filter(Boolean),
+          allowNet,
         },
       })
       if (!result.ok) {
@@ -550,7 +560,9 @@ function PlatformDialog({ mode, platform, open, onOpenChange, onSuccess }: Platf
 
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
-      <DialogContent>
+      {/* no-scrollbar: keep the modal bounded + scrollable but hide the
+          scrollbar chrome (the form still scrolls when tall). */}
+      <DialogContent className="no-scrollbar">
         <DialogHeader>
           <DialogTitle>{mode === "add" ? "Add Platform" : "Edit Platform"}</DialogTitle>
           <DialogDescription>

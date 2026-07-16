@@ -20,13 +20,13 @@ afterEach(() => {
 })
 
 describe("FullAccessPanel", () => {
-  it("renders the binary-name input and the install-confirmation copy", () => {
+  it("renders the binary-name input and the concise sandbox explainer", () => {
     const { getByPlaceholderText, getByText } = render(
       <FullAccessPanel fullAccess={emptyFullAccessState()} onChange={vi.fn()} />,
     )
     expect(getByPlaceholderText("gh")).toBeInTheDocument()
-    expect(getByText(/Full CLI access/)).toBeInTheDocument()
-    expect(getByText(/Junction learns this binary's commands once at install/)).toBeInTheDocument()
+    expect(getByText(/Agents can run any/)).toBeInTheDocument()
+    expect(getByText(/maps its/)).toBeInTheDocument()
   })
 
   it("discovering candidates preselects the recommendation (first entry)", async () => {

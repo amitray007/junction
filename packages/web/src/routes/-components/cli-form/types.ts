@@ -80,7 +80,14 @@ export interface FullAccessFormState {
   manualPath: boolean
   /** The manually-entered absolute path (only used when manualPath is true). */
   manualPathValue: string
-  /** host:port rows for the optional network allowlist. */
+  /**
+   * Network access mode:
+   *  - "denied"    → no network (default, safe)
+   *  - "allowlist" → only the host:port rows in `allowNet`
+   *  - "full"      → any host on any port (translated to "*" at install)
+   */
+  netMode: "denied" | "allowlist" | "full"
+  /** host:port rows — only meaningful when netMode === "allowlist". */
   allowNet: CliPathFormState[]
   credentialEnvVar: string
   /** True while a discoverCliBinaryFn call is in flight. */
@@ -98,6 +105,7 @@ export function emptyFullAccessState(): FullAccessFormState {
     selectedRealpath: "",
     manualPath: false,
     manualPathValue: "",
+    netMode: "denied",
     allowNet: [],
     credentialEnvVar: "",
     discovering: false,
@@ -154,7 +162,9 @@ export function emptyTool(): CliToolFormState {
 
 export function emptyConnection(): CliConnectionFormState {
   return {
-    mode: "declared",
+    // Full CLI access is the default — install a CLI by name and let agents
+    // drive the whole tool; declared commands is the opt-in narrower mode.
+    mode: "full-access",
     tools: [emptyTool()],
     credentialEnvVar: "",
     fullAccess: emptyFullAccessState(),

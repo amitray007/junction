@@ -6,45 +6,17 @@
 import { useState } from "react"
 import { Field, Input, Tabs, TabsList, TabsTrigger } from "../../../ui/index.js"
 import { ToolCardList } from "../tool-card-list.js"
+// credentialEnvVarError (format + inc-41 JUNCTION_/interpreter denylist) lives
+// in ./credential-env-var.ts — a neutral module both this form and
+// full-access-panel import DOWN into, breaking the form ↔ panel import cycle.
+import { credentialEnvVarError } from "./credential-env-var.js"
 import { FullAccessPanel } from "./full-access-panel.js"
 import { ToolCard } from "./tool-card.js"
 import type { CliAccessMode, CliConnectionFormState } from "./types.js"
 import { emptyTool } from "./types.js"
 
-// inc 41 (Fable ruling): the _TOKEN/_SECRET/_KEY suffix heuristic was DROPPED
-// (it blocked GH_TOKEN — the only var `gh` reads — for no real security
-// gain) and replaced with a JUNCTION_ prefix reservation + the
-// dynamic-linker/interpreter denylist class. This is a CLIENT component
-// (no .server.ts) so it cannot import @junction/core (would pull
-// better-sqlite3/keyring into the client bundle — see docs/rules/web.md
-// "server-only-core boundary") — the predicate is deliberately duplicated
-// here, mirroring sandbox/env-denylist.ts's isJunctionReservedEnvKey /
-// isInterpreterDenylistedEnvKey. Keep in lock-step with those.
-const INTERPRETER_ENV_DENYLIST = new Set([
-  "LD_PRELOAD",
-  "LD_LIBRARY_PATH",
-  "LD_AUDIT",
-  "NODE_OPTIONS",
-])
-const ENV_NAME_RE = /^[A-Z_][A-Z0-9_]*$/
-
-function isDenylistedCredentialEnvVar(name: string): boolean {
-  if (name.startsWith("JUNCTION_")) return true
-  const upper = name.toUpperCase()
-  return INTERPRETER_ENV_DENYLIST.has(upper) || upper.startsWith("DYLD_")
-}
-
-/** Validate a credentialEnvVar value — mirrors CliConnectionSchema's format + denylist. */
-export function credentialEnvVarError(name: string): string | undefined {
-  if (name === "") return undefined
-  if (!ENV_NAME_RE.test(name)) {
-    return "Must be a valid env-var name (A-Z, 0-9, _; starts with A-Z or _)"
-  }
-  if (isDenylistedCredentialEnvVar(name)) {
-    return "Reserved name — JUNCTION_-prefixed and dynamic-linker/interpreter names (LD_PRELOAD, DYLD_*, NODE_OPTIONS) are not allowed"
-  }
-  return undefined
-}
+// Re-exported for existing importers that referenced it from this module.
+export { credentialEnvVarError } from "./credential-env-var.js"
 
 interface CliConnectionFormProps {
   readonly connection: CliConnectionFormState
