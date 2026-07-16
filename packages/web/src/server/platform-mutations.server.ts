@@ -19,8 +19,8 @@
 // CliConnectionSchema.parse as the final authority before the descriptor reaches
 // addCliPlatform/validatePolicy/the sandbox. Never trust a client-sent argv array.
 
-import type { CliConnection, HttpConnection, Platform } from "@junction/core"
-import { CliConnectionSchema, HttpConnectionSchema } from "@junction/core"
+import type { CliConnection, DeclaredCliConnection, HttpConnection, Platform } from "@junction/core"
+import { CliConnectionSchema, HttpConnectionSchema, isFullAccess } from "@junction/core"
 import {
   addCliPlatform,
   addGraphQlPlatform,
@@ -733,9 +733,14 @@ function toPlatformDetail(p: Platform): PlatformDetail {
   }
 
   if (p.kind === "cli" && p.cli) {
+    // Declared platforms expose `tools`; full-access platforms expose optional
+    // `shortcuts` (same CliTool shape). The detail view renders whichever exists
+    // as the CLI tool cards. Full-access execute/help + the discovery install UI
+    // are inc 41.4/41.5; here we only surface the reversible declared-shape tools.
+    const cliTools = isFullAccess(p.cli) ? (p.cli.shortcuts ?? []) : p.cli.tools
     return {
       ...base,
-      cliTools: p.cli.tools.map((tool) => {
+      cliTools: cliTools.map((tool) => {
         const reversible = toolIsReversible(tool)
         return {
           name: tool.name,
@@ -808,10 +813,10 @@ function toPlatformDetail(p: Platform): PlatformDetail {
 // since core's CliArgvSegment is structurally assignable to the lib's local type.
 import { argvToCommandLine, isReversible } from "../lib/cli-command.js"
 
-function argvToCommandLineLocal(argv: CliConnection["tools"][number]["argv"]): string {
+function argvToCommandLineLocal(argv: DeclaredCliConnection["tools"][number]["argv"]): string {
   return argvToCommandLine(argv)
 }
 
-function toolIsReversible(tool: CliConnection["tools"][number]): boolean {
+function toolIsReversible(tool: DeclaredCliConnection["tools"][number]): boolean {
   return isReversible({ argv: tool.argv, args: tool.args })
 }

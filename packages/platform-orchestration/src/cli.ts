@@ -4,7 +4,13 @@
 // capabilities (warn, don't fail), dry-run validatePolicy per tool, validate
 // the platform.
 
-import { CliConnectionSchema, createSandbox, type Platform, validatePolicy } from "@junction/core"
+import {
+  CliConnectionSchema,
+  createSandbox,
+  isFullAccess,
+  type Platform,
+  validatePolicy,
+} from "@junction/core"
 import { err, ok, type Result, ResultAsync } from "neverthrow"
 import { type PlatformOrchestrationError, parsePlatform } from "./errors.js"
 
@@ -37,6 +43,12 @@ async function addCliPlatformAsync(
     return err({ kind: "invalid-descriptor", message })
   }
   const cli = cliParseResult.data
+
+  // Full CLI access descriptors are storable (inc 41.1: schema + repo only) but
+  // this add-flow doesn't wire discovery/install for them yet (inc 41.4).
+  if (isFullAccess(cli)) {
+    return err({ kind: "full-access-not-yet-supported" })
+  }
 
   // Probe sandbox capabilities — warn if no backend, but allow the add.
   // The descriptor is portable data; it may be served on a host that has a backend.

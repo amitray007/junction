@@ -222,15 +222,27 @@ export type {
   CliPolicy,
   CliSecret,
   CliTool,
+  DeclaredCliConnection,
+  FullAccessCliConnection,
 } from "./schema/cli-connection.js"
-// CliConnection — sandboxed CLI source descriptor
+// CliConnection — sandboxed CLI source descriptor (mode-tagged: declared |
+// full-access — docs/specs/2026-07-16-cli-exploratory-mode.md)
 export {
   CliArgSchema,
   CliArgvSegmentSchema,
   CliConnectionSchema,
   CliPolicySchema,
   CliToolSchema,
+  isFullAccess,
 } from "./schema/cli-connection.js"
+export type { CliFlag, CliSchemaNode, ExtractedCliSchema } from "./schema/cli-schema.js"
+// ExtractedCliSchema — the persisted recursive --help tree for a Full CLI
+// access platform (41.1; extractor lands in 41.2)
+export {
+  CliFlagSchema,
+  CliSchemaNodeSchema,
+  ExtractedCliSchemaSchema,
+} from "./schema/cli-schema.js"
 export type { Credential, CredentialVerifyResult, OAuthMeta } from "./schema/credential.js"
 // Credential
 export {
@@ -299,10 +311,24 @@ export { SourceRefSchema, ToolFilterSchema } from "./schema/source-ref.js"
 // Shared agent-arg string validation primitive (inc 30.7) — reused by every
 // source provider that validates agent-supplied strings (cli, http-client).
 export { rejectControlCharacters } from "./sources/arg-validation.js"
+// CLI Full-access recursive --help extractor (inc 41.2) — "Junction learns
+// the CLI once" (docs/specs/2026-07-16-cli-exploratory-mode.md §4 Layer 2).
+export type { ExtractCeiling, HelpExtractor, ParsedHelpNode } from "./sources/cli/extract.js"
+export {
+  DEFAULT_CEILING,
+  extractCliSchema,
+  genericHelpExtractor,
+  probeNode,
+} from "./sources/cli/extract.js"
 // CLI provider — sandboxed code-execution source (inc 21)
 export { createCliProvider } from "./sources/cli/provider.js"
 export { namespaceToolName, splitNamespacedName } from "./sources/naming.js"
-export type { ProviderTool, ToolProvider, ToolResult } from "./sources/provider.js"
+export type {
+  ProviderTool,
+  ProviderToolAnnotations,
+  ToolProvider,
+  ToolResult,
+} from "./sources/provider.js"
 export type {
   OnDescriptionDriftFn,
   OnPinStoreWarningFn,

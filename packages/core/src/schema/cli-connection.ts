@@ -9,6 +9,7 @@
 
 import { z } from "zod"
 import { hasUnsafePathChars } from "../sandbox/index.js"
+import { ExtractedCliSchemaSchema } from "./cli-schema.js"
 import { looksLikeCatastrophicRegex } from "./http-connection.js"
 
 // ---------------------------------------------------------------------------
@@ -210,6 +211,44 @@ export type CliTool = z.infer<typeof CliToolSchema>
 // ---------------------------------------------------------------------------
 // Connection descriptor
 // ---------------------------------------------------------------------------
+//
+// docs/specs/2026-07-16-cli-exploratory-mode.md — CliConnection gains a mode:
+//   - "declared" (default, back-compat): existing { tools, credentialEnvVar? }.
+//     Stored rows predating this increment have NO `mode` field at all — they
+//     MUST still parse as declared (sacred back-compat; see cli-connection.test.ts).
+//   - "full-access": a single pinned binary the agent drives via execute/help
+//     (41.3), plus the persisted extracted --help tree (41.2) and optional
+//     named shortcuts (declared CliTools, demoted to sugar; 41.5).
+
+/**
+ * credentialEnvVar's shape + denylist refine, shared verbatim by both the
+ * declared and full-access branches (same rule, same message). Factored here
+ * rather than duplicated because BOTH branches must react identically to any
+ * future denylist change — unlike the branches' other fields, which differ.
+ */
+const CredentialEnvVarSchema = z
+  .string()
+  .regex(
+    /^[A-Z_][A-Z0-9_]*$/,
+    "credentialEnvVar must be a valid env-var name (A-Z, 0-9, _; starts with A-Z or _)",
+  )
+  .optional()
+
+/**
+ * Mirrors validatePolicy's SECRET_DENYLIST_RE/EXACT so a descriptor that would
+ * be rejected at call-time is rejected at add-time instead. Extending this
+ * list? Add a name to the parity corpus in cli-connection.test.ts — additions
+ * here are invisible to the lock-step test unless the corpus grows too.
+ */
+function isDenylistedCredentialEnvVar(name: string): boolean {
+  if (/_TOKEN$|_SECRET$|_KEY$/.test(name)) return true
+  if (name === "JUNCTION_MASTER_KEY" || name === "JUNCTION_MASTER_KEY_FILE") return true
+  return false
+}
+
+const CREDENTIAL_ENV_VAR_DENYLIST_MESSAGE =
+  "credentialEnvVar must not end in _TOKEN/_SECRET/_KEY or be a JUNCTION_MASTER_KEY* name " +
+  "(validatePolicy denylist — use GH_PAT, API_AUTH, or similar instead)"
 
 /**
  * Sandboxed CLI source descriptor. Meaningful when Platform.kind === "cli".
@@ -224,8 +263,14 @@ export type CliTool = z.infer<typeof CliToolSchema>
  * API_AUTH, MYSERVICE_CRED. See docs/futures/revisit-when.md for the planned
  * guard-relaxation increment.
  */
-export const CliConnectionSchema = z
+const DeclaredCliConnectionSchema = z
   .object({
+    /**
+     * Discriminant. Optional + defaulted so a legacy stored row with NO
+     * `mode` field at all (every CLI platform before this increment) still
+     * parses as declared — this default is the entire back-compat mechanism.
+     */
+    mode: z.literal("declared").optional().default("declared"),
     /** One or more operator-declared commands — each becomes one namespaced MCP tool. */
     tools: z.array(CliToolSchema).min(1),
     /**
@@ -234,36 +279,76 @@ export const CliConnectionSchema = z
      * Must be a valid env-var identifier (A-Z, digits, underscore; starts with A-Z or _).
      * Must NOT end in _TOKEN, _SECRET, or _KEY (validatePolicy secret-denylist).
      */
-    credentialEnvVar: z
-      .string()
-      .regex(
-        /^[A-Z_][A-Z0-9_]*$/,
-        "credentialEnvVar must be a valid env-var name (A-Z, 0-9, _; starts with A-Z or _)",
-      )
-      .optional(),
+    credentialEnvVar: CredentialEnvVarSchema,
   })
   .refine(
-    (conn) => {
-      if (!conn.credentialEnvVar) return true
-      // Heuristic-suffix denylist + exact master-key names (incl. _FILE, which the
-      // _KEY$ suffix misses). Mirrors validatePolicy so a descriptor that would be
-      // rejected at call-time is rejected at add-time instead.
-      // Extending this list? Add a name to the parity corpus in cli-connection.test.ts —
-      // additions here are invisible to the lock-step test unless the corpus grows too.
-      const name = conn.credentialEnvVar
-      if (/_TOKEN$|_SECRET$|_KEY$/.test(name)) return false
-      if (name === "JUNCTION_MASTER_KEY" || name === "JUNCTION_MASTER_KEY_FILE") return false
-      return true
-    },
+    (conn) => !conn.credentialEnvVar || !isDenylistedCredentialEnvVar(conn.credentialEnvVar),
     {
-      message:
-        "credentialEnvVar must not end in _TOKEN/_SECRET/_KEY or be a JUNCTION_MASTER_KEY* name " +
-        "(validatePolicy denylist — use GH_PAT, API_AUTH, or similar instead)",
+      message: CREDENTIAL_ENV_VAR_DENYLIST_MESSAGE,
       path: ["credentialEnvVar"],
     },
   )
 
+/**
+ * Full CLI access (docs/specs/2026-07-16-cli-exploratory-mode.md §4 Layer 0).
+ * The platform is a single pinned binary the agent drives via execute/help
+ * (41.3) instead of a fixed per-tool argv template. `policy` is ONE
+ * platform-level CliPolicy (not per-tool, unlike declared's CliTool.policy).
+ */
+const FullAccessCliConnectionSchema = z
+  .object({
+    mode: z.literal("full-access"),
+    /**
+     * The resolved absolute realpath of the pinned binary (Fable Q1). Reuses
+     * the identical argv[0] guards CliToolSchema applies: must be absolute
+     * (sandbox has no PATH) and metachar-clean (interpolated into the
+     * Seatbelt SBPL profile).
+     */
+    binaryPath: z
+      .string()
+      .min(1)
+      .refine((p) => p.startsWith("/"), {
+        message: 'binaryPath must be an absolute path (starts with "/") — the sandbox has no PATH',
+      })
+      .refine((p) => !hasUnsafePathChars(p), {
+        message:
+          'binaryPath must not contain unsafe metacharacters (" \\ ( ) , or control characters) — it is interpolated into the sandbox profile',
+      }),
+    credentialEnvVar: CredentialEnvVarSchema,
+    /** ONE platform-level sandbox policy for the binary (not per-tool). */
+    policy: CliPolicySchema,
+    /** The persisted recursive --help tree (41.2 extracts it; this slice only stores/validates it). */
+    schema: ExtractedCliSchemaSchema,
+    /** Optional named saved commands — declared CliTool machinery, demoted to sugar (41.5). */
+    shortcuts: z.array(CliToolSchema).optional(),
+  })
+  .refine(
+    (conn) => !conn.credentialEnvVar || !isDenylistedCredentialEnvVar(conn.credentialEnvVar),
+    {
+      message: CREDENTIAL_ENV_VAR_DENYLIST_MESSAGE,
+      path: ["credentialEnvVar"],
+    },
+  )
+
+/**
+ * Mode-tagged union. Order matters for back-compat: FullAccess requires a
+ * literal `mode:"full-access"`, so any object lacking `mode` (every legacy
+ * stored row) fails that branch and falls through to Declared, whose `mode`
+ * is optional+defaulted. Explicit `mode:"declared"` also lands in Declared.
+ */
+export const CliConnectionSchema = z.union([
+  FullAccessCliConnectionSchema,
+  DeclaredCliConnectionSchema,
+])
+
+export type DeclaredCliConnection = z.infer<typeof DeclaredCliConnectionSchema>
+export type FullAccessCliConnection = z.infer<typeof FullAccessCliConnectionSchema>
 export type CliConnection = z.infer<typeof CliConnectionSchema>
+
+/** Discriminates a validated CliConnection — true iff it's the full-access branch. */
+export function isFullAccess(c: CliConnection): c is FullAccessCliConnection {
+  return c.mode === "full-access"
+}
 
 // ---------------------------------------------------------------------------
 // CliSecret — the resolved credential handed to createCliProvider

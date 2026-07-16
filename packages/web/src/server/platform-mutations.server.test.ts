@@ -14,6 +14,7 @@ import {
   createRepositories,
   getDatabase,
   getPaths,
+  isFullAccess,
   newCredentialId,
   newPlatformId,
 } from "@junction/core"
@@ -192,7 +193,9 @@ describe("platform-mutations.server", () => {
       const stored = await repos.platforms.get("local-cli")
       expect(stored.isOk()).toBe(true)
       if (stored.isOk()) {
-        const argv = stored.value.cli?.tools[0]?.argv
+        const cli = stored.value.cli
+        // This path adds a declared CLI platform, so narrow off the full-access branch.
+        const argv = cli && !isFullAccess(cli) ? cli.tools[0]?.argv : undefined
         expect(argv).toEqual([
           { kind: "literal", value: "/bin/echo" },
           { kind: "literal", value: "hello" },

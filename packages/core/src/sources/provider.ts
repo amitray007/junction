@@ -14,11 +14,30 @@ import type { ResultAsync } from "../result/index.js"
 // ProviderTool — raw upstream tool descriptor
 // ---------------------------------------------------------------------------
 
+/**
+ * MCP tool annotations — behavioral hints surfaced to the calling agent/client.
+ * Optional; a provider that has nothing to declare simply omits the field.
+ *
+ * NOTE (increment 41.3): this field is populated by the CLI full-access
+ * provider's `execute`/`help` tools (docs/specs/2026-07-16-cli-exploratory-mode.md
+ * §5 Q2), but is not yet forwarded end-to-end — mcp/client's session.ts
+ * `listTools` mapping and mcp/server's `ListToolsRequestSchema` handler still
+ * project only `{ name, description, inputSchema }` (see proxy.ts's
+ * `hashToolIdentity` comment: the pin hash must grow to cover `annotations`
+ * the same change that starts forwarding it end-to-end).
+ */
+export interface ProviderToolAnnotations {
+  readOnlyHint?: boolean
+  destructiveHint?: boolean
+  openWorldHint?: boolean
+}
+
 /** A single tool as returned by an upstream source. name is RAW (un-namespaced). */
 export interface ProviderTool {
   name: string
   description?: string | undefined
   inputSchema: object
+  annotations?: ProviderToolAnnotations | undefined
 }
 
 // ---------------------------------------------------------------------------

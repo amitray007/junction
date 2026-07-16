@@ -135,6 +135,11 @@ function formatOrchestrationError(
       return `cannot refresh a spec that wasn't added from a URL; "${id}" uses spec.from="${e.specFrom}"`
     case "verify-op-invalid":
       return `--verify-op is invalid: ${e.message}`
+    case "full-access-not-yet-supported":
+      // A full-access CLI descriptor was submitted via the declared-add path.
+      // Full CLI access is installed via `--full-access` (discovery flow, inc 41.4),
+      // not via `--descriptor`. Until 41.4 lands this is a hard, honest refusal.
+      return "full-access CLI platforms are not added via --descriptor; use `--full-access` (binary discovery flow)"
   }
 }
 

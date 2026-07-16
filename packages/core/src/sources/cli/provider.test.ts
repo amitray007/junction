@@ -13,8 +13,15 @@ import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
-import type { CliConnection, CliPolicy, CliSecret, CliTool } from "../../schema/cli-connection.js"
+import type {
+  CliConnection,
+  CliPolicy,
+  CliSecret,
+  CliTool,
+  FullAccessCliConnection,
+} from "../../schema/cli-connection.js"
 import { CliConnectionSchema } from "../../schema/cli-connection.js"
+import type { CliSchemaNode, ExtractedCliSchema } from "../../schema/cli-schema.js"
 import { validateArgs } from "./args.js"
 import { buildArgv } from "./argv.js"
 import { createCliProvider } from "./provider.js"
@@ -49,6 +56,43 @@ function echoTool(overrides: Partial<CliTool> = {}): CliTool {
 
 function minimalConnection(tool: CliTool = echoTool(), credentialEnvVar?: string): CliConnection {
   return { tools: [tool], ...(credentialEnvVar ? { credentialEnvVar } : {}) }
+}
+
+// ---------------------------------------------------------------------------
+// Full-access fixture helpers (increment 41.3)
+// ---------------------------------------------------------------------------
+
+function schemaNode(overrides: Partial<CliSchemaNode> = {}): CliSchemaNode {
+  return {
+    path: [],
+    parsed: true,
+    explored: true,
+    flags: [],
+    positionals: [],
+    subcommands: [],
+    ...overrides,
+  }
+}
+
+function extractedSchema(root: CliSchemaNode): ExtractedCliSchema {
+  return {
+    binaryName: "echo",
+    extractedAt: new Date().toISOString(),
+    root,
+    truncated: false,
+  }
+}
+
+function fullAccessConnection(
+  overrides: Partial<FullAccessCliConnection> = {},
+): FullAccessCliConnection {
+  return {
+    mode: "full-access",
+    binaryPath: "/bin/echo",
+    policy: BASE_POLICY,
+    schema: extractedSchema(schemaNode()),
+    ...overrides,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -421,6 +465,435 @@ describe("createCliProvider — callTool", () => {
       expect(text).toContain("hello-mapping")
     },
   )
+})
+
+// ---------------------------------------------------------------------------
+// Full CLI access — listTools (increment 41.3)
+// docs/specs/2026-07-16-cli-exploratory-mode.md §5 Q2
+// ---------------------------------------------------------------------------
+
+describe("createCliProvider — full-access listTools", () => {
+  it("returns exactly execute + help when no shortcuts are declared", async () => {
+    const provider = createCliProvider(fullAccessConnection(), null)
+    const result = await provider.listTools()
+    expect(result.isOk()).toBe(true)
+    if (!result.isOk()) return
+    expect(result.value.map((t) => t.name)).toEqual(["execute", "help"])
+  })
+
+  it("execute tool has the correct inputSchema + annotations", async () => {
+    const provider = createCliProvider(fullAccessConnection(), null)
+    const result = await provider.listTools()
+    if (!result.isOk()) return
+    const execute = result.value.find((t) => t.name === "execute")
+    expect(execute).toBeDefined()
+    expect(execute?.description).toContain("echo")
+    const schema = execute?.inputSchema as Record<string, unknown>
+    expect(schema.type).toBe("object")
+    const props = schema.properties as Record<string, unknown>
+    expect((props.args as Record<string, unknown>).type).toBe("array")
+    expect(((props.args as Record<string, unknown>).items as Record<string, unknown>).type).toBe(
+      "string",
+    )
+    expect((props.stdin as Record<string, unknown>).type).toBe("string")
+    expect(schema.required).toEqual(["args"])
+    expect(execute?.annotations).toEqual({
+      readOnlyHint: false,
+      destructiveHint: true,
+      openWorldHint: true,
+    })
+  })
+
+  it("help tool has the correct inputSchema + annotations", async () => {
+    const provider = createCliProvider(fullAccessConnection(), null)
+    const result = await provider.listTools()
+    if (!result.isOk()) return
+    const help = result.value.find((t) => t.name === "help")
+    expect(help).toBeDefined()
+    expect(help?.description).toContain("echo")
+    const schema = help?.inputSchema as Record<string, unknown>
+    expect(schema.type).toBe("object")
+    const props = schema.properties as Record<string, unknown>
+    expect((props.path as Record<string, unknown>).type).toBe("array")
+    expect(help?.annotations).toEqual({ readOnlyHint: true })
+  })
+
+  it("includes one ProviderTool per shortcut, alongside execute + help", async () => {
+    const shortcut = echoTool({ name: "say_hi" })
+    const provider = createCliProvider(fullAccessConnection({ shortcuts: [shortcut] }), null)
+    const result = await provider.listTools()
+    if (!result.isOk()) return
+    expect(result.value.map((t) => t.name)).toEqual(["execute", "help", "say_hi"])
+    const shortcutTool = result.value.find((t) => t.name === "say_hi")
+    const schema = shortcutTool?.inputSchema as Record<string, unknown>
+    const props = schema.properties as Record<string, unknown>
+    expect(props).toHaveProperty("message")
+  })
+
+  it("listTools works even when sandbox is unavailable (pure, never touches sandbox)", async () => {
+    const provider = createCliProvider(fullAccessConnection(), null)
+    const result = await provider.listTools()
+    expect(result.isOk()).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Full CLI access — execute (increment 41.3)
+// ---------------------------------------------------------------------------
+
+describe("createCliProvider — full-access execute", () => {
+  it("rejects non-array args with invalid-args", async () => {
+    const provider = createCliProvider(fullAccessConnection(), null)
+    const result = await provider.callTool("execute", { args: "not-an-array" })
+    expect(result.isErr()).toBe(true)
+    if (!result.isErr()) return
+    expect(result.error.kind).toBe("invalid-args")
+  })
+
+  it("rejects a non-string element", async () => {
+    const provider = createCliProvider(fullAccessConnection(), null)
+    const result = await provider.callTool("execute", { args: ["ok", 42] })
+    expect(result.isErr()).toBe(true)
+    if (!result.isErr()) return
+    expect(result.error.kind).toBe("invalid-args")
+  })
+
+  it("rejects an over-long element (> 4096 chars)", async () => {
+    const provider = createCliProvider(fullAccessConnection(), null)
+    const result = await provider.callTool("execute", { args: ["a".repeat(4097)] })
+    expect(result.isErr()).toBe(true)
+    if (!result.isErr()) return
+    expect(result.error.kind).toBe("invalid-args")
+  })
+
+  it("accepts an element at exactly the 4096 cap", async () => {
+    const provider = createCliProvider(fullAccessConnection(), null)
+    const result = await provider.callTool("execute", { args: ["a".repeat(4096)] })
+    // Not an invalid-args rejection for length — may still hit the sandbox path.
+    if (result.isErr()) expect(result.error.kind).not.toBe("invalid-args")
+  })
+
+  it("rejects an element containing a NUL byte", async () => {
+    const provider = createCliProvider(fullAccessConnection(), null)
+    const result = await provider.callTool("execute", { args: ["ab\x00cd"] })
+    expect(result.isErr()).toBe(true)
+    if (!result.isErr()) return
+    expect(result.error.kind).toBe("invalid-args")
+  })
+
+  it("rejects an element containing a newline", async () => {
+    const provider = createCliProvider(fullAccessConnection(), null)
+    const result = await provider.callTool("execute", { args: ["ab\ncd"] })
+    expect(result.isErr()).toBe(true)
+    if (!result.isErr()) return
+    expect(result.error.kind).toBe("invalid-args")
+  })
+
+  it("rejects too many elements (> 256)", async () => {
+    const provider = createCliProvider(fullAccessConnection(), null)
+    const result = await provider.callTool("execute", {
+      args: Array.from({ length: 257 }, () => "x"),
+    })
+    expect(result.isErr()).toBe(true)
+    if (!result.isErr()) return
+    expect(result.error.kind).toBe("invalid-args")
+  })
+
+  it("accepts exactly 256 elements", async () => {
+    const provider = createCliProvider(fullAccessConnection(), null)
+    const result = await provider.callTool("execute", {
+      args: Array.from({ length: 256 }, () => "x"),
+    })
+    if (result.isErr()) expect(result.error.kind).not.toBe("invalid-args")
+  })
+
+  it("rejects a non-string stdin", async () => {
+    const provider = createCliProvider(fullAccessConnection(), null)
+    const result = await provider.callTool("execute", { args: ["hi"], stdin: 123 })
+    expect(result.isErr()).toBe(true)
+    if (!result.isErr()) return
+    expect(result.error.kind).toBe("invalid-args")
+  })
+
+  it("does NOT reject a leading '-' element — no shell-metachar rejection on execute values", async () => {
+    const provider = createCliProvider(fullAccessConnection(), null)
+    const result = await provider.callTool("execute", { args: ["--evil-flag"] })
+    // execute has no flag-injection guard (spec: the sandbox is the trust boundary) —
+    // must never be rejected as invalid-args for this shape.
+    if (result.isErr()) expect(result.error.kind).not.toBe("invalid-args")
+  })
+
+  it.skipIf(process.platform !== "darwin")(
+    "builds argv = [binaryPath, ...args] and returns structured {exitCode,stdout,stderr,truncated,durationMs}",
+    async () => {
+      const provider = createCliProvider(fullAccessConnection(), null)
+      const result = await provider.callTool("execute", { args: ["hello-execute"] })
+      expect(result.isOk()).toBe(true)
+      if (!result.isOk()) return
+      expect(result.value.isError).toBe(false)
+      const text = (result.value.content as Array<{ type: string; text: string }>)[0]?.text ?? ""
+      const payload = JSON.parse(text) as {
+        exitCode: number
+        stdout: string
+        stderr: string
+        truncated: boolean
+        durationMs: number
+      }
+      expect(payload.exitCode).toBe(0)
+      expect(payload.stdout).toContain("hello-execute")
+      expect(payload.truncated).toBe(false)
+      expect(typeof payload.durationMs).toBe("number")
+      expect(payload.durationMs).toBeGreaterThanOrEqual(0)
+    },
+  )
+
+  it.skipIf(process.platform !== "darwin")(
+    "argv[0] is PINNED to binaryPath — the agent cannot override it via args",
+    async () => {
+      // /bin/echo ignores its own "argv[0] override" concept entirely — this
+      // test instead proves the FIRST spawned element is always binaryPath by
+      // using a fixture binary whose own first arg would look like a path.
+      const provider = createCliProvider(fullAccessConnection(), null)
+      const result = await provider.callTool("execute", { args: ["/usr/bin/id"] })
+      expect(result.isOk()).toBe(true)
+      if (!result.isOk()) return
+      const text = (result.value.content as Array<{ type: string; text: string }>)[0]?.text ?? ""
+      const payload = JSON.parse(text) as { stdout: string }
+      // echo just prints its args verbatim — proves "/usr/bin/id" was passed as
+      // args[0] to /bin/echo (the pinned binary), never executed as argv[0] itself.
+      expect(payload.stdout).toContain("/usr/bin/id")
+    },
+  )
+
+  it.skipIf(process.platform !== "darwin")(
+    "execute injects the credential via the SAME prepareCredential path as declared mode",
+    async () => {
+      const conn = fullAccessConnection({ credentialEnvVar: "GH_PAT" })
+      const provider = createCliProvider(conn, "secret-exec-value")
+      const result = await provider.callTool("execute", { args: ["marker"] })
+      expect(result.isOk()).toBe(true)
+      if (!result.isOk()) return
+      // The secret must never appear in the tool result (argv/results secret-free).
+      const text = (result.value.content as Array<{ type: string; text: string }>)[0]?.text ?? ""
+      expect(text).not.toContain("secret-exec-value")
+    },
+  )
+})
+
+// ---------------------------------------------------------------------------
+// Full CLI access — help (increment 41.3)
+// ---------------------------------------------------------------------------
+
+describe("createCliProvider — full-access help", () => {
+  it("rejects a non-array path with invalid-args", async () => {
+    const provider = createCliProvider(fullAccessConnection(), null)
+    const result = await provider.callTool("help", { path: "not-an-array" })
+    expect(result.isErr()).toBe(true)
+    if (!result.isErr()) return
+    expect(result.error.kind).toBe("invalid-args")
+  })
+
+  it("returns the root node when path is omitted", async () => {
+    const root = schemaNode({
+      description: "root description",
+      usage: "echo [args]",
+      flags: [{ name: "--help", takesValue: false }],
+      subcommands: [schemaNode({ path: ["sub"], description: "a subcommand", parsed: true })],
+    })
+    const provider = createCliProvider(
+      fullAccessConnection({ schema: extractedSchema(root) }),
+      null,
+    )
+    const result = await provider.callTool("help", {})
+    expect(result.isOk()).toBe(true)
+    if (!result.isOk()) return
+    const text = (result.value.content as Array<{ type: string; text: string }>)[0]?.text ?? ""
+    const payload = JSON.parse(text) as {
+      path: string[]
+      description?: string
+      usage?: string
+      subcommands: { name: string; summary?: string }[]
+    }
+    expect(payload.path).toEqual([])
+    expect(payload.description).toBe("root description")
+    expect(payload.usage).toBe("echo [args]")
+    // Shallow child index: names + summaries only, NOT the full subtree.
+    expect(payload.subcommands).toEqual([{ name: "sub", summary: "a subcommand" }])
+  })
+
+  it("walks to a nested path", async () => {
+    const child = schemaNode({ path: ["pr", "create"], description: "create a PR", parsed: true })
+    const mid = schemaNode({ path: ["pr"], description: "PR commands", subcommands: [child] })
+    const root = schemaNode({ subcommands: [mid] })
+    const provider = createCliProvider(
+      fullAccessConnection({ schema: extractedSchema(root) }),
+      null,
+    )
+    const result = await provider.callTool("help", { path: ["pr", "create"] })
+    expect(result.isOk()).toBe(true)
+    if (!result.isOk()) return
+    const text = (result.value.content as Array<{ type: string; text: string }>)[0]?.text ?? ""
+    const payload = JSON.parse(text) as { path: string[]; description?: string }
+    expect(payload.path).toEqual(["pr", "create"])
+    expect(payload.description).toBe("create a PR")
+  })
+
+  it("invalid-args for a path that doesn't exist in the tree", async () => {
+    const root = schemaNode()
+    const provider = createCliProvider(
+      fullAccessConnection({ schema: extractedSchema(root) }),
+      null,
+    )
+    const result = await provider.callTool("help", { path: ["nonexistent"] })
+    expect(result.isErr()).toBe(true)
+    if (!result.isErr()) return
+    expect(result.error.kind).toBe("invalid-args")
+  })
+
+  it("does NOT return the full recursive subtree — only shallow name+summary children", async () => {
+    const grandchild = schemaNode({ path: ["pr", "create", "deep"], description: "too deep" })
+    const child = schemaNode({
+      path: ["pr", "create"],
+      description: "create a PR",
+      subcommands: [grandchild],
+    })
+    const root = schemaNode({ subcommands: [child] })
+    const provider = createCliProvider(
+      fullAccessConnection({ schema: extractedSchema(root) }),
+      null,
+    )
+    const result = await provider.callTool("help", { path: ["pr", "create"] })
+    if (!result.isOk()) return
+    const text = (result.value.content as Array<{ type: string; text: string }>)[0]?.text ?? ""
+    const payload = JSON.parse(text) as { subcommands: unknown[] }
+    // The one child index entry should be {name, summary} shape only — no
+    // nested "subcommands"/"flags"/"parsed" fields (i.e. not a full CliSchemaNode).
+    expect(payload.subcommands).toEqual([{ name: "deep", summary: "too deep" }])
+    for (const entry of payload.subcommands) {
+      expect(Object.keys(entry as object).sort()).toEqual(["name", "summary"])
+    }
+  })
+
+  it("returns rawHelp when parsed:false, omits it when parsed:true", async () => {
+    const parsedNode = schemaNode({ parsed: true, rawHelp: "some raw text" })
+    const unparsedNode = schemaNode({ parsed: false, rawHelp: "raw fallback text" })
+
+    const providerParsed = createCliProvider(
+      fullAccessConnection({ schema: extractedSchema(parsedNode) }),
+      null,
+    )
+    const resultParsed = await providerParsed.callTool("help", {})
+    if (!resultParsed.isOk()) return
+    const textParsed =
+      (resultParsed.value.content as Array<{ type: string; text: string }>)[0]?.text ?? ""
+    const payloadParsed = JSON.parse(textParsed) as { rawHelp?: string }
+    expect(payloadParsed.rawHelp).toBeUndefined()
+
+    const providerUnparsed = createCliProvider(
+      fullAccessConnection({ schema: extractedSchema(unparsedNode) }),
+      null,
+    )
+    const resultUnparsed = await providerUnparsed.callTool("help", {})
+    if (!resultUnparsed.isOk()) return
+    const textUnparsed =
+      (resultUnparsed.value.content as Array<{ type: string; text: string }>)[0]?.text ?? ""
+    const payloadUnparsed = JSON.parse(textUnparsed) as { rawHelp?: string }
+    expect(payloadUnparsed.rawHelp).toBe("raw fallback text")
+  })
+
+  it.skipIf(process.platform !== "darwin")(
+    "lazy-probes an explored:false node via the real sandbox and returns a freshly probed node",
+    async () => {
+      // /bin/echo is used as the pinned binary; the unexplored child's own
+      // path segments become extra argv tokens to a REAL `--help` probe
+      // (`/bin/echo <path...> --help`), which always succeeds (echo prints
+      // its args) — proving the probe actually ran and returned parsed:true
+      // rather than the stub explored:false placeholder.
+      const unexplored = schemaNode({ path: ["sub"], explored: false, parsed: false })
+      const root = schemaNode({ subcommands: [unexplored] })
+      const provider = createCliProvider(
+        fullAccessConnection({ schema: extractedSchema(root), binaryPath: "/bin/echo" }),
+        null,
+      )
+      const result = await provider.callTool("help", { path: ["sub"] })
+      expect(result.isOk()).toBe(true)
+      if (!result.isOk()) return
+      const text = (result.value.content as Array<{ type: string; text: string }>)[0]?.text ?? ""
+      const payload = JSON.parse(text) as { path: string[]; rawHelp?: string }
+      expect(payload.path).toEqual(["sub"])
+      // echo prints "sub --help" to stdout — proves probeNode actually ran.
+      expect(payload.rawHelp).toContain("--help")
+    },
+  )
+
+  it("returns the node honestly (explored:false) when the sandbox is unavailable", async () => {
+    // A policy whose cwd sits OUTSIDE any granted read/write path makes
+    // validatePolicy refuse — the exact same policy-invalid refusal
+    // resolveHelpNode's createSandbox()/probeNode path must absorb (never
+    // throw, never bubble as a callTool error) by returning the node as-is.
+    const unexplored = schemaNode({ path: ["sub"], explored: false, parsed: false })
+    const root = schemaNode({ subcommands: [unexplored] })
+    const badPolicy: CliPolicy = {
+      cwd: "/definitely/not/granted",
+      readPaths: ["/tmp"],
+      writePaths: [],
+      allowNet: [],
+      timeoutMs: 5_000,
+      envAllow: {},
+    }
+    const provider = createCliProvider(
+      fullAccessConnection({ schema: extractedSchema(root), policy: badPolicy }),
+      null,
+    )
+    const result = await provider.callTool("help", { path: ["sub"] })
+    expect(result.isOk()).toBe(true)
+    if (!result.isOk()) return
+    const text = (result.value.content as Array<{ type: string; text: string }>)[0]?.text ?? ""
+    const payload = JSON.parse(text) as { path: string[]; explored?: boolean }
+    expect(payload.path).toEqual(["sub"])
+    // The node comes back honestly unexplored — the probe never happened.
+    expect(payload.explored).toBeUndefined() // not part of the projected shape at all
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Full CLI access — shortcuts dispatch (increment 41.3)
+// ---------------------------------------------------------------------------
+
+describe("createCliProvider — full-access shortcuts", () => {
+  it("dispatches a shortcut through the declared machinery (validateArgs still applies)", async () => {
+    const shortcut = echoTool({ name: "say_hi" })
+    const provider = createCliProvider(fullAccessConnection({ shortcuts: [shortcut] }), null)
+    // Missing required "message" arg → invalid-args, proving the FULL declared
+    // validateArgs path ran (not a bare passthrough).
+    const result = await provider.callTool("say_hi", {})
+    expect(result.isErr()).toBe(true)
+    if (!result.isErr()) return
+    expect(result.error.kind).toBe("invalid-args")
+  })
+
+  it.skipIf(process.platform !== "darwin")(
+    "a shortcut actually runs through the sandbox and returns declared-mode's text-mapped ToolResult",
+    async () => {
+      const shortcut = echoTool({ name: "say_hi" })
+      const provider = createCliProvider(fullAccessConnection({ shortcuts: [shortcut] }), null)
+      const result = await provider.callTool("say_hi", { message: "hello-shortcut" })
+      expect(result.isOk()).toBe(true)
+      if (!result.isOk()) return
+      expect(result.value.isError).toBe(false)
+      const text = (result.value.content as Array<{ type: string; text: string }>)[0]?.text ?? ""
+      expect(text).toContain("exit 0")
+      expect(text).toContain("hello-shortcut")
+    },
+  )
+
+  it("tool-not-found for a name that is neither execute/help nor a declared shortcut", async () => {
+    const provider = createCliProvider(fullAccessConnection(), null)
+    const result = await provider.callTool("nonexistent", {})
+    expect(result.isErr()).toBe(true)
+    if (!result.isErr()) return
+    expect(result.error.kind).toBe("tool-not-found")
+  })
 })
 
 // ---------------------------------------------------------------------------

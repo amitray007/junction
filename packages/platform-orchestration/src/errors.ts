@@ -32,6 +32,9 @@ export type PlatformOrchestrationError =
   // ---- cli ----
   | { kind: "invalid-descriptor"; message: string }
   | { kind: "policy-invalid"; toolName: string; reason: string }
+  // Full CLI access descriptors are storable (inc 41.1) but this add-flow only
+  // wires the declared-mode path — discovery/install lands in 41.4.
+  | { kind: "full-access-not-yet-supported" }
   // ---- openapi spec cache write (add + refresh) ----
   | { kind: "spec-cache-failed"; cause: unknown }
   // ---- refresh ----
