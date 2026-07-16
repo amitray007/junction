@@ -530,6 +530,35 @@ describe("createCliProvider — full-access listTools", () => {
     expect(props).toHaveProperty("message")
   })
 
+  it("multiple shortcuts each appear as their own named tool", async () => {
+    const provider = createCliProvider(
+      fullAccessConnection({
+        shortcuts: [echoTool({ name: "say_hi" }), echoTool({ name: "say_bye" })],
+      }),
+      null,
+    )
+    const result = await provider.listTools()
+    if (!result.isOk()) return
+    expect(result.value.map((t) => t.name)).toEqual(["execute", "help", "say_hi", "say_bye"])
+  })
+
+  it("removing a shortcut (going back to the connection with none) drops it from listTools", async () => {
+    // Simulates the 41.5 edit flow: an existing full-access connection with a
+    // shortcut has it removed (shortcuts: undefined after the edit) — the
+    // provider is rebuilt from the updated connection and no longer lists it.
+    const withShortcut = fullAccessConnection({ shortcuts: [echoTool({ name: "say_hi" })] })
+    const providerBefore = createCliProvider(withShortcut, null)
+    const before = await providerBefore.listTools()
+    if (!before.isOk()) return
+    expect(before.value.map((t) => t.name)).toContain("say_hi")
+
+    const { shortcuts: _removed, ...withoutShortcut } = withShortcut
+    const providerAfter = createCliProvider(withoutShortcut as typeof withShortcut, null)
+    const after = await providerAfter.listTools()
+    if (!after.isOk()) return
+    expect(after.value.map((t) => t.name)).toEqual(["execute", "help"])
+  })
+
   it("listTools works even when sandbox is unavailable (pure, never touches sandbox)", async () => {
     const provider = createCliProvider(fullAccessConnection(), null)
     const result = await provider.listTools()

@@ -150,16 +150,20 @@ export function toolFromDetail(tool: CliToolDetailLike): CliToolFormState {
 }
 
 export function connectionFromDetail(detail: {
+  cliMode?: "declared" | "full-access"
   cliTools?: CliToolDetailLike[]
   cliCredentialEnvVar?: string
 }): CliConnectionFormState {
   return {
-    // Edit-mode always pre-fills into the declared-form shape (the platform
-    // detail DTO projects a full-access platform's `shortcuts` as `cliTools` —
-    // see platform-mutations.server.ts's toPlatformDetail). Editing a Full CLI
-    // access platform's binary/policy is out of this increment's scope; the
-    // mode toggle only matters on ADD.
-    mode: "declared",
+    // `cliMode` (inc 41.5) tells the edit dialog which persistence path a save
+    // takes: "declared" tools submit through updatePlatformFn as before;
+    // "full-access" means `cliTools` here are actually `shortcuts[]` (the
+    // platform detail DTO projects both through the same field — see
+    // platform-mutations.server.ts's toPlatformDetail) and a save goes through
+    // setFullAccessCliShortcutsFn instead. Editing a Full CLI access
+    // platform's binary/policy stays out of scope — only shortcuts are
+    // editable; the fullAccess sub-state (binary discovery) only matters on ADD.
+    mode: detail.cliMode ?? "declared",
     tools: (detail.cliTools ?? []).map(toolFromDetail),
     credentialEnvVar: detail.cliCredentialEnvVar ?? "",
     fullAccess: emptyFullAccessState(),

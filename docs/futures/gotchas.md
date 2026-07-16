@@ -431,3 +431,11 @@ LEAD review, confirmed in the real-httpbin QA.)
 **Cause:** `pnpm -r build` builds workspace packages concurrently; under resource contention (e.g. a QA server or another verify running in parallel) web's vite/rolldown can start before `@junction/core`'s `dist` is fully written, so the `@junction/core` import doesn't resolve. A transient ordering race, not a code error.
 
 **Fix / discipline:** if `pnpm verify` fails ONLY with a `Rolldown failed to resolve "@junction/core"` (or similar cross-package resolve) error, it's this race — re-run after `pnpm --filter @junction/core build` (prebuild core) and with no competing background process (kill any QA server first). Distinct from the test-timeout parallel-flake above. (raised inc 40)
+
+## Seatbelt/bubblewrap can't scope CLI egress by HOST — only by port / all-or-nothing (inc 41)
+
+**Symptom:** a Full CLI access `execute` call fails `policy-invalid`: "seatbelt cannot scope egress to host \"api.github.com\" — use a Deno-tier backend for per-host allowlisting, or pass a port-only entry (\"*:443\")". The stored install policy had `allowNet: ["api.github.com:443"]`.
+
+**Cause:** macOS **Seatbelt** can only allowlist network egress by **port**, not host; Linux **bubblewrap** uses `--unshare-all` (all-or-nothing net namespace) — neither can do per-host filtering for `runCommand`. Only the **Deno tier** (script execution, not command execution) does true per-host allowlists. So a CLI `execute` (which uses `runCommand`) can be `[]` (offline), `*:443` (port-scoped), or (Linux) all-net — but NOT host-scoped. Verified live: `*:443` runs `gh --version`/`gh repo list` fine; `api.github.com:443` is rejected.
+
+**Fix / discipline:** the Full CLI access install must translate host intent → an enforceable port scope (`*:PORT`) for the sandbox and DISCLOSE that egress is port- not host-restricted on this OS (inc 41, Fable net-policy ruling). True host-scoping is a forward path — revisit when a Deno/microVM per-host backend backs `execute` (see revisit-when.md). Do NOT store a host:port allowNet on a CLI platform expecting enforcement; it will hard-fail at call time. (raised inc 41)

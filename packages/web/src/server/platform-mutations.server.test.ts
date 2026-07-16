@@ -25,6 +25,7 @@ import {
   mutateAddPlatform,
   mutateDeletePlatform,
   mutateRefreshPlatform,
+  mutateSetFullAccessCliShortcuts,
   mutateUpdatePlatform,
 } from "./platform-mutations.server.js"
 
@@ -615,6 +616,160 @@ describe("platform-mutations.server", () => {
         binaryPath: "/definitely/not/a/real/path/xyz",
       })
       expect(typeof result.ok).toBe("boolean")
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // mutateSetFullAccessCliShortcuts — the shortcuts editing surface (inc 41.5)
+  // ---------------------------------------------------------------------------
+
+  describe("mutateSetFullAccessCliShortcuts", () => {
+    /** Seed a Full CLI access platform directly — shortcuts editing needs no sandbox. Returns the generated id. */
+    async function seedFullAccessPlatform(): Promise<string> {
+      const repos = await makeRepos(tmpHome)
+      const id = newPlatformId()
+      const result = await repos.platforms.upsert({
+        id,
+        kind: "cli",
+        displayName: "GitHub CLI",
+        cli: {
+          mode: "full-access",
+          binaryPath: "/usr/bin/gh",
+          policy: {
+            cwd: "/tmp",
+            readPaths: ["/tmp"],
+            writePaths: [],
+            allowNet: [],
+            timeoutMs: 5_000,
+            envAllow: {},
+          },
+          schema: {
+            binaryName: "gh",
+            extractedAt: new Date().toISOString(),
+            root: {
+              path: [],
+              parsed: true,
+              explored: true,
+              flags: [],
+              positionals: [],
+              subcommands: [],
+            },
+            truncated: false,
+          },
+        },
+      })
+      if (result.isErr()) throw new Error("failed to seed full-access platform")
+      return String(id)
+    }
+
+    function shortcutInput(name: string) {
+      return {
+        name,
+        commandLine: "/usr/bin/gh pr list",
+        args: [],
+        policy: {
+          cwd: "/tmp",
+          readPaths: ["/tmp"],
+          writePaths: [],
+          network: { mode: "denied" as const },
+          timeoutMs: 5_000,
+          envAllow: {},
+        },
+      }
+    }
+
+    it("adds a shortcut to a platform with none yet", async () => {
+      const id = await seedFullAccessPlatform()
+      const result = await mutateSetFullAccessCliShortcuts({
+        id,
+        shortcuts: [shortcutInput("pr_list")],
+      })
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.platform.id).toBe(id)
+
+      const repos = await makeRepos(tmpHome)
+      const stored = await repos.platforms.get(id)
+      expect(stored.isOk()).toBe(true)
+      if (!stored.isOk() || !stored.value.cli || !isFullAccess(stored.value.cli)) return
+      expect(stored.value.cli.shortcuts?.map((s) => s.name)).toEqual(["pr_list"])
+    })
+
+    it("removing all shortcuts drops the field (round-trips back to none)", async () => {
+      const id = await seedFullAccessPlatform()
+      await mutateSetFullAccessCliShortcuts({
+        id,
+        shortcuts: [shortcutInput("pr_list")],
+      })
+      const result = await mutateSetFullAccessCliShortcuts({ id, shortcuts: [] })
+      expect(result.ok).toBe(true)
+
+      const repos = await makeRepos(tmpHome)
+      const stored = await repos.platforms.get(id)
+      if (!stored.isOk() || !stored.value.cli || !isFullAccess(stored.value.cli)) return
+      expect(stored.value.cli.shortcuts ?? []).toEqual([])
+    })
+
+    it("refuses on a declared-mode cli platform (not-full-access)", async () => {
+      const repos = await makeRepos(tmpHome)
+      const declaredId = newPlatformId()
+      await repos.platforms.upsert({
+        id: declaredId,
+        kind: "cli",
+        displayName: "Declared Tool",
+        cli: {
+          mode: "declared" as const,
+          tools: [
+            {
+              name: "echo",
+              argv: [
+                { kind: "literal", value: "/bin/echo" },
+                { kind: "arg", name: "msg" },
+              ],
+              args: [{ name: "msg", type: "string" as const, required: false }],
+              policy: {
+                cwd: "/tmp",
+                readPaths: ["/tmp"],
+                writePaths: [],
+                allowNet: [],
+                timeoutMs: 5_000,
+                envAllow: {},
+              },
+            },
+          ],
+        },
+      })
+
+      const result = await mutateSetFullAccessCliShortcuts({
+        id: String(declaredId),
+        shortcuts: [shortcutInput("pr_list")],
+      })
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.error).toMatch(/Full CLI access/)
+    })
+
+    it("a nonexistent platform id reports a clean not-found error", async () => {
+      const result = await mutateSetFullAccessCliShortcuts({
+        id: "does-not-exist",
+        shortcuts: [],
+      })
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.error).toMatch(/not found/i)
+    })
+
+    it("an invalid shortcut descriptor (missing cwd) reports fieldErrors, not a throw", async () => {
+      const id = await seedFullAccessPlatform()
+      const bad = shortcutInput("bad_shortcut")
+      bad.policy.cwd = ""
+      const result = await mutateSetFullAccessCliShortcuts({
+        id,
+        shortcuts: [bad],
+      })
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.fieldErrors).toBeDefined()
     })
   })
 })

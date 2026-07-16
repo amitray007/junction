@@ -5,7 +5,7 @@
 // logic here — domain assembly (spec fetch/parse, tool extraction, auth resolution,
 // sandbox probing, spec caching) lives in @junction/platform-orchestration.
 
-import type { Platform } from "@junction/core"
+import type { Platform, Repositories } from "@junction/core"
 import type {
   AddCliPlatformResult,
   AddGraphQlPlatformResult,
@@ -150,6 +150,8 @@ function formatOrchestrationError(
       return "no sandbox backend available on this host (Seatbelt on macOS, bubblewrap on Linux) — Full CLI access install requires one to extract the command schema"
     case "extract-refused":
       return `sandbox refused to run "--help" against the pinned binary: ${String(e.cause)}`
+    case "not-full-access":
+      return `shortcuts can only be set on a Full CLI access platform (this platform is kind "${e.platformKind}")`
   }
 }
 
@@ -861,6 +863,181 @@ const removeCommand = defineCommand({
   },
 })
 
+// ---------------------------------------------------------------------------
+// platform cli-shortcut add/remove — headless editing surface for a Full CLI
+// access platform's shortcuts[] (increment 41.5). Mirrors the web ShortcutsPanel:
+// same CliTool descriptor shape, same wholesale-replace semantics as upsert.
+// ---------------------------------------------------------------------------
+
+/** Load a platform, refuse cleanly if it doesn't exist or isn't kind:"cli". */
+async function loadCliPlatform(
+  id: string,
+  json: boolean,
+): Promise<{ repos: Repositories; platform: Platform } | null> {
+  const repos = await openDb(json)
+  if (!repos) return null
+  const result = await repos.platforms.get(id)
+  if (result.isErr()) {
+    if (result.error.kind === "not-found") {
+      reportError(`platform "${id}" not found`, json)
+    } else {
+      reportDbError(result.error, json)
+    }
+    return null
+  }
+  const platform = result.value
+  if (platform.kind !== "cli" || !platform.cli) {
+    reportError(`platform "${id}" is kind "${platform.kind}", not "cli"`, json)
+    return null
+  }
+  return { repos, platform }
+}
+
+/** Parse a --descriptor JSON string into a raw object, reporting a clean error on bad JSON. */
+function parseDescriptorArg(descriptorStr: string | undefined, json: boolean): unknown | null {
+  if (!descriptorStr) {
+    reportError(
+      "--descriptor is required. Pass a single CliTool JSON object:\n" +
+        '  --descriptor \'{"name":"pr_list","argv":[...],"policy":{...}}\'\n' +
+        '  --descriptor "$(cat shortcut.json)"',
+      json,
+    )
+    return null
+  }
+  try {
+    return JSON.parse(descriptorStr) as unknown
+  } catch (cause) {
+    reportError(`--descriptor is not valid JSON: ${String(cause)}`, json)
+    return null
+  }
+}
+
+/** Read the platform's current shortcuts[] (empty if none yet, e.g. declared mode has no slot at all). */
+function currentShortcuts(platform: Platform): unknown[] {
+  const cli = platform.cli as { mode?: string; shortcuts?: unknown[] } | undefined
+  return cli?.mode === "full-access" ? (cli.shortcuts ?? []) : []
+}
+
+async function runShortcutSet(
+  args: Record<string, unknown>,
+  nextShortcuts: unknown[],
+): Promise<void> {
+  const json = (args.json as boolean | undefined) ?? false
+  const platformId = args.platform as string | undefined
+  if (!platformId) {
+    reportError("--platform is required", json)
+    return
+  }
+
+  const loaded = await loadCliPlatform(platformId, json)
+  if (!loaded) return
+  const { repos, platform } = loaded
+
+  const { setFullAccessCliShortcuts } = await import("@junction/platform-orchestration")
+  // nextShortcuts is unvalidated JSON at this point (parsed from --descriptor,
+  // same trust level as the `add --descriptor` path's `unknown`) —
+  // setFullAccessCliShortcuts re-validates every element through
+  // CliConnectionSchema.safeParse (via a throwaway single-tool parse) before
+  // it can reach storage; this cast just satisfies the parameter type ahead
+  // of that authoritative check, it grants no extra trust.
+  const updateResult = setFullAccessCliShortcuts({
+    platform,
+    shortcuts: nextShortcuts as Parameters<typeof setFullAccessCliShortcuts>[0]["shortcuts"],
+  })
+  if (updateResult.isErr()) {
+    reportError(formatOrchestrationError(updateResult.error, "add"), json)
+    return
+  }
+
+  const upsertResult = await repos.platforms.upsert(updateResult.value)
+  if (upsertResult.isErr()) {
+    reportDbError(upsertResult.error, json)
+    return
+  }
+
+  const persisted = upsertResult.value
+  const shortcutCount =
+    persisted.cli && "mode" in persisted.cli && persisted.cli.mode === "full-access"
+      ? (persisted.cli.shortcuts?.length ?? 0)
+      : 0
+
+  if (json) {
+    process.stdout.write(`${JSON.stringify({ ok: true, platform: persisted, shortcutCount })}\n`)
+  } else {
+    consola.success(
+      `Platform "${persisted.displayName}" (${persisted.id}) — ${shortcutCount} shortcut(s)`,
+    )
+  }
+}
+
+const cliShortcutAddCommand = defineCommand({
+  meta: {
+    name: "add",
+    description: "Add (or replace, by name) a named shortcut on a Full CLI access platform.",
+  },
+  args: {
+    platform: { type: "string", description: "Platform ID", required: true },
+    descriptor: {
+      type: "string",
+      description: "CliTool JSON descriptor for the shortcut (name/argv/args/policy).",
+    },
+    json: JSON_ARG,
+  },
+  async run({ args }) {
+    const json = args.json ?? false
+    const descriptor = parseDescriptorArg(args.descriptor, json)
+    if (descriptor === null) return
+    const name = (descriptor as { name?: unknown }).name
+    if (typeof name !== "string" || !name) {
+      reportError('--descriptor must have a string "name" field', json)
+      return
+    }
+
+    const loaded = await loadCliPlatform(args.platform, json)
+    if (!loaded) return
+    const existing = currentShortcuts(loaded.platform)
+    // Add-or-replace-by-name: a shortcut with the same name is replaced in
+    // place (matches the web form's edit-in-place UX), not duplicated.
+    const next = [...existing.filter((s) => (s as { name?: unknown }).name !== name), descriptor]
+    await runShortcutSet(args as Record<string, unknown>, next)
+  },
+})
+
+const cliShortcutRemoveCommand = defineCommand({
+  meta: {
+    name: "remove",
+    description: "Remove a named shortcut from a Full CLI access platform.",
+  },
+  args: {
+    platform: { type: "string", description: "Platform ID", required: true },
+    name: { type: "string", description: "Shortcut name to remove", required: true },
+    json: JSON_ARG,
+  },
+  async run({ args }) {
+    const json = args.json ?? false
+    const loaded = await loadCliPlatform(args.platform, json)
+    if (!loaded) return
+    const existing = currentShortcuts(loaded.platform)
+    const next = existing.filter((s) => (s as { name?: unknown }).name !== args.name)
+    if (next.length === existing.length) {
+      reportError(`no shortcut named "${args.name}" on platform "${args.platform}"`, json)
+      return
+    }
+    await runShortcutSet(args as Record<string, unknown>, next)
+  },
+})
+
+const cliShortcutCommand = defineCommand({
+  meta: {
+    name: "cli-shortcut",
+    description: "Manage named shortcuts (saved commands) on a Full CLI access platform.",
+  },
+  subCommands: {
+    add: cliShortcutAddCommand,
+    remove: cliShortcutRemoveCommand,
+  },
+})
+
 export const platformCommand = defineCommand({
   meta: {
     name: "platform",
@@ -871,5 +1048,6 @@ export const platformCommand = defineCommand({
     list: listCommand,
     remove: removeCommand,
     refresh: refreshCommand,
+    "cli-shortcut": cliShortcutCommand,
   },
 })

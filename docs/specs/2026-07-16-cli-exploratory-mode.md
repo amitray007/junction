@@ -90,6 +90,23 @@ The current declared-`CliTool` becomes an optional `shortcuts[]` on an explorato
 - Lazy probing uses the identical safe-probe class (no creds/net/write).
 - Declared tools remain the default for every new CLI platform; Full CLI access is opt-in per platform.
 
+### Q7 Network policy (Fable, binding — added after E2E found Seatbelt can't host-scope egress)
+- **macOS Seatbelt scopes egress by PORT only, not host; Linux bubblewrap is all-or-nothing.** A host-scoped `allowNet` (`api.github.com:443`) HARD-FAILS `runCommand` (`policy-invalid`). Only `[]` (offline) or `*:PORT` (port-scoped) work for CLI `execute`.
+- **Default-deny:** install defaults `allowNet: []`. Network is an **explicit opt-in** step ("does this CLI need network access?").
+- **On opt-in:** the user still expresses intent as **hosts** (recorded as declared intent), but Junction **translates to the enforceable port scope** (`*:<port>` for each unique port) BEFORE building the sandbox policy — so `policy-invalid` can never fire from the install path. Store BOTH: intent hosts + derived port scope.
+- **Show two distinct fields:** "Intended hosts (recorded, not enforced on this OS)" vs "Enforced: any host on port(s) 443". Never imply host enforcement.
+- **Disclosure copy (exact):** _"On this machine the sandbox can restrict network access by **port only, not by host** — with network enabled, this CLI can reach **any server on port 443**. The hosts you listed are recorded as intent and will be enforced automatically once host-level sandboxing is available."_ (Substitute derived ports; drop 2nd sentence if no hosts listed. Linux/bubblewrap: if only all-or-nothing, say "any server on any port".)
+- **Net + credential orthogonal**, but when BOTH are granted, append: _"This CLI holds your &lt;platform&gt; credential and can reach any host on port 443 — a compromised or misbehaving CLI could send that credential anywhere on that port."_
+- Forward path: enforce hosts when a Deno-tier/microVM per-host command backend exists → `docs/futures/revisit-when.md`.
+
+### Q8 credentialEnvVar denylist (Fable, binding — E2E found gh needs GH_TOKEN, which the denylist blocked)
+Real CLIs dictate their credential env var name (`GH_TOKEN`/`GITHUB_TOKEN`, `AWS_SECRET_ACCESS_KEY`, `NPM_TOKEN`…) — exactly what the old `/_TOKEN$|_SECRET$|_KEY$/` denylist rejected, so gh never received its token ("not logged into any GitHub hosts"). Ruling:
+- **Drop the suffix-regex heuristic** (`_TOKEN$/_SECRET$/_KEY$`) — it added no real protection (the injected value is always the user's OWN store-resolved credential for that platform; the sandbox env is an explicit allowlist that never inherits `process.env`).
+- **Reserve the `JUNCTION_` PREFIX** (`/^JUNCTION_/`) instead of just the two exact master-key names — a namespace reservation that never stales as Junction adds internal vars.
+- **Add the dynamic-linker/interpreter denylist to the CLI sandbox env** (`LD_PRELOAD`, `LD_LIBRARY_PATH`, `LD_AUDIT`, `NODE_OPTIONS`, `DYLD_*` prefix) — reuse the stdio-MCP path's `INTERPRETER_ENV_DENYLIST` (`mcp-connection.ts`), **hoisted to a shared `core` constant** (DRY). Defense-in-depth: env-based code injection is the first link of a sandbox-escape chain, and no CLI's *credential* env is legitimately named `LD_PRELOAD`.
+- **Lock-step:** `validatePolicy` (`sandbox.ts`) + `CliConnectionSchema.credentialEnvVar` refine (`cli-connection.ts`) change together; parity test corpus grows — ACCEPT `GH_TOKEN`/`GITHUB_TOKEN`/`AWS_SECRET_ACCESS_KEY`/`NPM_TOKEN`/`CLOUDFLARE_API_TOKEN`; REJECT `JUNCTION_MASTER_KEY`/`JUNCTION_*`/`LD_PRELOAD`/`DYLD_INSERT_LIBRARIES`/`NODE_OPTIONS`. Fix the stale "use GH_PAT instead" copy; resolve `revisit-when.md:70`.
+- **Disclosure (exact):** _"This CLI will receive your &lt;platform&gt; credential as $&lt;VAR&gt; (e.g. $GH_TOKEN) — visible to &lt;cli&gt; and anything it runs inside the sandbox."_ (install, interactive + `--json`).
+
 ## 6. Slice plan (increment 41, parallel waves)
 
 - **41.1 core (blocking):** `CliConnection` mode discriminant + exploratory shape + extracted-schema type + storage. `touches: [core]`, `parallel_group: A`.

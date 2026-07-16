@@ -17,6 +17,7 @@ import type {
   HttpConnectionInput,
   HttpParamInput,
   HttpToolInput,
+  SetFullAccessCliShortcutsInput,
   SimpleAuthInput,
   UpdatePlatformInput,
 } from "./platform-mutations.server.js"
@@ -27,6 +28,7 @@ import {
   mutateAddPlatform,
   mutateDeletePlatform,
   mutateRefreshPlatform,
+  mutateSetFullAccessCliShortcuts,
   mutateUpdatePlatform,
 } from "./platform-mutations.server.js"
 
@@ -46,6 +48,7 @@ export type {
   HttpToolInput,
   PlatformDetail,
   PlatformDetailResult,
+  SetFullAccessCliShortcutsResult,
 } from "./platform-mutations.server.js"
 
 // ---------------------------------------------------------------------------
@@ -380,4 +383,27 @@ export const addFullAccessCliPlatformFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     assertLocalHost()
     return mutateAddFullAccessCliPlatform(data)
+  })
+
+// ---------------------------------------------------------------------------
+// Full CLI access — shortcuts editing (inc 41.5)
+// ---------------------------------------------------------------------------
+
+function validateSetFullAccessCliShortcutsInput(raw: unknown): SetFullAccessCliShortcutsInput {
+  const d = raw as Record<string, unknown>
+  const shortcutsRaw = Array.isArray(d.shortcuts) ? d.shortcuts : []
+  return {
+    id: requireString(d.id, "id"),
+    // Unlike declared-mode's requireNonEmptyTools, an empty shortcuts list is
+    // valid — a Full CLI access platform with zero shortcuts is just execute+help.
+    shortcuts: shortcutsRaw.map((t, i) => validateCliTool(t, i)),
+  }
+}
+
+/** Replace a Full CLI access platform's shortcuts[] wholesale (add/remove/edit a saved command). */
+export const setFullAccessCliShortcutsFn = createServerFn({ method: "POST" })
+  .validator(validateSetFullAccessCliShortcutsInput)
+  .handler(async ({ data }) => {
+    assertLocalHost()
+    return mutateSetFullAccessCliShortcuts(data)
   })

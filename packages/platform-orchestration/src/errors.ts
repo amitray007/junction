@@ -55,6 +55,10 @@ export type PlatformOrchestrationError =
   // ---- refresh ----
   | { kind: "not-openapi"; platformKind: string }
   | { kind: "not-url-spec"; specFrom: string }
+  // ---- cli full-access shortcuts editing (inc 41.5) ----
+  // Shortcuts can only be set on a Full CLI access platform — a declared-mode
+  // (or non-cli) platform has no `shortcuts` slot to write into.
+  | { kind: "not-full-access"; platformKind: string }
 
 /**
  * Map a parseSpec UpstreamError (only ever "spec-fetch-failed" or "spec-parse-failed"

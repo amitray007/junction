@@ -8,6 +8,7 @@ import { mkdir } from "node:fs/promises"
 import path from "node:path"
 import {
   CliConnectionSchema,
+  type CliTool,
   createSandbox,
   type ExtractedCliSchema,
   ensureRuntimeDir,
@@ -138,11 +139,59 @@ export interface AddFullAccessCliPlatformResult {
 }
 
 /**
+ * Translate a user's host:port network INTENT into the port scope the command
+ * sandbox can actually ENFORCE (Fable net-policy ruling, inc 41).
+ *
+ * WHY: macOS Seatbelt scopes egress by PORT only, not host, and Linux
+ * bubblewrap is all-or-nothing — a host-scoped allowNet entry ("api.github.com:443")
+ * HARD-FAILS runCommand with `policy-invalid`. So an install that recorded a
+ * host list would produce a platform whose `execute` can never reach the network.
+ * We translate each `host:port` (or bare `port`) to `*:<port>` (any host on that
+ * port), dedupe, and hand THAT to the sandbox. The user's host intent is honest
+ * documentation, not an enforced boundary — the install UI/confirmation discloses
+ * this (Fable Q3 copy). `*` / `*:port` / bare-port entries pass through unchanged.
+ *
+ * FORWARD PATH: when a Deno-tier / microVM per-host command backend backs
+ * `execute`, enforce the host list directly (docs/futures/revisit-when.md).
+ */
+export function hostIntentToEnforceablePortScope(intent: readonly string[]): string[] {
+  const ports = new Set<string>()
+  const passthrough: string[] = []
+  for (const entry of intent) {
+    if (entry === "") continue
+    if (entry === "*") {
+      // "any host, any port" — cannot be narrowed to a port; keep as-is.
+      passthrough.push("*")
+      continue
+    }
+    const colon = entry.lastIndexOf(":")
+    if (colon === -1) {
+      // bare token: a numeric port ("443") is already port-only; anything else
+      // is a bare host we cannot enforce — drop it (it would be rejected anyway).
+      if (/^\d+$/.test(entry)) ports.add(entry)
+      continue
+    }
+    const port = entry.slice(colon + 1)
+    // "*:443" or "host:443" → enforce as "*:443"; "*:*"/"host:*" → any port.
+    ports.add(port === "*" ? "*" : port)
+  }
+  // Build `*:<port>` entries; a lone "*" (any port) or passthrough "*" collapses all.
+  const anyPort = ports.has("*") || passthrough.includes("*")
+  if (anyPort) return ["*"]
+  return [...ports].map((p) => `*:${p}`)
+}
+
+/**
  * Build the default SAFE platform-level CliPolicy for a Full CLI access
  * install: cwd = a per-platform scratch dir under JUNCTION_HOME's runtimeDir,
- * readPaths/writePaths scoped to that one dir, allowNet = caller-provided or
- * `[]` (no network by default — Junction's sovereignty posture; the user
- * widens explicitly), a sane bounded timeout, and no static env entries.
+ * readPaths/writePaths scoped to that one dir, a sane bounded timeout, and no
+ * static env entries.
+ *
+ * NETWORK (Fable net-policy ruling): default `[]` (no network — sovereignty
+ * posture; the user opts in explicitly). When the user DOES pass a host list,
+ * we store the ENFORCEABLE port scope (see hostIntentToEnforceablePortScope) so
+ * the resulting platform's `execute` can actually reach the network on macOS
+ * (host-scoped entries would be rejected by Seatbelt at call time).
  */
 function defaultFullAccessPolicy(
   scratchDir: string,
@@ -152,7 +201,7 @@ function defaultFullAccessPolicy(
     cwd: scratchDir,
     readPaths: [scratchDir],
     writePaths: [scratchDir],
-    allowNet: allowNet ?? [],
+    allowNet: allowNet && allowNet.length > 0 ? hostIntentToEnforceablePortScope(allowNet) : [],
     timeoutMs: 120_000,
     envAllow: {},
   }
@@ -257,4 +306,55 @@ async function addFullAccessCliPlatformAsync(
     nodeCount: countNodes(schema.root),
     truncated: schema.truncated,
   })
+}
+
+// ---------------------------------------------------------------------------
+// Full CLI access — shortcuts editing (inc 41.5): demoted declared-CliTool
+// "saved commands" that ride connection.shortcuts[] alongside execute/help.
+// docs/specs/2026-07-16-cli-exploratory-mode.md §5 Q6.
+// ---------------------------------------------------------------------------
+
+export interface SetFullAccessCliShortcutsInput {
+  /** The existing platform (already loaded by the caller — never fetched here). */
+  platform: Platform
+  /** The full replacement list — wholesale replace, same semantics as upsert. */
+  shortcuts: CliTool[]
+}
+
+/**
+ * Replace a Full CLI access platform's `shortcuts[]` wholesale and re-validate
+ * the resulting CliConnection. The caller (web/cli edge) owns fetching the
+ * existing platform and upserting the returned one — this function is a pure
+ * assemble+validate step, mirroring parsePlatform's role in the add flows.
+ *
+ * Refuses on a non-cli or declared-mode platform: shortcuts only exist on the
+ * full-access branch (CliConnectionSchema's DeclaredCliConnection has no
+ * `shortcuts` field — declared tools already ARE the tool list).
+ */
+export function setFullAccessCliShortcuts(
+  input: SetFullAccessCliShortcutsInput,
+): Result<Platform, PlatformOrchestrationError> {
+  const { platform, shortcuts } = input
+  if (platform.kind !== "cli" || !platform.cli || !isFullAccess(platform.cli)) {
+    return err({ kind: "not-full-access", platformKind: platform.kind })
+  }
+
+  const nextCli: FullAccessCliConnection = {
+    ...platform.cli,
+    ...(shortcuts.length > 0 ? { shortcuts } : {}),
+  }
+  // Explicitly drop `shortcuts` when the caller passes an empty list (rather
+  // than persisting `shortcuts: []`) — the schema's `shortcuts` is optional,
+  // and an empty array is otherwise indistinguishable from "not yet used" in
+  // storage; dropping keeps a from-empty round-trip identical to never having
+  // set any shortcuts.
+  if (shortcuts.length === 0) delete (nextCli as { shortcuts?: CliTool[] }).shortcuts
+
+  const cliParseResult = CliConnectionSchema.safeParse(nextCli)
+  if (!cliParseResult.success) {
+    const message = cliParseResult.error.issues.map((i) => i.message).join(", ")
+    return err({ kind: "invalid-descriptor", message })
+  }
+
+  return parsePlatform({ ...platform, cli: cliParseResult.data })
 }

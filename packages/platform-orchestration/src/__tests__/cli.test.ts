@@ -2,9 +2,10 @@
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
+import type { CliPolicy, CliTool, FullAccessCliConnection, Platform } from "@junction/core"
 import { withTempHome } from "@junction/core/testing"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
-import { addCliPlatform, addFullAccessCliPlatform } from "../cli.js"
+import { addCliPlatform, addFullAccessCliPlatform, setFullAccessCliShortcuts } from "../cli.js"
 
 let ws: string
 
@@ -122,7 +123,7 @@ describe("addFullAccessCliPlatform", () => {
   )
 
   it.skipIf(process.platform !== "darwin")(
-    "honors a caller-provided allowNet on the assembled policy",
+    "translates a caller-provided host allowNet to the enforceable port scope (Seatbelt can't host-scope)",
     async () => {
       await withTempHome(async () => {
         const binDir = await mkdtemp(path.join(os.tmpdir(), "jx-po-fa-bin-"))
@@ -141,7 +142,10 @@ describe("addFullAccessCliPlatform", () => {
           expect(result.isOk()).toBe(true)
           if (!result.isOk()) return
           if (result.value.platform.cli?.mode !== "full-access") return
-          expect(result.value.platform.cli.policy.allowNet).toEqual(["api.example.com:443"])
+          // Host intent "api.example.com:443" is recorded but enforced as "*:443"
+          // — Seatbelt scopes egress by port only, so storing the host would
+          // hard-fail runCommand at call time (Fable net-policy ruling, inc 41).
+          expect(result.value.platform.cli.policy.allowNet).toEqual(["*:443"])
           expect(result.value.platform.cli.credentialEnvVar).toBe("EXAMPLE_PAT")
         } finally {
           await rm(binDir, { recursive: true, force: true })
@@ -175,5 +179,150 @@ describe("addFullAccessCliPlatform", () => {
       })
       expect(result.isErr()).toBe(true)
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// setFullAccessCliShortcuts — the shortcuts editing surface (increment 41.5)
+// ---------------------------------------------------------------------------
+
+const SHORTCUT_POLICY: CliPolicy = {
+  cwd: "/tmp",
+  readPaths: ["/tmp"],
+  writePaths: [],
+  allowNet: [],
+  timeoutMs: 5_000,
+  envAllow: {},
+}
+
+function shortcutTool(overrides: Partial<CliTool> = {}): CliTool {
+  return {
+    name: "pr_list",
+    description: "List open PRs",
+    argv: [
+      { kind: "literal", value: "/usr/bin/gh" },
+      { kind: "literal", value: "pr" },
+      { kind: "literal", value: "list" },
+    ],
+    args: [],
+    policy: SHORTCUT_POLICY,
+    ...overrides,
+  }
+}
+
+function fullAccessCli(overrides: Partial<FullAccessCliConnection> = {}): FullAccessCliConnection {
+  return {
+    mode: "full-access",
+    binaryPath: "/usr/bin/gh",
+    policy: SHORTCUT_POLICY,
+    schema: {
+      binaryName: "gh",
+      extractedAt: new Date().toISOString(),
+      root: { path: [], parsed: true, explored: true, flags: [], positionals: [], subcommands: [] },
+      truncated: false,
+    },
+    ...overrides,
+  }
+}
+
+function fullAccessPlatform(overrides: Partial<FullAccessCliConnection> = {}): Platform {
+  return {
+    id: "gh",
+    kind: "cli",
+    displayName: "GitHub CLI",
+    cli: fullAccessCli(overrides),
+  }
+}
+
+describe("setFullAccessCliShortcuts", () => {
+  it("adds a shortcut to a platform with none yet", () => {
+    const platform = fullAccessPlatform()
+    const result = setFullAccessCliShortcuts({
+      platform,
+      shortcuts: [shortcutTool()],
+    })
+    expect(result.isOk()).toBe(true)
+    if (!result.isOk()) return
+    expect(result.value.cli?.mode).toBe("full-access")
+    if (result.value.cli?.mode !== "full-access") return
+    expect(result.value.cli.shortcuts).toHaveLength(1)
+    expect(result.value.cli.shortcuts?.[0]?.name).toBe("pr_list")
+  })
+
+  it("removing all shortcuts drops the field entirely (empty list, not shortcuts:[])", () => {
+    const platform = fullAccessPlatform({ shortcuts: [shortcutTool()] })
+    const result = setFullAccessCliShortcuts({ platform, shortcuts: [] })
+    expect(result.isOk()).toBe(true)
+    if (!result.isOk()) return
+    expect(result.value.cli?.mode).toBe("full-access")
+    if (result.value.cli?.mode !== "full-access") return
+    expect(result.value.cli.shortcuts).toBeUndefined()
+  })
+
+  it("replaces the shortcuts list wholesale (two shortcuts -> one)", () => {
+    const platform = fullAccessPlatform({
+      shortcuts: [shortcutTool({ name: "pr_list" }), shortcutTool({ name: "issue_list" })],
+    })
+    const result = setFullAccessCliShortcuts({
+      platform,
+      shortcuts: [shortcutTool({ name: "pr_list" })],
+    })
+    expect(result.isOk()).toBe(true)
+    if (!result.isOk()) return
+    if (result.value.cli?.mode !== "full-access") return
+    expect(result.value.cli.shortcuts?.map((t) => t.name)).toEqual(["pr_list"])
+  })
+
+  it("preserves every other full-access field (binaryPath, policy, schema, credentialEnvVar)", () => {
+    const platform = fullAccessPlatform({ credentialEnvVar: "GH_PAT" })
+    const result = setFullAccessCliShortcuts({
+      platform,
+      shortcuts: [shortcutTool()],
+    })
+    expect(result.isOk()).toBe(true)
+    if (!result.isOk()) return
+    if (result.value.cli?.mode !== "full-access") return
+    expect(result.value.cli.binaryPath).toBe("/usr/bin/gh")
+    expect(result.value.cli.credentialEnvVar).toBe("GH_PAT")
+    expect(result.value.cli.schema.binaryName).toBe("gh")
+  })
+
+  it("refuses on a declared-mode cli platform (no shortcuts slot)", () => {
+    const platform: Platform = {
+      id: "declared-tool",
+      kind: "cli",
+      displayName: "Declared Tool",
+      cli: { tools: [shortcutTool()] },
+    }
+    const result = setFullAccessCliShortcuts({ platform, shortcuts: [shortcutTool()] })
+    expect(result.isErr()).toBe(true)
+    if (!result.isErr()) return
+    expect(result.error.kind).toBe("not-full-access")
+  })
+
+  it("refuses on a non-cli platform", () => {
+    const platform: Platform = {
+      id: "mcp-thing",
+      kind: "mcp",
+      displayName: "MCP Thing",
+      connection: { transport: "http", url: "https://example.com/mcp" },
+    }
+    const result = setFullAccessCliShortcuts({ platform, shortcuts: [] })
+    expect(result.isErr()).toBe(true)
+    if (!result.isErr()) return
+    expect(result.error.kind).toBe("not-full-access")
+    if (result.error.kind !== "not-full-access") return
+    expect(result.error.platformKind).toBe("mcp")
+  })
+
+  it("an invalid shortcut descriptor (argv[0] not absolute) surfaces invalid-descriptor", () => {
+    const platform = fullAccessPlatform()
+    const badTool = shortcutTool({
+      argv: [{ kind: "literal", value: "gh" }],
+    })
+    const result = setFullAccessCliShortcuts({ platform, shortcuts: [badTool] })
+    expect(result.isErr()).toBe(true)
+    if (!result.isErr()) return
+    expect(result.error.kind).toBe("invalid-descriptor")
   })
 })

@@ -85,6 +85,7 @@ const mockRefreshPlatformFn = vi.fn()
 const mockGetPlatformDetailFn = vi.fn()
 const mockDiscoverCliBinaryFn = vi.fn()
 const mockAddFullAccessCliPlatformFn = vi.fn()
+const mockSetFullAccessCliShortcutsFn = vi.fn()
 
 vi.mock("../server/platform-mutations.functions.js", () => ({
   addPlatformFn: (...args: unknown[]) => mockAddPlatformFn(...args),
@@ -94,6 +95,7 @@ vi.mock("../server/platform-mutations.functions.js", () => ({
   getPlatformDetailFn: (...args: unknown[]) => mockGetPlatformDetailFn(...args),
   discoverCliBinaryFn: (...args: unknown[]) => mockDiscoverCliBinaryFn(...args),
   addFullAccessCliPlatformFn: (...args: unknown[]) => mockAddFullAccessCliPlatformFn(...args),
+  setFullAccessCliShortcutsFn: (...args: unknown[]) => mockSetFullAccessCliShortcutsFn(...args),
 }))
 
 const { Route } = await import("./platforms.js")
@@ -112,6 +114,7 @@ afterEach(() => {
   mockGetPlatformDetailFn.mockReset()
   mockDiscoverCliBinaryFn.mockReset()
   mockAddFullAccessCliPlatformFn.mockReset()
+  mockSetFullAccessCliShortcutsFn.mockReset()
   mockInvalidate.mockReset().mockResolvedValue(undefined)
 })
 
