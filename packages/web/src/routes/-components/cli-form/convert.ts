@@ -14,7 +14,7 @@ import type {
   CliToolArgFormState,
   CliToolFormState,
 } from "./types.js"
-import { emptyEnvAllowRow, emptyPathRow, nextKey } from "./types.js"
+import { emptyEnvAllowRow, emptyFullAccessState, emptyPathRow, nextKey } from "./types.js"
 
 // ---------------------------------------------------------------------------
 // Form state → wire input (submit path)
@@ -87,6 +87,7 @@ export function toToolInput(tool: CliToolFormState): CliToolInput {
   }
 }
 
+/** Declared-mode submission shape — meaningless when state.mode === "full-access" (submit takes a separate path). */
 export function toConnectionInput(state: CliConnectionFormState) {
   return {
     tools: state.tools.map(toToolInput),
@@ -153,8 +154,15 @@ export function connectionFromDetail(detail: {
   cliCredentialEnvVar?: string
 }): CliConnectionFormState {
   return {
+    // Edit-mode always pre-fills into the declared-form shape (the platform
+    // detail DTO projects a full-access platform's `shortcuts` as `cliTools` —
+    // see platform-mutations.server.ts's toPlatformDetail). Editing a Full CLI
+    // access platform's binary/policy is out of this increment's scope; the
+    // mode toggle only matters on ADD.
+    mode: "declared",
     tools: (detail.cliTools ?? []).map(toolFromDetail),
     credentialEnvVar: detail.cliCredentialEnvVar ?? "",
+    fullAccess: emptyFullAccessState(),
   }
 }
 

@@ -13,6 +13,7 @@
 // browser pass (real Chromium), not this suite.
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { useState } from "react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { PlatformMeta } from "../server/data.functions.js"
 
@@ -82,6 +83,8 @@ const mockUpdatePlatformFn = vi.fn()
 const mockDeletePlatformFn = vi.fn()
 const mockRefreshPlatformFn = vi.fn()
 const mockGetPlatformDetailFn = vi.fn()
+const mockDiscoverCliBinaryFn = vi.fn()
+const mockAddFullAccessCliPlatformFn = vi.fn()
 
 vi.mock("../server/platform-mutations.functions.js", () => ({
   addPlatformFn: (...args: unknown[]) => mockAddPlatformFn(...args),
@@ -89,6 +92,8 @@ vi.mock("../server/platform-mutations.functions.js", () => ({
   deletePlatformFn: (...args: unknown[]) => mockDeletePlatformFn(...args),
   refreshPlatformFn: (...args: unknown[]) => mockRefreshPlatformFn(...args),
   getPlatformDetailFn: (...args: unknown[]) => mockGetPlatformDetailFn(...args),
+  discoverCliBinaryFn: (...args: unknown[]) => mockDiscoverCliBinaryFn(...args),
+  addFullAccessCliPlatformFn: (...args: unknown[]) => mockAddFullAccessCliPlatformFn(...args),
 }))
 
 const { Route } = await import("./platforms.js")
@@ -105,6 +110,8 @@ afterEach(() => {
   mockDeletePlatformFn.mockReset()
   mockRefreshPlatformFn.mockReset()
   mockGetPlatformDetailFn.mockReset()
+  mockDiscoverCliBinaryFn.mockReset()
+  mockAddFullAccessCliPlatformFn.mockReset()
   mockInvalidate.mockReset().mockResolvedValue(undefined)
 })
 
@@ -397,6 +404,44 @@ describe("PlatformsPage", () => {
     expect(getAllByText("Tool 1").length).toBeGreaterThan(0)
     expect(getByPlaceholderText("/opt/homebrew/bin/rg --json $pattern")).toBeInTheDocument()
     expect(getAllByText("Permissions").length).toBeGreaterThan(0)
+  })
+
+  // ── Full CLI access mode toggle (inc 41.4) ─────────────────────────────────
+
+  it("the CLI form's Access toggle defaults to Declared commands and offers Full CLI access", async () => {
+    const { CliConnectionForm } = await import("./-components/cli-form/cli-connection-form.js")
+    const { emptyConnection } = await import("./-components/cli-form/types.js")
+    const { getByText, getAllByText } = render(
+      <CliConnectionForm connection={emptyConnection()} onChange={() => {}} />,
+    )
+    // Exact Fable Q6 wording, split across the two tab triggers.
+    expect(getByText("Declared commands")).toBeInTheDocument()
+    expect(getByText("Full CLI access")).toBeInTheDocument()
+    // Declared mode is the default — the tool-card list renders, not the picker.
+    expect(getAllByText("Tool 1").length).toBeGreaterThan(0)
+  })
+
+  it("switching the Access toggle to Full CLI access swaps in the discovery picker", async () => {
+    const { CliConnectionForm } = await import("./-components/cli-form/cli-connection-form.js")
+    const { emptyConnection } = await import("./-components/cli-form/types.js")
+
+    function Wrapper() {
+      const [connection, setConnection] = useState(emptyConnection())
+      return <CliConnectionForm connection={connection} onChange={setConnection} />
+    }
+    const { getAllByText, getByPlaceholderText, queryByText } = render(<Wrapper />)
+
+    // Radix Tabs' trigger switches on mousedown (automatic activation), not
+    // click — fireEvent.click alone never fires a mousedown in happy-dom.
+    fireEvent.mouseDown(getAllByText("Full CLI access")[0] as HTMLElement)
+
+    // The declared tool-card list is gone; the Full CLI access binary-name
+    // input + install-confirmation copy render instead. "Full CLI access"
+    // now appears twice (the tab trigger + the explainer's <strong>).
+    expect(queryByText("Tool 1")).not.toBeInTheDocument()
+    expect(getByPlaceholderText("gh")).toBeInTheDocument()
+    expect(getAllByText(/Full CLI access/).length).toBeGreaterThanOrEqual(2)
+    expect(getAllByText(/sandboxed, offline, no/i).length).toBeGreaterThan(0)
   })
 
   // ── Auth-scheme note (wave 3, slice I) ──────────────────────────────────────

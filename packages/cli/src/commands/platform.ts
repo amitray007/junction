@@ -140,6 +140,16 @@ function formatOrchestrationError(
       // Full CLI access is installed via `--full-access` (discovery flow, inc 41.4),
       // not via `--descriptor`. Until 41.4 lands this is a hard, honest refusal.
       return "full-access CLI platforms are not added via --descriptor; use `--full-access` (binary discovery flow)"
+    case "invalid-binary-name":
+      return `"${e.name}" is not a valid bare command name (no slashes/metacharacters allowed)`
+    case "binary-not-found":
+      return `could not find "${e.name}" on PATH or in common install dirs; pass --path to point at it manually`
+    case "binary-path-invalid":
+      return `--path "${e.path}" is invalid: ${e.reason}`
+    case "sandbox-unavailable":
+      return "no sandbox backend available on this host (Seatbelt on macOS, bubblewrap on Linux) — Full CLI access install requires one to extract the command schema"
+    case "extract-refused":
+      return `sandbox refused to run "--help" against the pinned binary: ${String(e.cause)}`
   }
 }
 
@@ -245,6 +255,35 @@ const addCommand = defineCommand({
         "[cli/http] JSON descriptor string (CliConnectionSchema for --kind cli, " +
         "HttpConnectionSchema for --kind http). Use --descriptor '$(cat file.json)'",
     },
+    // Full CLI access flags (inc 41.4 — discovery/install path, --kind cli only)
+    "full-access": {
+      type: "boolean",
+      description:
+        "[cli] Install Full CLI access: discover the binary by --name, extract its " +
+        "--help tree (sandboxed), and let agents drive it via execute/help. " +
+        "Mutually exclusive with --descriptor.",
+      default: false,
+    },
+    name: {
+      type: "string",
+      description: "[cli/--full-access] Bare binary name to discover (e.g. gh)",
+    },
+    net: {
+      type: "string",
+      description:
+        "[cli/--full-access] host:port to allow the binary to reach (repeatable: " +
+        "--net api.github.com:443). Default: no network.",
+    },
+    "credential-env": {
+      type: "string",
+      description:
+        "[cli/--full-access] Env-var name the bound credential's secret is injected under.",
+    },
+    "binary-path": {
+      type: "string",
+      description:
+        "[cli/--full-access] Absolute path override — skip discovery and pin this binary directly.",
+    },
     json: JSON_ARG,
   },
   async run({ args, rawArgs }) {
@@ -270,6 +309,10 @@ const addCommand = defineCommand({
     }
 
     if (kind === "cli") {
+      if (args["full-access"]) {
+        await addFullAccessCliPlatformCommand(args, rawArgs, json)
+        return
+      }
       await addCliPlatform(args, json)
       return
     }
@@ -499,6 +542,107 @@ async function addCliPlatform(args: Record<string, unknown>, json: boolean): Pro
   }
 
   await persistAndReport(platform, toolCount, "cli", json)
+}
+
+// ---------------------------------------------------------------------------
+// addFullAccessCliPlatformCommand — handle --kind cli --full-access add path
+// (inc 41.4): discover the binary (or use --binary-path), extract its --help
+// tree sandboxed, and upsert a Full CLI access platform.
+// ---------------------------------------------------------------------------
+
+interface FullAccessJsonReport {
+  ok: true
+  candidates: Array<{ path: string; realpath: string; version?: string; source: string }>
+  chosen: string
+  nodeCount: number
+  truncated: boolean
+  platform: unknown
+}
+
+async function addFullAccessCliPlatformCommand(
+  args: Record<string, unknown>,
+  rawArgs: string[],
+  json: boolean,
+): Promise<void> {
+  const name = args.name as string | undefined
+  const binaryPathOverride = args["binary-path"] as string | undefined
+
+  if (!name && !binaryPathOverride) {
+    reportError(
+      "--name (binary to discover) or --binary-path (manual override) is required for --full-access",
+      json,
+    )
+    return
+  }
+
+  const { discoverBinary } = await import("@junction/core")
+  const netHosts = collectRepeatableFlag(rawArgs, "--net")
+  const credentialEnvVar = args["credential-env"] as string | undefined
+
+  let chosenRealpath: string
+  let candidateReport: FullAccessJsonReport["candidates"] = []
+
+  if (binaryPathOverride) {
+    chosenRealpath = binaryPathOverride
+  } else {
+    if (!json) consola.info(`Discovering "${name}" …`)
+    const discoverResult = await discoverBinary(name as string)
+    if (discoverResult.isErr()) {
+      reportError(`"${name}" is not a valid bare command name`, json)
+      return
+    }
+    const candidates = discoverResult.value
+    candidateReport = candidates.map((c) => ({
+      path: c.path,
+      realpath: c.realpath,
+      ...(c.version !== undefined ? { version: c.version } : {}),
+      source: c.source,
+    }))
+    const recommended = candidates[0]
+    if (!recommended) {
+      reportError(
+        `could not find "${name}" on PATH or in common install dirs; pass --binary-path to point at it manually`,
+        json,
+      )
+      return
+    }
+    chosenRealpath = recommended.realpath
+    if (!json) consola.info(`Found "${name}" at ${chosenRealpath} — extracting --help tree …`)
+  }
+
+  const { addFullAccessCliPlatform } = await import("@junction/platform-orchestration")
+  const result = await addFullAccessCliPlatform({
+    id: args.id as string,
+    displayName: args["display-name"] as string,
+    binaryPath: chosenRealpath,
+    ...(credentialEnvVar ? { credentialEnvVar } : {}),
+    ...(netHosts.length > 0 ? { allowNet: netHosts } : {}),
+  })
+  if (result.isErr()) {
+    reportError(formatOrchestrationError(result.error, "add"), json)
+    return
+  }
+
+  const { platform, nodeCount, truncated } = result.value
+  const persisted = await upsertPlatform(platform, json)
+  if (!persisted) return
+
+  if (json) {
+    const report: FullAccessJsonReport = {
+      ok: true,
+      candidates: candidateReport,
+      chosen: chosenRealpath,
+      nodeCount,
+      truncated,
+      platform: persisted,
+    }
+    process.stdout.write(`${JSON.stringify(report)}\n`)
+  } else {
+    consola.success(
+      `Platform "${persisted.displayName}" (${persisted.id}) defined — kind: cli, Full CLI access, ` +
+        `${nodeCount} command node(s) mapped${truncated ? " (partial — probe ceiling reached; remaining nodes explore lazily)" : ""}`,
+    )
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -15,6 +15,7 @@ import { useTableView } from "../lib/use-table-view.js"
 import { getCredentials, getPlatforms, type PlatformMeta } from "../server/data.functions.js"
 import {
   type AddPlatformInput,
+  addFullAccessCliPlatformFn,
   addPlatformFn,
   deletePlatformFn,
   getPlatformDetailFn,
@@ -329,6 +330,49 @@ function PlatformDialog({ mode, platform, open, onOpenChange, onSuccess }: Platf
     setState((prev) => ({ ...prev, [key]: value }))
   }
 
+  /**
+   * Full CLI access install (inc 41.4): resolve the chosen binary path (manual
+   * override or the discovery picker's selection), then call
+   * addFullAccessCliPlatformFn directly — discover→extract→upsert happens
+   * server-side. Shows the "Mapped N commands…" summary inline rather than
+   * closing the dialog immediately, so the user sees what got learned.
+   */
+  async function handleFullAccessSubmit() {
+    const fa = state.cli.fullAccess
+    const binaryPath = fa.manualPath ? fa.manualPathValue.trim() : fa.selectedRealpath
+    if (!binaryPath) {
+      toast.error("Choose a discovered binary or enter a path manually")
+      return
+    }
+
+    setSubmitting(true)
+    try {
+      const result = await addFullAccessCliPlatformFn({
+        data: {
+          id: state.id.trim(),
+          displayName: state.displayName.trim(),
+          binaryPath,
+          ...(fa.credentialEnvVar.trim() ? { credentialEnvVar: fa.credentialEnvVar.trim() } : {}),
+          allowNet: fa.allowNet.map((h) => h.value.trim()).filter(Boolean),
+        },
+      })
+      if (!result.ok) {
+        toast.error(`Failed to install: ${result.error}`)
+        setSubmitting(false)
+        return
+      }
+      const summary = `Mapped ${result.nodeCount} command node(s)${result.truncated ? " (partial — some branches deferred)" : ""}`
+      set("cli", { ...state.cli, fullAccess: { ...fa, installSummary: summary } })
+      toast.success(`Platform "${result.platform.displayName}" installed — ${summary}`)
+      setSubmitting(false)
+      handleOpenChange(false)
+      onSuccess()
+    } catch {
+      toast.error("Failed to install Full CLI access platform")
+      setSubmitting(false)
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     const newErrors: Record<string, string> = {}
@@ -352,6 +396,14 @@ function PlatformDialog({ mode, platform, open, onOpenChange, onSuccess }: Platf
     }
     if (Object.keys(newErrors).length > 0) {
       setErrors(newErrors)
+      return
+    }
+
+    // Full CLI access takes a SEPARATE submit path — no CliConnectionInput
+    // (tools/args) shape to assemble; discovery already resolved a realpath
+    // client-side and the install fn does discover→extract→upsert server-side.
+    if (state.kind === "cli" && state.cli.mode === "full-access") {
+      await handleFullAccessSubmit()
       return
     }
 

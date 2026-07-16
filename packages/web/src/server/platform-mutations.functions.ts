@@ -9,6 +9,7 @@
 import { createServerFn } from "@tanstack/react-start"
 import { assertLocalHost, requireString } from "./fn-guards.server.js"
 import type {
+  AddFullAccessCliPlatformInput,
   AddPlatformInput,
   CliConnectionInput,
   CliToolArgInput,
@@ -20,7 +21,9 @@ import type {
   UpdatePlatformInput,
 } from "./platform-mutations.server.js"
 import {
+  discoverCliBinary,
   getPlatformDetail,
+  mutateAddFullAccessCliPlatform,
   mutateAddPlatform,
   mutateDeletePlatform,
   mutateRefreshPlatform,
@@ -31,10 +34,13 @@ import {
 // a direct import from platform-mutations.server.ts (server-only by convention —
 // mirrors data.functions.ts's re-export of PlatformMeta/CredentialMeta/etc.).
 export type {
+  AddFullAccessCliPlatformResult,
   AddPlatformInput,
+  CliBinaryCandidate,
   CliConnectionInput,
   CliToolArgInput,
   CliToolInput,
+  DiscoverCliBinaryResult,
   HttpConnectionInput,
   HttpParamInput,
   HttpToolInput,
@@ -338,4 +344,40 @@ export const getPlatformDetailFn = createServerFn({ method: "GET" })
   .handler(async ({ data }) => {
     assertLocalHost()
     return getPlatformDetail(data.id)
+  })
+
+// ---------------------------------------------------------------------------
+// Full CLI access — binary discovery + install (inc 41.4)
+// ---------------------------------------------------------------------------
+
+function validateDiscoverInput(raw: unknown): { name: string } {
+  const d = raw as Record<string, unknown>
+  return { name: requireString(d.name, "name") }
+}
+
+/** Discover candidate binaries for a bare command name — the install picker's data source. */
+export const discoverCliBinaryFn = createServerFn({ method: "POST" })
+  .validator(validateDiscoverInput)
+  .handler(async ({ data }) => {
+    assertLocalHost()
+    return discoverCliBinary(data.name)
+  })
+
+function validateAddFullAccessCliPlatformInput(raw: unknown): AddFullAccessCliPlatformInput {
+  const d = raw as Record<string, unknown>
+  return {
+    id: requireString(d.id, "id"),
+    displayName: requireString(d.displayName, "displayName"),
+    binaryPath: requireString(d.binaryPath, "binaryPath"),
+    credentialEnvVar: optionalString(d.credentialEnvVar),
+    allowNet: optionalStringArray(d.allowNet),
+  }
+}
+
+/** Install a Full CLI access platform: extract the pinned binary's --help tree (sandboxed) and upsert. */
+export const addFullAccessCliPlatformFn = createServerFn({ method: "POST" })
+  .validator(validateAddFullAccessCliPlatformInput)
+  .handler(async ({ data }) => {
+    assertLocalHost()
+    return mutateAddFullAccessCliPlatform(data)
   })

@@ -20,9 +20,15 @@
 // addCliPlatform/validatePolicy/the sandbox. Never trust a client-sent argv array.
 
 import type { CliConnection, DeclaredCliConnection, HttpConnection, Platform } from "@junction/core"
-import { CliConnectionSchema, HttpConnectionSchema, isFullAccess } from "@junction/core"
+import {
+  CliConnectionSchema,
+  discoverBinary,
+  HttpConnectionSchema,
+  isFullAccess,
+} from "@junction/core"
 import {
   addCliPlatform,
+  addFullAccessCliPlatform,
   addGraphQlPlatform,
   addHttpPlatform,
   addMcpPlatform,
@@ -213,6 +219,18 @@ function orchestrationErrorMessage(e: { kind: string; [k: string]: unknown }): s
       return "Only specs added from a URL can be refreshed"
     case "verify-op-invalid":
       return `Invalid verify operation: ${e.message}`
+    case "full-access-not-yet-supported":
+      return "Full CLI access platforms aren't added via a raw descriptor — use the discovery install flow"
+    case "invalid-binary-name":
+      return `"${e.name}" is not a valid bare command name`
+    case "binary-not-found":
+      return `Could not find "${e.name}" on PATH or in common install dirs — enter the path manually`
+    case "binary-path-invalid":
+      return `Binary path is invalid: ${e.reason}`
+    case "sandbox-unavailable":
+      return "No sandbox backend available on this host — Full CLI access install requires one to extract the command schema"
+    case "extract-refused":
+      return `Sandbox refused to run "--help" against the pinned binary: ${String(e.cause)}`
     default:
       return "Operation failed"
   }
@@ -385,6 +403,109 @@ function assembleHttpConnection(
   }
 
   return finishAssemble(HttpConnectionSchema.safeParse(raw))
+}
+
+// ---------------------------------------------------------------------------
+// Full CLI access — binary discovery + install (inc 41.4).
+// docs/specs/2026-07-16-cli-exploratory-mode.md §5 Q1/Q3/Q6.
+// ---------------------------------------------------------------------------
+
+/** One candidate binary — metadata only (path/version/source), no I/O detail leaked. */
+export type CliBinaryCandidate = {
+  path: string
+  realpath: string
+  version?: string
+  source: "path" | "common-dir"
+}
+
+export type DiscoverCliBinaryResult =
+  | { ok: true; candidates: CliBinaryCandidate[] }
+  | { ok: false; error: string }
+
+/**
+ * Discover candidate binaries for a bare command name — the web install
+ * picker's data source. Never execs unsandboxed (discoverBinary's own
+ * contract); this wrapper adds no sandbox here since the version probe is
+ * best-effort and optional — a version-less candidate list is still useful,
+ * and threading a full sandbox instance through the picker step only for
+ * `--version` isn't worth the extra createSandbox() cost on every keystroke.
+ * The install step (mutateAddFullAccessCliPlatform) DOES use the sandbox —
+ * that's where extraction actually runs.
+ */
+export async function discoverCliBinary(name: string): Promise<DiscoverCliBinaryResult> {
+  const result = await discoverBinary(name)
+  if (result.isErr()) {
+    return { ok: false, error: `"${name}" is not a valid bare command name` }
+  }
+  return {
+    ok: true,
+    candidates: result.value.map((c) => ({
+      path: c.path,
+      realpath: c.realpath,
+      ...(c.version !== undefined ? { version: c.version } : {}),
+      source: c.source,
+    })),
+  }
+}
+
+export interface AddFullAccessCliPlatformInput {
+  id: string
+  displayName: string
+  /** The chosen candidate's realpath (from discoverCliBinary) or a manual override. */
+  binaryPath: string
+  credentialEnvVar?: string
+  /** host:port allowlist entries. Empty/absent = no network (safe default). */
+  allowNet?: string[]
+}
+
+export type AddFullAccessCliPlatformResult =
+  | {
+      ok: true
+      platform: { id: string; kind: string; displayName: string }
+      nodeCount: number
+      truncated: boolean
+    }
+  | { ok: false; error: string }
+
+/**
+ * Install a Full CLI access platform: run extractCliSchema (sandboxed) against
+ * the pinned binaryPath and upsert the resulting platform. Distinct from
+ * mutateAddPlatform's declared-mode dispatch — Full CLI access has no
+ * CliConnectionInput form shape (no tools/args to assemble), just a resolved
+ * binary + optional credential env var + optional net allowlist.
+ */
+export async function mutateAddFullAccessCliPlatform(
+  input: AddFullAccessCliPlatformInput,
+): Promise<AddFullAccessCliPlatformResult> {
+  const addResult = await addFullAccessCliPlatform({
+    id: input.id,
+    displayName: input.displayName,
+    binaryPath: input.binaryPath,
+    ...(input.credentialEnvVar ? { credentialEnvVar: input.credentialEnvVar } : {}),
+    ...(input.allowNet && input.allowNet.length > 0 ? { allowNet: input.allowNet } : {}),
+  })
+  if (addResult.isErr()) {
+    return { ok: false, error: orchestrationErrorMessage(addResult.error) }
+  }
+  const { platform, nodeCount, truncated } = addResult.value
+
+  return withRepos(async (repos) => {
+    const upsertResult = await repos.platforms.upsert(platform)
+    if (upsertResult.isErr()) {
+      return { ok: false as const, error: dbErrorMessage(upsertResult.error.kind) }
+    }
+    const persisted = upsertResult.value
+    return {
+      ok: true as const,
+      platform: {
+        id: String(persisted.id),
+        kind: persisted.kind,
+        displayName: persisted.displayName,
+      },
+      nodeCount,
+      truncated,
+    }
+  })
 }
 
 // ---------------------------------------------------------------------------

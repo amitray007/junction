@@ -4,10 +4,11 @@
 // connection-level credentialEnvVar disclosure.
 
 import { useState } from "react"
-import { Field, Input } from "../../../ui/index.js"
+import { Field, Input, Tabs, TabsList, TabsTrigger } from "../../../ui/index.js"
 import { ToolCardList } from "../tool-card-list.js"
+import { FullAccessPanel } from "./full-access-panel.js"
 import { ToolCard } from "./tool-card.js"
-import type { CliConnectionFormState } from "./types.js"
+import type { CliAccessMode, CliConnectionFormState } from "./types.js"
 import { emptyTool } from "./types.js"
 
 const RESERVED_SUFFIX_RE = /_TOKEN$|_SECRET$|_KEY$/
@@ -39,50 +40,78 @@ export function CliConnectionForm({ connection, onChange, toolErrors }: CliConne
 
   return (
     <div className="flex flex-col gap-4">
-      <ToolCardList
-        tools={connection.tools}
-        onChange={(tools) => onChange({ ...connection, tools })}
-        toolErrors={toolErrors}
-        makeTool={emptyTool}
-        addLabel="Add Tool"
-        renderCard={(props) => <ToolCard key={props.tool.key} {...props} />}
-      />
-
-      <div className="rounded-[var(--radius-6)] border" style={{ borderColor: "var(--alpha-400)" }}>
-        <button
-          type="button"
-          className="flex w-full items-center justify-between px-3 py-2 text-left"
-          onClick={() => setCredentialExpanded((v) => !v)}
-          aria-expanded={credentialExpanded}
+      <Field id="cli-access-mode" label="Access">
+        <Tabs
+          value={connection.mode}
+          onValueChange={(v) => onChange({ ...connection, mode: v as CliAccessMode })}
         >
-          <span
-            style={{ fontSize: "var(--text-label)", fontWeight: 500, color: "var(--gray-1000)" }}
+          <TabsList id="cli-access-mode">
+            <TabsTrigger value="declared">Declared commands</TabsTrigger>
+            <TabsTrigger value="full-access">Full CLI access</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      </Field>
+
+      {connection.mode === "full-access" ? (
+        <FullAccessPanel
+          fullAccess={connection.fullAccess}
+          onChange={(fullAccess) => onChange({ ...connection, fullAccess })}
+        />
+      ) : (
+        <>
+          <ToolCardList
+            tools={connection.tools}
+            onChange={(tools) => onChange({ ...connection, tools })}
+            toolErrors={toolErrors}
+            makeTool={emptyTool}
+            addLabel="Add Tool"
+            renderCard={(props) => <ToolCard key={props.tool.key} {...props} />}
+          />
+
+          <div
+            className="rounded-[var(--radius-6)] border"
+            style={{ borderColor: "var(--alpha-400)" }}
           >
-            Credential Env Var
-          </span>
-          <span style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)" }}>
-            {connection.credentialEnvVar || "none"}
-          </span>
-        </button>
-        {credentialExpanded && (
-          <div className="px-3 pb-3 pt-1">
-            <Field
-              id="cli-credential-env-var"
-              label="Env Var Name"
-              description="Optional — the env var name the bound credential's secret is injected under. Empty = no credential injected."
-              error={envError}
+            <button
+              type="button"
+              className="flex w-full items-center justify-between px-3 py-2 text-left"
+              onClick={() => setCredentialExpanded((v) => !v)}
+              aria-expanded={credentialExpanded}
             >
-              <Input
-                id="cli-credential-env-var"
-                placeholder="e.g. GH_PAT"
-                value={connection.credentialEnvVar}
-                onChange={(e) => onChange({ ...connection, credentialEnvVar: e.target.value })}
-                hasError={!!envError}
-              />
-            </Field>
+              <span
+                style={{
+                  fontSize: "var(--text-label)",
+                  fontWeight: 500,
+                  color: "var(--gray-1000)",
+                }}
+              >
+                Credential Env Var
+              </span>
+              <span style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)" }}>
+                {connection.credentialEnvVar || "none"}
+              </span>
+            </button>
+            {credentialExpanded && (
+              <div className="px-3 pb-3 pt-1">
+                <Field
+                  id="cli-credential-env-var"
+                  label="Env Var Name"
+                  description="Optional — the env var name the bound credential's secret is injected under. Empty = no credential injected."
+                  error={envError}
+                >
+                  <Input
+                    id="cli-credential-env-var"
+                    placeholder="e.g. GH_PAT"
+                    value={connection.credentialEnvVar}
+                    onChange={(e) => onChange({ ...connection, credentialEnvVar: e.target.value })}
+                    hasError={!!envError}
+                  />
+                </Field>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </>
+      )}
     </div>
   )
 }

@@ -60,6 +60,7 @@ export type { ConfigError, PathsError, UpstreamError } from "./errors/index.js"
 export { getLogger, type Logger, setLogger } from "./logging/index.js"
 export {
   ensureHome,
+  ensureRuntimeDir,
   getPaths,
   type JunctionPaths,
   openapiSpecCacheFile,
@@ -311,6 +312,10 @@ export { SourceRefSchema, ToolFilterSchema } from "./schema/source-ref.js"
 // Shared agent-arg string validation primitive (inc 30.7) — reused by every
 // source provider that validates agent-supplied strings (cli, http-client).
 export { rejectControlCharacters } from "./sources/arg-validation.js"
+// CLI Full-access binary discovery (inc 41.4) — "install a CLI by name"
+// (docs/specs/2026-07-16-cli-exploratory-mode.md §5 Q1).
+export type { BinaryCandidate, DiscoverError } from "./sources/cli/discover.js"
+export { discoverBinary } from "./sources/cli/discover.js"
 // CLI Full-access recursive --help extractor (inc 41.2) — "Junction learns
 // the CLI once" (docs/specs/2026-07-16-cli-exploratory-mode.md §4 Layer 2).
 export type { ExtractCeiling, HelpExtractor, ParsedHelpNode } from "./sources/cli/extract.js"

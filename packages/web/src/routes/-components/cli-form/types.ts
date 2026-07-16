@@ -55,9 +55,60 @@ export interface CliToolFormState {
   rawJson: string
 }
 
+// ---------------------------------------------------------------------------
+// Full CLI access sub-flow state (inc 41.4) — binary discovery + install.
+// docs/specs/2026-07-16-cli-exploratory-mode.md §5 Q1/Q3/Q6.
+// ---------------------------------------------------------------------------
+
+export type CliAccessMode = "declared" | "full-access"
+
+export interface CliBinaryCandidateState {
+  path: string
+  realpath: string
+  version?: string
+  source: "path" | "common-dir"
+}
+
+export interface FullAccessFormState {
+  /** Bare command name typed into the discovery input, e.g. "gh". */
+  binaryName: string
+  /** Candidates returned by the last discoverCliBinaryFn call. */
+  candidates: CliBinaryCandidateState[]
+  /** Selected realpath — defaults to candidates[0] (the recommendation) once discovered. */
+  selectedRealpath: string
+  /** True when the user opts into the manual "enter path manually" escape hatch. */
+  manualPath: boolean
+  /** The manually-entered absolute path (only used when manualPath is true). */
+  manualPathValue: string
+  /** host:port rows for the optional network allowlist. */
+  allowNet: CliPathFormState[]
+  credentialEnvVar: string
+  /** True while a discoverCliBinaryFn call is in flight. */
+  discovering: boolean
+  /** Discovery error message, if the last discover call failed. */
+  discoverError?: string
+  /** Set once install succeeds — the summary line ("Mapped N commands…"). */
+  installSummary?: string
+}
+
+export function emptyFullAccessState(): FullAccessFormState {
+  return {
+    binaryName: "",
+    candidates: [],
+    selectedRealpath: "",
+    manualPath: false,
+    manualPathValue: "",
+    allowNet: [],
+    credentialEnvVar: "",
+    discovering: false,
+  }
+}
+
 export interface CliConnectionFormState {
+  mode: CliAccessMode
   tools: CliToolFormState[]
   credentialEnvVar: string
+  fullAccess: FullAccessFormState
 }
 
 let keyCounter = 0
@@ -102,5 +153,10 @@ export function emptyTool(): CliToolFormState {
 }
 
 export function emptyConnection(): CliConnectionFormState {
-  return { tools: [emptyTool()], credentialEnvVar: "" }
+  return {
+    mode: "declared",
+    tools: [emptyTool()],
+    credentialEnvVar: "",
+    fullAccess: emptyFullAccessState(),
+  }
 }

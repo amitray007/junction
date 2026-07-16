@@ -35,6 +35,21 @@ export type PlatformOrchestrationError =
   // Full CLI access descriptors are storable (inc 41.1) but this add-flow only
   // wires the declared-mode path — discovery/install lands in 41.4.
   | { kind: "full-access-not-yet-supported" }
+  // ---- cli full-access install (inc 41.4) ----
+  // Binary name failed discoverBinary's bare-command validation.
+  | { kind: "invalid-binary-name"; name: string }
+  // Discovery found no candidate and no --path override was given.
+  | { kind: "binary-not-found"; name: string }
+  // A manual --path override doesn't exist / isn't executable.
+  | { kind: "binary-path-invalid"; path: string; reason: string }
+  // No sandbox backend on this host — Full CLI access install REQUIRES one
+  // (unlike declared-mode add, which stores a warning and proceeds): schema
+  // extraction cannot run at all without a sandbox.
+  | { kind: "sandbox-unavailable" }
+  // extractCliSchema hit a hard sandbox refusal on the ROOT probe (policy-invalid
+  // / unsupported-platform / runtime-unavailable) — no probe for this binary can
+  // ever succeed under this policy.
+  | { kind: "extract-refused"; cause: unknown }
   // ---- openapi spec cache write (add + refresh) ----
   | { kind: "spec-cache-failed"; cause: unknown }
   // ---- refresh ----
