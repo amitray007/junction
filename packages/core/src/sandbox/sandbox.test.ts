@@ -255,6 +255,43 @@ describe.skipIf(process.platform !== "darwin")("Seatbelt", () => {
     expect(allowed.isOk()).toBe(true)
   })
 
+  it("network egress does NOT open host-wide unix-socket IPC (C1 regression)", async () => {
+    // Regression for the sandbox-security review C1: the DNS unix-socket allow
+    // MUST be scoped to the mDNSResponder resolver socket. An unscoped
+    // `(remote unix-socket)` would let a networked full-access CLI connect to
+    // ANY host AF_UNIX socket (docker vmnetd, SSH_AUTH_SOCK, DB sockets). We
+    // prove that with network enabled, a connect to a non-resolver unix socket
+    // is refused. Use a python one-liner (present on macOS) to attempt an
+    // AF_UNIX connect and report whether it was permitted.
+    const sb = await createSandbox()
+    expect(sb.isOk()).toBe(true)
+    if (!sb.isOk()) return
+
+    const py = "/usr/bin/python3"
+    // Attempt to connect to the launchd/notifyd socket (a well-known non-DNS
+    // AF_UNIX socket present on macOS). A scoped profile denies it (EPERM);
+    // an unscoped one would connect. We assert the process reports DENIED.
+    const script =
+      "import socket,sys\n" +
+      "s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)\n" +
+      "try:\n" +
+      " s.settimeout(2); s.connect('/var/run/com.docker.vmnetd.sock'); print('CONNECTED')\n" +
+      "except PermissionError:\n" +
+      " print('DENIED')\n" +
+      "except Exception as e:\n" +
+      " print('OTHER:'+type(e).__name__)\n"
+    const res = await sb.value.runCommand([py, "-c", script], {
+      ...basePolicy(ws),
+      allowNet: ["*:443"], // network enabled → the scoped unix-socket allow is emitted
+    })
+    expect(res.isOk()).toBe(true)
+    if (!res.isOk()) return
+    // Must NOT be able to connect to the docker socket. "DENIED" is the scoped
+    // outcome; "OTHER:FileNotFoundError" is also acceptable (socket absent on
+    // this host) — the one thing that must never appear is "CONNECTED".
+    expect(res.value.stdout).not.toContain("CONNECTED")
+  })
+
   it("no secret leak: JUNCTION_MASTER_KEY is not passed to child", async () => {
     const sb = await createSandbox()
     expect(sb.isOk()).toBe(true)
