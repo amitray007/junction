@@ -5,20 +5,14 @@
 // not code (no "if platform === 'github'" anywhere). Design spec §4 + method 10.
 
 import { z } from "zod"
+import { isInterpreterDenylistedEnvKey } from "../sandbox/index.js"
 
-/**
- * Env-var names forbidden in an operator-declared stdio `env` map because they
- * hijack the dynamic linker or the interpreter runtime of the (UNSANDBOXED) MCP
- * child → arbitrary code execution. Checked uppercase; `DYLD_*` is matched by
- * prefix separately. PATH/HOME are intentionally NOT here (dual-use, grant nothing
- * beyond the operator-declared command). See the stdio-env refine below.
- */
-const INTERPRETER_ENV_DENYLIST = new Set([
-  "LD_PRELOAD",
-  "LD_LIBRARY_PATH",
-  "LD_AUDIT",
-  "NODE_OPTIONS",
-])
+// The dynamic-linker/interpreter env-key denylist class (LD_PRELOAD,
+// NODE_OPTIONS, DYLD_* by prefix, …) is hoisted to sandbox/env-denylist.ts
+// (inc 41 Fable ruling) and shared with validatePolicy + the CLI
+// credentialEnvVar refine — see isInterpreterDenylistedEnvKey below.
+// PATH/HOME are intentionally NOT denylisted (dual-use, grant nothing beyond
+// the operator-declared command). See the stdio-env refine below.
 
 // ---------------------------------------------------------------------------
 // McpConnectionSchema
@@ -121,8 +115,7 @@ export const McpConnectionSchema = z.discriminatedUnion("transport", [
         // JS). PATH is deliberately NOT blocked — it's dual-use and grants nothing
         // beyond the operator-declared command. Case-insensitive; DYLD_* by prefix.
         for (const key of keys) {
-          const upper = key.toUpperCase()
-          if (INTERPRETER_ENV_DENYLIST.has(upper) || upper.startsWith("DYLD_")) return false
+          if (isInterpreterDenylistedEnvKey(key)) return false
         }
         return true
       },

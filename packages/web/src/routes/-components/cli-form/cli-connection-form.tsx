@@ -11,9 +11,28 @@ import { ToolCard } from "./tool-card.js"
 import type { CliAccessMode, CliConnectionFormState } from "./types.js"
 import { emptyTool } from "./types.js"
 
-const RESERVED_SUFFIX_RE = /_TOKEN$|_SECRET$|_KEY$/
-const RESERVED_EXACT = new Set(["JUNCTION_MASTER_KEY", "JUNCTION_MASTER_KEY_FILE"])
+// inc 41 (Fable ruling): the _TOKEN/_SECRET/_KEY suffix heuristic was DROPPED
+// (it blocked GH_TOKEN — the only var `gh` reads — for no real security
+// gain) and replaced with a JUNCTION_ prefix reservation + the
+// dynamic-linker/interpreter denylist class. This is a CLIENT component
+// (no .server.ts) so it cannot import @junction/core (would pull
+// better-sqlite3/keyring into the client bundle — see docs/rules/web.md
+// "server-only-core boundary") — the predicate is deliberately duplicated
+// here, mirroring sandbox/env-denylist.ts's isJunctionReservedEnvKey /
+// isInterpreterDenylistedEnvKey. Keep in lock-step with those.
+const INTERPRETER_ENV_DENYLIST = new Set([
+  "LD_PRELOAD",
+  "LD_LIBRARY_PATH",
+  "LD_AUDIT",
+  "NODE_OPTIONS",
+])
 const ENV_NAME_RE = /^[A-Z_][A-Z0-9_]*$/
+
+function isDenylistedCredentialEnvVar(name: string): boolean {
+  if (name.startsWith("JUNCTION_")) return true
+  const upper = name.toUpperCase()
+  return INTERPRETER_ENV_DENYLIST.has(upper) || upper.startsWith("DYLD_")
+}
 
 /** Validate a credentialEnvVar value — mirrors CliConnectionSchema's format + denylist. */
 export function credentialEnvVarError(name: string): string | undefined {
@@ -21,8 +40,8 @@ export function credentialEnvVarError(name: string): string | undefined {
   if (!ENV_NAME_RE.test(name)) {
     return "Must be a valid env-var name (A-Z, 0-9, _; starts with A-Z or _)"
   }
-  if (RESERVED_SUFFIX_RE.test(name) || RESERVED_EXACT.has(name)) {
-    return "Reserved name — use GH_PAT, API_AUTH, or similar instead"
+  if (isDenylistedCredentialEnvVar(name)) {
+    return "Reserved name — JUNCTION_-prefixed and dynamic-linker/interpreter names (LD_PRELOAD, DYLD_*, NODE_OPTIONS) are not allowed"
   }
   return undefined
 }

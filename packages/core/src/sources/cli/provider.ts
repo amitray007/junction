@@ -165,8 +165,9 @@ async function prepareCredential(
     return ok({ envAllow, extraReadPaths: [], materializedDir: undefined })
   }
 
-  // credentialEnvVar is validated by CliConnectionSchema to not end in
-  // _TOKEN/_SECRET/_KEY so it passes validatePolicy's secret-denylist check.
+  // credentialEnvVar is validated by CliConnectionSchema to not be
+  // JUNCTION_-prefixed or an interpreter/linker name, so it passes
+  // validatePolicy's denylist check (inc 41 Fable ruling).
   if (secret.kind !== "file") {
     envAllow[connection.credentialEnvVar] = secret.value
     return ok({ envAllow, extraReadPaths: [], materializedDir: undefined })

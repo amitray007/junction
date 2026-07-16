@@ -8,7 +8,11 @@
 // SOURCE-AGNOSTIC: no vendor-specific fields.
 
 import { z } from "zod"
-import { hasUnsafePathChars } from "../sandbox/index.js"
+import {
+  hasUnsafePathChars,
+  isInterpreterDenylistedEnvKey,
+  isJunctionReservedEnvKey,
+} from "../sandbox/index.js"
 import { ExtractedCliSchemaSchema } from "./cli-schema.js"
 import { looksLikeCatastrophicRegex } from "./http-connection.js"
 
@@ -235,20 +239,40 @@ const CredentialEnvVarSchema = z
   .optional()
 
 /**
- * Mirrors validatePolicy's SECRET_DENYLIST_RE/EXACT so a descriptor that would
- * be rejected at call-time is rejected at add-time instead. Extending this
- * list? Add a name to the parity corpus in cli-connection.test.ts — additions
- * here are invisible to the lock-step test unless the corpus grows too.
+ * Mirrors validatePolicy's isDenylistedEnvKey so a descriptor that would be
+ * rejected at call-time is rejected at add-time instead (lock-step, inc 41
+ * Fable ruling — sourced from the SAME shared sandbox/env-denylist.js
+ * predicates validatePolicy consumes, not a re-implemented copy). Extending
+ * this list? Add a name to the parity corpus in cli-connection.test.ts —
+ * additions here are invisible to the lock-step test unless the corpus grows
+ * too.
  */
 function isDenylistedCredentialEnvVar(name: string): boolean {
-  if (/_TOKEN$|_SECRET$|_KEY$/.test(name)) return true
-  if (name === "JUNCTION_MASTER_KEY" || name === "JUNCTION_MASTER_KEY_FILE") return true
-  return false
+  return isJunctionReservedEnvKey(name) || isInterpreterDenylistedEnvKey(name)
 }
 
 const CREDENTIAL_ENV_VAR_DENYLIST_MESSAGE =
-  "credentialEnvVar must not end in _TOKEN/_SECRET/_KEY or be a JUNCTION_MASTER_KEY* name " +
-  "(validatePolicy denylist — use GH_PAT, API_AUTH, or similar instead)"
+  "credentialEnvVar must not start with JUNCTION_ (reserved namespace) and must not be a " +
+  "dynamic-linker/interpreter name (LD_PRELOAD, LD_LIBRARY_PATH, LD_AUDIT, DYLD_*, NODE_OPTIONS) " +
+  "— ordinary credential names like GH_TOKEN, AWS_SECRET_ACCESS_KEY, or NPM_TOKEN are fine"
+
+/**
+ * Install-flow disclosure copy (Fable Q3) — tells the user, in plain language,
+ * that the CLI child process will see the credential as a named env var
+ * inside the sandbox. Exported as a pure string template so a UI (the
+ * install/setup-destination flow) can render it verbatim; this module stays
+ * data-only (no rendering here).
+ */
+export function credentialEnvVarDisclosure(
+  platformDisplayName: string,
+  credentialEnvVar: string,
+  cliDisplayName: string,
+): string {
+  return (
+    `This CLI will receive your ${platformDisplayName} credential as $${credentialEnvVar} — ` +
+    `visible to ${cliDisplayName} and anything it runs inside the sandbox.`
+  )
+}
 
 /**
  * Sandboxed CLI source descriptor. Meaningful when Platform.kind === "cli".
@@ -258,10 +282,16 @@ const CREDENTIAL_ENV_VAR_DENYLIST_MESSAGE =
  * time. When credentialEnvVar is absent or no credential is bound, no secret is
  * added to the environment.
  *
- * credentialEnvVar MUST NOT end in _TOKEN, _SECRET, or _KEY because those
- * suffixes match validatePolicy's secret-denylist heuristic. Use e.g. GH_PAT,
- * API_AUTH, MYSERVICE_CRED. See docs/futures/revisit-when.md for the planned
- * guard-relaxation increment.
+ * credentialEnvVar MUST NOT start with JUNCTION_ (junction's reserved env-var
+ * namespace — JUNCTION_MASTER_KEY, JUNCTION_MASTER_KEY_FILE, JUNCTION_HOME,
+ * and any future JUNCTION_* var) and MUST NOT be a dynamic-linker/interpreter
+ * name (LD_PRELOAD, LD_LIBRARY_PATH, LD_AUDIT, DYLD_*, NODE_OPTIONS). Ordinary
+ * credential env-var names — including ones ending in _TOKEN/_SECRET/_KEY,
+ * such as GH_TOKEN (the only var `gh` reads) — are accepted: the injected
+ * value is always the user's own store-resolved credential, and sandbox env
+ * is an explicit allowlist that never inherits process.env, so a suffix
+ * heuristic added no real protection. (inc 41 Fable ruling; see
+ * docs/futures/revisit-when.md, resolved row.)
  */
 const DeclaredCliConnectionSchema = z
   .object({

@@ -495,7 +495,10 @@ describe("refuse-if-unavailable", () => {
 })
 
 describe("policy-invalid", () => {
-  it("rejects policy with *_KEY env var", async () => {
+  // inc 41 Fable ruling: the *_TOKEN/*_SECRET/*_KEY suffix heuristic was
+  // dropped (it blocked GH_TOKEN — the only var gh reads — while adding no
+  // real protection). These now ACCEPT.
+  it("ACCEPTS policy with *_KEY env var (suffix heuristic dropped, inc 41)", async () => {
     const sb = await createSandbox()
     expect(sb.isOk()).toBe(true)
     if (!sb.isOk()) return
@@ -511,9 +514,29 @@ describe("policy-invalid", () => {
         timeoutMs: 5_000,
       }
       const result = await sb.value.runCommand(["/bin/echo", "hi"], policy)
-      expect(result.isErr()).toBe(true)
-      if (!result.isErr()) return
-      expect(result.error.kind).toBe("policy-invalid")
+      expect(result.isOk()).toBe(true)
+    } finally {
+      await cleanup(ws)
+    }
+  })
+
+  it("ACCEPTS policy with *_TOKEN in env (suffix heuristic dropped, inc 41)", async () => {
+    const sb = await createSandbox()
+    expect(sb.isOk()).toBe(true)
+    if (!sb.isOk()) return
+
+    const ws = await makeWorkspace()
+    try {
+      const policy: SandboxPolicy = {
+        readPaths: [ws],
+        writePaths: [ws],
+        allowNet: [],
+        env: { GH_TOKEN: "ghp_xyz" },
+        cwd: ws,
+        timeoutMs: 5_000,
+      }
+      const result = await sb.value.runCommand(["/bin/echo", "hi"], policy)
+      expect(result.isOk()).toBe(true)
     } finally {
       await cleanup(ws)
     }
@@ -543,7 +566,7 @@ describe("policy-invalid", () => {
     }
   })
 
-  it("rejects policy with *_TOKEN in env", async () => {
+  it("rejects policy with any JUNCTION_-prefixed env key (reserved namespace, inc 41)", async () => {
     const sb = await createSandbox()
     expect(sb.isOk()).toBe(true)
     if (!sb.isOk()) return
@@ -554,7 +577,31 @@ describe("policy-invalid", () => {
         readPaths: [ws],
         writePaths: [ws],
         allowNet: [],
-        env: { GITHUB_TOKEN: "ghp_xyz" },
+        env: { JUNCTION_ANYTHING: "x" },
+        cwd: ws,
+        timeoutMs: 5_000,
+      }
+      const result = await sb.value.runCommand(["/bin/echo", "hi"], policy)
+      expect(result.isErr()).toBe(true)
+      if (!result.isErr()) return
+      expect(result.error.kind).toBe("policy-invalid")
+    } finally {
+      await cleanup(ws)
+    }
+  })
+
+  it("rejects policy with LD_PRELOAD in env (interpreter denylist, inc 41)", async () => {
+    const sb = await createSandbox()
+    expect(sb.isOk()).toBe(true)
+    if (!sb.isOk()) return
+
+    const ws = await makeWorkspace()
+    try {
+      const policy: SandboxPolicy = {
+        readPaths: [ws],
+        writePaths: [ws],
+        allowNet: [],
+        env: { LD_PRELOAD: "/tmp/evil.so" },
         cwd: ws,
         timeoutMs: 5_000,
       }

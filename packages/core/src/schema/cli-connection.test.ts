@@ -161,11 +161,13 @@ describe("CliArgSchema — pattern ReDoS guard (32.13 Slice D3)", () => {
 })
 
 describe("credentialEnvVar denylist — lock-step with validatePolicy", () => {
-  // Increment 32.7 item 3: the schema's inline denylist refine (this file's
-  // CliConnectionSchema) and the sandbox's SECRET_DENYLIST_RE/EXACT
-  // (sandbox.ts) are two separately-maintained copies of the same rule.
-  // Nothing pins them together — this test is that pin, via BEHAVIORAL
-  // parity over a corpus (neither list is exported; both stay private).
+  // Increment 32.7 item 3 (revised inc 41 — Fable ruling): the schema's
+  // inline denylist refine (this file's CliConnectionSchema) and the
+  // sandbox's isDenylistedEnvKey (sandbox.ts) are two separately-maintained
+  // call sites of the SAME shared predicate (sandbox/env-denylist.ts).
+  // Nothing pins them together except behavior — this test is that pin, via
+  // BEHAVIORAL parity over a corpus (neither call site is exported; both
+  // stay private).
   //
   // JUNCTION_HOME is stubbed to a tmpdir for this block (testing.md rule;
   // mirrors sandbox.test.ts): validatePolicy →
@@ -180,14 +182,32 @@ describe("credentialEnvVar denylist — lock-step with validatePolicy", () => {
   // which is charset-agnostic) — a non-uppercase corpus entry would fail the
   // parity assertion for the WRONG reason (charset, not the denylist rule
   // under test).
+  //
+  // inc 41: the _TOKEN/_SECRET/_KEY suffix heuristic was DROPPED (it blocked
+  // GH_TOKEN — the only var `gh` reads — for no real security gain) and
+  // REPLACED with a JUNCTION_ prefix reservation + the shared
+  // interpreter/linker denylist class (LD_PRELOAD, DYLD_*, NODE_OPTIONS, …).
   const REJECTED = [
-    "FOO_TOKEN",
-    "BAR_SECRET",
-    "BAZ_KEY",
     "JUNCTION_MASTER_KEY",
     "JUNCTION_MASTER_KEY_FILE",
+    "JUNCTION_HOME",
+    "JUNCTION_ANYTHING",
+    "LD_PRELOAD",
+    "DYLD_INSERT_LIBRARIES",
+    "NODE_OPTIONS",
   ]
-  const ACCEPTED = ["GH_PAT", "API_AUTH", "TOKEN_FOO", "MY_KEYS", "KEYRING_NAME"]
+  const ACCEPTED = [
+    "GH_PAT",
+    "API_AUTH",
+    "TOKEN_FOO",
+    "MY_KEYS",
+    "KEYRING_NAME",
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+    "AWS_SECRET_ACCESS_KEY",
+    "NPM_TOKEN",
+    "CLOUDFLARE_API_TOKEN",
+  ]
 
   let fakeJunctionHome: string
   let prevJunctionHome: string | undefined
@@ -349,12 +369,19 @@ describe("CliConnectionSchema — mode discriminant back-compat (inc 41.1)", () 
   })
 
   it("(e) REJECTS full-access with a denylisted credentialEnvVar", () => {
-    const r = CliConnectionSchema.safeParse(fullAccessConnection({ credentialEnvVar: "FOO_TOKEN" }))
+    const r = CliConnectionSchema.safeParse(
+      fullAccessConnection({ credentialEnvVar: "JUNCTION_MASTER_KEY" }),
+    )
     expect(r.success).toBe(false)
   })
 
   it("accepts full-access with a non-denylisted credentialEnvVar", () => {
     const r = CliConnectionSchema.safeParse(fullAccessConnection({ credentialEnvVar: "GH_PAT" }))
+    expect(r.success).toBe(true)
+  })
+
+  it("accepts full-access with GH_TOKEN (inc 41 — the only var gh reads)", () => {
+    const r = CliConnectionSchema.safeParse(fullAccessConnection({ credentialEnvVar: "GH_TOKEN" }))
     expect(r.success).toBe(true)
   })
 

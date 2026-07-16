@@ -9,11 +9,13 @@ import { fileURLToPath } from "node:url"
 import { describe, expect, it } from "vitest"
 import type { SandboxError } from "../../errors/index.js"
 import { err, okAsync, ResultAsync } from "../../result/index.js"
-import type {
-  Sandbox,
-  SandboxCapabilities,
-  SandboxPolicy,
-  SandboxResult,
+import {
+  isInterpreterDenylistedEnvKey,
+  isJunctionReservedEnvKey,
+  type Sandbox,
+  type SandboxCapabilities,
+  type SandboxPolicy,
+  type SandboxResult,
 } from "../../sandbox/index.js"
 import type { CliPolicy } from "../../schema/cli-connection.js"
 import {
@@ -263,7 +265,7 @@ describe("probeNode", () => {
 // ---------------------------------------------------------------------------
 
 describe("extractCliSchema — safe-probe policy (Fable Q3)", () => {
-  it("derives a probe policy with allowNet:[], writePaths:[], and no secret-shaped env key", async () => {
+  it("derives a probe policy with allowNet:[], writePaths:[], and no denylisted env key", async () => {
     const rootHelp = "Root.\n\nUSAGE\n  gh <command>\n\nFLAGS\n  --help   Show help\n"
     const sandbox = new FakeSandbox(new Map([["/usr/bin/gh --help", { help: rootHelp }]]))
 
@@ -278,8 +280,12 @@ describe("extractCliSchema — safe-probe policy (Fable Q3)", () => {
     for (const policy of sandbox.policiesSeen) {
       expect(policy.allowNet).toEqual([])
       expect(policy.writePaths).toEqual([])
+      // inc 41: the probe env must carry no JUNCTION_-reserved or
+      // interpreter/linker-denylisted key (the _TOKEN/_SECRET/_KEY suffix
+      // heuristic was dropped; this now checks the CURRENT shared predicate).
       for (const key of Object.keys(policy.env)) {
-        expect(/_TOKEN$|_SECRET$|_KEY$/.test(key)).toBe(false)
+        expect(isJunctionReservedEnvKey(key)).toBe(false)
+        expect(isInterpreterDenylistedEnvKey(key)).toBe(false)
       }
     }
   })

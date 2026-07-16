@@ -1,6 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Narrow barrel — public surface of the sandbox module.
 
+// The interpreter/linker + JUNCTION_ reserved-prefix env-key denylist (inc 41
+// Fable ruling) — shared by validatePolicy (below) AND
+// schema/cli-connection.ts's credentialEnvVar refine AND
+// schema/mcp-connection.ts's stdio env refine, so all three enforce the
+// identical rule from one definition.
+export {
+  INTERPRETER_ENV_DENYLIST,
+  isInterpreterDenylistedEnvKey,
+  isJunctionReservedEnvKey,
+} from "./env-denylist.js"
 // hasUnsafePathChars is reused by schema/cli-connection.ts (32.13 Slice D1) to
 // metachar-check argv[0]'s literal value at author-time — the SAME check
 // validatePolicy already applies to readPaths/writePaths/cwd, restoring

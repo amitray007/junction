@@ -951,10 +951,13 @@ describe("CliConnectionSchema refines", () => {
     ).toBe(true)
   })
 
-  it("credentialEnvVar rejects denylisted + master-key names", () => {
-    expect(parse([baseTool([])], "API_TOKEN").success).toBe(false)
+  it("credentialEnvVar rejects JUNCTION_-reserved + interpreter names; accepts ordinary names (inc 41)", () => {
     expect(parse([baseTool([])], "JUNCTION_MASTER_KEY_FILE").success).toBe(false)
+    expect(parse([baseTool([])], "LD_PRELOAD").success).toBe(false)
     expect(parse([baseTool([])], "GH_PAT").success).toBe(true)
+    // inc 41: the _TOKEN suffix heuristic was dropped — API_TOKEN and GH_TOKEN now pass.
+    expect(parse([baseTool([])], "API_TOKEN").success).toBe(true)
+    expect(parse([baseTool([])], "GH_TOKEN").success).toBe(true)
   })
 })
 
@@ -1001,21 +1004,23 @@ describe("credential-as-env sentinel", () => {
     expect(provider).toBeDefined()
   })
 
-  it("credentialEnvVar name must not end in _TOKEN/_SECRET/_KEY (schema guard)", () => {
+  it("credentialEnvVar name must not be JUNCTION_-reserved or an interpreter/linker name (schema guard, inc 41)", () => {
     // The schema refine blocks names that would trip validatePolicy's denylist.
-    for (const badName of ["MY_TOKEN", "API_SECRET", "GH_KEY", "JUNCTION_MASTER_KEY"]) {
+    for (const badName of ["JUNCTION_MASTER_KEY", "JUNCTION_HOME", "LD_PRELOAD", "NODE_OPTIONS"]) {
       const result = CliConnectionSchema.safeParse({
         tools: [echoTool()],
         credentialEnvVar: badName,
       })
       expect(result.success).toBe(false)
     }
-    // A safe name is accepted
-    const result = CliConnectionSchema.safeParse({
-      tools: [echoTool()],
-      credentialEnvVar: "GH_PAT",
-    })
-    expect(result.success).toBe(true)
+    // Ordinary credential names — including _TOKEN/_SECRET/_KEY suffixes — are accepted.
+    for (const okName of ["GH_PAT", "MY_TOKEN", "API_SECRET", "GH_KEY", "GH_TOKEN"]) {
+      const result = CliConnectionSchema.safeParse({
+        tools: [echoTool()],
+        credentialEnvVar: okName,
+      })
+      expect(result.success).toBe(true)
+    }
   })
 
   it("invalid-args error message does not contain the secret value", async () => {
@@ -1046,7 +1051,8 @@ describe("createCliProvider — refusal on no backend", () => {
     // Test the fail-closed guarantee: when validatePolicy rejects a policy, callTool
     // must return connect-failed — never a raw exec.
     // provider.ts adds cwd to readPaths automatically, so we trigger policy-invalid via
-    // an env key that matches validatePolicy's secret denylist (/_TOKEN$/ suffix).
+    // an env key that matches validatePolicy's denylist (inc 41: JUNCTION_ reserved
+    // prefix, since the _TOKEN suffix heuristic was dropped).
     const tool: CliTool = {
       name: "noop",
       argv: [{ kind: "literal", value: "/bin/echo" }],
@@ -1057,8 +1063,8 @@ describe("createCliProvider — refusal on no backend", () => {
         writePaths: [],
         allowNet: [],
         timeoutMs: 1000,
-        // MY_API_TOKEN ends in _TOKEN → validatePolicy's SECRET_DENYLIST_RE rejects it
-        envAllow: { MY_API_TOKEN: "forbidden" },
+        // JUNCTION_ prefix → validatePolicy's isDenylistedEnvKey rejects it
+        envAllow: { JUNCTION_ANYTHING: "forbidden" },
       },
     }
     const provider = createCliProvider({ tools: [tool] }, null)
@@ -1216,7 +1222,7 @@ describe("CliConnectionSchema — schema validation", () => {
     expect(result.success).toBe(false)
   })
 
-  it("rejects credentialEnvVar ending in _TOKEN", () => {
+  it("accepts credentialEnvVar ending in _TOKEN (inc 41 — suffix heuristic dropped)", () => {
     const result = CliConnectionSchema.safeParse({
       tools: [
         {
@@ -1233,12 +1239,12 @@ describe("CliConnectionSchema — schema validation", () => {
           },
         },
       ],
-      credentialEnvVar: "MY_TOKEN",
+      credentialEnvVar: "GH_TOKEN",
     })
-    expect(result.success).toBe(false)
+    expect(result.success).toBe(true)
   })
 
-  it("rejects credentialEnvVar ending in _SECRET", () => {
+  it("accepts credentialEnvVar ending in _SECRET (inc 41 — suffix heuristic dropped)", () => {
     const result = CliConnectionSchema.safeParse({
       tools: [
         {
@@ -1255,12 +1261,12 @@ describe("CliConnectionSchema — schema validation", () => {
           },
         },
       ],
-      credentialEnvVar: "API_SECRET",
+      credentialEnvVar: "AWS_SECRET_ACCESS_KEY",
     })
-    expect(result.success).toBe(false)
+    expect(result.success).toBe(true)
   })
 
-  it("rejects credentialEnvVar ending in _KEY", () => {
+  it("accepts credentialEnvVar ending in _KEY (inc 41 — suffix heuristic dropped)", () => {
     const result = CliConnectionSchema.safeParse({
       tools: [
         {
@@ -1278,6 +1284,50 @@ describe("CliConnectionSchema — schema validation", () => {
         },
       ],
       credentialEnvVar: "GH_KEY",
+    })
+    expect(result.success).toBe(true)
+  })
+
+  it("rejects credentialEnvVar with a JUNCTION_ prefix (reserved namespace, inc 41)", () => {
+    const result = CliConnectionSchema.safeParse({
+      tools: [
+        {
+          name: "t",
+          argv: [{ kind: "literal", value: "/bin/echo" }],
+          args: [],
+          policy: {
+            cwd: "/tmp",
+            readPaths: ["/tmp"],
+            writePaths: [],
+            allowNet: [],
+            timeoutMs: 5000,
+            envAllow: {},
+          },
+        },
+      ],
+      credentialEnvVar: "JUNCTION_HOME",
+    })
+    expect(result.success).toBe(false)
+  })
+
+  it("rejects credentialEnvVar that is an interpreter/linker name (inc 41)", () => {
+    const result = CliConnectionSchema.safeParse({
+      tools: [
+        {
+          name: "t",
+          argv: [{ kind: "literal", value: "/bin/echo" }],
+          args: [],
+          policy: {
+            cwd: "/tmp",
+            readPaths: ["/tmp"],
+            writePaths: [],
+            allowNet: [],
+            timeoutMs: 5000,
+            envAllow: {},
+          },
+        },
+      ],
+      credentialEnvVar: "LD_PRELOAD",
     })
     expect(result.success).toBe(false)
   })
