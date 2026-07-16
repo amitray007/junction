@@ -13,6 +13,7 @@
 // browser pass (real Chromium), not this suite.
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { useState } from "react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { PlatformMeta } from "../server/data.functions.js"
 
@@ -82,6 +83,9 @@ const mockUpdatePlatformFn = vi.fn()
 const mockDeletePlatformFn = vi.fn()
 const mockRefreshPlatformFn = vi.fn()
 const mockGetPlatformDetailFn = vi.fn()
+const mockDiscoverCliBinaryFn = vi.fn()
+const mockAddFullAccessCliPlatformFn = vi.fn()
+const mockSetFullAccessCliShortcutsFn = vi.fn()
 
 vi.mock("../server/platform-mutations.functions.js", () => ({
   addPlatformFn: (...args: unknown[]) => mockAddPlatformFn(...args),
@@ -89,6 +93,9 @@ vi.mock("../server/platform-mutations.functions.js", () => ({
   deletePlatformFn: (...args: unknown[]) => mockDeletePlatformFn(...args),
   refreshPlatformFn: (...args: unknown[]) => mockRefreshPlatformFn(...args),
   getPlatformDetailFn: (...args: unknown[]) => mockGetPlatformDetailFn(...args),
+  discoverCliBinaryFn: (...args: unknown[]) => mockDiscoverCliBinaryFn(...args),
+  addFullAccessCliPlatformFn: (...args: unknown[]) => mockAddFullAccessCliPlatformFn(...args),
+  setFullAccessCliShortcutsFn: (...args: unknown[]) => mockSetFullAccessCliShortcutsFn(...args),
 }))
 
 const { Route } = await import("./platforms.js")
@@ -105,6 +112,9 @@ afterEach(() => {
   mockDeletePlatformFn.mockReset()
   mockRefreshPlatformFn.mockReset()
   mockGetPlatformDetailFn.mockReset()
+  mockDiscoverCliBinaryFn.mockReset()
+  mockAddFullAccessCliPlatformFn.mockReset()
+  mockSetFullAccessCliShortcutsFn.mockReset()
   mockInvalidate.mockReset().mockResolvedValue(undefined)
 })
 
@@ -377,7 +387,7 @@ describe("PlatformsPage", () => {
     expect(kindTrigger.textContent).toMatch(/mcp/i)
   })
 
-  it("selecting CLI kind reveals the guided command-builder form", async () => {
+  it("selecting CLI kind reveals the Full CLI access discovery picker by default", async () => {
     mockUseLoaderData.mockReturnValue(emptyLoaderData)
     render(<PlatformsPage />)
     fireEvent.click(screen.getByRole("button", { name: /add platform/i }))
@@ -385,18 +395,54 @@ describe("PlatformsPage", () => {
 
     // Radix Select's onValueChange path isn't drivable via fireEvent in happy-dom
     // (no portal render) — assert the CLI form components render standalone
-    // instead, covering the same "guided form renders" contract the E2E pass
-    // exercises interactively.
+    // instead. Full CLI access is now the DEFAULT, so the discovery picker
+    // (binary-name input) renders — not the declared tool-card builder.
     const { CliConnectionForm } = await import("./-components/cli-form/cli-connection-form.js")
     const { emptyConnection } = await import("./-components/cli-form/types.js")
-    const { getAllByText, getByPlaceholderText } = render(
+    const { getByPlaceholderText, queryByText } = render(
       <CliConnectionForm connection={emptyConnection()} onChange={() => {}} />,
     )
-    // One tool card, auto-expanded (its name + summary both read "Tool 1"), with
-    // its command input and the Permissions panel disclosure visible.
+    expect(getByPlaceholderText("gh")).toBeInTheDocument()
+    expect(queryByText("Tool 1")).not.toBeInTheDocument()
+  })
+
+  // ── Full CLI access mode toggle (inc 41.4; default flipped to full-access) ──
+
+  it("the CLI form's Access toggle defaults to Full CLI access and offers Declared commands", async () => {
+    const { CliConnectionForm } = await import("./-components/cli-form/cli-connection-form.js")
+    const { emptyConnection } = await import("./-components/cli-form/types.js")
+    const { getByText, getByPlaceholderText, queryByText } = render(
+      <CliConnectionForm connection={emptyConnection()} onChange={() => {}} />,
+    )
+    // Both tabs present (exact Fable Q6 wording).
+    expect(getByText("Declared commands")).toBeInTheDocument()
+    expect(getByText("Full CLI access")).toBeInTheDocument()
+    // Full CLI access is now the default — the discovery picker renders, not the
+    // declared tool-card list.
+    expect(getByPlaceholderText("gh")).toBeInTheDocument()
+    expect(queryByText("Tool 1")).not.toBeInTheDocument()
+  })
+
+  it("switching the Access toggle to Declared commands swaps in the tool-card builder", async () => {
+    const { CliConnectionForm } = await import("./-components/cli-form/cli-connection-form.js")
+    const { emptyConnection } = await import("./-components/cli-form/types.js")
+
+    function Wrapper() {
+      const [connection, setConnection] = useState(emptyConnection())
+      return <CliConnectionForm connection={connection} onChange={setConnection} />
+    }
+    const { getAllByText, getByPlaceholderText, queryByPlaceholderText } = render(<Wrapper />)
+
+    // Starts on Full CLI access (the discovery input is present).
+    expect(getByPlaceholderText("gh")).toBeInTheDocument()
+
+    // Radix Tabs' trigger switches on mousedown (automatic activation), not click.
+    fireEvent.mouseDown(getAllByText("Declared commands")[0] as HTMLElement)
+
+    // The discovery input is gone; the declared tool-card builder renders instead.
+    expect(queryByPlaceholderText("gh")).not.toBeInTheDocument()
     expect(getAllByText("Tool 1").length).toBeGreaterThan(0)
     expect(getByPlaceholderText("/opt/homebrew/bin/rg --json $pattern")).toBeInTheDocument()
-    expect(getAllByText("Permissions").length).toBeGreaterThan(0)
   })
 
   // ── Auth-scheme note (wave 3, slice I) ──────────────────────────────────────

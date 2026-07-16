@@ -15,11 +15,13 @@ import { useTableView } from "../lib/use-table-view.js"
 import { getCredentials, getPlatforms, type PlatformMeta } from "../server/data.functions.js"
 import {
   type AddPlatformInput,
+  addFullAccessCliPlatformFn,
   addPlatformFn,
   deletePlatformFn,
   getPlatformDetailFn,
   type PlatformDetail,
   refreshPlatformFn,
+  setFullAccessCliShortcutsFn,
   updatePlatformFn,
 } from "../server/platform-mutations.functions.js"
 import { MonoChip, MonoCode } from "../ui/code.js"
@@ -58,7 +60,12 @@ import {
   TableSkeleton,
 } from "../ui/index.js"
 import { CliConnectionForm } from "./-components/cli-form/cli-connection-form.js"
-import { connectionFromDetail, toConnectionInput } from "./-components/cli-form/convert.js"
+import {
+  connectionFromDetail,
+  toConnectionInput,
+  toToolInput,
+} from "./-components/cli-form/convert.js"
+import { ShortcutsPanel } from "./-components/cli-form/shortcuts-panel.js"
 import type { CliConnectionFormState } from "./-components/cli-form/types.js"
 import { emptyConnection } from "./-components/cli-form/types.js"
 import { httpConnectionFromDetail, toHttpConnectionInput } from "./-components/http-form/convert.js"
@@ -329,6 +336,92 @@ function PlatformDialog({ mode, platform, open, onOpenChange, onSuccess }: Platf
     setState((prev) => ({ ...prev, [key]: value }))
   }
 
+  /**
+   * Full CLI access install (inc 41.4): resolve the chosen binary path (manual
+   * override or the discovery picker's selection), then call
+   * addFullAccessCliPlatformFn directly — discover→extract→upsert happens
+   * server-side. Shows the "Mapped N commands…" summary inline rather than
+   * closing the dialog immediately, so the user sees what got learned.
+   */
+  async function handleFullAccessSubmit() {
+    const fa = state.cli.fullAccess
+    const binaryPath = fa.manualPath ? fa.manualPathValue.trim() : fa.selectedRealpath
+    if (!binaryPath) {
+      toast.error("Choose a discovered binary or enter a path manually")
+      return
+    }
+
+    // Map the network mode to the allowNet payload the install expects:
+    //  denied → [] (no network); full → ["*"] (any host/port); allowlist → the
+    //  host:port rows (translated to enforceable port scopes server-side).
+    const allowNet =
+      fa.netMode === "full"
+        ? ["*"]
+        : fa.netMode === "allowlist"
+          ? fa.allowNet.map((h) => h.value.trim()).filter(Boolean)
+          : []
+
+    setSubmitting(true)
+    try {
+      const result = await addFullAccessCliPlatformFn({
+        data: {
+          id: state.id.trim(),
+          displayName: state.displayName.trim(),
+          binaryPath,
+          ...(fa.credentialEnvVar.trim() ? { credentialEnvVar: fa.credentialEnvVar.trim() } : {}),
+          allowNet,
+        },
+      })
+      if (!result.ok) {
+        toast.error(`Failed to install: ${result.error}`)
+        setSubmitting(false)
+        return
+      }
+      const summary = `Mapped ${result.nodeCount} command node(s)${result.truncated ? " (partial — some branches deferred)" : ""}`
+      set("cli", { ...state.cli, fullAccess: { ...fa, installSummary: summary } })
+      toast.success(`Platform "${result.platform.displayName}" installed — ${summary}`)
+      setSubmitting(false)
+      handleOpenChange(false)
+      onSuccess()
+    } catch {
+      toast.error("Failed to install Full CLI access platform")
+      setSubmitting(false)
+    }
+  }
+
+  /**
+   * Edit a Full CLI access platform's shortcuts (inc 41.5): a SEPARATE submit
+   * path from both handleFullAccessSubmit (add-only, installs a new binary)
+   * and the declared-mode handleSubmit path below — there's no
+   * CliConnectionInput (tools/credentialEnvVar/binary) to resubmit here, only
+   * the shortcuts[] replacement. setFullAccessCliShortcutsFn re-fetches the
+   * existing platform server-side and replaces shortcuts wholesale.
+   */
+  async function handleShortcutsSubmit() {
+    setSubmitting(true)
+    try {
+      const result = await setFullAccessCliShortcutsFn({
+        data: {
+          id: state.id.trim(),
+          shortcuts: state.cli.tools.map(toToolInput),
+        },
+      })
+      if (!result.ok) {
+        toast.error(`Failed to update shortcuts: ${result.error}`)
+        if (result.fieldErrors) setErrors((prev) => ({ ...prev, ...result.fieldErrors }))
+        setSubmitting(false)
+        return
+      }
+      toast.success("Shortcuts updated")
+      setSubmitting(false)
+      handleOpenChange(false)
+      onSuccess()
+    } catch {
+      toast.error("Failed to update shortcuts")
+      setSubmitting(false)
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     const newErrors: Record<string, string> = {}
@@ -352,6 +445,23 @@ function PlatformDialog({ mode, platform, open, onOpenChange, onSuccess }: Platf
     }
     if (Object.keys(newErrors).length > 0) {
       setErrors(newErrors)
+      return
+    }
+
+    // Editing an EXISTING Full CLI access platform only ever touches
+    // shortcuts[] — check this before the add-only full-access branch below
+    // (mode==="edit" here always means "this cli platform's mode is already
+    // full-access", since Add is the only place the toggle is user-driven).
+    if (mode === "edit" && state.kind === "cli" && state.cli.mode === "full-access") {
+      await handleShortcutsSubmit()
+      return
+    }
+
+    // Full CLI access takes a SEPARATE submit path — no CliConnectionInput
+    // (tools/args) shape to assemble; discovery already resolved a realpath
+    // client-side and the install fn does discover→extract→upsert server-side.
+    if (state.kind === "cli" && state.cli.mode === "full-access") {
+      await handleFullAccessSubmit()
       return
     }
 
@@ -450,7 +560,9 @@ function PlatformDialog({ mode, platform, open, onOpenChange, onSuccess }: Platf
 
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
-      <DialogContent>
+      {/* no-scrollbar: keep the modal bounded + scrollable but hide the
+          scrollbar chrome (the form still scrolls when tall). */}
+      <DialogContent className="no-scrollbar">
         <DialogHeader>
           <DialogTitle>{mode === "add" ? "Add Platform" : "Edit Platform"}</DialogTitle>
           <DialogDescription>
@@ -458,6 +570,11 @@ function PlatformDialog({ mode, platform, open, onOpenChange, onSuccess }: Platf
               <>
                 Add a source platform. Junction discovers its tools and namespaces them under the
                 platform's ID.
+              </>
+            ) : state.kind === "cli" && state.cli.mode === "full-access" ? (
+              <>
+                Edit <MonoCode>{platform?.id}</MonoCode>'s shortcuts. Agents can already run any
+                command via execute/help — shortcuts are optional saved commands on top.
               </>
             ) : (
               <>
@@ -678,8 +795,18 @@ function PlatformDialog({ mode, platform, open, onOpenChange, onSuccess }: Platf
               </Field>
             )}
 
-            {state.kind === "cli" && (
-              <CliConnectionForm connection={state.cli} onChange={(cli) => set("cli", cli)} />
+            {state.kind === "cli" && mode === "edit" && state.cli.mode === "full-access" ? (
+              // Editing an existing Full CLI access platform only exposes the
+              // shortcuts editing surface (inc 41.5) — the binary/policy/schema
+              // aren't editable here (out of scope; see connectionFromDetail).
+              <ShortcutsPanel
+                shortcuts={state.cli.tools}
+                onChange={(tools) => set("cli", { ...state.cli, tools })}
+              />
+            ) : (
+              state.kind === "cli" && (
+                <CliConnectionForm connection={state.cli} onChange={(cli) => set("cli", cli)} />
+              )
             )}
 
             {state.kind === "http" && (

@@ -5,7 +5,7 @@
 // logic here — domain assembly (spec fetch/parse, tool extraction, auth resolution,
 // sandbox probing, spec caching) lives in @junction/platform-orchestration.
 
-import type { Platform } from "@junction/core"
+import type { Platform, Repositories } from "@junction/core"
 import type {
   AddCliPlatformResult,
   AddGraphQlPlatformResult,
@@ -135,6 +135,23 @@ function formatOrchestrationError(
       return `cannot refresh a spec that wasn't added from a URL; "${id}" uses spec.from="${e.specFrom}"`
     case "verify-op-invalid":
       return `--verify-op is invalid: ${e.message}`
+    case "full-access-not-yet-supported":
+      // A full-access CLI descriptor was submitted via the declared-add path.
+      // Full CLI access is installed via `--full-access` (discovery flow, inc 41.4),
+      // not via `--descriptor`. Until 41.4 lands this is a hard, honest refusal.
+      return "full-access CLI platforms are not added via --descriptor; use `--full-access` (binary discovery flow)"
+    case "invalid-binary-name":
+      return `"${e.name}" is not a valid bare command name (no slashes/metacharacters allowed)`
+    case "binary-not-found":
+      return `could not find "${e.name}" on PATH or in common install dirs; pass --path to point at it manually`
+    case "binary-path-invalid":
+      return `--path "${e.path}" is invalid: ${e.reason}`
+    case "sandbox-unavailable":
+      return "no sandbox backend available on this host (Seatbelt on macOS, bubblewrap on Linux) — Full CLI access install requires one to extract the command schema"
+    case "extract-refused":
+      return `sandbox refused to run "--help" against the pinned binary: ${String(e.cause)}`
+    case "not-full-access":
+      return `shortcuts can only be set on a Full CLI access platform (this platform is kind "${e.platformKind}")`
   }
 }
 
@@ -240,6 +257,35 @@ const addCommand = defineCommand({
         "[cli/http] JSON descriptor string (CliConnectionSchema for --kind cli, " +
         "HttpConnectionSchema for --kind http). Use --descriptor '$(cat file.json)'",
     },
+    // Full CLI access flags (inc 41.4 — discovery/install path, --kind cli only)
+    "full-access": {
+      type: "boolean",
+      description:
+        "[cli] Install Full CLI access: discover the binary by --name, extract its " +
+        "--help tree (sandboxed), and let agents drive it via execute/help. " +
+        "Mutually exclusive with --descriptor.",
+      default: false,
+    },
+    name: {
+      type: "string",
+      description: "[cli/--full-access] Bare binary name to discover (e.g. gh)",
+    },
+    net: {
+      type: "string",
+      description:
+        "[cli/--full-access] host:port to allow the binary to reach (repeatable: " +
+        "--net api.github.com:443). Default: no network.",
+    },
+    "credential-env": {
+      type: "string",
+      description:
+        "[cli/--full-access] Env-var name the bound credential's secret is injected under.",
+    },
+    "binary-path": {
+      type: "string",
+      description:
+        "[cli/--full-access] Absolute path override — skip discovery and pin this binary directly.",
+    },
     json: JSON_ARG,
   },
   async run({ args, rawArgs }) {
@@ -265,6 +311,10 @@ const addCommand = defineCommand({
     }
 
     if (kind === "cli") {
+      if (args["full-access"]) {
+        await addFullAccessCliPlatformCommand(args, rawArgs, json)
+        return
+      }
       await addCliPlatform(args, json)
       return
     }
@@ -497,6 +547,113 @@ async function addCliPlatform(args: Record<string, unknown>, json: boolean): Pro
 }
 
 // ---------------------------------------------------------------------------
+// addFullAccessCliPlatformCommand — handle --kind cli --full-access add path
+// (inc 41.4): discover the binary (or use --binary-path), extract its --help
+// tree sandboxed, and upsert a Full CLI access platform.
+// ---------------------------------------------------------------------------
+
+interface FullAccessJsonReport {
+  ok: true
+  candidates: Array<{ path: string; realpath: string; version?: string; source: string }>
+  chosen: string
+  nodeCount: number
+  truncated: boolean
+  platform: unknown
+}
+
+async function addFullAccessCliPlatformCommand(
+  args: Record<string, unknown>,
+  rawArgs: string[],
+  json: boolean,
+): Promise<void> {
+  const name = args.name as string | undefined
+  const binaryPathOverride = args["binary-path"] as string | undefined
+
+  if (!name && !binaryPathOverride) {
+    reportError(
+      "--name (binary to discover) or --binary-path (manual override) is required for --full-access",
+      json,
+    )
+    return
+  }
+
+  const { discoverBinary } = await import("@junction/core")
+  const netHosts = collectRepeatableFlag(rawArgs, "--net")
+  const credentialEnvVar = args["credential-env"] as string | undefined
+
+  let chosenRealpath: string
+  let candidateReport: FullAccessJsonReport["candidates"] = []
+
+  if (binaryPathOverride) {
+    chosenRealpath = binaryPathOverride
+  } else {
+    if (!json) consola.info(`Discovering "${name}" …`)
+    const discoverResult = await discoverBinary(name as string)
+    if (discoverResult.isErr()) {
+      reportError(`"${name}" is not a valid bare command name`, json)
+      return
+    }
+    const candidates = discoverResult.value
+    candidateReport = candidates.map((c) => ({
+      path: c.path,
+      realpath: c.realpath,
+      ...(c.version !== undefined ? { version: c.version } : {}),
+      source: c.source,
+    }))
+    const recommended = candidates[0]
+    if (!recommended) {
+      reportError(
+        `could not find "${name}" on PATH or in common install dirs; pass --binary-path to point at it manually`,
+        json,
+      )
+      return
+    }
+    chosenRealpath = recommended.realpath
+    if (!json) consola.info(`Found "${name}" at ${chosenRealpath} — extracting --help tree …`)
+  }
+
+  const { addFullAccessCliPlatform } = await import("@junction/platform-orchestration")
+  const result = await addFullAccessCliPlatform({
+    id: args.id as string,
+    displayName: args["display-name"] as string,
+    binaryPath: chosenRealpath,
+    ...(credentialEnvVar ? { credentialEnvVar } : {}),
+    ...(netHosts.length > 0 ? { allowNet: netHosts } : {}),
+  })
+  if (result.isErr()) {
+    reportError(formatOrchestrationError(result.error, "add"), json)
+    return
+  }
+
+  const { platform, nodeCount, truncated } = result.value
+  const persisted = await upsertPlatform(platform, json)
+  if (!persisted) return
+
+  if (json) {
+    // Report the ACTUALLY-pinned path: addFullAccessCliPlatform realpath-resolves
+    // the binary before storing it (inc 41 review #1), so a manual --binary-path
+    // override or a symlink is reported as its resolved realpath, matching what
+    // execute will run — not the raw input string.
+    const pinnedPath =
+      persisted.cli?.mode === "full-access" ? persisted.cli.binaryPath : chosenRealpath
+    const report: FullAccessJsonReport = {
+      ok: true,
+      candidates: candidateReport,
+      chosen: pinnedPath,
+      nodeCount,
+      truncated,
+      platform: persisted,
+    }
+    process.stdout.write(`${JSON.stringify(report)}\n`)
+  } else {
+    consola.success(
+      `Platform "${persisted.displayName}" (${persisted.id}) defined — kind: cli, Full CLI access, ` +
+        `${nodeCount} command node(s) mapped${truncated ? " (partial — probe ceiling reached; remaining nodes explore lazily)" : ""}`,
+    )
+  }
+}
+
+// ---------------------------------------------------------------------------
 // addHttpPlatform — handle --kind http add path
 // ---------------------------------------------------------------------------
 
@@ -712,6 +869,181 @@ const removeCommand = defineCommand({
   },
 })
 
+// ---------------------------------------------------------------------------
+// platform cli-shortcut add/remove — headless editing surface for a Full CLI
+// access platform's shortcuts[] (increment 41.5). Mirrors the web ShortcutsPanel:
+// same CliTool descriptor shape, same wholesale-replace semantics as upsert.
+// ---------------------------------------------------------------------------
+
+/** Load a platform, refuse cleanly if it doesn't exist or isn't kind:"cli". */
+async function loadCliPlatform(
+  id: string,
+  json: boolean,
+): Promise<{ repos: Repositories; platform: Platform } | null> {
+  const repos = await openDb(json)
+  if (!repos) return null
+  const result = await repos.platforms.get(id)
+  if (result.isErr()) {
+    if (result.error.kind === "not-found") {
+      reportError(`platform "${id}" not found`, json)
+    } else {
+      reportDbError(result.error, json)
+    }
+    return null
+  }
+  const platform = result.value
+  if (platform.kind !== "cli" || !platform.cli) {
+    reportError(`platform "${id}" is kind "${platform.kind}", not "cli"`, json)
+    return null
+  }
+  return { repos, platform }
+}
+
+/** Parse a --descriptor JSON string into a raw object, reporting a clean error on bad JSON. */
+function parseDescriptorArg(descriptorStr: string | undefined, json: boolean): unknown | null {
+  if (!descriptorStr) {
+    reportError(
+      "--descriptor is required. Pass a single CliTool JSON object:\n" +
+        '  --descriptor \'{"name":"pr_list","argv":[...],"policy":{...}}\'\n' +
+        '  --descriptor "$(cat shortcut.json)"',
+      json,
+    )
+    return null
+  }
+  try {
+    return JSON.parse(descriptorStr) as unknown
+  } catch (cause) {
+    reportError(`--descriptor is not valid JSON: ${String(cause)}`, json)
+    return null
+  }
+}
+
+/** Read the platform's current shortcuts[] (empty if none yet, e.g. declared mode has no slot at all). */
+function currentShortcuts(platform: Platform): unknown[] {
+  const cli = platform.cli as { mode?: string; shortcuts?: unknown[] } | undefined
+  return cli?.mode === "full-access" ? (cli.shortcuts ?? []) : []
+}
+
+async function runShortcutSet(
+  args: Record<string, unknown>,
+  nextShortcuts: unknown[],
+): Promise<void> {
+  const json = (args.json as boolean | undefined) ?? false
+  const platformId = args.platform as string | undefined
+  if (!platformId) {
+    reportError("--platform is required", json)
+    return
+  }
+
+  const loaded = await loadCliPlatform(platformId, json)
+  if (!loaded) return
+  const { repos, platform } = loaded
+
+  const { setFullAccessCliShortcuts } = await import("@junction/platform-orchestration")
+  // nextShortcuts is unvalidated JSON at this point (parsed from --descriptor,
+  // same trust level as the `add --descriptor` path's `unknown`) —
+  // setFullAccessCliShortcuts re-validates every element through
+  // CliConnectionSchema.safeParse (via a throwaway single-tool parse) before
+  // it can reach storage; this cast just satisfies the parameter type ahead
+  // of that authoritative check, it grants no extra trust.
+  const updateResult = setFullAccessCliShortcuts({
+    platform,
+    shortcuts: nextShortcuts as Parameters<typeof setFullAccessCliShortcuts>[0]["shortcuts"],
+  })
+  if (updateResult.isErr()) {
+    reportError(formatOrchestrationError(updateResult.error, "add"), json)
+    return
+  }
+
+  const upsertResult = await repos.platforms.upsert(updateResult.value)
+  if (upsertResult.isErr()) {
+    reportDbError(upsertResult.error, json)
+    return
+  }
+
+  const persisted = upsertResult.value
+  const shortcutCount =
+    persisted.cli && "mode" in persisted.cli && persisted.cli.mode === "full-access"
+      ? (persisted.cli.shortcuts?.length ?? 0)
+      : 0
+
+  if (json) {
+    process.stdout.write(`${JSON.stringify({ ok: true, platform: persisted, shortcutCount })}\n`)
+  } else {
+    consola.success(
+      `Platform "${persisted.displayName}" (${persisted.id}) — ${shortcutCount} shortcut(s)`,
+    )
+  }
+}
+
+const cliShortcutAddCommand = defineCommand({
+  meta: {
+    name: "add",
+    description: "Add (or replace, by name) a named shortcut on a Full CLI access platform.",
+  },
+  args: {
+    platform: { type: "string", description: "Platform ID", required: true },
+    descriptor: {
+      type: "string",
+      description: "CliTool JSON descriptor for the shortcut (name/argv/args/policy).",
+    },
+    json: JSON_ARG,
+  },
+  async run({ args }) {
+    const json = args.json ?? false
+    const descriptor = parseDescriptorArg(args.descriptor, json)
+    if (descriptor === null) return
+    const name = (descriptor as { name?: unknown }).name
+    if (typeof name !== "string" || !name) {
+      reportError('--descriptor must have a string "name" field', json)
+      return
+    }
+
+    const loaded = await loadCliPlatform(args.platform, json)
+    if (!loaded) return
+    const existing = currentShortcuts(loaded.platform)
+    // Add-or-replace-by-name: a shortcut with the same name is replaced in
+    // place (matches the web form's edit-in-place UX), not duplicated.
+    const next = [...existing.filter((s) => (s as { name?: unknown }).name !== name), descriptor]
+    await runShortcutSet(args as Record<string, unknown>, next)
+  },
+})
+
+const cliShortcutRemoveCommand = defineCommand({
+  meta: {
+    name: "remove",
+    description: "Remove a named shortcut from a Full CLI access platform.",
+  },
+  args: {
+    platform: { type: "string", description: "Platform ID", required: true },
+    name: { type: "string", description: "Shortcut name to remove", required: true },
+    json: JSON_ARG,
+  },
+  async run({ args }) {
+    const json = args.json ?? false
+    const loaded = await loadCliPlatform(args.platform, json)
+    if (!loaded) return
+    const existing = currentShortcuts(loaded.platform)
+    const next = existing.filter((s) => (s as { name?: unknown }).name !== args.name)
+    if (next.length === existing.length) {
+      reportError(`no shortcut named "${args.name}" on platform "${args.platform}"`, json)
+      return
+    }
+    await runShortcutSet(args as Record<string, unknown>, next)
+  },
+})
+
+const cliShortcutCommand = defineCommand({
+  meta: {
+    name: "cli-shortcut",
+    description: "Manage named shortcuts (saved commands) on a Full CLI access platform.",
+  },
+  subCommands: {
+    add: cliShortcutAddCommand,
+    remove: cliShortcutRemoveCommand,
+  },
+})
+
 export const platformCommand = defineCommand({
   meta: {
     name: "platform",
@@ -722,5 +1054,6 @@ export const platformCommand = defineCommand({
     list: listCommand,
     remove: removeCommand,
     refresh: refreshCommand,
+    "cli-shortcut": cliShortcutCommand,
   },
 })

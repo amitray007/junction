@@ -137,6 +137,102 @@ describe("repositories", () => {
       // FK RESTRICT on platform_id → in-use (not generic constraint-violation)
       if (result.isErr()) expect(result.error.kind).toBe("in-use")
     })
+
+    it("round-trips a full-access CLI connection unchanged (inc 41.1)", async () => {
+      // No migration needed: the extracted schema lives INSIDE the CliConnection
+      // JSON, which already serializes into the existing platforms.cli TEXT
+      // column via JSON.stringify/CliConnectionSchema.parse (toPlatformRow/
+      // rowToPlatform) — docs/methods/41.1-cli-full-access-core.md §3.
+      const platform: Platform = {
+        id: newPlatformId(),
+        kind: "cli" as const,
+        displayName: "GitHub CLI",
+        cli: {
+          mode: "full-access" as const,
+          binaryPath: "/opt/homebrew/bin/gh",
+          credentialEnvVar: "GH_PAT",
+          policy: {
+            cwd: "/work",
+            readPaths: ["/work"],
+            writePaths: [],
+            allowNet: [],
+            timeoutMs: 5000,
+          },
+          schema: {
+            binaryName: "gh",
+            extractedAt: "2026-07-16T00:00:00.000Z",
+            truncated: true,
+            root: {
+              path: [],
+              parsed: true,
+              explored: true,
+              description: "GitHub CLI",
+              flags: [],
+              positionals: [],
+              subcommands: [
+                {
+                  path: ["pr"],
+                  parsed: true,
+                  explored: true,
+                  flags: [],
+                  positionals: [],
+                  subcommands: [
+                    {
+                      path: ["pr", "create"],
+                      parsed: true,
+                      explored: true,
+                      flags: [{ name: "--title", alias: "-t", takesValue: true }],
+                      positionals: [],
+                      subcommands: [],
+                    },
+                    {
+                      path: ["pr", "list"],
+                      parsed: false,
+                      explored: false,
+                      rawHelp: "usage: gh pr list [flags]",
+                      flags: [],
+                      positionals: [],
+                      subcommands: [],
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+          shortcuts: [
+            {
+              name: "prs",
+              argv: [
+                { kind: "literal", value: "/opt/homebrew/bin/gh" },
+                { kind: "literal", value: "pr" },
+                { kind: "literal", value: "list" },
+              ],
+              args: [],
+              policy: {
+                cwd: "/work",
+                readPaths: ["/work"],
+                writePaths: [],
+                allowNet: [],
+                timeoutMs: 5000,
+              },
+            },
+          ],
+        },
+      }
+
+      const created = await repos.platforms.create(platform)
+      expect(created.isOk()).toBe(true)
+
+      const fetched = await repos.platforms.get(platform.id)
+      expect(fetched.isOk()).toBe(true)
+      // Compare against the VALIDATED (post-parse) shape, not the raw input
+      // literal — CliPolicySchema.envAllow defaults to {} on parse, so the
+      // create()-returned value (also parsed) is the correct round-trip target.
+      if (fetched.isOk() && created.isOk()) {
+        expect(fetched.value.cli).toEqual(created.value.cli)
+        expect(fetched.value.cli?.mode).toBe("full-access")
+      }
+    })
   })
 
   describe("credentials — multi-account wedge", () => {

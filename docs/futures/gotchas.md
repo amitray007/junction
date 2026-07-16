@@ -431,3 +431,27 @@ LEAD review, confirmed in the real-httpbin QA.)
 **Cause:** `pnpm -r build` builds workspace packages concurrently; under resource contention (e.g. a QA server or another verify running in parallel) web's vite/rolldown can start before `@junction/core`'s `dist` is fully written, so the `@junction/core` import doesn't resolve. A transient ordering race, not a code error.
 
 **Fix / discipline:** if `pnpm verify` fails ONLY with a `Rolldown failed to resolve "@junction/core"` (or similar cross-package resolve) error, it's this race — re-run after `pnpm --filter @junction/core build` (prebuild core) and with no competing background process (kill any QA server first). Distinct from the test-timeout parallel-flake above. (raised inc 40)
+
+## Seatbelt/bubblewrap can't scope CLI egress by HOST — only by port / all-or-nothing (inc 41)
+
+**Symptom:** a Full CLI access `execute` call fails `policy-invalid`: "seatbelt cannot scope egress to host \"api.github.com\" — use a Deno-tier backend for per-host allowlisting, or pass a port-only entry (\"*:443\")". The stored install policy had `allowNet: ["api.github.com:443"]`.
+
+**Cause:** macOS **Seatbelt** can only allowlist network egress by **port**, not host; Linux **bubblewrap** uses `--unshare-all` (all-or-nothing net namespace) — neither can do per-host filtering for `runCommand`. Only the **Deno tier** (script execution, not command execution) does true per-host allowlists. So a CLI `execute` (which uses `runCommand`) can be `[]` (offline), `*:443` (port-scoped), or (Linux) all-net — but NOT host-scoped. Verified live: `*:443` runs `gh --version`/`gh repo list` fine; `api.github.com:443` is rejected.
+
+**Fix / discipline:** the Full CLI access install must translate host intent → an enforceable port scope (`*:PORT`) for the sandbox and DISCLOSE that egress is port- not host-restricted on this OS (inc 41, Fable net-policy ruling). True host-scoping is a forward path — revisit when a Deno/microVM per-host backend backs `execute` (see revisit-when.md). Do NOT store a host:port allowNet on a CLI platform expecting enforcement; it will hard-fail at call time. (raised inc 41)
+
+## Seatbelt port-scoped egress can't resolve hostnames without a unix-socket DNS allow (inc 41)
+
+**Symptom:** a Full CLI access `execute` that hits the network (e.g. `gh repo list`) fails with "error connecting to api.github.com / check your internet connection" even though `allowNet` was set (`*:443`) and the token is valid. `gh --version` (offline) works; the credential IS reaching the tool.
+
+**Cause:** macOS DNS resolution goes through **mDNSResponder over a UNIX domain socket**, NOT an IP connection to `*:53`. Junction's seatbelt profile emitted only `(allow network* (remote ip "*:443"))`, so the resolver couldn't reach mDNSResponder → every hostname egress failed at name lookup, before the 443 connection was ever attempted. Verified: `(allow network*)` (unfiltered) works; `(allow network* (remote ip "*:443"))` alone gives http=000; adding `(allow network-outbound (remote unix-socket))` gives http=200. Adding `*:53` to the IP allowlist does NOT help (it's not an IP/53 connection).
+
+**Fix (seatbelt.ts, inc 41):** when `allowNet` is non-empty, emit `(allow network-outbound (remote unix-socket))` alongside the port-scoped IP allows. Verified it does NOT widen egress — with the unix-socket allow but no `(remote ip …)` allow, api.github.com is still unreachable (DNS may resolve but the TCP connect is still denied). Regression test in sandbox.test.ts ("port-scoped allowNet permits a DNS-resolved egress"). NOTE: pre-existing — inc 21's declared-CLI tier only ever tested `allowNet:[]` (denial), never a real egress, so this was latent until Full CLI access first needed authenticated network. (raised inc 41)
+
+## Seatbelt `(remote unix-socket)` unfiltered = host-wide IPC egress — scope to the resolver socket (inc 41)
+
+**Symptom / risk:** allowing DNS resolution under Seatbelt by adding `(allow network-outbound (remote unix-socket))` (to reach mDNSResponder — see the DNS gotcha above) SILENTLY grants connect access to EVERY AF_UNIX socket on the host, not just DNS. Verified: a sandboxed process could connect to the root-owned `/var/run/com.docker.vmnetd.sock`, and would reach `docker.sock`/`SSH_AUTH_SOCK`/DB sockets at directly-resolvable paths — a sandbox-escape / priv-esc class, triggered the moment a full-access CLI opts into any network.
+
+**Cause:** `(remote unix-socket)` with no path filter is an unscoped grant; the profile's `file-read*` deny-default does NOT gate a directly-resolvable socket path.
+
+**Fix (inc 41, sandbox-security review C1):** scope the allow to the resolver socket by path-literal — `(allow network-outbound (remote unix-socket (path-literal "/private/var/run/mDNSResponder")))` (use the `/private` realpath form; `/var/run/mDNSResponder` symlinks there). Verified: DNS still resolves (curl→200), docker vmnetd → EPERM. Regression test in sandbox.test.ts ("network egress does NOT open host-wide unix-socket IPC (C1 regression)"). LESSON: an unfiltered `(remote …)` in an SBPL allow is almost always too broad — always scope network-outbound allows by ip/port or path-literal. (raised inc 41, CRITICAL caught by adversarial review before ship)

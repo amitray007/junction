@@ -7,8 +7,19 @@
 
 export type { AuthInput } from "./auth.js"
 export { buildPlatformAuth, deriveAuthFromSpec } from "./auth.js"
-export type { AddCliPlatformInput, AddCliPlatformResult } from "./cli.js"
-export { addCliPlatform } from "./cli.js"
+export type {
+  AddCliPlatformInput,
+  AddCliPlatformResult,
+  AddFullAccessCliPlatformInput,
+  AddFullAccessCliPlatformResult,
+  SetFullAccessCliShortcutsInput,
+} from "./cli.js"
+export {
+  addCliPlatform,
+  addFullAccessCliPlatform,
+  hostIntentToEnforceablePortScope,
+  setFullAccessCliShortcuts,
+} from "./cli.js"
 export type { PlatformOrchestrationError } from "./errors.js"
 export type { AddGraphQlPlatformInput, AddGraphQlPlatformResult } from "./graphql.js"
 export { addGraphQlPlatform } from "./graphql.js"

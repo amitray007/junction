@@ -7,21 +7,25 @@
 // here; the error-message mapping for their failure kinds is covered by the switch
 // itself (pure) and the CLI's own orchestration-package tests cover the fetch paths.
 
-import { mkdtemp, rm } from "node:fs/promises"
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
   createRepositories,
   getDatabase,
   getPaths,
+  isFullAccess,
   newCredentialId,
   newPlatformId,
 } from "@junction/core"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import {
+  discoverCliBinary,
+  mutateAddFullAccessCliPlatform,
   mutateAddPlatform,
   mutateDeletePlatform,
   mutateRefreshPlatform,
+  mutateSetFullAccessCliShortcuts,
   mutateUpdatePlatform,
 } from "./platform-mutations.server.js"
 
@@ -192,7 +196,9 @@ describe("platform-mutations.server", () => {
       const stored = await repos.platforms.get("local-cli")
       expect(stored.isOk()).toBe(true)
       if (stored.isOk()) {
-        const argv = stored.value.cli?.tools[0]?.argv
+        const cli = stored.value.cli
+        // This path adds a declared CLI platform, so narrow off the full-access branch.
+        const argv = cli && !isFullAccess(cli) ? cli.tools[0]?.argv : undefined
         expect(argv).toEqual([
           { kind: "literal", value: "/bin/echo" },
           { kind: "literal", value: "hello" },
@@ -510,6 +516,260 @@ describe("platform-mutations.server", () => {
     it("returns not-found for a nonexistent platform id", async () => {
       const result = await mutateRefreshPlatform("nonexistent")
       expect(result.ok).toBe(false)
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // Full CLI access — discovery + install (inc 41.4)
+  // ---------------------------------------------------------------------------
+
+  describe("discoverCliBinary", () => {
+    it("rejects an invalid bare-command name", async () => {
+      const result = await discoverCliBinary("../etc/passwd")
+      expect(result.ok).toBe(false)
+      if (result.ok) throw new Error("expected error")
+      expect(result.error).toMatch(/not a valid bare command name/)
+    })
+
+    it("returns an empty candidate list (not an error) for a name found nowhere", async () => {
+      const prevPath = process.env.PATH
+      process.env.PATH = tmpHome // a dir with no matching binary
+      try {
+        const result = await discoverCliBinary("definitely-not-a-real-binary-xyz")
+        expect(result.ok).toBe(true)
+        if (result.ok) expect(result.candidates).toEqual([])
+      } finally {
+        process.env.PATH = prevPath
+      }
+    })
+
+    it("finds a fake executable placed on PATH and reports it as metadata only", async () => {
+      const binDir = await mkdtemp(join(tmpdir(), "junction-plat-fa-bin-"))
+      const binPath = join(binDir, "faketool")
+      await writeFile(binPath, "#!/bin/sh\necho hi\n")
+      await chmod(binPath, 0o755)
+      const prevPath = process.env.PATH
+      process.env.PATH = binDir
+      try {
+        const result = await discoverCliBinary("faketool")
+        expect(result.ok).toBe(true)
+        if (result.ok) {
+          expect(result.candidates).toHaveLength(1)
+          expect(result.candidates[0]?.source).toBe("path")
+          // Metadata-only shape: exactly {path, realpath, source, version?} — no
+          // extra fields (e.g. no raw fs stat data) leak through.
+          expect(Object.keys(result.candidates[0] ?? {}).sort()).toEqual(
+            ["path", "realpath", "source"].sort(),
+          )
+        }
+      } finally {
+        process.env.PATH = prevPath
+        await rm(binDir, { recursive: true, force: true })
+      }
+    })
+  })
+
+  describe("mutateAddFullAccessCliPlatform", () => {
+    let binDir: string
+    let binPath: string
+
+    beforeEach(async () => {
+      binDir = await mkdtemp(join(tmpdir(), "junction-plat-fa-install-"))
+      binPath = join(binDir, "faketool")
+      await writeFile(binPath, "#!/bin/sh\necho 'usage: faketool [flags]'\n")
+      await chmod(binPath, 0o755)
+    })
+
+    afterEach(async () => {
+      await rm(binDir, { recursive: true, force: true })
+    })
+
+    it.skipIf(process.platform !== "darwin")(
+      "installs a full-access platform and persists it (metadata-only result)",
+      async () => {
+        const result = await mutateAddFullAccessCliPlatform({
+          id: "fa-install",
+          displayName: "FA Install",
+          binaryPath: binPath,
+        })
+        expect(result.ok).toBe(true)
+        if (!result.ok) throw new Error("expected ok")
+        expect(result.platform.kind).toBe("cli")
+        expect(result.nodeCount).toBeGreaterThanOrEqual(1)
+        // Metadata-only: no binaryPath/schema/policy leaked in the result shape.
+        expect(Object.keys(result.platform).sort()).toEqual(["displayName", "id", "kind"].sort())
+
+        const repos = await makeRepos(tmpHome)
+        const stored = await repos.platforms.get("fa-install")
+        expect(stored.isOk()).toBe(true)
+        if (stored.isOk()) {
+          const cli = stored.value.cli
+          expect(cli && isFullAccess(cli)).toBe(true)
+        }
+      },
+    )
+
+    it("a nonexistent binary path never throws — returns an ok/err Result", async () => {
+      const result = await mutateAddFullAccessCliPlatform({
+        id: "fa-missing",
+        displayName: "FA Missing",
+        binaryPath: "/definitely/not/a/real/path/xyz",
+      })
+      expect(typeof result.ok).toBe("boolean")
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // mutateSetFullAccessCliShortcuts — the shortcuts editing surface (inc 41.5)
+  // ---------------------------------------------------------------------------
+
+  describe("mutateSetFullAccessCliShortcuts", () => {
+    /** Seed a Full CLI access platform directly — shortcuts editing needs no sandbox. Returns the generated id. */
+    async function seedFullAccessPlatform(): Promise<string> {
+      const repos = await makeRepos(tmpHome)
+      const id = newPlatformId()
+      const result = await repos.platforms.upsert({
+        id,
+        kind: "cli",
+        displayName: "GitHub CLI",
+        cli: {
+          mode: "full-access",
+          binaryPath: "/usr/bin/gh",
+          policy: {
+            cwd: "/tmp",
+            readPaths: ["/tmp"],
+            writePaths: [],
+            allowNet: [],
+            timeoutMs: 5_000,
+            envAllow: {},
+          },
+          schema: {
+            binaryName: "gh",
+            extractedAt: new Date().toISOString(),
+            root: {
+              path: [],
+              parsed: true,
+              explored: true,
+              flags: [],
+              positionals: [],
+              subcommands: [],
+            },
+            truncated: false,
+          },
+        },
+      })
+      if (result.isErr()) throw new Error("failed to seed full-access platform")
+      return String(id)
+    }
+
+    function shortcutInput(name: string) {
+      return {
+        name,
+        commandLine: "/usr/bin/gh pr list",
+        args: [],
+        policy: {
+          cwd: "/tmp",
+          readPaths: ["/tmp"],
+          writePaths: [],
+          network: { mode: "denied" as const },
+          timeoutMs: 5_000,
+          envAllow: {},
+        },
+      }
+    }
+
+    it("adds a shortcut to a platform with none yet", async () => {
+      const id = await seedFullAccessPlatform()
+      const result = await mutateSetFullAccessCliShortcuts({
+        id,
+        shortcuts: [shortcutInput("pr_list")],
+      })
+      expect(result.ok).toBe(true)
+      if (!result.ok) return
+      expect(result.platform.id).toBe(id)
+
+      const repos = await makeRepos(tmpHome)
+      const stored = await repos.platforms.get(id)
+      expect(stored.isOk()).toBe(true)
+      if (!stored.isOk() || !stored.value.cli || !isFullAccess(stored.value.cli)) return
+      expect(stored.value.cli.shortcuts?.map((s) => s.name)).toEqual(["pr_list"])
+    })
+
+    it("removing all shortcuts drops the field (round-trips back to none)", async () => {
+      const id = await seedFullAccessPlatform()
+      await mutateSetFullAccessCliShortcuts({
+        id,
+        shortcuts: [shortcutInput("pr_list")],
+      })
+      const result = await mutateSetFullAccessCliShortcuts({ id, shortcuts: [] })
+      expect(result.ok).toBe(true)
+
+      const repos = await makeRepos(tmpHome)
+      const stored = await repos.platforms.get(id)
+      if (!stored.isOk() || !stored.value.cli || !isFullAccess(stored.value.cli)) return
+      expect(stored.value.cli.shortcuts ?? []).toEqual([])
+    })
+
+    it("refuses on a declared-mode cli platform (not-full-access)", async () => {
+      const repos = await makeRepos(tmpHome)
+      const declaredId = newPlatformId()
+      await repos.platforms.upsert({
+        id: declaredId,
+        kind: "cli",
+        displayName: "Declared Tool",
+        cli: {
+          mode: "declared" as const,
+          tools: [
+            {
+              name: "echo",
+              argv: [
+                { kind: "literal", value: "/bin/echo" },
+                { kind: "arg", name: "msg" },
+              ],
+              args: [{ name: "msg", type: "string" as const, required: false }],
+              policy: {
+                cwd: "/tmp",
+                readPaths: ["/tmp"],
+                writePaths: [],
+                allowNet: [],
+                timeoutMs: 5_000,
+                envAllow: {},
+              },
+            },
+          ],
+        },
+      })
+
+      const result = await mutateSetFullAccessCliShortcuts({
+        id: String(declaredId),
+        shortcuts: [shortcutInput("pr_list")],
+      })
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.error).toMatch(/Full CLI access/)
+    })
+
+    it("a nonexistent platform id reports a clean not-found error", async () => {
+      const result = await mutateSetFullAccessCliShortcuts({
+        id: "does-not-exist",
+        shortcuts: [],
+      })
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.error).toMatch(/not found/i)
+    })
+
+    it("an invalid shortcut descriptor (missing cwd) reports fieldErrors, not a throw", async () => {
+      const id = await seedFullAccessPlatform()
+      const bad = shortcutInput("bad_shortcut")
+      bad.policy.cwd = ""
+      const result = await mutateSetFullAccessCliShortcuts({
+        id,
+        shortcuts: [bad],
+      })
+      expect(result.ok).toBe(false)
+      if (result.ok) return
+      expect(result.fieldErrors).toBeDefined()
     })
   })
 })

@@ -4,13 +4,27 @@
 import path from "node:path"
 import { err, ok, ResultAsync } from "neverthrow"
 import type { SandboxError } from "../errors/index.js"
+import { isInterpreterDenylistedEnvKey, isJunctionReservedEnvKey } from "./env-denylist.js"
 import { grantedPathExposesSecrets, hasUnsafePathChars, isPathWithin } from "./policy.js"
 
-// Secret key patterns that must never appear in sandbox env.
-// Extending this list? Add a name to the parity corpus in schema/cli-connection.test.ts —
-// additions here are invisible to the lock-step test unless the corpus grows with them.
-const SECRET_DENYLIST_EXACT = new Set(["JUNCTION_MASTER_KEY", "JUNCTION_MASTER_KEY_FILE"])
-const SECRET_DENYLIST_RE = [/_TOKEN$/, /_SECRET$/, /_KEY$/]
+/**
+ * True if `key` must never appear in sandbox env — the JUNCTION_ reserved
+ * namespace (JUNCTION_MASTER_KEY, JUNCTION_MASTER_KEY_FILE, JUNCTION_HOME,
+ * any future JUNCTION_*) OR the dynamic-linker/interpreter denylist class
+ * (LD_PRELOAD, NODE_OPTIONS, DYLD_*, …). Deliberately does NOT reject
+ * _TOKEN/_SECRET/_KEY-suffixed names (inc 41 Fable ruling) — the injected
+ * value is always the user's own store-resolved credential, and sandbox env
+ * is an explicit allowlist that never inherits process.env, so a suffix
+ * heuristic added no real protection while blocking legitimate names real
+ * CLIs require (e.g. gh's GH_TOKEN).
+ *
+ * Extending this list? Add a name to the parity corpus in
+ * schema/cli-connection.test.ts — additions here are invisible to the
+ * lock-step test unless the corpus grows with them.
+ */
+function isDenylistedEnvKey(key: string): boolean {
+  return isJunctionReservedEnvKey(key) || isInterpreterDenylistedEnvKey(key)
+}
 
 export interface SandboxPolicy {
   /** Absolute paths the child may read. */
@@ -105,13 +119,8 @@ function validateAllowNetEntry(entry: string): string | null {
 /** Validate a SandboxPolicy; returns a policy-invalid SandboxError or null. */
 export async function validatePolicy(policy: SandboxPolicy): Promise<SandboxError | null> {
   for (const key of Object.keys(policy.env)) {
-    if (SECRET_DENYLIST_EXACT.has(key)) {
+    if (isDenylistedEnvKey(key)) {
       return { kind: "policy-invalid", reason: `env key "${key}" matches secret denylist` }
-    }
-    for (const re of SECRET_DENYLIST_RE) {
-      if (re.test(key)) {
-        return { kind: "policy-invalid", reason: `env key "${key}" matches secret denylist` }
-      }
     }
   }
 

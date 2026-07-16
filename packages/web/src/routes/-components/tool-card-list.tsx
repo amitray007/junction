@@ -32,6 +32,13 @@ export interface ToolCardListProps<T extends KeyedItem> {
   readonly makeTool: () => T
   readonly addLabel: string
   readonly renderCard: (props: ToolCardComponentProps<T>) => ReactNode
+  /**
+   * Fewest items the list may shrink to before Remove disables (default 1 —
+   * every existing caller requires at least one tool). Full CLI access
+   * shortcuts (inc 41.5) pass 0: a platform with zero shortcuts is valid
+   * (just execute+help), so the last shortcut must stay removable.
+   */
+  readonly minItems?: number
 }
 
 export function ToolCardList<T extends KeyedItem>({
@@ -41,6 +48,7 @@ export function ToolCardList<T extends KeyedItem>({
   makeTool,
   addLabel,
   renderCard,
+  minItems = 1,
 }: ToolCardListProps<T>) {
   const accordion = useAccordionExpansion(tools[0]?.key)
 
@@ -59,8 +67,8 @@ export function ToolCardList<T extends KeyedItem>({
           expanded: accordion.expandedKey === tool.key,
           onToggle: () => accordion.toggle(tool.key),
           onChange: (next) => onChange(updateKeyed(tools, tool.key, next)),
-          onRemove: () => onChange(removeKeyed(tools, tool.key)),
-          canRemove: tools.length > 1,
+          onRemove: () => onChange(removeKeyed(tools, tool.key, minItems)),
+          canRemove: tools.length > minItems,
           errors: toolErrors?.[i],
         }),
       )}

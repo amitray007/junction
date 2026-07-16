@@ -7,7 +7,7 @@
 
 import { execFile } from "node:child_process"
 import { existsSync } from "node:fs"
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises"
 import { createServer } from "node:http"
 import type { AddressInfo } from "node:net"
 import { tmpdir } from "node:os"
@@ -1414,5 +1414,415 @@ describe("platform add — graphql (unit)", () => {
     if (!got.isOk()) return
     expect(got.value.kind).toBe("graphql")
     expect(got.value.graphql?.schemaSdl).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// platform add --kind cli --full-access — binary discovery + install (inc 41.4)
+// ---------------------------------------------------------------------------
+
+describe("platform add --kind cli --full-access (unit)", () => {
+  let home: string
+  let prevHome: string | undefined
+  let prevExitCode: number | undefined
+  let binDir: string
+  let binPath: string
+
+  beforeEach(async () => {
+    prevHome = process.env.JUNCTION_HOME
+    prevExitCode = process.exitCode
+    home = await mkdtemp(join(tmpdir(), "junction-cli-fa-test-"))
+    process.env.JUNCTION_HOME = home
+    process.exitCode = 0
+
+    binDir = await mkdtemp(join(tmpdir(), "junction-cli-fa-bin-"))
+    binPath = join(binDir, "faketool")
+    await writeFile(
+      binPath,
+      "#!/bin/sh\necho 'usage: faketool [flags]'\necho ''\necho 'FLAGS'\necho '  --dry-run   no-op'\n",
+    )
+    await chmod(binPath, 0o755)
+  })
+
+  afterEach(async () => {
+    if (prevHome === undefined) delete process.env.JUNCTION_HOME
+    else process.env.JUNCTION_HOME = prevHome
+    process.exitCode = prevExitCode
+    await rm(home, { recursive: true, force: true })
+    await rm(binDir, { recursive: true, force: true })
+  })
+
+  it("missing both --name and --binary-path → reportError, exitCode 1", async () => {
+    const add = getPlatformSubCmd("add")
+    const out = await captureStdout(
+      () =>
+        add.run?.(
+          ctx({
+            id: "fa-missing",
+            kind: "cli",
+            "display-name": "Missing",
+            "full-access": true,
+            json: true,
+          }),
+        ) ?? Promise.resolve(),
+    )
+    expect(process.exitCode).toBe(1)
+    const parsed = JSON.parse(out.trim()) as { ok: boolean; error?: string }
+    expect(parsed.ok).toBe(false)
+    expect(parsed.error).toMatch(/--name.*--binary-path/)
+  })
+
+  it.skipIf(process.platform !== "darwin")(
+    "--binary-path <override> --json → discovers nothing, extracts via the pinned path, upserts",
+    async () => {
+      const add = getPlatformSubCmd("add")
+      const out = await captureStdout(
+        () =>
+          add.run?.(
+            ctx({
+              id: "fa-tool",
+              kind: "cli",
+              "display-name": "Fake Tool",
+              "full-access": true,
+              "binary-path": binPath,
+              json: true,
+            }),
+          ) ?? Promise.resolve(),
+      )
+      expect(process.exitCode).toBe(0)
+      const parsed = JSON.parse(out.trim()) as {
+        ok: boolean
+        candidates: unknown[]
+        chosen: string
+        nodeCount: number
+        truncated: boolean
+        platform: { id: string; kind: string; cli?: { mode: string; binaryPath: string } }
+      }
+      // The install realpath-resolves the override before pinning (inc 41 review
+      // #1), so the stored binaryPath is realpath(binPath) — on macOS that differs
+      // from binPath under /var/folders (→ /private/var/folders).
+      const binRealpath = await realpath(binPath)
+      expect(parsed.ok).toBe(true)
+      expect(parsed.candidates).toEqual([])
+      expect(parsed.chosen).toBe(binRealpath)
+      expect(parsed.nodeCount).toBeGreaterThanOrEqual(1)
+      expect(parsed.platform.kind).toBe("cli")
+      expect(parsed.platform.cli?.mode).toBe("full-access")
+      expect(parsed.platform.cli?.binaryPath).toBe(binRealpath)
+
+      const dbResult = await getDatabase(getPaths())
+      if (dbResult.isErr()) return
+      const repos = createRepositories(dbResult.value)
+      const got = await repos.platforms.get("fa-tool")
+      expect(got.isOk()).toBe(true)
+      if (!got.isOk()) return
+      expect(got.value.cli?.mode).toBe("full-access")
+    },
+  )
+
+  it.skipIf(process.platform !== "darwin")(
+    "--name <not found> → binary-not-found error (searches an empty temp PATH)",
+    async () => {
+      const add = getPlatformSubCmd("add")
+      const prevPath = process.env.PATH
+      process.env.PATH = binDir.replace("faketool", "") // a dir with no matching binary name
+      try {
+        const out = await captureStdout(
+          () =>
+            add.run?.(
+              ctx({
+                id: "fa-notfound",
+                kind: "cli",
+                "display-name": "Not Found",
+                "full-access": true,
+                name: "definitely-not-a-real-binary-xyz",
+                json: true,
+              }),
+            ) ?? Promise.resolve(),
+        )
+        expect(process.exitCode).toBe(1)
+        const parsed = JSON.parse(out.trim()) as { ok: boolean; error?: string }
+        expect(parsed.ok).toBe(false)
+        expect(parsed.error).toMatch(/could not find/)
+      } finally {
+        process.env.PATH = prevPath
+      }
+    },
+  )
+
+  it("the existing --descriptor declared path still works unchanged", async () => {
+    const add = getPlatformSubCmd("add")
+    const out = await captureStdout(
+      () =>
+        add.run?.(
+          ctx({
+            id: "declared-still-works",
+            kind: "cli",
+            "display-name": "Declared Tool",
+            descriptor: JSON.stringify({
+              tools: [
+                {
+                  name: "echo",
+                  argv: [
+                    { kind: "literal", value: "/bin/echo" },
+                    { kind: "arg", name: "msg" },
+                  ],
+                  args: [{ name: "msg", type: "string" }],
+                  policy: {
+                    cwd: binDir,
+                    readPaths: [binDir],
+                    writePaths: [binDir],
+                    allowNet: [],
+                    timeoutMs: 5_000,
+                  },
+                },
+              ],
+            }),
+            json: true,
+          }),
+        ) ?? Promise.resolve(),
+    )
+    expect(process.exitCode).toBe(0)
+    const parsed = JSON.parse(out.trim()) as { ok: boolean; toolCount?: number }
+    expect(parsed.ok).toBe(true)
+    expect(parsed.toolCount).toBe(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// platform cli-shortcut add/remove — headless shortcuts editing (inc 41.5)
+// ---------------------------------------------------------------------------
+
+describe("platform cli-shortcut add/remove (unit)", () => {
+  let home: string
+  let prevHome: string | undefined
+  let prevExitCode: number | undefined
+
+  beforeEach(async () => {
+    prevHome = process.env.JUNCTION_HOME
+    prevExitCode = process.exitCode
+    home = await mkdtemp(join(tmpdir(), "junction-cli-shortcut-test-"))
+    process.env.JUNCTION_HOME = home
+    process.exitCode = 0
+  })
+
+  afterEach(async () => {
+    if (prevHome === undefined) delete process.env.JUNCTION_HOME
+    else process.env.JUNCTION_HOME = prevHome
+    process.exitCode = prevExitCode
+    await rm(home, { recursive: true, force: true })
+  })
+
+  /** Seed a Full CLI access platform directly (no sandbox extraction needed for shortcuts editing). */
+  async function seedFullAccessPlatform(id: string) {
+    const dbResult = await getDatabase(getPaths())
+    if (dbResult.isErr()) throw new Error("failed to open test db")
+    const repos = createRepositories(dbResult.value)
+    const upsertResult = await repos.platforms.upsert({
+      id,
+      kind: "cli",
+      displayName: "GitHub CLI",
+      cli: {
+        mode: "full-access",
+        binaryPath: "/usr/bin/gh",
+        policy: {
+          cwd: "/tmp",
+          readPaths: ["/tmp"],
+          writePaths: [],
+          allowNet: [],
+          timeoutMs: 5_000,
+          envAllow: {},
+        },
+        schema: {
+          binaryName: "gh",
+          extractedAt: new Date().toISOString(),
+          root: {
+            path: [],
+            parsed: true,
+            explored: true,
+            flags: [],
+            positionals: [],
+            subcommands: [],
+          },
+          truncated: false,
+        },
+      },
+    })
+    if (upsertResult.isErr()) throw new Error("failed to seed platform")
+    return repos
+  }
+
+  function shortcutDescriptor(name: string) {
+    return JSON.stringify({
+      name,
+      argv: [
+        { kind: "literal", value: "/usr/bin/gh" },
+        { kind: "literal", value: "pr" },
+        { kind: "literal", value: "list" },
+      ],
+      args: [],
+      policy: {
+        cwd: "/tmp",
+        readPaths: ["/tmp"],
+        writePaths: [],
+        allowNet: [],
+        timeoutMs: 5_000,
+      },
+    })
+  }
+
+  it("add: makes the provider expose the shortcut as a named tool", async () => {
+    await seedFullAccessPlatform("gh")
+    const add = getPlatformSubCmd("cli-shortcut")
+
+    const out = await captureStdout(
+      () =>
+        (
+          add as unknown as {
+            subCommands: Record<string, { run?: (c: unknown) => Promise<void> }>
+          }
+        ).subCommands.add?.run?.(
+          ctx({ platform: "gh", descriptor: shortcutDescriptor("pr_list"), json: true }),
+        ) ?? Promise.resolve(),
+    )
+    expect(process.exitCode).toBe(0)
+    const parsed = JSON.parse(out.trim()) as {
+      ok: boolean
+      shortcutCount: number
+      platform: { cli?: { shortcuts?: Array<{ name: string }> } }
+    }
+    expect(parsed.ok).toBe(true)
+    expect(parsed.shortcutCount).toBe(1)
+    expect(parsed.platform.cli?.shortcuts?.map((s) => s.name)).toEqual(["pr_list"])
+
+    // Confirm the provider now lists it alongside execute/help (41.3 integration).
+    const { createCliProvider } = await import("@junction/core")
+    const dbResult = await getDatabase(getPaths())
+    if (dbResult.isErr()) throw new Error("db")
+    const repos = createRepositories(dbResult.value)
+    const got = await repos.platforms.get("gh")
+    if (!got.isOk() || !got.value.cli) throw new Error("platform missing")
+    const provider = createCliProvider(got.value.cli, null)
+    const listResult = await provider.listTools()
+    if (!listResult.isOk()) throw new Error("listTools failed")
+    expect(listResult.value.map((t) => t.name)).toEqual(["execute", "help", "pr_list"])
+  })
+
+  it("remove: drops the shortcut so the provider no longer lists it", async () => {
+    await seedFullAccessPlatform("gh")
+    const cliShortcut = getPlatformSubCmd("cli-shortcut") as unknown as {
+      subCommands: Record<string, { run?: (c: unknown) => Promise<void> }>
+    }
+
+    await captureStdout(
+      () =>
+        cliShortcut.subCommands.add?.run?.(
+          ctx({ platform: "gh", descriptor: shortcutDescriptor("pr_list"), json: true }),
+        ) ?? Promise.resolve(),
+    )
+
+    const out = await captureStdout(
+      () =>
+        cliShortcut.subCommands.remove?.run?.(
+          ctx({ platform: "gh", name: "pr_list", json: true }),
+        ) ?? Promise.resolve(),
+    )
+    expect(process.exitCode).toBe(0)
+    const parsed = JSON.parse(out.trim()) as { ok: boolean; shortcutCount: number }
+    expect(parsed.ok).toBe(true)
+    expect(parsed.shortcutCount).toBe(0)
+
+    const { createCliProvider } = await import("@junction/core")
+    const dbResult = await getDatabase(getPaths())
+    if (dbResult.isErr()) throw new Error("db")
+    const repos = createRepositories(dbResult.value)
+    const got = await repos.platforms.get("gh")
+    if (!got.isOk() || !got.value.cli) throw new Error("platform missing")
+    const provider = createCliProvider(got.value.cli, null)
+    const listResult = await provider.listTools()
+    if (!listResult.isOk()) throw new Error("listTools failed")
+    expect(listResult.value.map((t) => t.name)).toEqual(["execute", "help"])
+  })
+
+  it("remove: a nonexistent shortcut name reports a clean error, exitCode 1", async () => {
+    await seedFullAccessPlatform("gh")
+    const cliShortcut = getPlatformSubCmd("cli-shortcut") as unknown as {
+      subCommands: Record<string, { run?: (c: unknown) => Promise<void> }>
+    }
+    const out = await captureStdout(
+      () =>
+        cliShortcut.subCommands.remove?.run?.(
+          ctx({ platform: "gh", name: "does_not_exist", json: true }),
+        ) ?? Promise.resolve(),
+    )
+    expect(process.exitCode).toBe(1)
+    const parsed = JSON.parse(out.trim()) as { ok: boolean; error?: string }
+    expect(parsed.ok).toBe(false)
+    expect(parsed.error).toMatch(/no shortcut named/)
+  })
+
+  it("add: refuses on a declared-mode cli platform (not-full-access)", async () => {
+    const dbResult = await getDatabase(getPaths())
+    if (dbResult.isErr()) throw new Error("db")
+    const repos = createRepositories(dbResult.value)
+    await repos.platforms.upsert({
+      id: "declared-tool",
+      kind: "cli",
+      displayName: "Declared Tool",
+      cli: {
+        tools: [
+          {
+            name: "echo",
+            argv: [
+              { kind: "literal", value: "/bin/echo" },
+              { kind: "arg", name: "msg" },
+            ],
+            args: [{ name: "msg", type: "string" }],
+            policy: {
+              cwd: "/tmp",
+              readPaths: ["/tmp"],
+              writePaths: [],
+              allowNet: [],
+              timeoutMs: 5_000,
+              envAllow: {},
+            },
+          },
+        ],
+      },
+    })
+
+    const cliShortcut = getPlatformSubCmd("cli-shortcut") as unknown as {
+      subCommands: Record<string, { run?: (c: unknown) => Promise<void> }>
+    }
+    const out = await captureStdout(
+      () =>
+        cliShortcut.subCommands.add?.run?.(
+          ctx({
+            platform: "declared-tool",
+            descriptor: shortcutDescriptor("pr_list"),
+            json: true,
+          }),
+        ) ?? Promise.resolve(),
+    )
+    expect(process.exitCode).toBe(1)
+    const parsed = JSON.parse(out.trim()) as { ok: boolean; error?: string }
+    expect(parsed.ok).toBe(false)
+    expect(parsed.error).toMatch(/Full CLI access/)
+  })
+
+  it("add: platform not found reports a clean error", async () => {
+    const cliShortcut = getPlatformSubCmd("cli-shortcut") as unknown as {
+      subCommands: Record<string, { run?: (c: unknown) => Promise<void> }>
+    }
+    const out = await captureStdout(
+      () =>
+        cliShortcut.subCommands.add?.run?.(
+          ctx({ platform: "nope", descriptor: shortcutDescriptor("pr_list"), json: true }),
+        ) ?? Promise.resolve(),
+    )
+    expect(process.exitCode).toBe(1)
+    const parsed = JSON.parse(out.trim()) as { ok: boolean; error?: string }
+    expect(parsed.ok).toBe(false)
+    expect(parsed.error).toMatch(/not found/)
   })
 })

@@ -14,7 +14,7 @@ import type {
   CliToolArgFormState,
   CliToolFormState,
 } from "./types.js"
-import { emptyEnvAllowRow, emptyPathRow, nextKey } from "./types.js"
+import { emptyEnvAllowRow, emptyFullAccessState, emptyPathRow, nextKey } from "./types.js"
 
 // ---------------------------------------------------------------------------
 // Form state → wire input (submit path)
@@ -87,6 +87,7 @@ export function toToolInput(tool: CliToolFormState): CliToolInput {
   }
 }
 
+/** Declared-mode submission shape — meaningless when state.mode === "full-access" (submit takes a separate path). */
 export function toConnectionInput(state: CliConnectionFormState) {
   return {
     tools: state.tools.map(toToolInput),
@@ -149,12 +150,23 @@ export function toolFromDetail(tool: CliToolDetailLike): CliToolFormState {
 }
 
 export function connectionFromDetail(detail: {
+  cliMode?: "declared" | "full-access"
   cliTools?: CliToolDetailLike[]
   cliCredentialEnvVar?: string
 }): CliConnectionFormState {
   return {
+    // `cliMode` (inc 41.5) tells the edit dialog which persistence path a save
+    // takes: "declared" tools submit through updatePlatformFn as before;
+    // "full-access" means `cliTools` here are actually `shortcuts[]` (the
+    // platform detail DTO projects both through the same field — see
+    // platform-mutations.server.ts's toPlatformDetail) and a save goes through
+    // setFullAccessCliShortcutsFn instead. Editing a Full CLI access
+    // platform's binary/policy stays out of scope — only shortcuts are
+    // editable; the fullAccess sub-state (binary discovery) only matters on ADD.
+    mode: detail.cliMode ?? "declared",
     tools: (detail.cliTools ?? []).map(toolFromDetail),
     credentialEnvVar: detail.cliCredentialEnvVar ?? "",
+    fullAccess: emptyFullAccessState(),
   }
 }
 

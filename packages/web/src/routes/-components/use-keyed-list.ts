@@ -51,8 +51,12 @@ export function updateKeyed<T extends KeyedItem>(items: T[], key: string, next: 
   return items.map((item) => (item.key === key ? next : item))
 }
 
-/** Remove the item matching `key` — a no-op when only one item remains (floor of one). */
-export function removeKeyed<T extends KeyedItem>(items: T[], key: string): T[] {
-  if (items.length <= 1) return items
+/**
+ * Remove the item matching `key` — a no-op once the list is already at `floor`
+ * (default 1, matching every caller before Full CLI access shortcuts (41.5),
+ * which pass floor 0: a platform may validly have zero shortcuts).
+ */
+export function removeKeyed<T extends KeyedItem>(items: T[], key: string, floor = 1): T[] {
+  if (items.length <= floor) return items
   return items.filter((item) => item.key !== key)
 }

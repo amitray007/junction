@@ -19,15 +19,28 @@
 // CliConnectionSchema.parse as the final authority before the descriptor reaches
 // addCliPlatform/validatePolicy/the sandbox. Never trust a client-sent argv array.
 
-import type { CliConnection, HttpConnection, Platform } from "@junction/core"
-import { CliConnectionSchema, HttpConnectionSchema } from "@junction/core"
+import type {
+  CliConnection,
+  CliTool,
+  DeclaredCliConnection,
+  HttpConnection,
+  Platform,
+} from "@junction/core"
+import {
+  CliConnectionSchema,
+  discoverBinary,
+  HttpConnectionSchema,
+  isFullAccess,
+} from "@junction/core"
 import {
   addCliPlatform,
+  addFullAccessCliPlatform,
   addGraphQlPlatform,
   addHttpPlatform,
   addMcpPlatform,
   addOpenApiPlatform,
   refreshOpenApiPlatform,
+  setFullAccessCliShortcuts,
 } from "@junction/platform-orchestration"
 import { errAsync, type ResultAsync } from "neverthrow"
 import type { CliArgInput, CliPolicyInput } from "../lib/cli-command.js"
@@ -213,6 +226,20 @@ function orchestrationErrorMessage(e: { kind: string; [k: string]: unknown }): s
       return "Only specs added from a URL can be refreshed"
     case "verify-op-invalid":
       return `Invalid verify operation: ${e.message}`
+    case "full-access-not-yet-supported":
+      return "Full CLI access platforms aren't added via a raw descriptor — use the discovery install flow"
+    case "invalid-binary-name":
+      return `"${e.name}" is not a valid bare command name`
+    case "binary-not-found":
+      return `Could not find "${e.name}" on PATH or in common install dirs — enter the path manually`
+    case "binary-path-invalid":
+      return `Binary path is invalid: ${e.reason}`
+    case "sandbox-unavailable":
+      return "No sandbox backend available on this host — Full CLI access install requires one to extract the command schema"
+    case "extract-refused":
+      return `Sandbox refused to run "--help" against the pinned binary: ${String(e.cause)}`
+    case "not-full-access":
+      return `Shortcuts can only be set on a Full CLI access platform (this platform is kind "${e.platformKind}")`
     default:
       return "Operation failed"
   }
@@ -278,6 +305,34 @@ function toPlatformMeta(p: Platform): PlatformMetaResult & { ok: true } {
   }
 }
 
+/** The bare {id, kind, displayName} shape every non-openapi upsert success reports. */
+function toBarePlatformMeta(p: Platform): { id: string; kind: string; displayName: string } {
+  return { id: String(p.id), kind: p.kind, displayName: p.displayName }
+}
+
+/**
+ * Shared tail for the three call sites that upsert an already-assembled Platform
+ * and report either a DB error or a caller-shaped success value: declared/http/mcp/
+ * openapi/graphql add+update (assembleAndUpsert), Full CLI access install
+ * (mutateAddFullAccessCliPlatform), and Full CLI access shortcuts editing
+ * (mutateSetFullAccessCliShortcuts). `onSuccess` shapes the persisted Platform into
+ * each caller's own result type (they differ: install adds nodeCount/truncated,
+ * shortcuts editing adds nothing extra, assembleAndUpsert uses toPlatformMeta's
+ * baseUrl-inclusive shape) — only the upsert-and-map-DB-error plumbing is shared.
+ */
+function upsertAndReport<T extends { ok: true }>(
+  platform: Platform,
+  onSuccess: (persisted: Platform) => T,
+): Promise<T | { ok: false; error: string }> {
+  return withRepos(async (repos) => {
+    const upsertResult = await repos.platforms.upsert(platform)
+    if (upsertResult.isErr()) {
+      return { ok: false as const, error: dbErrorMessage(upsertResult.error.kind) }
+    }
+    return onSuccess(upsertResult.value)
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Auth mapping — SimpleAuthInput (web's bearer-first subset) → orchestration AuthInput
 // ---------------------------------------------------------------------------
@@ -295,6 +350,48 @@ function toAuthInput(
 // ---------------------------------------------------------------------------
 
 /**
+ * Map one web CliToolInput (raw commandLine + args + policy) to the raw object
+ * shape CliConnectionSchema/CliToolSchema expects — re-tokenizing commandLine
+ * server-side (never trusting a client argv) and mapping policy.network →
+ * allowNet. Shared by the declared-mode connection assembler (assembleCliConnection)
+ * AND the full-access shortcuts assembler (assembleCliShortcuts, inc 41.5) —
+ * both build a `CliTool[]`, just destined for a different field
+ * (connection.tools vs connection.shortcuts).
+ */
+function toRawCliTool(tool: CliToolInput): unknown {
+  // The JSON escape hatch: use the operator's raw tool object verbatim
+  // (CliConnectionSchema.parse below is still the final authority).
+  if (tool.advancedTool !== undefined) return tool.advancedTool
+  /* jscpd:ignore-start — mirrors the CliTool arg/policy field shape that the
+     client-side cli-form/convert.ts also maps (client→wire) and that core's
+     CliConnectionSchema defines. It can't be factored to a shared module (the
+     client form file must not import server/core), so this structural mirror
+     across the client↔server boundary is permitted per the DRY policy. */
+  return {
+    name: tool.name,
+    description: tool.description,
+    argv: tokenizeCommandLine(tool.commandLine),
+    args: tool.args.map((a) => ({
+      name: a.name,
+      description: a.description,
+      type: a.type,
+      required: a.required,
+      enum: a.enum,
+      pattern: a.pattern,
+      maxLength: a.maxLength,
+    })),
+    policy: {
+      cwd: tool.policy.cwd,
+      readPaths: tool.policy.readPaths,
+      writePaths: tool.policy.writePaths,
+      allowNet: tool.policy.network.mode === "allow" ? tool.policy.network.hosts : [],
+      timeoutMs: tool.policy.timeoutMs,
+      envAllow: tool.policy.envAllow,
+    },
+  } /* jscpd:ignore-end */
+}
+
+/**
  * Assemble+validate a CliConnection from the web's structured CliConnectionInput.
  * Re-tokenizes each tool's raw commandLine server-side (never trusts a client
  * argv) and maps policy.network → allowNet, then runs CliConnectionSchema.parse
@@ -306,43 +403,8 @@ function assembleCliConnection(
 ):
   | { ok: true; connection: CliConnection }
   | { ok: false; message: string; fieldErrors: Record<string, string> } {
-  const rawTools = input.tools.map(
-    (tool) =>
-      // The JSON escape hatch: use the operator's raw tool object verbatim
-      // (CliConnectionSchema.parse below is still the final authority).
-      tool.advancedTool !== undefined
-        ? tool.advancedTool
-        : /* jscpd:ignore-start — mirrors the CliTool arg/policy field shape that the
-           client-side cli-form/convert.ts also maps (client→wire) and that core's
-           CliConnectionSchema defines. It can't be factored to a shared module (the
-           client form file must not import server/core), so this structural mirror
-           across the client↔server boundary is permitted per the DRY policy. */
-          {
-            name: tool.name,
-            description: tool.description,
-            argv: tokenizeCommandLine(tool.commandLine),
-            args: tool.args.map((a) => ({
-              name: a.name,
-              description: a.description,
-              type: a.type,
-              required: a.required,
-              enum: a.enum,
-              pattern: a.pattern,
-              maxLength: a.maxLength,
-            })),
-            policy: {
-              cwd: tool.policy.cwd,
-              readPaths: tool.policy.readPaths,
-              writePaths: tool.policy.writePaths,
-              allowNet: tool.policy.network.mode === "allow" ? tool.policy.network.hosts : [],
-              timeoutMs: tool.policy.timeoutMs,
-              envAllow: tool.policy.envAllow,
-            },
-          } /* jscpd:ignore-end */,
-  )
-
   const raw = {
-    tools: rawTools,
+    tools: input.tools.map(toRawCliTool),
     ...(input.credentialEnvVar ? { credentialEnvVar: input.credentialEnvVar } : {}),
   }
 
@@ -385,6 +447,193 @@ function assembleHttpConnection(
   }
 
   return finishAssemble(HttpConnectionSchema.safeParse(raw))
+}
+
+// ---------------------------------------------------------------------------
+// Full CLI access — binary discovery + install (inc 41.4).
+// docs/specs/2026-07-16-cli-exploratory-mode.md §5 Q1/Q3/Q6.
+// ---------------------------------------------------------------------------
+
+/** One candidate binary — metadata only (path/version/source), no I/O detail leaked. */
+export type CliBinaryCandidate = {
+  path: string
+  realpath: string
+  version?: string
+  source: "path" | "common-dir"
+}
+
+export type DiscoverCliBinaryResult =
+  | { ok: true; candidates: CliBinaryCandidate[] }
+  | { ok: false; error: string }
+
+/**
+ * Discover candidate binaries for a bare command name — the web install
+ * picker's data source. Never execs unsandboxed (discoverBinary's own
+ * contract); this wrapper adds no sandbox here since the version probe is
+ * best-effort and optional — a version-less candidate list is still useful,
+ * and threading a full sandbox instance through the picker step only for
+ * `--version` isn't worth the extra createSandbox() cost on every keystroke.
+ * The install step (mutateAddFullAccessCliPlatform) DOES use the sandbox —
+ * that's where extraction actually runs.
+ */
+export async function discoverCliBinary(name: string): Promise<DiscoverCliBinaryResult> {
+  const result = await discoverBinary(name)
+  if (result.isErr()) {
+    return { ok: false, error: `"${name}" is not a valid bare command name` }
+  }
+  return {
+    ok: true,
+    candidates: result.value.map((c) => ({
+      path: c.path,
+      realpath: c.realpath,
+      ...(c.version !== undefined ? { version: c.version } : {}),
+      source: c.source,
+    })),
+  }
+}
+
+export interface AddFullAccessCliPlatformInput {
+  id: string
+  displayName: string
+  /** The chosen candidate's realpath (from discoverCliBinary) or a manual override. */
+  binaryPath: string
+  credentialEnvVar?: string
+  /** host:port allowlist entries. Empty/absent = no network (safe default). */
+  allowNet?: string[]
+}
+
+export type AddFullAccessCliPlatformResult =
+  | {
+      ok: true
+      platform: { id: string; kind: string; displayName: string }
+      nodeCount: number
+      truncated: boolean
+    }
+  | { ok: false; error: string }
+
+/**
+ * Install a Full CLI access platform: run extractCliSchema (sandboxed) against
+ * the pinned binaryPath and upsert the resulting platform. Distinct from
+ * mutateAddPlatform's declared-mode dispatch — Full CLI access has no
+ * CliConnectionInput form shape (no tools/args to assemble), just a resolved
+ * binary + optional credential env var + optional net allowlist.
+ */
+export async function mutateAddFullAccessCliPlatform(
+  input: AddFullAccessCliPlatformInput,
+): Promise<AddFullAccessCliPlatformResult> {
+  const addResult = await addFullAccessCliPlatform({
+    id: input.id,
+    displayName: input.displayName,
+    binaryPath: input.binaryPath,
+    ...(input.credentialEnvVar ? { credentialEnvVar: input.credentialEnvVar } : {}),
+    ...(input.allowNet && input.allowNet.length > 0 ? { allowNet: input.allowNet } : {}),
+  })
+  if (addResult.isErr()) {
+    return { ok: false, error: orchestrationErrorMessage(addResult.error) }
+  }
+  const { platform, nodeCount, truncated } = addResult.value
+
+  return upsertAndReport(platform, (persisted) => ({
+    ok: true as const,
+    platform: toBarePlatformMeta(persisted),
+    nodeCount,
+    truncated,
+  }))
+}
+
+// ---------------------------------------------------------------------------
+// Full CLI access — shortcuts editing (inc 41.5). Named saved commands (the
+// demoted declared-CliTool model) that ride connection.shortcuts[] on a
+// Full CLI access platform, alongside execute/help. A SEPARATE path from
+// updatePlatformFn: full-access has no binaryPath/policy/schema form fields
+// to resubmit, so editing shortcuts must not go through the full
+// assembleAndUpsert rebuild that mutateUpdatePlatform uses for every other kind.
+// ---------------------------------------------------------------------------
+
+export interface SetFullAccessCliShortcutsInput {
+  id: string
+  shortcuts: CliToolInput[]
+}
+
+export type SetFullAccessCliShortcutsResult =
+  | { ok: true; platform: { id: string; kind: string; displayName: string } }
+  | { ok: false; error: string; fieldErrors?: Record<string, string> }
+
+/**
+ * Assemble+validate a bare CliTool[] from the web's structured CliToolInput[]
+ * (the same per-tool shape declared-mode tools use). Wraps each raw tool in a
+ * throwaway single-tool CliConnectionSchema parse so the exact same
+ * refine()s (argv[0] absolute + metachar-clean, undeclared-arg guard, etc.)
+ * that gate a declared tool also gate a shortcut — CliToolSchema itself isn't
+ * exported standalone, and re-deriving its refines here would drift from the
+ * authoritative schema in cli-connection.ts.
+ */
+function assembleCliShortcuts(
+  tools: CliToolInput[],
+):
+  | { ok: true; shortcuts: CliTool[] }
+  | { ok: false; message: string; fieldErrors: Record<string, string> } {
+  const shortcuts: CliTool[] = []
+  for (let i = 0; i < tools.length; i++) {
+    const tool = tools[i]
+    if (!tool) continue
+    const raw = { tools: [toRawCliTool(tool)] }
+    const parsed = CliConnectionSchema.safeParse(raw)
+    if (!parsed.success) {
+      // Re-key field errors under this shortcut's index (the throwaway parse
+      // always reports "tools[0].…"; rewrite to "shortcuts[i].…" for the caller).
+      const fieldErrors: Record<string, string> = {}
+      for (const issue of parsed.error.issues) {
+        const path = issue.path
+          .map(String)
+          .join(".")
+          .replace(/^tools\.0\./, `shortcuts.${i}.`)
+        const key = path || "_root"
+        if (!(key in fieldErrors)) fieldErrors[key] = issue.message
+      }
+      return {
+        ok: false,
+        message: parsed.error.issues.map((iss) => iss.message).join(", "),
+        fieldErrors,
+      }
+    }
+    const [validated] = (parsed.data as DeclaredCliConnection).tools
+    if (validated) shortcuts.push(validated)
+  }
+  return { ok: true, shortcuts }
+}
+
+/**
+ * Replace a Full CLI access platform's shortcuts[] wholesale. Fetches the
+ * existing platform, assembles+validates the new CliTool[] from the web's
+ * structured input, delegates the field replacement + full-access guard to
+ * @junction/platform-orchestration's setFullAccessCliShortcuts, then upserts.
+ */
+export async function mutateSetFullAccessCliShortcuts(
+  input: SetFullAccessCliShortcutsInput,
+): Promise<SetFullAccessCliShortcutsResult> {
+  const assembled = assembleCliShortcuts(input.shortcuts)
+  if (!assembled.ok) {
+    return { ok: false, error: assembled.message, fieldErrors: assembled.fieldErrors }
+  }
+
+  const existing = await withRepos(async (repos) => repos.platforms.get(input.id))
+  if (existing.isErr()) {
+    return { ok: false, error: dbErrorMessage(existing.error.kind) }
+  }
+
+  const updateResult = setFullAccessCliShortcuts({
+    platform: existing.value,
+    shortcuts: assembled.shortcuts,
+  })
+  if (updateResult.isErr()) {
+    return { ok: false, error: orchestrationErrorMessage(updateResult.error) }
+  }
+
+  return upsertAndReport(updateResult.value, (persisted) => ({
+    ok: true as const,
+    platform: toBarePlatformMeta(persisted),
+  }))
 }
 
 // ---------------------------------------------------------------------------
@@ -482,13 +731,7 @@ async function assembleAndUpsert(input: AddPlatformInput): Promise<PlatformMetaR
   }
   const { platform } = addResult.value
 
-  return withRepos(async (repos) => {
-    const upsertResult = await repos.platforms.upsert(platform)
-    if (upsertResult.isErr()) {
-      return { ok: false as const, error: dbErrorMessage(upsertResult.error.kind) }
-    }
-    return toPlatformMeta(upsertResult.value)
-  })
+  return upsertAndReport(platform, toPlatformMeta)
 }
 
 /**
@@ -614,6 +857,15 @@ export interface PlatformDetail {
   // graphql
   endpoint?: string
   // cli
+  /**
+   * "declared" (default) | "full-access" — which CliConnection branch this
+   * platform's `cli` is. Declared mode's `cliTools` below are its `tools[]`
+   * (mandatory, at least one); full-access mode's `cliTools` are its optional
+   * `shortcuts[]` (the 41.5 editing surface persists through a SEPARATE path —
+   * setFullAccessCliShortcutsFn — never updatePlatformFn, since full-access has
+   * no binaryPath/policy/schema form fields to round-trip).
+   */
+  cliMode?: "declared" | "full-access"
   cliTools?: Array<{
     name: string
     description?: string
@@ -733,9 +985,15 @@ function toPlatformDetail(p: Platform): PlatformDetail {
   }
 
   if (p.kind === "cli" && p.cli) {
+    // Declared platforms expose `tools`; full-access platforms expose optional
+    // `shortcuts` (same CliTool shape) — `cliMode` tells the edit form which
+    // persistence path a save must take (updatePlatformFn for declared,
+    // setFullAccessCliShortcutsFn for full-access; see cli-form/convert.ts).
+    const cliTools = isFullAccess(p.cli) ? (p.cli.shortcuts ?? []) : p.cli.tools
     return {
       ...base,
-      cliTools: p.cli.tools.map((tool) => {
+      cliMode: isFullAccess(p.cli) ? ("full-access" as const) : ("declared" as const),
+      cliTools: cliTools.map((tool) => {
         const reversible = toolIsReversible(tool)
         return {
           name: tool.name,
@@ -808,10 +1066,10 @@ function toPlatformDetail(p: Platform): PlatformDetail {
 // since core's CliArgvSegment is structurally assignable to the lib's local type.
 import { argvToCommandLine, isReversible } from "../lib/cli-command.js"
 
-function argvToCommandLineLocal(argv: CliConnection["tools"][number]["argv"]): string {
+function argvToCommandLineLocal(argv: DeclaredCliConnection["tools"][number]["argv"]): string {
   return argvToCommandLine(argv)
 }
 
-function toolIsReversible(tool: CliConnection["tools"][number]): boolean {
+function toolIsReversible(tool: DeclaredCliConnection["tools"][number]): boolean {
   return isReversible({ argv: tool.argv, args: tool.args })
 }

@@ -9,6 +9,7 @@
 import { createServerFn } from "@tanstack/react-start"
 import { assertLocalHost, requireString } from "./fn-guards.server.js"
 import type {
+  AddFullAccessCliPlatformInput,
   AddPlatformInput,
   CliConnectionInput,
   CliToolArgInput,
@@ -16,14 +17,18 @@ import type {
   HttpConnectionInput,
   HttpParamInput,
   HttpToolInput,
+  SetFullAccessCliShortcutsInput,
   SimpleAuthInput,
   UpdatePlatformInput,
 } from "./platform-mutations.server.js"
 import {
+  discoverCliBinary,
   getPlatformDetail,
+  mutateAddFullAccessCliPlatform,
   mutateAddPlatform,
   mutateDeletePlatform,
   mutateRefreshPlatform,
+  mutateSetFullAccessCliShortcuts,
   mutateUpdatePlatform,
 } from "./platform-mutations.server.js"
 
@@ -31,15 +36,19 @@ import {
 // a direct import from platform-mutations.server.ts (server-only by convention —
 // mirrors data.functions.ts's re-export of PlatformMeta/CredentialMeta/etc.).
 export type {
+  AddFullAccessCliPlatformResult,
   AddPlatformInput,
+  CliBinaryCandidate,
   CliConnectionInput,
   CliToolArgInput,
   CliToolInput,
+  DiscoverCliBinaryResult,
   HttpConnectionInput,
   HttpParamInput,
   HttpToolInput,
   PlatformDetail,
   PlatformDetailResult,
+  SetFullAccessCliShortcutsResult,
 } from "./platform-mutations.server.js"
 
 // ---------------------------------------------------------------------------
@@ -338,4 +347,63 @@ export const getPlatformDetailFn = createServerFn({ method: "GET" })
   .handler(async ({ data }) => {
     assertLocalHost()
     return getPlatformDetail(data.id)
+  })
+
+// ---------------------------------------------------------------------------
+// Full CLI access — binary discovery + install (inc 41.4)
+// ---------------------------------------------------------------------------
+
+function validateDiscoverInput(raw: unknown): { name: string } {
+  const d = raw as Record<string, unknown>
+  return { name: requireString(d.name, "name") }
+}
+
+/** Discover candidate binaries for a bare command name — the install picker's data source. */
+export const discoverCliBinaryFn = createServerFn({ method: "POST" })
+  .validator(validateDiscoverInput)
+  .handler(async ({ data }) => {
+    assertLocalHost()
+    return discoverCliBinary(data.name)
+  })
+
+function validateAddFullAccessCliPlatformInput(raw: unknown): AddFullAccessCliPlatformInput {
+  const d = raw as Record<string, unknown>
+  return {
+    id: requireString(d.id, "id"),
+    displayName: requireString(d.displayName, "displayName"),
+    binaryPath: requireString(d.binaryPath, "binaryPath"),
+    credentialEnvVar: optionalString(d.credentialEnvVar),
+    allowNet: optionalStringArray(d.allowNet),
+  }
+}
+
+/** Install a Full CLI access platform: extract the pinned binary's --help tree (sandboxed) and upsert. */
+export const addFullAccessCliPlatformFn = createServerFn({ method: "POST" })
+  .validator(validateAddFullAccessCliPlatformInput)
+  .handler(async ({ data }) => {
+    assertLocalHost()
+    return mutateAddFullAccessCliPlatform(data)
+  })
+
+// ---------------------------------------------------------------------------
+// Full CLI access — shortcuts editing (inc 41.5)
+// ---------------------------------------------------------------------------
+
+function validateSetFullAccessCliShortcutsInput(raw: unknown): SetFullAccessCliShortcutsInput {
+  const d = raw as Record<string, unknown>
+  const shortcutsRaw = Array.isArray(d.shortcuts) ? d.shortcuts : []
+  return {
+    id: requireString(d.id, "id"),
+    // Unlike declared-mode's requireNonEmptyTools, an empty shortcuts list is
+    // valid — a Full CLI access platform with zero shortcuts is just execute+help.
+    shortcuts: shortcutsRaw.map((t, i) => validateCliTool(t, i)),
+  }
+}
+
+/** Replace a Full CLI access platform's shortcuts[] wholesale (add/remove/edit a saved command). */
+export const setFullAccessCliShortcutsFn = createServerFn({ method: "POST" })
+  .validator(validateSetFullAccessCliShortcutsInput)
+  .handler(async ({ data }) => {
+    assertLocalHost()
+    return mutateSetFullAccessCliShortcuts(data)
   })

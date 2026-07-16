@@ -5,7 +5,7 @@ import os from "node:os"
 import path from "node:path"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"
 import { validatePolicy } from "../sandbox/index.js"
-import { CliArgSchema, CliConnectionSchema, CliToolSchema } from "./cli-connection.js"
+import { CliArgSchema, CliConnectionSchema, CliToolSchema, isFullAccess } from "./cli-connection.js"
 
 const basePolicy = {
   cwd: "/work",
@@ -161,11 +161,13 @@ describe("CliArgSchema — pattern ReDoS guard (32.13 Slice D3)", () => {
 })
 
 describe("credentialEnvVar denylist — lock-step with validatePolicy", () => {
-  // Increment 32.7 item 3: the schema's inline denylist refine (this file's
-  // CliConnectionSchema) and the sandbox's SECRET_DENYLIST_RE/EXACT
-  // (sandbox.ts) are two separately-maintained copies of the same rule.
-  // Nothing pins them together — this test is that pin, via BEHAVIORAL
-  // parity over a corpus (neither list is exported; both stay private).
+  // Increment 32.7 item 3 (revised inc 41 — Fable ruling): the schema's
+  // inline denylist refine (this file's CliConnectionSchema) and the
+  // sandbox's isDenylistedEnvKey (sandbox.ts) are two separately-maintained
+  // call sites of the SAME shared predicate (sandbox/env-denylist.ts).
+  // Nothing pins them together except behavior — this test is that pin, via
+  // BEHAVIORAL parity over a corpus (neither call site is exported; both
+  // stay private).
   //
   // JUNCTION_HOME is stubbed to a tmpdir for this block (testing.md rule;
   // mirrors sandbox.test.ts): validatePolicy →
@@ -180,14 +182,32 @@ describe("credentialEnvVar denylist — lock-step with validatePolicy", () => {
   // which is charset-agnostic) — a non-uppercase corpus entry would fail the
   // parity assertion for the WRONG reason (charset, not the denylist rule
   // under test).
+  //
+  // inc 41: the _TOKEN/_SECRET/_KEY suffix heuristic was DROPPED (it blocked
+  // GH_TOKEN — the only var `gh` reads — for no real security gain) and
+  // REPLACED with a JUNCTION_ prefix reservation + the shared
+  // interpreter/linker denylist class (LD_PRELOAD, DYLD_*, NODE_OPTIONS, …).
   const REJECTED = [
-    "FOO_TOKEN",
-    "BAR_SECRET",
-    "BAZ_KEY",
     "JUNCTION_MASTER_KEY",
     "JUNCTION_MASTER_KEY_FILE",
+    "JUNCTION_HOME",
+    "JUNCTION_ANYTHING",
+    "LD_PRELOAD",
+    "DYLD_INSERT_LIBRARIES",
+    "NODE_OPTIONS",
   ]
-  const ACCEPTED = ["GH_PAT", "API_AUTH", "TOKEN_FOO", "MY_KEYS", "KEYRING_NAME"]
+  const ACCEPTED = [
+    "GH_PAT",
+    "API_AUTH",
+    "TOKEN_FOO",
+    "MY_KEYS",
+    "KEYRING_NAME",
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+    "AWS_SECRET_ACCESS_KEY",
+    "NPM_TOKEN",
+    "CLOUDFLARE_API_TOKEN",
+  ]
 
   let fakeJunctionHome: string
   let prevJunctionHome: string | undefined
@@ -238,4 +258,150 @@ describe("credentialEnvVar denylist — lock-step with validatePolicy", () => {
       expect(schemaAccepts).toBe(policyError === null)
     })
   }
+})
+
+// ---------------------------------------------------------------------------
+// Increment 41.1 — mode-tagged CliConnection (declared | full-access)
+// docs/methods/41.1-cli-full-access-core.md
+// ---------------------------------------------------------------------------
+
+const fullAccessPolicy = {
+  cwd: "/work",
+  readPaths: ["/work"],
+  writePaths: [],
+  allowNet: [],
+  timeoutMs: 5000,
+}
+
+const minimalExtractedSchema = {
+  binaryName: "gh",
+  extractedAt: "2026-07-16T00:00:00.000Z",
+  root: {
+    path: [],
+    parsed: true,
+    explored: true,
+    flags: [],
+    positionals: [],
+    subcommands: [],
+  },
+  truncated: false,
+}
+
+function fullAccessConnection(overrides: Record<string, unknown> = {}) {
+  return {
+    mode: "full-access" as const,
+    binaryPath: "/opt/homebrew/bin/gh",
+    policy: fullAccessPolicy,
+    schema: minimalExtractedSchema,
+    ...overrides,
+  }
+}
+
+describe("CliConnectionSchema — mode discriminant back-compat (inc 41.1)", () => {
+  it("(a) parses a LEGACY object with NO `mode` field as declared", () => {
+    // The exact shape every CLI platform row predating this increment has.
+    const legacy = {
+      tools: [
+        {
+          name: "run",
+          argv: [{ kind: "literal", value: "/bin/echo" }],
+          args: [],
+          policy: fullAccessPolicy,
+        },
+      ],
+      credentialEnvVar: "GH_PAT",
+    }
+    const r = CliConnectionSchema.safeParse(legacy)
+    expect(r.success).toBe(true)
+    if (r.success) {
+      expect(r.data.mode).toBe("declared")
+      expect(isFullAccess(r.data)).toBe(false)
+      if (!isFullAccess(r.data)) {
+        expect(r.data.tools).toHaveLength(1)
+        expect(r.data.credentialEnvVar).toBe("GH_PAT")
+      }
+    }
+  })
+
+  it('(b) parses an object with explicit mode:"declared" as declared', () => {
+    const explicit = {
+      mode: "declared" as const,
+      tools: [
+        {
+          name: "run",
+          argv: [{ kind: "literal", value: "/bin/echo" }],
+          args: [],
+          policy: fullAccessPolicy,
+        },
+      ],
+    }
+    const r = CliConnectionSchema.safeParse(explicit)
+    expect(r.success).toBe(true)
+    if (r.success) {
+      expect(r.data.mode).toBe("declared")
+      expect(isFullAccess(r.data)).toBe(false)
+    }
+  })
+
+  it("(c) parses a valid full-access object as full-access", () => {
+    const r = CliConnectionSchema.safeParse(fullAccessConnection())
+    expect(r.success).toBe(true)
+    if (r.success) {
+      expect(r.data.mode).toBe("full-access")
+      expect(isFullAccess(r.data)).toBe(true)
+      if (isFullAccess(r.data)) {
+        expect(r.data.binaryPath).toBe("/opt/homebrew/bin/gh")
+        expect(r.data.schema.binaryName).toBe("gh")
+      }
+    }
+  })
+
+  it("(d) REJECTS full-access with a relative binaryPath", () => {
+    const r = CliConnectionSchema.safeParse(fullAccessConnection({ binaryPath: "gh" }))
+    expect(r.success).toBe(false)
+  })
+
+  it("(d) REJECTS full-access with a metachar-unsafe binaryPath", () => {
+    const r = CliConnectionSchema.safeParse(
+      fullAccessConnection({ binaryPath: '/opt/homebrew/bin/gh") (allow file-read* (subpath "/' }),
+    )
+    expect(r.success).toBe(false)
+  })
+
+  it("(e) REJECTS full-access with a denylisted credentialEnvVar", () => {
+    const r = CliConnectionSchema.safeParse(
+      fullAccessConnection({ credentialEnvVar: "JUNCTION_MASTER_KEY" }),
+    )
+    expect(r.success).toBe(false)
+  })
+
+  it("accepts full-access with a non-denylisted credentialEnvVar", () => {
+    const r = CliConnectionSchema.safeParse(fullAccessConnection({ credentialEnvVar: "GH_PAT" }))
+    expect(r.success).toBe(true)
+  })
+
+  it("accepts full-access with GH_TOKEN (inc 41 — the only var gh reads)", () => {
+    const r = CliConnectionSchema.safeParse(fullAccessConnection({ credentialEnvVar: "GH_TOKEN" }))
+    expect(r.success).toBe(true)
+  })
+
+  it("accepts full-access with optional shortcuts (reusing CliToolSchema verbatim)", () => {
+    const r = CliConnectionSchema.safeParse(
+      fullAccessConnection({
+        shortcuts: [
+          {
+            name: "prs",
+            argv: [
+              { kind: "literal", value: "/opt/homebrew/bin/gh" },
+              { kind: "literal", value: "pr" },
+              { kind: "literal", value: "list" },
+            ],
+            args: [],
+            policy: fullAccessPolicy,
+          },
+        ],
+      }),
+    )
+    expect(r.success).toBe(true)
+  })
 })

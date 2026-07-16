@@ -423,3 +423,14 @@ body {
     animation-duration: 100ms;
   }
 }
+
+/* Hide the scrollbar chrome while keeping scroll functional. Used by the
+   Add/Edit Platform dialog so a bounded, still-scrollable modal doesn't show a
+   visible scrollbar. */
+.no-scrollbar {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* legacy Edge/IE */
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none; /* WebKit/Blink */
+}

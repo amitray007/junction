@@ -264,6 +264,56 @@ describe("buildProvider — unsupported kind", () => {
     })
   })
 
+  it("cli full-access platform → Ok(ToolProvider) exposing execute + help (increment 41.3)", async () => {
+    await withTempHome(async () => {
+      const paths = getPaths()
+      const platform: Platform = {
+        id: PlatformIdSchema.parse("cli-full-access"),
+        kind: "cli",
+        displayName: "CLI Full Access",
+        cli: {
+          mode: "full-access",
+          binaryPath: "/bin/echo",
+          policy: {
+            cwd: "/tmp",
+            readPaths: ["/tmp"],
+            writePaths: [],
+            allowNet: [],
+            timeoutMs: 5_000,
+            envAllow: {},
+          },
+          schema: {
+            binaryName: "echo",
+            extractedAt: new Date().toISOString(),
+            root: {
+              path: [],
+              parsed: true,
+              explored: true,
+              flags: [],
+              positionals: [],
+              subcommands: [],
+            },
+            truncated: false,
+          },
+        },
+      }
+
+      // buildProvider lazy-imports createCliProvider from @junction/core internally —
+      // confirms build-provider.ts's cli branch passes platform.cli through UNCHANGED
+      // (no edit needed there; createCliProvider itself branches on isFullAccess).
+      const result = await buildProvider(platform, null, paths)
+      expect(result.isOk()).toBe(true)
+      if (!result.isOk()) return
+
+      const toolsResult = await result.value.listTools()
+      expect(toolsResult.isOk()).toBe(true)
+      if (!toolsResult.isOk()) return
+      expect(toolsResult.value.map((t) => t.name)).toEqual(["execute", "help"])
+
+      await result.value.close()
+    })
+  })
+
   it("returns connect-failed for a graphql platform without a descriptor", async () => {
     await withTempHome(async () => {
       const paths = getPaths()

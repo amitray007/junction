@@ -135,6 +135,23 @@ async function generateProfile(policy: SandboxPolicy, binaryPath?: string): Prom
       ? "(deny network*)"
       : [
           "(deny network*)",
+          // DNS resolution on macOS goes through mDNSResponder over a UNIX domain
+          // socket, NOT an IP connection to *:53 — so a purely port-scoped IP allow
+          // (below) can open the TCP connection but can never RESOLVE the hostname,
+          // and every real egress fails at name lookup ("error connecting to <host>").
+          // This lets the resolver reach mDNSResponder ONLY.
+          //
+          // SECURITY (inc 41, sandbox-security review C1): the allow MUST be scoped
+          // to the resolver socket by path-literal. An UNSCOPED `(remote unix-socket)`
+          // authorizes connecting to EVERY AF_UNIX socket on the host — verified to
+          // reach the root-owned `/var/run/com.docker.vmnetd.sock` and would expose
+          // docker.sock / SSH_AUTH_SOCK / DB sockets to a prompt-injected agent the
+          // moment any network is enabled. Scoping to the realpath'd resolver socket
+          // (`/var/run/mDNSResponder` → `/private/var/run/mDNSResponder`) keeps DNS
+          // working while denying every other socket (verified: docker vmnetd → EPERM,
+          // mDNSResponder → connected). It does NOT widen IP egress either (no
+          // `(remote ip …)` here; the port allows below are the only IP grants).
+          '(allow network-outbound (remote unix-socket (path-literal "/private/var/run/mDNSResponder")))',
           ...policy.allowNet.map((entry) => {
             const port = entry.includes(":") ? entry.slice(entry.lastIndexOf(":") + 1) : entry
             return `(allow network* (remote ip "*:${port}"))`
