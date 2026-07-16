@@ -482,32 +482,25 @@ export function extractCliSchema(args: {
 
       for (const child of parsedForChildren.subcommands) {
         const childPath = [...item.path, child.name]
+        // Unexplored placeholder for this child — replaced once its queued probe
+        // completes. Kept so subcommands[] order is stable and every discovered
+        // child is present even if the queue never reaches it (ceiling hit
+        // mid-flight). Identical shape whether we queue it or defer it as truncated.
+        const unexplored: CliSchemaNode = {
+          path: childPath,
+          parsed: false,
+          explored: false,
+          ...(child.summary !== undefined ? { description: child.summary } : {}),
+          flags: [],
+          positionals: [],
+          subcommands: [],
+        }
         if (withinCeiling(item.depth)) {
           queue.push({ path: childPath, depth: item.depth + 1, ancestorHashes: nextAncestorHashes })
-          // Placeholder — replaced once the queued probe completes. Kept so
-          // subcommands[] order is stable and every discovered child is present
-          // even if the queue never reaches it (ceiling hit mid-flight).
-          childNodes.push({
-            path: childPath,
-            parsed: false,
-            explored: false,
-            ...(child.summary !== undefined ? { description: child.summary } : {}),
-            flags: [],
-            positionals: [],
-            subcommands: [],
-          })
         } else {
           truncated = true
-          childNodes.push({
-            path: childPath,
-            parsed: false,
-            explored: false,
-            ...(child.summary !== undefined ? { description: child.summary } : {}),
-            flags: [],
-            positionals: [],
-            subcommands: [],
-          })
         }
+        childNodes.push(unexplored)
       }
 
       nodesByPath.set(pathKey(item.path), { ...node, subcommands: childNodes })
