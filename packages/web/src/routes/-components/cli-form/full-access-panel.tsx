@@ -281,6 +281,18 @@ export function FullAccessPanel({ fullAccess, onChange }: FullAccessPanelProps) 
         />
       </Field>
 
+      {/* Fable Q3 disclosure: when a credential env var is set, tell the user
+          plainly that the CLI child sees the credential under that name. */}
+      {fullAccess.credentialEnvVar.trim() && !envError && (
+        <p style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)", margin: 0 }}>
+          {binaryLabel} will receive your credential as{" "}
+          <code style={{ fontFamily: "var(--font-mono)" }}>
+            ${fullAccess.credentialEnvVar.trim()}
+          </code>{" "}
+          — visible to {binaryLabel} and anything it runs inside the sandbox.
+        </p>
+      )}
+
       <p style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)", margin: 0 }}>
         Agents can run any{" "}
         {hasBinaryLabel ? (

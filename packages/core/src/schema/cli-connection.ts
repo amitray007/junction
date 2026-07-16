@@ -256,23 +256,9 @@ const CREDENTIAL_ENV_VAR_DENYLIST_MESSAGE =
   "dynamic-linker/interpreter name (LD_PRELOAD, LD_LIBRARY_PATH, LD_AUDIT, DYLD_*, NODE_OPTIONS) " +
   "— ordinary credential names like GH_TOKEN, AWS_SECRET_ACCESS_KEY, or NPM_TOKEN are fine"
 
-/**
- * Install-flow disclosure copy (Fable Q3) — tells the user, in plain language,
- * that the CLI child process will see the credential as a named env var
- * inside the sandbox. Exported as a pure string template so a UI (the
- * install/setup-destination flow) can render it verbatim; this module stays
- * data-only (no rendering here).
- */
-export function credentialEnvVarDisclosure(
-  platformDisplayName: string,
-  credentialEnvVar: string,
-  cliDisplayName: string,
-): string {
-  return (
-    `This CLI will receive your ${platformDisplayName} credential as $${credentialEnvVar} — ` +
-    `visible to ${cliDisplayName} and anything it runs inside the sandbox.`
-  )
-}
+// (The Fable Q3 credential disclosure copy is rendered by the web full-access
+// panel directly — a client component can't import this core module, so the
+// string lives at the render site rather than as an unused core export here.)
 
 /**
  * Sandboxed CLI source descriptor. Meaningful when Platform.kind === "cli".
