@@ -7,7 +7,7 @@
 
 import { execFile } from "node:child_process"
 import { existsSync } from "node:fs"
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises"
 import { createServer } from "node:http"
 import type { AddressInfo } from "node:net"
 import { tmpdir } from "node:os"
@@ -1498,13 +1498,17 @@ describe("platform add --kind cli --full-access (unit)", () => {
         truncated: boolean
         platform: { id: string; kind: string; cli?: { mode: string; binaryPath: string } }
       }
+      // The install realpath-resolves the override before pinning (inc 41 review
+      // #1), so the stored binaryPath is realpath(binPath) — on macOS that differs
+      // from binPath under /var/folders (→ /private/var/folders).
+      const binRealpath = await realpath(binPath)
       expect(parsed.ok).toBe(true)
       expect(parsed.candidates).toEqual([])
-      expect(parsed.chosen).toBe(binPath)
+      expect(parsed.chosen).toBe(binRealpath)
       expect(parsed.nodeCount).toBeGreaterThanOrEqual(1)
       expect(parsed.platform.kind).toBe("cli")
       expect(parsed.platform.cli?.mode).toBe("full-access")
-      expect(parsed.platform.cli?.binaryPath).toBe(binPath)
+      expect(parsed.platform.cli?.binaryPath).toBe(binRealpath)
 
       const dbResult = await getDatabase(getPaths())
       if (dbResult.isErr()) return

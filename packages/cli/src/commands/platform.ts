@@ -630,10 +630,16 @@ async function addFullAccessCliPlatformCommand(
   if (!persisted) return
 
   if (json) {
+    // Report the ACTUALLY-pinned path: addFullAccessCliPlatform realpath-resolves
+    // the binary before storing it (inc 41 review #1), so a manual --binary-path
+    // override or a symlink is reported as its resolved realpath, matching what
+    // execute will run — not the raw input string.
+    const pinnedPath =
+      persisted.cli?.mode === "full-access" ? persisted.cli.binaryPath : chosenRealpath
     const report: FullAccessJsonReport = {
       ok: true,
       candidates: candidateReport,
-      chosen: chosenRealpath,
+      chosen: pinnedPath,
       nodeCount,
       truncated,
       platform: persisted,
