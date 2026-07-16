@@ -4,7 +4,8 @@
 // capabilities (warn, don't fail), dry-run validatePolicy per tool, validate
 // the platform.
 
-import { mkdir } from "node:fs/promises"
+import { constants as fsConstants } from "node:fs"
+import { access, mkdir, realpath } from "node:fs/promises"
 import path from "node:path"
 import {
   CliConnectionSchema,
@@ -119,9 +120,12 @@ export interface AddFullAccessCliPlatformInput {
   id: string
   displayName: string
   /**
-   * The chosen binary's resolved realpath (from discoverBinary or a manual
-   * --path override the caller has already resolved to a realpath). Persisted
-   * verbatim as CliConnection.binaryPath.
+   * The chosen binary path — either a discoverBinary candidate's realpath OR a
+   * raw manual `--binary-path` / web override. It is NOT trusted as-resolved:
+   * addFullAccessCliPlatform re-checks access(X_OK) and resolves realpath()
+   * itself (a manual override may be a typo or a symlink), and pins the
+   * resolved realpath as CliConnection.binaryPath. Rejects with
+   * `binary-path-invalid` if the path is missing/non-executable/relative.
    */
   binaryPath: string
   credentialEnvVar?: string
@@ -222,6 +226,32 @@ export function addFullAccessCliPlatform(
 async function addFullAccessCliPlatformAsync(
   input: AddFullAccessCliPlatformInput,
 ): Promise<Result<AddFullAccessCliPlatformResult, PlatformOrchestrationError>> {
+  // SECURITY (inc 41, clean-code review #1): the binaryPath may come from a
+  // discoverBinary candidate (already access(X_OK)+realpath'd) OR from a manual
+  // --binary-path / web manual-path override that is a RAW user string. We must
+  // NOT trust the caller-resolved claim: re-verify here that the path exists, is
+  // executable, and RESOLVE it to its realpath before pinning it — otherwise a
+  // typo fails every later execute/help call, and (worse) a symlink silently
+  // pins a DIFFERENT binary than the operator intended. Store the realpath.
+  if (!path.isAbsolute(input.binaryPath)) {
+    return err({
+      kind: "binary-path-invalid",
+      path: input.binaryPath,
+      reason: "not an absolute path",
+    })
+  }
+  let binaryPath: string
+  try {
+    await access(input.binaryPath, fsConstants.X_OK)
+    binaryPath = await realpath(input.binaryPath)
+  } catch {
+    return err({
+      kind: "binary-path-invalid",
+      path: input.binaryPath,
+      reason: "file does not exist or is not executable",
+    })
+  }
+
   const paths = getPaths()
   const scratchDir = path.join(paths.runtimeDir, "cli", input.id)
 
@@ -269,7 +299,7 @@ async function addFullAccessCliPlatformAsync(
   }
 
   const extractResult = await extractCliSchema({
-    binaryPath: input.binaryPath,
+    binaryPath,
     policy,
     sandbox,
   })
@@ -280,7 +310,7 @@ async function addFullAccessCliPlatformAsync(
 
   const cli: FullAccessCliConnection = {
     mode: "full-access",
-    binaryPath: input.binaryPath,
+    binaryPath,
     ...(input.credentialEnvVar ? { credentialEnvVar: input.credentialEnvVar } : {}),
     policy,
     schema,

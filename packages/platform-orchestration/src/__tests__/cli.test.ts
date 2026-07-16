@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { chmod, mkdtemp, realpath, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import type { CliPolicy, CliTool, FullAccessCliConnection, Platform } from "@junction/core"
@@ -87,6 +87,53 @@ describe("addCliPlatform", () => {
 // ---------------------------------------------------------------------------
 
 describe("addFullAccessCliPlatform", () => {
+  // Binary-path validation (clean-code review #1): a manual --binary-path/web
+  // override is a RAW user string, NOT a trusted realpath. These rejection paths
+  // run before the sandbox, so they need no backend.
+  it("rejects a non-existent --binary-path with binary-path-invalid", async () => {
+    await withTempHome(async () => {
+      const result = await addFullAccessCliPlatform({
+        id: "ghost",
+        displayName: "Ghost",
+        binaryPath: "/nonexistent/definitely/not/here/ghosttool",
+      })
+      expect(result.isErr()).toBe(true)
+      if (result.isErr()) expect(result.error.kind).toBe("binary-path-invalid")
+    })
+  })
+
+  it("rejects a non-executable --binary-path with binary-path-invalid", async () => {
+    await withTempHome(async () => {
+      const binDir = await mkdtemp(path.join(os.tmpdir(), "jx-po-fa-noexec-"))
+      const notExec = path.join(binDir, "data.txt")
+      await writeFile(notExec, "not a program")
+      await chmod(notExec, 0o644)
+      try {
+        const result = await addFullAccessCliPlatform({
+          id: "notexec",
+          displayName: "Not Exec",
+          binaryPath: notExec,
+        })
+        expect(result.isErr()).toBe(true)
+        if (result.isErr()) expect(result.error.kind).toBe("binary-path-invalid")
+      } finally {
+        await rm(binDir, { recursive: true, force: true })
+      }
+    })
+  })
+
+  it("rejects a relative --binary-path with binary-path-invalid", async () => {
+    await withTempHome(async () => {
+      const result = await addFullAccessCliPlatform({
+        id: "rel",
+        displayName: "Relative",
+        binaryPath: "some/relative/tool",
+      })
+      expect(result.isErr()).toBe(true)
+      if (result.isErr()) expect(result.error.kind).toBe("binary-path-invalid")
+    })
+  })
+
   // The sandbox-touching happy path (extraction requires a real seatbelt/bwrap
   // backend) is darwin-gated, same pattern as provider.test.ts's real-run tests.
   it.skipIf(process.platform !== "darwin")(
@@ -112,7 +159,10 @@ describe("addFullAccessCliPlatform", () => {
           expect(result.value.platform.kind).toBe("cli")
           expect(result.value.platform.cli?.mode).toBe("full-access")
           if (result.value.platform.cli?.mode !== "full-access") return
-          expect(result.value.platform.cli.binaryPath).toBe(binPath)
+          // The stored binaryPath is the REALPATH of the input (inc 41 review #1:
+          // a manual path is realpath-resolved before pinning), which on macOS
+          // differs from binPath under /var/folders (→ /private/var/folders).
+          expect(result.value.platform.cli.binaryPath).toBe(await realpath(binPath))
           expect(result.value.platform.cli.policy.allowNet).toEqual([])
           expect(result.value.nodeCount).toBeGreaterThanOrEqual(1)
         } finally {
