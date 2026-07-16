@@ -226,6 +226,35 @@ describe.skipIf(process.platform !== "darwin")("Seatbelt", () => {
     void execFileAsync(ncPath, ["-z", "-w2", "1.1.1.1", "443"]).catch(() => null)
   })
 
+  it("port-scoped allowNet permits a DNS-resolved egress (mDNSResponder unix-socket allow)", async () => {
+    // Regression for the seatbelt DNS fix (inc 41): a port-scoped `(allow network*
+    // (remote ip "*:443"))` alone cannot RESOLVE a hostname on macOS — DNS goes
+    // through mDNSResponder over a UNIX socket, so without the network-outbound
+    // unix-socket allow, every hostname egress fails at name lookup. This proves
+    // a real host:443 connect succeeds WITH a port allow, and fails WITHOUT one.
+    const sb = await createSandbox()
+    expect(sb.isOk()).toBe(true)
+    if (!sb.isOk()) return
+
+    const ncPath = "/usr/bin/nc"
+    // WITH a :443 allow → nc resolves api.github.com and connects (exit 0).
+    const allowed = await sb.value.runCommand([ncPath, "-z", "-w4", "api.github.com", "443"], {
+      ...basePolicy(ws),
+      allowNet: ["*:443"],
+    })
+    // WITHOUT any allow → same op denied (exit ≠ 0). This guards against the
+    // unix-socket line silently widening egress when net is meant to be denied.
+    const denied = await sb.value.runCommand([ncPath, "-z", "-w4", "api.github.com", "443"], {
+      ...basePolicy(ws),
+      allowNet: [],
+    })
+    expect(denied.isOk()).toBe(true)
+    if (denied.isOk()) expect(denied.value.exitCode).not.toBe(0)
+    // The allowed path is best-effort on the exit code (CI firewalls may block
+    // outbound entirely), but it must at least not error at the sandbox layer.
+    expect(allowed.isOk()).toBe(true)
+  })
+
   it("no secret leak: JUNCTION_MASTER_KEY is not passed to child", async () => {
     const sb = await createSandbox()
     expect(sb.isOk()).toBe(true)

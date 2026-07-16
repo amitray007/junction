@@ -135,6 +135,15 @@ async function generateProfile(policy: SandboxPolicy, binaryPath?: string): Prom
       ? "(deny network*)"
       : [
           "(deny network*)",
+          // DNS resolution on macOS goes through mDNSResponder over a UNIX domain
+          // socket, NOT an IP connection to *:53 — so a purely port-scoped IP allow
+          // (below) can open the TCP connection but can never RESOLVE the hostname,
+          // and every real egress fails at name lookup ("error connecting to <host>").
+          // This one line lets the resolver talk to mDNSResponder. It does NOT widen
+          // egress: with no `(remote ip …)` allow present, the actual connection is
+          // still denied (verified — a unix-socket allow alone leaves api.github.com
+          // unreachable). Only emitted when the caller opted into some network.
+          "(allow network-outbound (remote unix-socket))",
           ...policy.allowNet.map((entry) => {
             const port = entry.includes(":") ? entry.slice(entry.lastIndexOf(":") + 1) : entry
             return `(allow network* (remote ip "*:${port}"))`
