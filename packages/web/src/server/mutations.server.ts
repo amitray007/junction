@@ -4,9 +4,17 @@
 // Called exclusively from mutations.functions.ts createServerFn handlers.
 // SECURITY: all credential output is metadata-only — no secret, no secretRef.
 
-import type { Credential, CredentialKind, CredentialStore, Platform } from "@junction/core"
+import type {
+  Credential,
+  CredentialError,
+  CredentialKind,
+  CredentialStore,
+  DbError,
+  Platform,
+} from "@junction/core"
 import {
   addCredential,
+  addStandaloneCredential,
   createCredentialStore,
   createRepositories,
   getPaths,
@@ -45,7 +53,10 @@ async function withReposAndStore<T>(
 
 export type CredentialMutationMeta = {
   id: string
-  platformId: string
+  /** Increment 42 — the credential's identity slug, shown everywhere. */
+  name: string
+  /** Increment 42 — null for an UNLINKED (standalone) credential. */
+  platformId: string | null
   account: string
   kind: string
 }
@@ -54,7 +65,8 @@ export type CredentialMutationMeta = {
 function toMutationMeta(c: Credential): CredentialMutationMeta {
   return {
     id: String(c.id),
-    platformId: String(c.platformId),
+    name: c.name,
+    platformId: c.platformId === null ? null : String(c.platformId),
     account: c.profileName,
     kind: c.kind,
   }
@@ -91,23 +103,80 @@ export type AddVerifyResult =
   | { status: "unreachable"; detail: string }
   | { status: "not-verifiable"; reason: string }
 
+/**
+ * Map an addCredential/addStandaloneCredential failure to a human-readable
+ * message — shared by mutateAddCredential's two branches (standalone vs.
+ * platform-linked) so the mapping can't drift between them (increment 42
+ * introduced the standalone branch; this factor-out is what keeps the two
+ * from becoming near-duplicate switch statements). `scope` tailors the
+ * kind-incompatible wording to whether a platform is in play — pass "" for
+ * the standalone (no-platform) path (which can never hit duplicate-account —
+ * addStandaloneCredential has no account concept — but the branch is kept
+ * for type-exhaustiveness against the shared CredentialError union).
+ */
+function addCredentialErrorMessage(e: CredentialError | DbError, scope: "platform" | ""): string {
+  if (e.kind === "invalid-input") return e.reason
+  if (e.kind === "kind-incompatible") {
+    const suffix = scope === "platform" ? " for this platform" : ""
+    return `Credential kind "${e.requested}" not accepted${suffix}; allowed: ${e.allowed.join(", ")}`
+  }
+  if (e.kind === "duplicate-account") {
+    return `an account named "${e.account}" is already connected to this platform`
+  }
+  return e.kind
+}
+
 export async function mutateAddCredential(input: {
-  platformId: string
-  account: string
+  /** Increment 42 — OPTIONAL. Absent → creates an UNLINKED (standalone) credential. */
+  platformId?: string
+  /** Required when platformId is present; ignored (must be absent) otherwise. */
+  account?: string
+  /** Increment 42 — the credential's identity slug. Required for a standalone
+   *  create; optional (derived) for a platform-linked create — see addCredential. */
+  name?: string
   kind: Exclude<CredentialKind, "oauth2">
   secret: string
-  /** Opt-in verify-on-add (28.9) — never blocks storing; a failed verify still stores. */
+  /** Opt-in verify-on-add (28.9) — never blocks storing; a failed verify still stores.
+   *  Meaningless for a standalone credential (no platform to verify against). */
   verify?: boolean
 }): Promise<
   | { ok: true; credential: CredentialMutationMeta; verify?: AddVerifyResult }
   | { ok: false; error: string }
 > {
+  // Increment 42 — no platformId → the standalone (unlinked) vault create
+  // path. No kind-compat matrix, no verify (nothing to test against).
+  if (input.platformId === undefined) {
+    return withReposAndStore(async (repos, store) => {
+      if (input.name === undefined || input.name.trim() === "") {
+        input.secret = ""
+        return { ok: false as const, error: "name is required for a standalone credential" }
+      }
+      const result = await addStandaloneCredential(
+        { name: input.name, kind: input.kind, secret: input.secret },
+        store,
+        repos.credentials,
+      )
+      input.secret = ""
+      if (result.isErr()) {
+        return { ok: false as const, error: addCredentialErrorMessage(result.error, "") }
+      }
+      return { ok: true as const, credential: toMutationMeta(result.value) }
+    })
+  }
+
+  const platformId = input.platformId
   return withReposAndStore(async (repos, store) => {
+    if (input.account === undefined || input.account.trim() === "") {
+      input.secret = ""
+      return { ok: false as const, error: "account is required when platformId is given" }
+    }
+    const account = input.account
+
     // Fetch the platform — addCredential validates the requested kind against
     // its kind-compat matrix before the secret is touched (slice A of
     // increment 28.9). The kind now comes from the caller (the web dialog's
     // Select, pre-filtered to the platform's compatibleKinds).
-    const platformResult = await repos.platforms.get(input.platformId)
+    const platformResult = await repos.platforms.get(platformId)
     if (platformResult.isErr()) {
       input.secret = ""
       const error =
@@ -118,10 +187,14 @@ export async function mutateAddCredential(input: {
 
     const result = await addCredential(
       {
-        platformId: input.platformId,
-        account: input.account,
+        platformId,
+        account,
         kind: input.kind,
         secret: input.secret,
+        // Explicit name passes through (validated inside addCredential);
+        // absent → addCredential derives one, keeping back-compat callers
+        // (this same fn, pre-42 shape) byte-identical in behavior.
+        ...(input.name !== undefined && input.name.trim() !== "" ? { name: input.name } : {}),
       },
       platform,
       store,
@@ -133,21 +206,7 @@ export async function mutateAddCredential(input: {
     // enters the return value or error).
     input.secret = ""
     if (result.isErr()) {
-      const e = result.error
-      if (e.kind === "invalid-input") return { ok: false as const, error: e.reason }
-      if (e.kind === "kind-incompatible") {
-        return {
-          ok: false as const,
-          error: `Credential kind "${e.requested}" not accepted for this platform; allowed: ${e.allowed.join(", ")}`,
-        }
-      }
-      if (e.kind === "duplicate-account") {
-        return {
-          ok: false as const,
-          error: `an account named "${e.account}" is already connected to this platform`,
-        }
-      }
-      return { ok: false as const, error: e.kind }
+      return { ok: false as const, error: addCredentialErrorMessage(result.error, "platform") }
     }
 
     const credential = result.value
@@ -274,6 +333,14 @@ async function loadPlatformForCredential(
     return { ok: false, error: credentialErrorMessage(credResult.error.kind) }
   }
   const credential = credResult.value
+
+  // Increment 42 — an UNLINKED credential (platformId: null) has no platform
+  // to test against. testCredential's caller (the web ⋯ menu) should already
+  // disable "Test Connection" for an unlinked row, but this is the honest
+  // server-side backstop.
+  if (credential.platformId === null) {
+    return { ok: false, error: "This credential is not linked to a platform — nothing to verify" }
+  }
 
   const platformResult = await repos.platforms.get(credential.platformId)
   if (platformResult.isErr()) {

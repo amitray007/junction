@@ -40,6 +40,7 @@ import type { Platform } from "../schema/platform.js"
 import { PlatformIdSchema } from "../schema/primitives.js"
 import { ProfileSchema } from "../schema/profile.js"
 import { addCredential, FILE_SECRET_MAX_BYTES } from "./add-credential.js"
+import { deriveCredentialName } from "./derive-name.js"
 import { isKindAccepted } from "./kind-compat.js"
 import { removeCredential } from "./remove-credential.js"
 import type { CredentialStore } from "./store.js"
@@ -97,7 +98,7 @@ export interface ImportSummary {
     added: number
     skipped: number
     overwritten: number
-    failed: Array<{ platformId: string; account: string; reason: string }>
+    failed: Array<{ platformId: string | null; account: string; reason: string }>
   }
   profiles?: {
     added: number
@@ -296,13 +297,28 @@ async function runImport(
   const idMap = new Map<string, string>()
 
   for (const mc of manifest.credentials) {
-    const label = `${mc.platformId}/${mc.account}`
-    const platform = platformById.get(mc.platformId)
+    const label = `${mc.platformId ?? "(unlinked)"}/${mc.account}`
+
+    // Increment 42 — an unlinked credential (no platformId) has nothing to
+    // resolve/upsert here. Importing a standalone secret is out of Phase 1's
+    // scope (vault import stays platform-scoped, as it always has been) —
+    // fail this ONE entry with an honest reason rather than crash the import.
+    if (mc.platformId === undefined) {
+      summary.credentials.failed.push({
+        platformId: null,
+        account: mc.account,
+        reason: `credential ${label} is unlinked (no platformId) — unlinked-credential vault import is not yet supported`,
+      })
+      continue
+    }
+    const mcPlatformId = mc.platformId
+
+    const platform = platformById.get(mcPlatformId)
     if (platform === undefined) {
       // Should not happen (platforms are upserted from the same manifest above),
       // but guard defensively rather than crash on a malformed archive.
       summary.credentials.failed.push({
-        platformId: mc.platformId,
+        platformId: mcPlatformId,
         account: mc.account,
         reason: `credential ${label} references a platform not present in the archive`,
       })
@@ -312,7 +328,7 @@ async function runImport(
     const existingForPlatform = await repos.credentials.forPlatform(platform.id)
     if (existingForPlatform.isErr()) {
       summary.credentials.failed.push({
-        platformId: mc.platformId,
+        platformId: mcPlatformId,
         account: mc.account,
         reason: `failed to check for collision: ${describeDbError(existingForPlatform.error)}`,
       })
@@ -337,7 +353,7 @@ async function runImport(
       if (removed.isErr()) {
         if (removed.error.kind === "in-use") {
           summary.credentials.failed.push({
-            platformId: mc.platformId,
+            platformId: mcPlatformId,
             account: mc.account,
             reason:
               "credential in use by a profile; cannot overwrite — remove the route first or use --on-collision skip",
@@ -345,7 +361,7 @@ async function runImport(
           continue
         }
         summary.credentials.failed.push({
-          platformId: mc.platformId,
+          platformId: mcPlatformId,
           account: mc.account,
           reason: `failed to remove existing credential: ${describeDbError(removed.error)}`,
         })
@@ -502,8 +518,21 @@ async function prevalidateStrict(
   // ---- credentials: shape, kind-compat, file cap, archive-internal dups, DB collisions ----
   const seenAccounts = new Set<string>()
   for (const mc of manifest.credentials) {
-    const label = `${mc.platformId}/${mc.account}`
-    const platform = platformById.get(mc.platformId)
+    const label = `${mc.platformId ?? "(unlinked)"}/${mc.account}`
+
+    // Increment 42 — unlinked-credential vault import is not yet supported
+    // (see runImport's identical guard); strict must catch it here too
+    // (zero writes) rather than let phase 2 discover it after secrets were
+    // written.
+    if (mc.platformId === undefined) {
+      return err({
+        kind: "import-failed",
+        reason: `credential ${label} is unlinked (no platformId) — unlinked-credential vault import is not yet supported`,
+      })
+    }
+    const mcPlatformId = mc.platformId
+
+    const platform = platformById.get(mcPlatformId)
     if (platform === undefined) {
       // Mirrors the non-strict dropped/missing-platform guard — this credential
       // would fail in phase 2 too, but strict must catch it here (zero writes).
@@ -516,7 +545,7 @@ async function prevalidateStrict(
     // JSON-array key, NOT a delimiter-joined string — platform ids/accounts may
     // themselves contain any delimiter we could pick (("a b","c") vs ("a","b c")
     // would spuriously collide under a space-join).
-    const dupKey = JSON.stringify([mc.platformId, mc.account])
+    const dupKey = JSON.stringify([mcPlatformId, mc.account])
     if (seenAccounts.has(dupKey)) {
       return err({
         kind: "import-failed",
@@ -630,9 +659,18 @@ function buildCandidateForValidation(
   mc: ManifestCredential,
   platform: Platform,
 ): Result<void, string> {
+  // Increment 42 — mirrors the real write path's back-compat derivation
+  // (addImportedCredential/addOAuthImportedCredential below): an archive from
+  // before increment 42 has no `name`; a throwaway derived name is enough to
+  // validate SHAPE here (empty existing-names set — TRUE global uniqueness is
+  // re-checked at the real DB write in phase 2, which strict's journal/
+  // compensation machinery already covers via the constraint-violation path).
+  const candidateName = mc.name ?? deriveCredentialName(platform.id, mc.account, new Set())
+
   if (mc.kind !== "oauth2") {
     const parsed = CredentialSchema.safeParse({
       id: newCredentialId(),
+      name: candidateName,
       platformId: platform.id,
       profileName: mc.account,
       kind: mc.kind,
@@ -646,6 +684,7 @@ function buildCandidateForValidation(
 
   const parsed = CredentialSchema.safeParse({
     id: newCredentialId(),
+    name: candidateName,
     platformId: platform.id,
     profileName: mc.account,
     kind: "oauth2",
@@ -874,7 +913,16 @@ async function addImportedCredential(
 ): Promise<Result<Credential, { reason: string }>> {
   if (mc.kind !== "oauth2") {
     const added = await addCredential(
-      { platformId: mc.platformId, account: mc.account, kind: mc.kind, secret: mc.secret },
+      {
+        platformId: platform.id,
+        account: mc.account,
+        kind: mc.kind,
+        secret: mc.secret,
+        // Increment 42 — use the manifest's name when present; addCredential
+        // derives one itself (deriveCredentialName) when absent, matching
+        // back-compat for a pre-42 archive with no `name` field.
+        ...(mc.name !== undefined ? { name: mc.name } : {}),
+      },
       platform,
       store,
       repos.credentials,
@@ -882,7 +930,7 @@ async function addImportedCredential(
     if (added.isErr()) {
       const e = added.error
       return err({
-        reason: `import failed for ${mc.platformId}/${mc.account}: ${describeAddError(e)}`,
+        reason: `import failed for ${platform.id}/${mc.account}: ${describeAddError(e)}`,
       })
     }
     // Best-effort carry over the verify state — a formatting-only field, never
@@ -892,7 +940,7 @@ async function addImportedCredential(
     }
     return ok(added.value)
   }
-  return addOAuthImportedCredential(mc, store, repos)
+  return addOAuthImportedCredential(mc, platform.id, store, repos)
 }
 
 /**
@@ -912,7 +960,7 @@ async function addAndRecord(
   const added = await addImportedCredential(mc, platform, store, repos)
   if (added.isErr()) {
     summary.credentials.failed.push({
-      platformId: mc.platformId,
+      platformId: platform.id,
       account: mc.account,
       reason: added.error.reason,
     })
@@ -948,6 +996,7 @@ function describeAddError(e: { kind: string } & Record<string, unknown>): string
  */
 async function addOAuthImportedCredential(
   mc: ManifestCredential,
+  platformId: string,
   store: CredentialStore,
   repos: Pick<Repositories, "credentials">,
 ): Promise<Result<Credential, { reason: string }>> {
@@ -957,9 +1006,25 @@ async function addOAuthImportedCredential(
   const clientIdRef = mc.clientId !== undefined ? newCredentialId() : undefined
   const clientSecretRef = mc.clientSecret !== undefined ? newCredentialId() : undefined
 
+  // Increment 42 — use the manifest's name when present; DERIVE one (against
+  // the CURRENT DB's existing names) when absent, matching back-compat for a
+  // pre-42 archive with no `name` field. A live list() read here (rather than
+  // the empty-set placeholder buildCandidateForValidation used for shape-only
+  // prevalidation) so a non-strict import's real write gets a truly-unique
+  // derived name, not just a schema-shaped one.
+  let name = mc.name
+  if (name === undefined) {
+    const existingResult = await repos.credentials.list()
+    const existingNames = existingResult.isOk()
+      ? new Set(existingResult.value.map((c) => c.name))
+      : new Set<string>()
+    name = deriveCredentialName(platformId, mc.account, existingNames)
+  }
+
   const credentialParse = CredentialSchema.safeParse({
     id,
-    platformId: mc.platformId,
+    name,
+    platformId,
     profileName: mc.account,
     kind: "oauth2",
     secretRef,
@@ -983,7 +1048,7 @@ async function addOAuthImportedCredential(
   // DB insert → stranded store entries).
   if (!credentialParse.success) {
     return err({
-      reason: `invalid oauth2 credential shape for ${mc.platformId}/${mc.account}: ${credentialParse.error.issues.map((i) => i.message).join(", ")}`,
+      reason: `invalid oauth2 credential shape for ${platformId}/${mc.account}: ${credentialParse.error.issues.map((i) => i.message).join(", ")}`,
     })
   }
   const credential = credentialParse.data
@@ -1005,7 +1070,7 @@ async function addOAuthImportedCredential(
     if (setResult.isErr()) {
       await cleanupRefs(store, written)
       return err({
-        reason: `failed to write secret for ${mc.platformId}/${mc.account}: ${describeCredentialError(setResult.error)}`,
+        reason: `failed to write secret for ${platformId}/${mc.account}: ${describeCredentialError(setResult.error)}`,
       })
     }
     written.push(ref)
@@ -1015,7 +1080,7 @@ async function addOAuthImportedCredential(
   if (createResult.isErr()) {
     await cleanupRefs(store, written)
     return err({
-      reason: `failed to persist oauth2 credential for ${mc.platformId}/${mc.account}: ${describeDbError(createResult.error)}`,
+      reason: `failed to persist oauth2 credential for ${platformId}/${mc.account}: ${describeDbError(createResult.error)}`,
     })
   }
 

@@ -489,6 +489,7 @@ describe("persistOAuthTokens", () => {
       // Seed an EXISTING credential with account "work" on this platform.
       await repos.credentials.create({
         id: "existing-cred-id",
+        name: "work-existing-cred-id",
         platformId: "dup-platform",
         profileName: "work",
         kind: "oauth2",
@@ -572,6 +573,7 @@ describe("persistOAuthTokens", () => {
 
       await repos.credentials.create({
         id: "existing-cred-id-2",
+        name: "work-existing-cred-id-2",
         platformId: "dup-platform-2",
         profileName: "work",
         kind: "oauth2",
@@ -637,6 +639,7 @@ describe("persistOAuthTokens", () => {
 
       await repos.credentials.create({
         id: "reconnect-cred-id",
+        name: "work-reconnect-cred-id",
         platformId: "dup-platform-3",
         profileName: "work",
         kind: "oauth2",
@@ -732,6 +735,7 @@ describe("persistOAuthTokens", () => {
 
       const createResult = await repos.credentials.create({
         id: "cred-reconnect-test",
+        name: "work-cred-reconnect-test",
         platformId: "test-platform-2",
         profileName: "work",
         kind: "oauth2",

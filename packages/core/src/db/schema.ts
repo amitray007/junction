@@ -27,9 +27,15 @@ export const credentials = sqliteTable(
   "credentials",
   {
     id: text("id").primaryKey(),
-    platformId: text("platform_id")
-      .notNull()
-      .references(() => platforms.id),
+    // Increment 42 — the credential's SOLE identity. Lowercase slug, globally
+    // UNIQUE (see the index below). Backfilled for pre-42 rows by migration
+    // 0011 (name = platform_id || '-' || profile_name, deduped).
+    name: text("name").notNull(),
+    // Increment 42 — nullable (a credential no longer requires a platform to
+    // exist). No uniqueness role; identity lives entirely in `name`.
+    platformId: text("platform_id").references(() => platforms.id),
+    // @deprecated Increment 42 — vestigial, WRITE-ONLY legacy column. See
+    // schema/credential.ts's CredentialSchema doc-comment.
     profileName: text("profile_name").notNull(),
     kind: text("kind").notNull(),
     // secrets-as-references: ONLY a handle, NEVER a secret value
@@ -44,10 +50,11 @@ export const credentials = sqliteTable(
     lastVerifyResult: text("last_verify_result"),
   },
   (table) => [
-    // DB-level backstop for the addCredential app-layer duplicate-account
-    // guard (inc 30.12). Migration 0010 dedups legacy rows before this index
-    // is created (dedup-then-constrain) — see docs/methods/32.9-db-unique-index.md.
-    uniqueIndex("credentials_platform_profile_unique").on(table.platformId, table.profileName),
+    // Increment 42 — the credential's GLOBAL identity constraint. Replaces
+    // the old (platform_id, profile_name) unique index (migration 0011 drops
+    // it) — the multi-account wedge was never that index; it is "a Profile
+    // references a Credential by id" (unchanged).
+    uniqueIndex("credentials_name_unique").on(table.name),
   ],
 )
 

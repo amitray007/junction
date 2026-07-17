@@ -7,6 +7,7 @@
 import { readFile } from "node:fs/promises"
 import {
   addCredential,
+  addStandaloneCredential,
   type Credential,
   type CredentialVerifyResult,
   compatibleCredentialKinds,
@@ -57,20 +58,32 @@ const addCommand = defineCommand({
       "Add a credential for a platform (kind is derived from the platform's auth unless --kind is given).",
   },
   args: {
+    // Increment 42 — no longer required. Omitted → an UNLINKED (standalone)
+    // credential, which REQUIRES --name (there's no account to derive one
+    // from). Provided → the legacy platform-scoped path, unchanged.
     platform: {
       type: "string",
-      description: "Platform ID",
-      required: true,
+      description: "Platform ID (omit to create a standalone/unlinked credential; requires --name)",
     },
     account: {
       type: "string",
-      description: "Logical account label (e.g. work, personal)",
-      required: true,
+      description:
+        "Logical account label (e.g. work, personal). Required when --platform is given.",
+    },
+    // Increment 42 — the credential's identity slug. Optional when --platform
+    // + --account are BOTH given (derived as `<platform>-<account>`, `-2`/
+    // `-3` suffixed on collision — same rule the migration backfill uses).
+    // REQUIRED when --platform is omitted (a standalone credential has no
+    // account to derive a name from).
+    name: {
+      type: "string",
+      description:
+        "Credential identity slug (lowercase, digits, hyphens). Derived from --platform/--account when omitted; required for a standalone credential (no --platform).",
     },
     kind: {
       type: "string",
       description:
-        "Credential kind (api-key, bearer, env, file). Default: derived from the platform's auth.",
+        "Credential kind (api-key, bearer, env, file). Default: derived from the platform's auth (platform-scoped) or 'bearer' (standalone).",
     },
     "token-stdin": {
       type: "boolean",
@@ -93,13 +106,26 @@ const addCommand = defineCommand({
   async run({ args }) {
     const json = args.json ?? false
 
-    // Validate platform and account BEFORE reading the token — bad input must
-    // not cause a secret to be captured from stdin (nice-to-have 2 + FIX 2).
-    if (!args.platform || args.platform.trim() === "") {
-      const msg = "invalid input: --platform must not be empty"
-      reportError(json, msg)
+    const hasPlatform = args.platform !== undefined && args.platform.trim() !== ""
+
+    // Increment 42 — no --platform → standalone (unlinked) credential. Requires
+    // --name (no account to derive one from) and rejects --account (meaningless
+    // without a platform to scope it to).
+    if (!hasPlatform) {
+      if (!args.name || args.name.trim() === "") {
+        reportError(json, "invalid input: --name is required when --platform is omitted")
+        return
+      }
+      if (args.account !== undefined && args.account.trim() !== "") {
+        reportError(json, "invalid input: --account requires --platform")
+        return
+      }
+      await runAddStandalone(args, json)
       return
     }
+
+    // Validate platform and account BEFORE reading the token — bad input must
+    // not cause a secret to be captured from stdin (nice-to-have 2 + FIX 2).
     if (!args.account || args.account.trim() === "") {
       const msg = "invalid input: --account must not be empty"
       reportError(json, msg)
@@ -110,6 +136,8 @@ const addCommand = defineCommand({
       reportError(json, msg)
       return
     }
+    // biome-ignore lint/style/noNonNullAssertion: hasPlatform guarantees this above
+    const platformArg = args.platform!
 
     const ctx = await openDbAndStore(json)
     if (!ctx) return
@@ -118,7 +146,7 @@ const addCommand = defineCommand({
     // Fetch the platform BEFORE reading the secret — addCredential validates the
     // requested (or derived) kind against its kind-compat matrix, and the derived
     // default itself comes from this same platform row.
-    const platformResult = await repos.platforms.get(args.platform)
+    const platformResult = await repos.platforms.get(platformArg)
     if (platformResult.isErr()) {
       reportDbError(platformResult.error, json)
       return
@@ -132,7 +160,7 @@ const addCommand = defineCommand({
     if (kind === undefined) {
       const derived = compatibleCredentialKinds(platform)[0]
       if (derived === undefined) {
-        const msg = `platform "${args.platform}" declares no auth; credentials not accepted`
+        const msg = `platform "${platformArg}" declares no auth; credentials not accepted`
         reportError(json, msg)
         return
       }
@@ -167,7 +195,7 @@ const addCommand = defineCommand({
     } else {
       secret = await acquireSecret({
         fromStdin: args["token-stdin"],
-        promptMessage: `Secret (${kind}) for ${args.platform} (${args.account}):`,
+        promptMessage: `Secret (${kind}) for ${platformArg} (${args.account}):`,
         json,
       })
     }
@@ -181,10 +209,14 @@ const addCommand = defineCommand({
 
     const result = await addCredential(
       {
-        platformId: args.platform,
+        platformId: platformArg,
         account: args.account,
         kind: kind as Exclude<Parameters<typeof addCredential>[0]["kind"], "oauth2">,
         secret,
+        // Increment 42 — explicit --name passes through (validated inside
+        // addCredential); omitted → addCredential derives one itself
+        // (deriveCredentialName), keeping this call's behavior unchanged.
+        ...(args.name !== undefined && args.name.trim() !== "" ? { name: args.name.trim() } : {}),
       },
       platform,
       store,
@@ -237,6 +269,90 @@ const addCommand = defineCommand({
     writeCredentialMeta(credential, json, "added", verifyOutcome, persisted)
   },
 })
+
+// ---------------------------------------------------------------------------
+// Standalone (unlinked) credential add — increment 42. No --platform: a pure
+// secret with its own identity, no kind-compat matrix to validate against
+// (there's no platform to derive one from), no verify (nothing to test
+// against). Mirrors addCommand's secret-acquisition discipline (validate
+// input BEFORE touching stdin/prompt).
+// ---------------------------------------------------------------------------
+
+const STANDALONE_KINDS = ["api-key", "bearer", "env", "file"] as const
+
+async function runAddStandalone(
+  args: {
+    name?: string
+    kind?: string
+    "token-stdin": boolean
+    "secret-file"?: string
+  },
+  json: boolean,
+): Promise<void> {
+  // biome-ignore lint/style/noNonNullAssertion: caller validated --name is present+non-empty
+  const name = args.name!.trim()
+
+  if (args["secret-file"] && args["token-stdin"]) {
+    reportError(json, "invalid input: --secret-file and --token-stdin are mutually exclusive")
+    return
+  }
+
+  const kind = args.kind ?? "bearer"
+  if (!(STANDALONE_KINDS as readonly string[]).includes(kind)) {
+    reportError(
+      json,
+      `invalid input: --kind must be one of ${STANDALONE_KINDS.join(", ")} for a standalone credential (got "${kind}")`,
+    )
+    return
+  }
+
+  if (args["secret-file"] && kind !== "file") {
+    reportError(
+      json,
+      `invalid input: --secret-file is only valid for file-kind credentials (kind is "${kind}"); use --token-stdin for bearer/api-key`,
+    )
+    return
+  }
+
+  let secret: string | null
+  if (args["secret-file"]) {
+    const fileResult = await readSecretFile(args["secret-file"])
+    if (fileResult === null) {
+      reportError(json, `could not read --secret-file "${args["secret-file"]}"`)
+      return
+    }
+    secret = fileResult
+  } else {
+    secret = await acquireSecret({
+      fromStdin: args["token-stdin"],
+      promptMessage: `Secret (${kind}) for "${name}":`,
+      json,
+    })
+  }
+  if (secret === null) return
+
+  if (!secret) {
+    reportError(json, "token must not be empty")
+    return
+  }
+
+  const ctx = await openDbAndStore(json)
+  if (!ctx) return
+  const { repos, store } = ctx
+
+  const result = await addStandaloneCredential(
+    { name, kind: kind as (typeof STANDALONE_KINDS)[number], secret },
+    store,
+    repos.credentials,
+  )
+
+  if (result.isErr()) {
+    reportCredentialOpError(result.error, json)
+    return
+  }
+
+  writeCredentialMeta(result.value, json, "added")
+}
 
 /**
  * OAuth connection state for `credential list` (D3) — derived purely from
@@ -885,7 +1001,16 @@ function reportCredentialOpError(
  * other call site, e.g. rotate, unaffected).
  */
 function writeCredentialMeta(
-  cred: { id: unknown; platformId: unknown; profileName: string; kind: string },
+  cred: {
+    id: unknown
+    // Increment 42 — the credential's identity slug. Optional on the param
+    // type only so pre-42 call shapes still typecheck; every real Credential
+    // has one.
+    name?: string
+    platformId: unknown
+    profileName: string
+    kind: string
+  },
   json: boolean,
   successVerb: string,
   verifyOutcome?: VerifyOutcome,
@@ -893,6 +1018,7 @@ function writeCredentialMeta(
 ): void {
   const meta = {
     id: cred.id,
+    ...(cred.name !== undefined ? { name: cred.name } : {}),
     platformId: cred.platformId,
     account: cred.profileName,
     kind: cred.kind,
@@ -907,9 +1033,16 @@ function writeCredentialMeta(
       })}\n`,
     )
   } else {
-    consola.success(
-      `Credential ${successVerb} — account: ${cred.profileName}, platform: ${String(cred.platformId)}, id: ${String(cred.id)}`,
-    )
+    const nameLabel = cred.name !== undefined ? `name: ${cred.name}, ` : ""
+    // An unlinked credential (platformId null, increment 42) has no
+    // meaningful account/platform to report — profileName mirrors `name`
+    // for that case (addStandaloneCredential), so the "account: X, platform:
+    // null" line would be redundant/confusing noise.
+    const scopeLabel =
+      cred.platformId === null
+        ? ""
+        : `account: ${cred.profileName}, platform: ${String(cred.platformId)}, `
+    consola.success(`Credential ${successVerb} — ${nameLabel}${scopeLabel}id: ${String(cred.id)}`)
     if (verifyOutcome !== undefined) {
       consola.info(formatVerifyOutcome(verifyOutcome))
     }

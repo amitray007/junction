@@ -143,6 +143,7 @@ describe("data.server", () => {
     const credId = newCredentialId()
     const createResult = await repos.credentials.create({
       id: credId,
+      name: "work-1",
       platformId,
       profileName: "work",
       kind: "bearer",
@@ -183,6 +184,7 @@ describe("data.server", () => {
     const credId = newCredentialId()
     const createResult = await repos.credentials.create({
       id: credId,
+      name: "work-2",
       platformId,
       profileName: "work",
       kind: "oauth2",
@@ -235,6 +237,7 @@ describe("data.server", () => {
     await repos.platforms.create({ id: platformId, kind: "mcp", displayName: "P" })
     await repos.credentials.create({
       id: newCredentialId(),
+      name: "work-3",
       platformId,
       profileName: "work",
       kind: "bearer",
@@ -290,6 +293,7 @@ describe("data.server", () => {
     const credId = newCredentialId()
     await repos.credentials.create({
       id: credId,
+      name: "personal-4",
       platformId,
       profileName: "personal",
       kind: "bearer",
@@ -378,6 +382,7 @@ describe("data.server", () => {
     await repos.platforms.create({ id: platformId, kind: "mcp", displayName: "My GitHub MCP" })
     await repos.credentials.create({
       id: newCredentialId(),
+      name: "work-5",
       platformId,
       profileName: "work",
       kind: "oauth2",
@@ -406,6 +411,7 @@ describe("data.server", () => {
     await repos.platforms.create({ id: platformId, kind: "mcp", displayName: "Unrecognized Thing" })
     await repos.credentials.create({
       id: newCredentialId(),
+      name: "work-6",
       platformId,
       profileName: "work",
       kind: "bearer",
@@ -429,6 +435,7 @@ describe("data.server", () => {
     const credId = newCredentialId()
     await repos.credentials.create({
       id: credId,
+      name: "work-7",
       platformId,
       profileName: "work",
       kind: "oauth2",
@@ -481,6 +488,7 @@ describe("data.server", () => {
     await repos.platforms.create({ id: platformId, kind: "mcp", displayName: "GitHub" })
     await repos.credentials.create({
       id: newCredentialId(),
+      name: "work-8",
       platformId,
       profileName: "work",
       kind: "oauth2",
@@ -489,6 +497,7 @@ describe("data.server", () => {
     })
     await repos.credentials.create({
       id: newCredentialId(),
+      name: "personal-9",
       platformId,
       profileName: "personal",
       kind: "oauth2",
@@ -693,6 +702,7 @@ describe("data.server", () => {
       const credA = newCredentialId()
       await repos.credentials.create({
         id: credA,
+        name: "healthy-no-tools-10",
         platformId,
         profileName: "healthy-no-tools",
         kind: "bearer",
@@ -704,6 +714,7 @@ describe("data.server", () => {
       const credB = newCredentialId()
       await repos.credentials.create({
         id: credB,
+        name: "unhealthy-with-tools-11",
         platformId,
         profileName: "unhealthy-with-tools",
         kind: "bearer",
@@ -737,6 +748,7 @@ describe("data.server", () => {
       const cred = newCredentialId()
       await repos.credentials.create({
         id: cred,
+        name: "healthy-with-tools-12",
         platformId,
         profileName: "healthy-with-tools",
         kind: "bearer",

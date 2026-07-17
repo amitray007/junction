@@ -78,6 +78,13 @@
       "when": 1783640810447,
       "tag": "0010_gifted_namor",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1784318788167,
+      "tag": "0011_credential_standalone_identity",
+      "breakpoints": true
     }
   ]
 }

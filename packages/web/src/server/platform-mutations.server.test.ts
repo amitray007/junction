@@ -482,6 +482,7 @@ describe("platform-mutations.server", () => {
       await repos.platforms.create({ id: platformId, kind: "mcp", displayName: "In Use" })
       await repos.credentials.create({
         id: newCredentialId(),
+        name: "acct-14",
         platformId,
         profileName: "acct",
         kind: "bearer",

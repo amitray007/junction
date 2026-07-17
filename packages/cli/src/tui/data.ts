@@ -128,10 +128,14 @@ async function buildSnapshot(paths: JunctionPaths): Promise<DashboardSnapshot> {
       }))
     : []
 
-  // Count credentials per platform (NEVER include secretRef — counts only)
+  // Count credentials per platform (NEVER include secretRef — counts only).
+  // An unlinked credential (platformId: null, increment 42) has no platform
+  // to count against — skip it (it shows up in the standalone vault view
+  // instead, not here).
   const credCountByPlatform = new Map<string, number>()
   if (credentialsResult.isOk()) {
     for (const cred of credentialsResult.value) {
+      if (cred.platformId === null) continue
       credCountByPlatform.set(cred.platformId, (credCountByPlatform.get(cred.platformId) ?? 0) + 1)
     }
   }

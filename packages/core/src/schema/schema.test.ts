@@ -29,6 +29,7 @@ describe("multi-account wedge", () => {
 
     const credWork = CredentialSchema.safeParse({
       id: newCredentialId(),
+      name: "github-work",
       platformId,
       profileName: "work",
       kind: "oauth2",
@@ -37,6 +38,7 @@ describe("multi-account wedge", () => {
 
     const credPersonal = CredentialSchema.safeParse({
       id: newCredentialId(),
+      name: "github-personal",
       platformId,
       profileName: "personal",
       kind: "api-key",
@@ -121,6 +123,7 @@ describe("valid entity parsing", () => {
   it("parses a Credential with optional oauthMeta", () => {
     const result = CredentialSchema.safeParse({
       id: newCredentialId(),
+      name: "linear-work",
       platformId: newPlatformId(),
       profileName: "work",
       kind: "oauth2",
@@ -323,6 +326,7 @@ describe("security: no plaintext secret survives Credential parse", () => {
     // Simulate a stray `secret` field on the raw input (e.g. from a bad serializer).
     const raw = {
       id: newCredentialId(),
+      name: "github-work",
       platformId: newPlatformId(),
       profileName: "work",
       kind: "api-key" as const,

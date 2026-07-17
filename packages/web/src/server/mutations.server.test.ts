@@ -15,6 +15,10 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 const getMock = vi.fn()
 const credentialsGetMock = vi.fn()
 const forPlatformMock = vi.fn()
+// Increment 42 — addCredential now reads list() (not just forPlatform) to
+// derive a name when the caller doesn't supply one; every mutateAddCredential
+// mock scenario needs this stubbed alongside forPlatform.
+const credentialsListMock = vi.fn()
 const setVerifyStateMock = vi.fn()
 const storeGetMock = vi.fn()
 const storeSetMock = vi.fn()
@@ -52,6 +56,7 @@ vi.mock("@junction/core", async (importOriginal) => {
           credentials: {
             get: credentialsGetMock,
             forPlatform: forPlatformMock,
+            list: credentialsListMock,
             setVerifyState: setVerifyStateMock,
             create: credentialsCreateMock,
           },
@@ -78,6 +83,7 @@ afterEach(() => {
   getMock.mockReset()
   credentialsGetMock.mockReset()
   forPlatformMock.mockReset()
+  credentialsListMock.mockReset()
   setVerifyStateMock.mockReset()
   storeGetMock.mockReset()
   storeSetMock.mockReset()
@@ -138,6 +144,7 @@ describe("mutateAddCredential — verify-on-add secret discipline", () => {
   it("never leaks the plaintext secret or secretRef through the verify=true success result (stringify guard)", async () => {
     getMock.mockReturnValue(okAsync(verifyOnAddPlatform))
     forPlatformMock.mockReturnValue(okAsync([]))
+    credentialsListMock.mockReturnValue(okAsync([]))
     storeSetMock.mockReturnValue(okAsync(undefined))
     credentialsCreateMock.mockImplementation((c: { id: string }) => okAsync(c))
     verifyCredentialMock.mockReturnValue(okAsync({ status: "ok" }))
@@ -162,6 +169,47 @@ describe("mutateAddCredential — verify-on-add secret discipline", () => {
 })
 
 // ---------------------------------------------------------------------------
+// mutateAddCredential — increment 42: standalone (unlinked) create path.
+// No platformId → addStandaloneCredential, never touches platforms.get.
+// ---------------------------------------------------------------------------
+
+describe("mutateAddCredential — standalone (unlinked) create (increment 42)", () => {
+  it("no platformId + a valid name creates an unlinked credential, never touching platforms.get", async () => {
+    credentialsCreateMock.mockImplementation((c: { id: string }) => okAsync(c))
+    storeSetMock.mockReturnValue(okAsync(undefined))
+
+    const result = await mutateAddCredential({
+      name: "my-vault-secret",
+      kind: "bearer",
+      secret: "super-secret-plaintext-value",
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error("expected success")
+    expect(result.credential.platformId).toBeNull()
+    expect(result.credential.name).toBe("my-vault-secret")
+    // The platform-lookup path (platforms.get) must never be touched — this
+    // is the whole point of "standalone": no platform to look up.
+    expect(getMock).not.toHaveBeenCalled()
+
+    const serialized = JSON.stringify(result)
+    expect(serialized).not.toContain("super-secret-plaintext-value")
+  })
+
+  it("no platformId and no name → clean error, no store write", async () => {
+    const result = await mutateAddCredential({
+      kind: "bearer",
+      secret: "some-secret",
+    })
+
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error("expected failure")
+    expect(result.error).toContain("name is required")
+    expect(storeSetMock).not.toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------
 // testCredential — 28.9 Test Connection. Mocks the repo/store/verify layers
 // per this file's established pattern (mutateAddCredential's platform-lookup
 // suite above) rather than engineering a real sqlite/keyring/network failure.
@@ -173,6 +221,22 @@ const fakePlatform = { id: "plat-1", kind: "mcp", displayName: "Test" } as unkno
 const fakeCredentialRow = { id: "cred-1", platformId: "plat-1", secretRef: "ref-1" }
 
 describe("testCredential", () => {
+  it("increment 42: an UNLINKED credential (platformId: null) returns a clean ok:false — nothing to verify", async () => {
+    credentialsGetMock.mockReturnValue(
+      okAsync({ id: "cred-vault", platformId: null, secretRef: "ref-1" }),
+    )
+
+    const result = await testCredential("cred-vault")
+
+    expect(result).toEqual({
+      ok: false,
+      error: "This credential is not linked to a platform — nothing to verify",
+    })
+    // Never reaches the platform lookup or the store — the guard is up-front.
+    expect(getMock).not.toHaveBeenCalled()
+    expect(storeGetMock).not.toHaveBeenCalled()
+  })
+
   it('returns {ok:true, status:"ok"} and persists setVerifyState on a real ok verify', async () => {
     credentialsGetMock.mockReturnValue(okAsync(fakeCredentialRow))
     getMock.mockReturnValue(okAsync(fakePlatform))

@@ -33,7 +33,7 @@ export interface ExportVaultResult {
   credentialsExported: number
   platformsExported: number
   profilesExported?: number
-  skipped: Array<{ platformId: string; account: string; reason: string }>
+  skipped: Array<{ platformId: string | null; account: string; reason: string }>
 }
 
 /**
@@ -134,43 +134,47 @@ function resolveCredentials(
   {
     manifestCredentials: ManifestCredential[]
     referencedPlatforms: Platform[]
-    skipped: Array<{ platformId: string; account: string; reason: string }>
+    skipped: Array<{ platformId: string | null; account: string; reason: string }>
   },
   CredentialError
 > {
   const platformById = new Map(allPlatforms.map((p) => [p.id, p]))
   const referencedPlatformIds = new Set<string>()
   const manifestCredentials: ManifestCredential[] = []
-  const skipped: Array<{ platformId: string; account: string; reason: string }> = []
+  const skipped: Array<{ platformId: string | null; account: string; reason: string }> = []
 
   type StepResult = Result<
     {
       manifestCredentials: ManifestCredential[]
       referencedPlatforms: Platform[]
-      skipped: Array<{ platformId: string; account: string; reason: string }>
+      skipped: Array<{ platformId: string | null; account: string; reason: string }>
     },
     CredentialError
   >
 
   const step = async (): Promise<StepResult> => {
     for (const cred of allCredentials) {
-      const label = `${cred.platformId}/${cred.profileName}`
+      const label = `${cred.platformId ?? "(unlinked)"}/${cred.profileName}`
 
-      // Orphan-platform check FIRST (I5) — a dangling FK must not reach the store.
-      const platform = platformById.get(cred.platformId)
-      if (platform === undefined) {
-        if (skipMissing) {
-          skipped.push({
-            platformId: cred.platformId,
-            account: cred.profileName,
-            reason: "references a missing platform",
+      // Increment 42 — an UNLINKED credential (platformId: null) has no
+      // platform to resolve or collision-check; skip straight to the secret
+      // read. Orphan-platform check (I5) only applies when platformId is set.
+      if (cred.platformId !== null) {
+        const platform = platformById.get(cred.platformId)
+        if (platform === undefined) {
+          if (skipMissing) {
+            skipped.push({
+              platformId: cred.platformId,
+              account: cred.profileName,
+              reason: "references a missing platform",
+            })
+            continue
+          }
+          return err({
+            kind: "export-failed",
+            reason: `credential ${label} references a missing platform`,
           })
-          continue
         }
-        return err({
-          kind: "export-failed",
-          reason: `credential ${label} references a missing platform`,
-        })
       }
 
       const secretResult = await store.get(cred.secretRef)
@@ -227,10 +231,15 @@ function resolveCredentials(
 
       if (skipThisCredential) continue
 
-      referencedPlatformIds.add(cred.platformId)
+      if (cred.platformId !== null) referencedPlatformIds.add(cred.platformId)
       manifestCredentials.push({
-        platformId: cred.platformId,
-        account: cred.profileName,
+        name: cred.name,
+        ...(cred.platformId !== null ? { platformId: cred.platformId } : {}),
+        // account stays required in the manifest (ManifestCredentialSchema) —
+        // an unlinked credential has no meaningful account label, so `name`
+        // (its actual identity) fills the slot instead of the meaningless
+        // write-only profileName.
+        account: cred.platformId !== null ? cred.profileName : cred.name,
         kind: cred.kind,
         ...(cred.oauthMeta !== undefined
           ? {

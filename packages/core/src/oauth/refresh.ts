@@ -190,7 +190,10 @@ export function refreshIfExpired(
   if (meta?.needsReauth === true) {
     return errAsync({
       kind: "needs-reauth",
-      platformId: credential.platformId,
+      // oauth2 credentials always carry a platformId (OAuth is untouched by
+      // increment 42 — only raw-kind credentials can be unlinked); the `?? ""`
+      // fallback is unreachable defensive code, not a real null case.
+      platformId: credential.platformId ?? "",
       account: credential.profileName,
     })
   }
@@ -229,7 +232,9 @@ function performRefresh(
   refreshFn: RefreshTokenFn,
   now: number,
 ): ResultAsync<{ accessToken: string | null }, RefreshError> {
-  const platformId = credential.platformId
+  // oauth2 credentials always carry a platformId (see the identical comment
+  // above in refreshIfExpired) — the `?? ""` fallback is unreachable.
+  const platformId = credential.platformId ?? ""
   const account = credential.profileName
   const needsReauth = (): RefreshError => ({ kind: "needs-reauth", platformId, account })
 
@@ -302,7 +307,9 @@ function callRefreshAndPersist(
   clientId: string,
   clientSecret: string,
 ): ResultAsync<{ accessToken: string }, RefreshError> {
-  const platformId = credential.platformId
+  // oauth2 credentials always carry a platformId (see the identical comment
+  // in refreshIfExpired above) — the `?? ""` fallback is unreachable.
+  const platformId = credential.platformId ?? ""
   const account = credential.profileName
   const providerId = meta?.providerId ?? ""
   // Capture the OLD refs at entry (mirrors rotateCredential capturing

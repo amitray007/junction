@@ -8,6 +8,20 @@ import { z } from "zod"
 import { CredentialIdSchema, PlatformIdSchema } from "./primitives.js"
 
 // ---------------------------------------------------------------------------
+// CredentialName — the credential's SOLE identity (increment 42, Phase 1 of
+// docs/specs/2026-07-17-credential-platform-normalization.md). Lowercase slug,
+// globally unique across ALL credentials (linked or not). No `_`/`__` contract
+// here — credential names never enter tool namespaces (those come from
+// profile/source wiring, see primitives.ts's ToolNamespaceSchema).
+// ---------------------------------------------------------------------------
+
+export const CredentialNameSchema = z.string().regex(/^[a-z0-9][a-z0-9-]*$/, {
+  message:
+    "name must match ^[a-z0-9][a-z0-9-]*$ (lowercase, digits, hyphens; must start alphanumeric)",
+})
+export type CredentialName = z.infer<typeof CredentialNameSchema>
+
+// ---------------------------------------------------------------------------
 // CredentialKind
 // ---------------------------------------------------------------------------
 
@@ -70,9 +84,30 @@ export type CredentialVerifyResult = z.infer<typeof CredentialVerifyResult>
 export const CredentialSchema = z.object({
   /** Opaque stable credential ID */
   id: CredentialIdSchema,
-  /** FK → Platform. Multiple Credentials can share the same platformId (the wedge). */
-  platformId: PlatformIdSchema,
-  /** Logical account name within a profile, e.g. "work", "personal", "client-acme" */
+  /**
+   * The credential's SOLE identity (increment 42 — Phase 1 of
+   * docs/specs/2026-07-17-credential-platform-normalization.md). Lowercase
+   * slug, globally UNIQUE across every credential (linked or not). Shown
+   * everywhere a credential is referenced (CLI `--credential`, web list,
+   * agent-facing displays). Required on every create path — see
+   * `deriveCredentialName` for paths that don't take a user-supplied name
+   * (OAuth connect, catalog connect, legacy CLI `--account`).
+   */
+  name: CredentialNameSchema,
+  /**
+   * FK → Platform. Multiple Credentials can share the same platformId (the
+   * wedge). NULLABLE as of increment 42 — a credential no longer requires a
+   * platform to exist (a standalone vault secret). Carries NO uniqueness role
+   * (identity lives entirely in `name`).
+   */
+  platformId: PlatformIdSchema.nullable(),
+  /**
+   * @deprecated Increment 42 — vestigial, WRITE-ONLY legacy column. The OAuth
+   * connect flow still writes it (Phase 1 leaves OAuth untouched), but
+   * nothing NEW may read it for identity or uniqueness — use `name`
+   * exclusively. Phase 3 (docs/specs/2026-07-17-credential-platform-
+   * normalization.md) physically drops this column.
+   */
   profileName: z.string().min(1),
   /** Authentication mechanism kind */
   kind: CredentialKind,

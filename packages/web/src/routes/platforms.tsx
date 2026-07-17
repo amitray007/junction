@@ -77,9 +77,12 @@ import { KeyValueRepeater } from "./-components/key-value-repeater.js"
 export const Route = createFileRoute("/platforms")({
   loader: async () => {
     const [platforms, credentials] = await Promise.all([getPlatforms(), getCredentials()])
-    // Derive connection counts per platform from the credential list.
+    // Derive connection counts per platform from the credential list. An
+    // UNLINKED credential (platformId: null, increment 42) has no platform
+    // to count against — skip it.
     const connectionCounts = new Map<string, number>()
     for (const c of credentials) {
+      if (c.platformId === null) continue
       connectionCounts.set(c.platformId, (connectionCounts.get(c.platformId) ?? 0) + 1)
     }
     return { platforms, connectionCounts: Object.fromEntries(connectionCounts) }

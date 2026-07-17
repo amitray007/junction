@@ -30,7 +30,7 @@ const platforms: PlatformMeta[] = [
 ]
 
 const credentials: CredentialMeta[] = [
-  { id: "cred-1", platformId: "github", account: "alice", kind: "bearer" },
+  { id: "cred-1", name: "cred-1", platformId: "github", account: "alice", kind: "bearer" },
 ]
 
 const populatedData = {

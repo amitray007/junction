@@ -3,7 +3,7 @@
 // dry.md: no generic base. security.md: only secret_ref stored, never plaintext.
 // better-sqlite3 is sync; we present an async API for libsql-swap safety.
 
-import { eq } from "drizzle-orm"
+import { eq, isNull } from "drizzle-orm"
 import { errAsync, okAsync, type ResultAsync } from "neverthrow"
 import { mapDbError } from "../db/errors.js"
 import type { Db } from "../db/index.js"
@@ -28,9 +28,15 @@ function fetchRowOrNotFound(
   return { ok: true, row }
 }
 
+/**
+ * Boundary-validate a raw row into a Credential — nullable platformId parses
+ * (increment 42), `name` is required. Every read path goes through this, so a
+ * schema-drifted row fails loudly here rather than downstream.
+ */
 function rowToCredential(row: typeof credentials.$inferSelect): Credential {
   return CredentialSchema.parse({
     id: row.id,
+    name: row.name,
     platformId: row.platformId,
     profileName: row.profileName,
     kind: row.kind,
@@ -51,6 +57,7 @@ export function createCredentialsRepo(db: Db) {
         db.insert(credentials)
           .values({
             id: validated.id,
+            name: validated.name,
             platformId: validated.platformId,
             profileName: validated.profileName,
             kind: validated.kind,
@@ -97,6 +104,20 @@ export function createCredentialsRepo(db: Db) {
     },
 
     /**
+     * Credentials with no platform link (increment 42 — the standalone vault
+     * view). `platformId IS NULL` — a credential created via the web
+     * standalone dialog or any create path that omitted platformId.
+     */
+    listUnlinked(): ResultAsync<Credential[], DbError> {
+      try {
+        const rows = db.select().from(credentials).where(isNull(credentials.platformId)).all()
+        return okAsync(rows.map(rowToCredential))
+      } catch (cause) {
+        return errAsync(mapDbError(cause))
+      }
+    },
+
+    /**
      * Update a credential row's secretRef (used by rotateCredential).
      * Only the secretRef column is modified; id, platformId, profileName, and kind
      * are immutable through this path.
@@ -128,6 +149,27 @@ export function createCredentialsRepo(db: Db) {
           .where(eq(credentials.id, id))
           .run()
         return okAsync(rowToCredential({ ...found.row, profileName: newProfileName }))
+      } catch (cause) {
+        return errAsync(mapDbError(cause))
+      }
+    },
+
+    /**
+     * Update a credential row's `name` (the credential's SOLE identity,
+     * increment 42) in place — used by renameCredential's new identity-rename
+     * path. Only the name column is modified; id, platformId, profileName,
+     * kind, secretRef, and oauthMeta are untouched. Read-before-write so a
+     * not-found surfaces (and the full updated Credential is returned). A
+     * collision with the global `credentials_name_unique` index surfaces as
+     * `constraint-violation` via mapDbError — callers map that to a typed
+     * duplicate error (mirrors setProfileName's discipline).
+     */
+    setName(id: string, newName: string): ResultAsync<Credential, DbError> {
+      try {
+        const found = fetchRowOrNotFound(db, id)
+        if (!found.ok) return errAsync(found.error)
+        db.update(credentials).set({ name: newName }).where(eq(credentials.id, id)).run()
+        return okAsync(rowToCredential({ ...found.row, name: newName }))
       } catch (cause) {
         return errAsync(mapDbError(cause))
       }

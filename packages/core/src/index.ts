@@ -148,10 +148,13 @@ export { openInBrowser } from "./browser/open-browser.js"
 // ---------------------------------------------------------------------------
 export {
   type AddCredentialInput,
+  type AddStandaloneCredentialInput,
   addCredential,
+  addStandaloneCredential,
   type CredentialStore,
   compatibleCredentialKinds,
   createCredentialStore,
+  deriveCredentialName,
   deriveKeyFromPassphrase,
   type EncFile,
   EncFileSchema,
@@ -244,10 +247,16 @@ export {
   CliSchemaNodeSchema,
   ExtractedCliSchemaSchema,
 } from "./schema/cli-schema.js"
-export type { Credential, CredentialVerifyResult, OAuthMeta } from "./schema/credential.js"
+export type {
+  Credential,
+  CredentialName,
+  CredentialVerifyResult,
+  OAuthMeta,
+} from "./schema/credential.js"
 // Credential
 export {
   CredentialKind,
+  CredentialNameSchema,
   CredentialSchema,
   CredentialVerifyResult as CredentialVerifyResultSchema,
   OAuthMetaSchema,

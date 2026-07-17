@@ -146,6 +146,7 @@ describe("renameCredential", () => {
     const created = (
       await repos.credentials.create({
         id: `${platformId}-oauth-cred`,
+        name: "oauth-work",
         platformId,
         profileName: "work",
         kind: "oauth2",

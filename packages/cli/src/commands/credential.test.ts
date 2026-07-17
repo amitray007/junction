@@ -365,6 +365,236 @@ describe("credential add — kind derivation + kind-compat (unit)", () => {
 })
 
 // ---------------------------------------------------------------------------
+// Increment 42 — credential name (identity slug). `--name` derivation for
+// the legacy --platform/--account path, and the standalone (no --platform)
+// create path via addStandaloneCredential.
+// ---------------------------------------------------------------------------
+
+describe("credential add — name derivation + standalone create (inc 42, unit)", () => {
+  let prevStore: string | undefined
+  let prevExitCode: number | undefined
+
+  beforeEach(() => {
+    prevStore = process.env.JUNCTION_STORE
+    prevExitCode = process.exitCode
+    process.env.JUNCTION_STORE = "file"
+    process.exitCode = 0
+  })
+
+  afterEach(() => {
+    if (prevStore === undefined) delete process.env.JUNCTION_STORE
+    else process.env.JUNCTION_STORE = prevStore
+    process.exitCode = prevExitCode
+  })
+
+  it("the inc-style `--platform gh --account personal --token-stdin` (no --name) derives name gh-personal", async () => {
+    await withTempHome(async () => {
+      await setupApiKeyPlatform("gh")
+      mockPasswordValue = "some-token-value"
+
+      const add = getCredentialSubCmd("add")
+      const out = await captureStdout(() =>
+        add.run?.(
+          ctx({
+            platform: "gh",
+            account: "personal",
+            "token-stdin": false,
+            verify: false,
+            json: true,
+            kind: undefined,
+            name: undefined,
+          }),
+        ),
+      )
+
+      const parsed = JSON.parse(out.trim()) as {
+        ok: boolean
+        credential?: { name?: string; platformId?: string; account?: string }
+      }
+      expect(parsed.ok).toBe(true)
+      expect(parsed.credential?.name).toBe("gh-personal")
+      expect(parsed.credential?.platformId).toBe("gh")
+      expect(parsed.credential?.account).toBe("personal")
+      expect(process.exitCode).toBe(0)
+    })
+  })
+
+  it("an explicit --name on a platform-scoped add is stored verbatim (not derived)", async () => {
+    await withTempHome(async () => {
+      await setupApiKeyPlatform("gh-named")
+      mockPasswordValue = "some-token-value"
+
+      const add = getCredentialSubCmd("add")
+      const out = await captureStdout(() =>
+        add.run?.(
+          ctx({
+            platform: "gh-named",
+            account: "personal",
+            "token-stdin": false,
+            verify: false,
+            json: true,
+            kind: undefined,
+            name: "my-custom-name",
+          }),
+        ),
+      )
+
+      const parsed = JSON.parse(out.trim()) as { ok: boolean; credential?: { name?: string } }
+      expect(parsed.ok).toBe(true)
+      expect(parsed.credential?.name).toBe("my-custom-name")
+      expect(process.exitCode).toBe(0)
+    })
+  })
+
+  it("a colliding derived name gets a -2 suffix (mirrors the migration backfill rule)", async () => {
+    await withTempHome(async () => {
+      await setupApiKeyPlatform("gh-collide")
+      mockPasswordValue = "token-1"
+
+      const add = getCredentialSubCmd("add")
+      // First add: an EXPLICIT --name that happens to equal what the SECOND
+      // add's derivation would naturally produce (`gh-collide-personal`).
+      await captureStdout(() =>
+        add.run?.(
+          ctx({
+            platform: "gh-collide",
+            account: "seed",
+            "token-stdin": false,
+            verify: false,
+            json: true,
+            kind: undefined,
+            name: "gh-collide-personal",
+          }),
+        ),
+      )
+
+      // Second add: omits --name → derives "gh-collide-personal", which
+      // collides with the first row's explicit name → suffixed "-2".
+      mockPasswordValue = "token-2"
+      const out = await captureStdout(() =>
+        add.run?.(
+          ctx({
+            platform: "gh-collide",
+            account: "personal",
+            "token-stdin": false,
+            verify: false,
+            json: true,
+            kind: undefined,
+            name: undefined,
+          }),
+        ),
+      )
+
+      const parsed = JSON.parse(out.trim()) as { ok: boolean; credential?: { name?: string } }
+      expect(parsed.ok).toBe(true)
+      expect(parsed.credential?.name).toBe("gh-collide-personal-2")
+      expect(process.exitCode).toBe(0)
+    })
+  })
+
+  it("--name required, no --platform → creates a standalone (unlinked) credential", async () => {
+    await withTempHome(async () => {
+      mockPasswordValue = "standalone-secret-value"
+
+      const add = getCredentialSubCmd("add")
+      const out = await captureStdout(() =>
+        add.run?.(
+          ctx({
+            platform: undefined,
+            account: undefined,
+            "token-stdin": false,
+            verify: false,
+            json: true,
+            kind: undefined,
+            name: "my-vault-secret",
+          }),
+        ),
+      )
+
+      const parsed = JSON.parse(out.trim()) as {
+        ok: boolean
+        credential?: { name?: string; platformId?: string | null }
+      }
+      expect(parsed.ok).toBe(true)
+      expect(parsed.credential?.name).toBe("my-vault-secret")
+      expect(parsed.credential?.platformId).toBeNull()
+      expect(process.exitCode).toBe(0)
+    })
+  })
+
+  it("no --platform and no --name → clean invalid-input error, no stdin read", async () => {
+    await withTempHome(async () => {
+      const add = getCredentialSubCmd("add")
+      const out = await captureStdout(() =>
+        add.run?.(
+          ctx({
+            platform: undefined,
+            account: undefined,
+            "token-stdin": true,
+            verify: false,
+            json: true,
+            kind: undefined,
+            name: undefined,
+          }),
+        ),
+      )
+
+      const parsed = JSON.parse(out.trim()) as { ok: boolean; error?: string }
+      expect(parsed.ok).toBe(false)
+      expect(parsed.error).toContain("--name")
+      expect(process.exitCode).toBe(1)
+    })
+  })
+
+  it("no --platform but --account given → clean invalid-input error (account is meaningless without a platform)", async () => {
+    await withTempHome(async () => {
+      const add = getCredentialSubCmd("add")
+      const out = await captureStdout(() =>
+        add.run?.(
+          ctx({
+            platform: undefined,
+            account: "work",
+            "token-stdin": true,
+            verify: false,
+            json: true,
+            kind: undefined,
+            name: "some-name",
+          }),
+        ),
+      )
+
+      const parsed = JSON.parse(out.trim()) as { ok: boolean; error?: string }
+      expect(parsed.ok).toBe(false)
+      expect(parsed.error).toContain("--account")
+      expect(process.exitCode).toBe(1)
+    })
+  })
+
+  it("standalone create rejects kind oauth2", async () => {
+    await withTempHome(async () => {
+      const add = getCredentialSubCmd("add")
+      const out = await captureStdout(() =>
+        add.run?.(
+          ctx({
+            platform: undefined,
+            account: undefined,
+            "token-stdin": true,
+            verify: false,
+            json: true,
+            kind: "oauth2",
+            name: "oauth-not-allowed",
+          }),
+        ),
+      )
+
+      const parsed = JSON.parse(out.trim()) as { ok: boolean; error?: string }
+      expect(parsed.ok).toBe(false)
+      expect(process.exitCode).toBe(1)
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
 // --secret-file (increment 28.9 slice D): reads the file's CONTENT and stores
 // it — the PATH itself must never reach the store.
 // ---------------------------------------------------------------------------
@@ -721,6 +951,7 @@ async function seedOAuthCredential(
   const repos = await setupOAuthPlatform(platformId)
   const credential = CredentialSchema.parse({
     id: `${platformId}-cred-1`,
+    name: `${platformId}-work`,
     platformId,
     profileName: "work",
     kind: "oauth2" as const,

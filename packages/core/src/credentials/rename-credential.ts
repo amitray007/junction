@@ -64,14 +64,22 @@ export function renameCredential(
     if (current.profileName === account) {
       return credentialsRepo.setProfileName(input.credentialId, account)
     }
+    // Increment 42 — an UNLINKED credential (platformId: null) has no
+    // platform-scoped duplicate-account guard to run (the guard's purpose is
+    // "no two credentials on the SAME platform share this label," which is
+    // moot with no platform) — rename it directly.
+    if (current.platformId === null) {
+      return credentialsRepo.setProfileName(input.credentialId, account)
+    }
+    const platformId = current.platformId
     return credentialsRepo
-      .forPlatform(current.platformId)
+      .forPlatform(platformId)
       .andThen((existing): ResultAsync<Credential, CredentialError | DbError> => {
         const duplicate = existing.some((c) => c.id !== current.id && c.profileName === account)
         if (duplicate) {
           return errAsync({
             kind: "duplicate-account" as const,
-            platformId: String(current.platformId),
+            platformId: String(platformId),
             account,
           })
         }

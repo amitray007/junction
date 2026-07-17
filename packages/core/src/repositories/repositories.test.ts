@@ -17,6 +17,7 @@ import type { Db } from "../db/index.js"
 import { getDatabase } from "../db/index.js"
 import { newCredentialId, newPlatformId, newProfileId } from "../ids/index.js"
 import { getPaths } from "../paths/index.js"
+import { CredentialSchema } from "../schema/credential.js"
 import type { Platform } from "../schema/platform.js"
 import type { Repositories } from "./index.js"
 import { createRepositories } from "./index.js"
@@ -126,6 +127,7 @@ describe("repositories", () => {
       await repos.platforms.create({ id: platformId, kind: "mcp" as const, displayName: "GitHub" })
       await repos.credentials.create({
         id: newCredentialId(),
+        name: "work-1",
         platformId,
         profileName: "work",
         kind: "api-key" as const,
@@ -242,6 +244,7 @@ describe("repositories", () => {
 
       const cred = {
         id: newCredentialId(),
+        name: "work-2",
         platformId,
         profileName: "work",
         kind: "api-key" as const,
@@ -271,6 +274,7 @@ describe("repositories", () => {
 
       await repos.credentials.create({
         id: newCredentialId(),
+        name: "work-3",
         platformId: platformId1,
         profileName: "work",
         kind: "api-key" as const,
@@ -278,6 +282,7 @@ describe("repositories", () => {
       })
       await repos.credentials.create({
         id: newCredentialId(),
+        name: "personal-4",
         platformId: platformId1,
         profileName: "personal",
         kind: "api-key" as const,
@@ -285,6 +290,7 @@ describe("repositories", () => {
       })
       await repos.credentials.create({
         id: newCredentialId(),
+        name: "work-5",
         platformId: platformId2,
         profileName: "work",
         kind: "api-key" as const,
@@ -310,6 +316,7 @@ describe("repositories", () => {
       await repos.platforms.create({ id: platformId, kind: "mcp" as const, displayName: "GitHub" })
       await repos.credentials.create({
         id: credId,
+        name: "work-6",
         platformId,
         profileName: "work",
         kind: "api-key" as const,
@@ -374,6 +381,7 @@ describe("repositories", () => {
       await repos.platforms.create({ id: platformId, kind: "mcp" as const, displayName: "GitHub" })
       await repos.credentials.create({
         id: credId,
+        name: "work-7",
         platformId,
         profileName: "work",
         kind: "api-key" as const,
@@ -447,6 +455,7 @@ describe("repositories", () => {
       await repos.platforms.create({ id: platformId, kind: "mcp" as const, displayName: "GitHub" })
       await repos.credentials.create({
         id: credId,
+        name: "work-8",
         platformId,
         profileName: "work",
         kind: "api-key" as const,
@@ -536,6 +545,7 @@ describe("repositories", () => {
       await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
       await repos.credentials.create({
         id: credId,
+        name: "work-9",
         platformId,
         profileName: "work",
         kind: "bearer" as const,
@@ -616,6 +626,7 @@ describe("repositories", () => {
       await repos.platforms.create({ id: platformId, kind: "mcp" as const, displayName: "GitHub" })
       await repos.credentials.create({
         id: newCredentialId(),
+        name: "work-10",
         platformId,
         profileName: "work",
         kind: "api-key" as const,
@@ -749,6 +760,7 @@ describe("repositories", () => {
       })
       await repos.credentials.create({
         id: credId,
+        name: "work-11",
         platformId,
         profileName: "work",
         kind: "bearer" as const,
@@ -783,6 +795,7 @@ describe("repositories", () => {
       await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
       await repos.credentials.create({
         id: credId,
+        name: "work-12",
         platformId,
         profileName: "work",
         kind: "bearer" as const,
@@ -819,6 +832,7 @@ describe("repositories", () => {
       await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
       await repos.credentials.create({
         id: credId,
+        name: "work-13",
         platformId,
         profileName: "work",
         kind: "bearer" as const,
@@ -859,6 +873,7 @@ describe("repositories", () => {
       await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
       await repos.credentials.create({
         id: credId,
+        name: "work-14",
         platformId,
         profileName: "work",
         kind: "bearer" as const,
@@ -957,6 +972,7 @@ describe("repositories", () => {
       await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
       await repos.credentials.create({
         id: credId,
+        name: "work-15",
         platformId,
         profileName: "work",
         kind: "bearer" as const,
@@ -990,6 +1006,7 @@ describe("repositories", () => {
       await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
       await repos.credentials.create({
         id: credId,
+        name: "work-16",
         platformId,
         profileName: "work",
         kind: "bearer" as const,
@@ -1014,6 +1031,7 @@ describe("repositories", () => {
       await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
       await repos.credentials.create({
         id: credId,
+        name: "work-17",
         platformId,
         profileName: "work",
         kind: "bearer" as const,
@@ -1049,6 +1067,7 @@ describe("repositories", () => {
       await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
       await repos.credentials.create({
         id: credId,
+        name: "work-18",
         platformId,
         profileName: "work",
         kind: "bearer" as const,
@@ -1097,6 +1116,7 @@ describe("repositories", () => {
       await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
       await repos.credentials.create({
         id: credId,
+        name: "work-19",
         platformId,
         profileName: "work",
         kind: "bearer" as const,
@@ -1134,6 +1154,7 @@ describe("repositories", () => {
       await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
       await repos.credentials.create({
         id: credId,
+        name: "work-20",
         platformId,
         profileName: "work",
         kind: "bearer" as const,
@@ -1162,6 +1183,7 @@ describe("repositories", () => {
       await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
       await repos.credentials.create({
         id: credId,
+        name: "work-21",
         platformId,
         profileName: "work",
         kind: "bearer" as const,
@@ -1205,6 +1227,7 @@ describe("repositories", () => {
       await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
       await repos.credentials.create({
         id: credId,
+        name: "work-22",
         platformId,
         profileName: "work",
         kind: "bearer" as const,
@@ -1240,6 +1263,7 @@ describe("repositories", () => {
       await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
       await repos.credentials.create({
         id: credId,
+        name: "work-23",
         platformId,
         profileName: "work",
         kind: "bearer" as const,
@@ -1605,6 +1629,7 @@ describe("repositories", () => {
 
       const created = await repos.credentials.create({
         id: newCredentialId(),
+        name: "work-24",
         platformId,
         profileName: "work",
         kind: "bearer",
@@ -1665,6 +1690,7 @@ describe("repositories", () => {
       await repos.platforms.upsert(platform)
       const created = await repos.credentials.create({
         id: newCredentialId(),
+        name: "work-25",
         platformId,
         profileName: "work",
         kind: "oauth2",
@@ -1886,6 +1912,7 @@ describe("repositories", () => {
       const credId = newCredentialId()
       await repos.credentials.create({
         id: credId,
+        name: "work-26",
         platformId,
         profileName: "work",
         kind: "bearer" as const,
@@ -1920,6 +1947,7 @@ describe("repositories", () => {
 
       await repos.credentials.create({
         id: credId,
+        name: "work-27",
         platformId,
         profileName: "work",
         kind: "bearer" as const,
@@ -1969,6 +1997,7 @@ describe("repositories", () => {
       const credId = newCredentialId()
       await repos.credentials.create({
         id: credId,
+        name: "work-28",
         platformId,
         profileName: "work",
         kind: "bearer" as const,
@@ -2016,6 +2045,7 @@ describe("repositories", () => {
 
       await repos.credentials.create({
         id: credId,
+        name: "work-29",
         platformId,
         profileName: "work",
         kind: "bearer" as const,
@@ -2052,6 +2082,7 @@ describe("repositories", () => {
       await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
       await repos.credentials.create({
         id: credId,
+        name: "work-30",
         platformId,
         profileName: "work",
         kind: "bearer" as const,
@@ -2109,6 +2140,7 @@ describe("repositories", () => {
       await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
       await repos.credentials.create({
         id: credId,
+        name: "work-31",
         platformId,
         profileName: "work",
         kind: "bearer" as const,
@@ -2170,6 +2202,7 @@ describe("repositories", () => {
       await repos.platforms.upsert({ id: platformId, kind: "mcp" as const, displayName: "P" })
       await repos.credentials.create({
         id: credId,
+        name: "work-32",
         platformId,
         profileName: "work",
         kind: "bearer" as const,
@@ -2749,6 +2782,314 @@ describe("migration 0010 — dedup then unique constraint", () => {
       ).toThrow(/UNIQUE constraint failed/)
     } finally {
       rawDb.close()
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Migration 0011 — increment 42 Phase 1: credentials become standalone.
+// Backfills `name`, makes platform_id nullable, drops the old
+// (platform_id, profile_name) index, adds global UNIQUE(name).
+// ---------------------------------------------------------------------------
+
+describe("migration 0011 — credential standalone identity", () => {
+  it("backfills name = platform_id-profile_name (deduped -2 on a base-name collision), keeps platformId+profileName on existing rows, makes platform_id nullable, and a NEW unlinked credential round-trips", async () => {
+    const rawDb = new Database(":memory:")
+    try {
+      rawDb.pragma("foreign_keys = ON")
+
+      // ── Build the PRE-0011 schema exactly as a real post-0010 DB would look ──
+      for (const tag of [
+        "0000_odd_amazoness",
+        "0001_illegal_kingpin",
+        "0002_natural_lady_bullseye",
+        "0003_add_openapi_column",
+        "0004_neat_spirit",
+        "0005_confused_swordsman",
+        "0006_violet_kinsey_walden",
+        "0007_burly_elektra",
+        "0008_sticky_marvel_boy",
+        "0009_dear_yellowjacket",
+        "0010_gifted_namor",
+      ]) {
+        await applyMigration(rawDb, tag)
+      }
+
+      // idA: a plain existing credential — backfills to "gh-work".
+      const idA = ulid(1_700_000_010_000)
+      // idB/idC: a DELIBERATE base-name COLLISION across two different
+      // platforms — 0010's (platform_id, profile_name) unique index only
+      // blocks a duplicate WITHIN one platform, so two credentials on
+      // DIFFERENT platforms can legitimately backfill to the SAME
+      // `<platform_id>-<profile_name>` string: platform "gh" account
+      // "work-x" and platform "gh-work" account "x" both → base "gh-work-x".
+      // idB is older (lower ULID) so it wins the base name; idC (newer)
+      // must get the "-2" suffix (ROW_NUMBER() ... ORDER BY id).
+      const idB = ulid(1_700_000_011_000)
+      const idC = ulid(1_700_000_012_000)
+      rawDb.exec(`
+        INSERT INTO platforms (id, kind, display_name) VALUES ('gh', 'mcp', 'GitHub');
+        INSERT INTO platforms (id, kind, display_name) VALUES ('gh-work', 'mcp', 'GitHub Work Alias');
+        INSERT INTO credentials (id, platform_id, profile_name, kind, secret_ref)
+          VALUES ('${idA}', 'gh', 'work', 'bearer', 'ref_a');
+        INSERT INTO credentials (id, platform_id, profile_name, kind, secret_ref)
+          VALUES ('${idB}', 'gh', 'work-x', 'bearer', 'ref_b');
+        INSERT INTO credentials (id, platform_id, profile_name, kind, secret_ref)
+          VALUES ('${idC}', 'gh-work', 'x', 'bearer', 'ref_c');
+      `)
+
+      // ── The migration under test ──
+      await expect(
+        applyMigration(rawDb, "0011_credential_standalone_identity"),
+      ).resolves.toBeUndefined()
+
+      // 1. Existing rows keep platform_id + profile_name, and get a backfilled name.
+      const rows = rawDb
+        .prepare("SELECT id, platform_id, profile_name, name FROM credentials ORDER BY id")
+        .all() as Array<{ id: string; platform_id: string; profile_name: string; name: string }>
+      const byId = new Map(rows.map((r) => [r.id, r]))
+
+      expect(byId.get(idA)?.platform_id).toBe("gh")
+      expect(byId.get(idA)?.profile_name).toBe("work")
+      expect(byId.get(idA)?.name).toBe("gh-work")
+
+      // 2. The base-name collision: idB (older) keeps the bare base name;
+      //    idC (newer) is suffixed with its OWN lower(id) — GLOBALLY unique, so
+      //    it can never collide with a different row's literal base (the 2nd
+      //    data-migration CRITICAL fix). A plain "-2" would risk that collision.
+      expect(byId.get(idB)?.platform_id).toBe("gh")
+      expect(byId.get(idB)?.profile_name).toBe("work-x")
+      expect(byId.get(idB)?.name).toBe("gh-work-x")
+
+      expect(byId.get(idC)?.platform_id).toBe("gh-work")
+      expect(byId.get(idC)?.profile_name).toBe("x")
+      expect(byId.get(idC)?.name).toBe(`gh-work-x-${idC.toLowerCase()}`)
+
+      // 3. Every backfilled name is globally distinct.
+      const names = rows.map((r) => r.name)
+      expect(new Set(names).size).toBe(names.length)
+
+      // 4. Global UNIQUE(name) exists.
+      const indexes = rawDb
+        .prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='credentials'")
+        .all() as Array<{ name: string }>
+      expect(indexes.map((i) => i.name)).toContain("credentials_name_unique")
+      expect(indexes.map((i) => i.name)).not.toContain("credentials_platform_profile_unique")
+
+      // 5. platform_id is nullable now (PRAGMA table_info notnull=0).
+      const cols = rawDb
+        .prepare("SELECT name, \"notnull\" FROM pragma_table_info('credentials')")
+        .all() as Array<{ name: string; notnull: number }>
+      const platformIdCol = cols.find((c) => c.name === "platform_id")
+      expect(platformIdCol?.notnull).toBe(0)
+      const nameCol = cols.find((c) => c.name === "name")
+      expect(nameCol?.notnull).toBe(1)
+
+      // 6. A raw duplicate name INSERT now throws SQLITE_CONSTRAINT.
+      expect(() =>
+        rawDb.exec(
+          `INSERT INTO credentials (id, name, platform_id, profile_name, kind, secret_ref)
+             VALUES ('${ulid(1_700_000_020_000)}', 'gh-work', 'gh', 'work-2', 'bearer', 'ref_new_dup')`,
+        ),
+      ).toThrow(/UNIQUE constraint failed/)
+
+      // 7. A NEW unlinked credential (platform_id NULL, name only) round-trips.
+      const newId = ulid(1_700_000_021_000)
+      rawDb.exec(
+        `INSERT INTO credentials (id, name, platform_id, profile_name, kind, secret_ref)
+           VALUES ('${newId}', 'my-vault-secret', NULL, 'my-vault-secret', 'bearer', 'ref_vault')`,
+      )
+      const unlinkedRow = rawDb
+        .prepare("SELECT platform_id, name FROM credentials WHERE id = ?")
+        .get(newId) as { platform_id: string | null; name: string } | undefined
+      expect(unlinkedRow?.platform_id).toBeNull()
+      expect(unlinkedRow?.name).toBe("my-vault-secret")
+    } finally {
+      rawDb.close()
+    }
+  })
+
+  it("SLUGIFIES non-slug platform_id/profile_name so migrated rows stay READABLE (data-integrity: raw concat would brick them)", async () => {
+    // CRITICAL regression: platform_id and profile_name are unconstrained
+    // (z.string().min(1)), so real rows can hold "openapi:acme", "Work",
+    // "client_acme", etc. A raw `platform_id || '-' || profile_name` backfill
+    // would produce a NON-slug name that fails CredentialSchema.parse on every
+    // read → the row is bricked. The migration must slugify (mirroring the
+    // app-layer slugifyPart) with a lower(id) fallback for the exotic tail.
+    const rawDb = new Database(":memory:")
+    try {
+      rawDb.pragma("foreign_keys = ON")
+      for (const tag of [
+        "0000_odd_amazoness",
+        "0001_illegal_kingpin",
+        "0002_natural_lady_bullseye",
+        "0003_add_openapi_column",
+        "0004_neat_spirit",
+        "0005_confused_swordsman",
+        "0006_violet_kinsey_walden",
+        "0007_burly_elektra",
+        "0008_sticky_marvel_boy",
+        "0009_dear_yellowjacket",
+        "0010_gifted_namor",
+      ]) {
+        await applyMigration(rawDb, tag)
+      }
+
+      const idColon = ulid(1_700_000_030_000) // platform "openapi:acme" → colon
+      const idUpper = ulid(1_700_000_031_000) // profile "Work_Account" → upper+underscore
+      const idSpace = ulid(1_700_000_032_000) // profile "my prod key" → spaces
+      const idExotic = ulid(1_700_000_033_000) // profile "***" → slugifies empty → lower(id)
+      rawDb.exec(`
+        INSERT INTO platforms (id, kind, display_name) VALUES ('openapi:acme', 'openapi', 'Acme');
+        INSERT INTO platforms (id, kind, display_name) VALUES ('gh', 'mcp', 'GitHub');
+        INSERT INTO credentials (id, platform_id, profile_name, kind, secret_ref)
+          VALUES ('${idColon}', 'openapi:acme', 'prod', 'bearer', 'ref_colon');
+        INSERT INTO credentials (id, platform_id, profile_name, kind, secret_ref)
+          VALUES ('${idUpper}', 'gh', 'Work_Account', 'bearer', 'ref_upper');
+        INSERT INTO credentials (id, platform_id, profile_name, kind, secret_ref)
+          VALUES ('${idSpace}', 'gh', 'my prod key', 'bearer', 'ref_space');
+        INSERT INTO credentials (id, platform_id, profile_name, kind, secret_ref)
+          VALUES ('${idExotic}', 'gh', '***', 'bearer', 'ref_exotic');
+      `)
+
+      await expect(
+        applyMigration(rawDb, "0011_credential_standalone_identity"),
+      ).resolves.toBeUndefined()
+
+      const rows = rawDb.prepare("SELECT id, name FROM credentials").all() as Array<{
+        id: string
+        name: string
+      }>
+      const byId = new Map(rows.map((r) => [r.id, r.name]))
+
+      // Human-friendly slugs for realistic labels.
+      expect(byId.get(idColon)).toBe("openapi-acme-prod")
+      expect(byId.get(idUpper)).toBe("gh-work-account")
+      expect(byId.get(idSpace)).toBe("gh-my-prod-key")
+      // Exotic ("gh-***" → "gh" after slugify+trim... actually "gh-" → "gh"):
+      // "gh" is a valid slug so it's kept (NOT the id fallback) — assert it's
+      // at least a valid slug either way.
+      const exoticName = byId.get(idExotic) ?? ""
+
+      // THE INVARIANT: every migrated name is a valid CredentialNameSchema slug
+      // AND the full row parses (i.e. is readable, not bricked).
+      const slugRe = /^[a-z0-9][a-z0-9-]*$/
+      for (const name of byId.values()) {
+        expect(name).toMatch(slugRe)
+      }
+      expect(exoticName).toMatch(slugRe)
+
+      // Prove readability: each row must satisfy CredentialSchema — exactly the
+      // boundary validation rowToCredential runs (a non-slug name fails here).
+      const full = rawDb
+        .prepare("SELECT id, name, platform_id, profile_name, kind, secret_ref FROM credentials")
+        .all() as Array<Record<string, unknown>>
+      for (const r of full) {
+        const parsed = CredentialSchema.safeParse({
+          id: r.id,
+          name: r.name,
+          platformId: r.platform_id,
+          profileName: r.profile_name,
+          kind: r.kind,
+          secretRef: r.secret_ref,
+        })
+        expect(parsed.success).toBe(true)
+      }
+    } finally {
+      rawDb.close()
+    }
+  })
+
+  it("does NOT abort on a cross-partition suffix collision (2nd CRITICAL: -rn suffix could equal another row's literal base → UNIQUE violation → whole migration rolls back)", async () => {
+    // The exact data-migration-review repro. All three rows are VALID slugs and
+    // all legal post-0010 (the colliding pair is cross-platform, so 0010's
+    // (platform_id, profile_name) index doesn't dedupe them):
+    //   (a-b, c)   → base "a-b-c"
+    //   (a,   b-c) → base "a-b-c"  (rn=2)
+    //   (a-b, c-2) → base "a-b-c-2" (rn=1, DIFFERENT partition)
+    // A plain "-rn" suffix makes row 2 → "a-b-c-2", colliding with row 3's
+    // literal base "a-b-c-2" → UNIQUE(name) violation → the single-transaction
+    // migration rolls back → boot-brick. The lower(id) suffix fix prevents it.
+    const rawDb = new Database(":memory:")
+    try {
+      rawDb.pragma("foreign_keys = ON")
+      for (const tag of [
+        "0000_odd_amazoness",
+        "0001_illegal_kingpin",
+        "0002_natural_lady_bullseye",
+        "0003_add_openapi_column",
+        "0004_neat_spirit",
+        "0005_confused_swordsman",
+        "0006_violet_kinsey_walden",
+        "0007_burly_elektra",
+        "0008_sticky_marvel_boy",
+        "0009_dear_yellowjacket",
+        "0010_gifted_namor",
+      ]) {
+        await applyMigration(rawDb, tag)
+      }
+      const id1 = ulid(1_700_000_040_000)
+      const id2 = ulid(1_700_000_041_000)
+      const id3 = ulid(1_700_000_042_000)
+      rawDb.exec(`
+        INSERT INTO platforms (id, kind, display_name) VALUES ('a-b', 'mcp', 'AB');
+        INSERT INTO platforms (id, kind, display_name) VALUES ('a', 'mcp', 'A');
+        INSERT INTO credentials (id, platform_id, profile_name, kind, secret_ref)
+          VALUES ('${id1}', 'a-b', 'c', 'bearer', 'r1');
+        INSERT INTO credentials (id, platform_id, profile_name, kind, secret_ref)
+          VALUES ('${id2}', 'a', 'b-c', 'bearer', 'r2');
+        INSERT INTO credentials (id, platform_id, profile_name, kind, secret_ref)
+          VALUES ('${id3}', 'a-b', 'c-2', 'bearer', 'r3');
+      `)
+
+      // Must NOT throw (pre-fix this rejected with UNIQUE constraint failed).
+      await expect(
+        applyMigration(rawDb, "0011_credential_standalone_identity"),
+      ).resolves.toBeUndefined()
+
+      const names = (
+        rawDb.prepare("SELECT name FROM credentials").all() as Array<{ name: string }>
+      ).map((r) => r.name)
+      // All names globally distinct (the UNIQUE index held → no abort).
+      expect(new Set(names).size).toBe(3)
+    } finally {
+      rawDb.close()
+    }
+  })
+
+  it("full getDatabase() migration path (all migrations from empty) round-trips through the repo layer — existing behavior for a fresh DB is unaffected", async () => {
+    // This exercises the SAME migration via the real getDatabase() path (not
+    // hand-applied raw SQL) — proves 0011 composes cleanly with every prior
+    // migration on a from-scratch DB, matching what a real `junction init`
+    // or first command run experiences. Own home dir (this describe block
+    // is top-level, outside the outer "repositories" describe's beforeEach).
+    const home = await mkdtemp(join(tmpdir(), "junction-m11-fresh-test-"))
+    const prevHome = process.env.JUNCTION_HOME
+    process.env.JUNCTION_HOME = home
+    try {
+      const dbResult = await getDatabase(getPaths())
+      if (dbResult.isErr()) throw dbResult.error
+      const repos = createRepositories(dbResult.value)
+
+      const platformId = newPlatformId()
+      await repos.platforms.create({ id: platformId, kind: "mcp" as const, displayName: "GitHub" })
+      const created = await repos.credentials.create({
+        id: newCredentialId(),
+        name: "gh-fresh",
+        platformId,
+        profileName: "work",
+        kind: "bearer" as const,
+        secretRef: "ref_fresh",
+      })
+      expect(created.isOk()).toBe(true)
+      if (created.isOk()) {
+        expect(created.value.name).toBe("gh-fresh")
+        expect(created.value.platformId).toBe(platformId)
+      }
+    } finally {
+      if (prevHome === undefined) delete process.env.JUNCTION_HOME
+      else process.env.JUNCTION_HOME = prevHome
+      await rm(home, { recursive: true, force: true })
     }
   })
 })

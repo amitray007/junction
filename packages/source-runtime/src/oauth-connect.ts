@@ -18,6 +18,7 @@ import {
   CredentialSchema,
   type CredentialStore,
   type DbError,
+  deriveCredentialName,
   err,
   getLogger,
   type NormalizedTokens,
@@ -446,6 +447,13 @@ export function persistOAuthTokens(
   const { repos, store, tokens, providerId, authMode, clientId, clientSecret, now } = args
   const written: string[] = []
 
+  // Increment 42 — derived name for a fresh oauth2 credential (mode:"create"
+  // only; mode:"update" repoints an EXISTING credential and never mints a
+  // new name). Populated inside the mode:"create" branch below, once the
+  // duplicate-account guard's `all` read is in hand — keeps the SAME "one
+  // list() read serves both checks" shape as core's addCredential.
+  let derivedName: string | undefined
+
   const work = async (): Promise<Result<Credential, OAuthConnectError>> => {
     // Duplicate-account guard (32.13 Slice B1) — BEFORE any store write,
     // mirroring core's addCredential (30.12): a same-{platformId,account}
@@ -465,11 +473,15 @@ export function persistOAuthTokens(
           reason: `invalid platformId: ${platformIdParse.error.issues.map((i) => i.message).join(", ")}`,
         })
       }
-      const existingResult = await repos.credentials.forPlatform(platformIdParse.data)
-      if (existingResult.isErr()) {
-        return err({ kind: "persist-failed", cause: existingResult.error })
+      // list() (not forPlatform) — increment 42's name uniqueness is GLOBAL,
+      // so derivation needs every existing name, not just this platform's.
+      const allResult = await repos.credentials.list()
+      if (allResult.isErr()) {
+        return err({ kind: "persist-failed", cause: allResult.error })
       }
-      const duplicate = existingResult.value.some((c) => c.profileName === args.account)
+      const duplicate = allResult.value.some(
+        (c) => c.platformId === platformIdParse.data && c.profileName === args.account,
+      )
       if (duplicate) {
         return err({
           kind: "duplicate-account",
@@ -477,6 +489,11 @@ export function persistOAuthTokens(
           account: args.account,
         })
       }
+      derivedName = deriveCredentialName(
+        platformIdParse.data,
+        args.account,
+        new Set(allResult.value.map((c) => c.name)),
+      )
     }
 
     const accessRef = newCredentialId()
@@ -516,6 +533,12 @@ export function persistOAuthTokens(
       // repos.credentials.create's internal parse to be the only guard.
       const credentialParse = CredentialSchema.safeParse({
         id: newCredentialId(),
+        // derivedName is always set on this branch — the duplicate-account
+        // guard above (which also computes it) is unconditional for
+        // mode:"create". The `?? ""` fallback is unreachable defensive code;
+        // an empty-string name would fail CredentialNameSchema below anyway,
+        // surfacing as a clean invalid-input rather than a TypeScript-only guarantee.
+        name: derivedName ?? "",
         platformId: args.platformId,
         profileName: args.account,
         kind: "oauth2",

@@ -110,6 +110,7 @@ describe("exportVault", () => {
     await store.set("ref-clientsecret-1", "CLIENT_SECRET_1")
     const created = await repos.credentials.create({
       id: "cred-oauth-1",
+      name: "oauth-work-1",
       platformId,
       profileName: "work",
       kind: "oauth2",

@@ -203,6 +203,7 @@ describe("importVault", () => {
       const oauthCred = (
         await src.repos.credentials.create({
           id: "cred-oauth-rt",
+          name: "oauth-account-cred-oauth-rt",
           platformId: String(platformA.id),
           profileName: "oauth-account",
           kind: "oauth2",
@@ -364,6 +365,7 @@ describe("importVault", () => {
       const oauthCred = (
         await src.repos.credentials.create({
           id: "cred-oauth-vs",
+          name: "verify-state-account-cred-oauth-vs",
           platformId: String(platform.id),
           profileName: "verify-state-account",
           kind: "oauth2",
@@ -646,6 +648,7 @@ describe("importVault", () => {
       await src.store.set("ref-access-h2new", "NEW_ACCESS")
       await src.repos.credentials.create({
         id: "cred-oauth-h2new",
+        name: "oauth-work-cred-oauth-h2new",
         platformId: String(platform.id),
         profileName: "oauth-work",
         kind: "oauth2",
@@ -666,6 +669,7 @@ describe("importVault", () => {
       await dst.store.set("ref-clientsecret-h2old", "OLD_CLIENTSECRET")
       await dst.repos.credentials.create({
         id: "cred-oauth-h2old",
+        name: "oauth-work-cred-oauth-h2old",
         platformId: String(platform.id),
         profileName: "oauth-work",
         kind: "oauth2",
@@ -1136,6 +1140,7 @@ describe("importVault", () => {
       await src.store.set("ref-access-dedicated", "ACCESS_DEDICATED")
       await src.repos.credentials.create({
         id: "cred-oauth-dedicated",
+        name: "oauth-dedicated-cred-oauth-dedicated",
         platformId: String(platform.id),
         profileName: "oauth-dedicated",
         kind: "oauth2",
@@ -1377,6 +1382,7 @@ describe("importVault", () => {
         const oauthCred = (
           await src.repos.credentials.create({
             id: "cred-oauth-comp",
+            name: "comp-account-cred-oauth-comp",
             platformId: String(platformOauth.id),
             profileName: "comp-account",
             kind: "oauth2",

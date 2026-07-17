@@ -348,6 +348,7 @@ describe("makeResolveProvider — oauth2 wiring (inc29-B): the real arctic-backe
       const expiredAt = new Date(Date.now() - 1000).toISOString()
       const createResult = await repos.credentials.create({
         id: "oauth-cred-1",
+        name: "work-oauth-cred-1",
         platformId: "oauth-platform",
         profileName: "work",
         kind: "oauth2",

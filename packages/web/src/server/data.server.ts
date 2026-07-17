@@ -192,7 +192,10 @@ export async function readPlatforms(): Promise<PlatformMeta[]> {
 
 export type CredentialMeta = {
   id: string
-  platformId: string
+  /** Increment 42 — the credential's SOLE identity, shown everywhere. */
+  name: string
+  /** Increment 42 — null for an UNLINKED (standalone) credential. */
+  platformId: string | null
   account: string
   kind: string
   /** Ms-epoch of the last verify-on-add/test-connection attempt. Absent = never verified. */
@@ -226,7 +229,8 @@ export async function readCredentials(): Promise<CredentialMeta[]> {
     // Map to metadata-only shape. NEVER include secret or secretRef.
     return result.value.map((c) => ({
       id: String(c.id),
-      platformId: String(c.platformId),
+      name: c.name,
+      platformId: c.platformId === null ? null : String(c.platformId),
       account: c.profileName,
       kind: c.kind,
       ...(c.lastVerifiedAt !== undefined ? { lastVerifiedAt: c.lastVerifiedAt } : {}),
@@ -461,13 +465,19 @@ async function readAppGroups(): Promise<AppGroupMeta[]> {
       kind: p.kind as Platform["kind"],
       displayName: p.displayName,
     })),
-    credentials: credentials.map((c) => ({
-      platformId: c.platformId,
-      account: c.account,
-      ...(c.oauthState?.providerId !== undefined
-        ? { oauthProviderId: c.oauthState.providerId }
-        : {}),
-    })),
+    // Increment 42 — an UNLINKED credential (platformId: null) has no
+    // platform to group under an App; the /app surface is platform-scoped by
+    // design, so it's excluded here (it shows up in the /credentials
+    // "Unlinked" vault view instead).
+    credentials: credentials
+      .filter((c): c is typeof c & { platformId: string } => c.platformId !== null)
+      .map((c) => ({
+        platformId: c.platformId,
+        account: c.account,
+        ...(c.oauthState?.providerId !== undefined
+          ? { oauthProviderId: c.oauthState.providerId }
+          : {}),
+      })),
   }
   const groups = groupByApp(groupInput)
 
