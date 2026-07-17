@@ -21,26 +21,40 @@ picking a platform — backwards. Make credentials standalone: a credential is a
 its own identity, no platform required to exist. Existing credentials keep their platform link
 (back-compat); new ones may be unlinked.
 
+## BINDING identity model (Fable, 2026-07-17)
+
+- **ONE identity field: `name`.** Required, **lowercase slug** `^[a-z0-9][a-z0-9-]*$`, the
+  credential's sole identity, shown everywhere. (No `_`/`__` contract — credential names never
+  enter tool namespaces; namespaces come from profile/source wiring.)
+- **Global `UNIQUE(name)`** for ALL credentials (linked or not). **Drop** the old
+  `(platformId, profileName)` unique index entirely — the multi-account wedge was never that
+  index; it is "a Profile references a Credential by id" (unchanged). Agents/CLI must resolve
+  `--credential github-work` to exactly one row → one global name uniqueness.
+- **`platformId` → nullable**, with **no** uniqueness participation.
+- **`profileName` is KEPT as a vestigial, WRITE-ONLY legacy column** (Fable phasing decision A):
+  the OAuth connect flow still writes it, so Phase 1 leaves OAuth 100% untouched. **Nothing new
+  may READ `profileName` for identity or uniqueness — those go through `name` exclusively.** Mark
+  it `@deprecated` in the schema doc-comment; **Phase 3 physically drops it** (slugifying
+  account→name in the same pass that reworks OAuth). Record in `docs/futures/revisit-when.md`
+  (trigger: "Phase 3 OAuth rework").
+- **Every credential-CREATE path must now supply a `name`** (create requires it). For paths that
+  don't take a user name today (OAuth connect, catalog connect, legacy CLI `--account`), **derive
+  it deterministically = `<platformId>-<profileName>` with a `-2`/`-3` suffix on collision** (the
+  same rule as the migration backfill). The web standalone dialog + the new CLI `--name` take it
+  explicitly. This keeps OAuth/connect behavior unchanged (they just gain a derived name).
+
 ## Interfaces / changes
 
 ### 1. Schema + migration (the core slice — lands first)
 
-- **`credential.platformId` → nullable.** `packages/core/src/schema/credential.ts`:
-  `platformId: PlatformIdSchema.nullable()` (or `.optional()` — pick nullable to match the DB
-  column; keep the wire shape explicit). Migration **0011** via `pnpm drizzle-kit generate`
-  (SQLite can't drop NOT NULL in place → drizzle emits a table-rebuild; **never hand-author**).
-  Existing rows keep their non-null platformId.
-- **Credential identity (name).** A standalone credential needs its own display identity (today
-  it's identified by `(platform, account)`). Add a first-class **`name`** field
-  (`z.string().min(1)`) — the credential's own label, shown everywhere. `profileName` stays as the
-  **account** concept (which account, used at bind/verify time when a platform is present).
-  Migration adds the `name` column; backfill existing rows' `name` from `profileName` (or
-  `platform:account`) so nothing is nameless.
-- **Unique index `(platform_id, profile_name)`**: with a nullable `platform_id`, SQLite treats
-  NULLs as distinct, so multiple unlinked credentials coexist — keep the index (it still guards
-  one-account-per-platform for *linked* rows). Add a **`name` uniqueness** guard for unlinked
-  credentials (partial unique index on `name WHERE platform_id IS NULL`) so the vault has stable
-  identities. Confirm the exact index shape with the data-migration reviewer.
+- `packages/core/src/schema/credential.ts`: add `name` (slug regex above, required);
+  `platformId` → `.nullable()` (match the DB column); `profileName` kept + `@deprecated`
+  doc-comment (write-only legacy).
+- Migration **0011** via `pnpm drizzle-kit generate` (SQLite can't drop NOT NULL / alter index in
+  place → table-rebuild; **never hand-author**): add `name` column, **backfill**
+  `name = <platform_id>-<profile_name>` (`-2`/`-3` on collision, deterministic, no data loss),
+  make `platform_id` nullable, **drop** the `(platform_id, profile_name)` unique index, **add**
+  global `UNIQUE(name)`. Existing rows keep `platform_id` + `profile_name`.
 
 ### 2. Repository (`packages/core/src/repositories/credentials.ts`)
 
