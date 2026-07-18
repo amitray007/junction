@@ -142,6 +142,7 @@ function parseDesignsFile(raw: string): CustomOAuthDesign[] {
     // hand-edited file could otherwise smuggle a mismatched pair past the
     // per-value Zod check. Treat disagreement as corruption (fail closed).
     if (key !== design.id) {
+      // nosemgrep: no-bare-throw-in-core -- category 3 (same-module try/catch conversion): thrown inside parseDesignsFile → readAndParse, caught + Result-converted by loadCustomDesigns's ResultAsync.fromPromise mapper (below). Never crosses the module boundary as a throw.
       throw new Error(`oauth-designs.json: key "${key}" does not match design id "${design.id}"`)
     }
     return design
@@ -170,6 +171,7 @@ async function readAndParse(oauthDesignsFile: string): Promise<CustomOAuthDesign
     raw = await readFile(oauthDesignsFile, "utf-8")
   } catch (cause) {
     if (isNodeError(cause) && cause.code === "ENOENT") return []
+    // nosemgrep: no-bare-throw-in-core -- category 3 (same-module try/catch conversion): distinguishes a real read error from ENOENT inside readAndParse; caught + Result-converted by loadCustomDesigns's ResultAsync.fromPromise mapper. Never crosses the module boundary.
     throw new DesignsReadError(cause)
   }
   return parseDesignsFile(raw)
@@ -249,6 +251,7 @@ async function doSave(paths: JunctionPaths, designs: CustomOAuthDesign[]): Promi
     try {
       await readAndParse(paths.oauthDesignsFile)
     } catch {
+      // nosemgrep: no-bare-throw-in-core -- category 3 (same-module try/catch conversion): thrown inside doSave, caught + Result-converted by saveCustomDesigns's ResultAsync.fromPromise mapper. Never crosses the module boundary as a throw.
       throw new RefusedError("oauth-designs.json: refusing to overwrite an unparseable file")
     }
 
