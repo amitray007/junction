@@ -85,6 +85,13 @@
       "when": 1784318788167,
       "tag": "0011_credential_standalone_identity",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1784405188167,
+      "tag": "0012_platform_oauth_provider_id",
+      "breakpoints": true
     }
   ]
 }

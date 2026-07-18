@@ -415,6 +415,174 @@ describe("makeResolveProvider — oauth2 wiring (inc29-B): the real arctic-backe
 })
 
 // ---------------------------------------------------------------------------
+// Increment 44 (R1/R3) — provider-id resolution wired through resolve-provider
+// at the makeResolveProvider integration level (real temp-home DB, real
+// oauthRefreshFn call via the mocked arctic client).
+// ---------------------------------------------------------------------------
+
+describe("makeResolveProvider — provider-id resolution (increment 44)", () => {
+  beforeEach(() => {
+    // The module-scope refreshAccessToken mock (hoisted above) is shared
+    // across every test in this file — reset its call log so each test's
+    // assertions are about ITS OWN call, not an accumulated count.
+    refreshAccessToken.mockReset()
+  })
+
+  async function setUpOAuthCredential(opts: {
+    idSuffix: string
+    platformOauthProviderId?: string
+    legacyProviderId?: string
+  }) {
+    const paths = getPaths()
+    const dbResult = await getDatabase(paths)
+    if (dbResult.isErr()) throw dbResult.error
+    const repos = createRepositories(dbResult.value)
+
+    const platformId = `oauth-platform-44-${opts.idSuffix}`
+    const platform = PlatformSchema.parse({
+      id: PlatformIdSchema.parse(platformId),
+      kind: "mcp" as const,
+      displayName: "OAuth MCP 44",
+      connection: { transport: "http" as const, url: "https://example.com/mcp" },
+      ...(opts.platformOauthProviderId !== undefined
+        ? { oauthProviderId: opts.platformOauthProviderId }
+        : {}),
+    })
+    await repos.platforms.upsert(platform)
+
+    const storeResult = await createCredentialStore(paths)
+    if (storeResult.isErr()) throw storeResult.error
+    const store = storeResult.value
+
+    const accessRef = `access-ref-44-${opts.idSuffix}`
+    const refreshRef = `refresh-ref-44-${opts.idSuffix}`
+    const clientIdRef = `client-id-ref-44-${opts.idSuffix}`
+    const clientSecretRef = `client-secret-ref-44-${opts.idSuffix}`
+    await store.set(accessRef, "old-access-token")
+    await store.set(refreshRef, "old-refresh-token")
+    await store.set(clientIdRef, "byo-client-id")
+    await store.set(clientSecretRef, "byo-client-secret")
+
+    const expiredAt = new Date(Date.now() - 1000).toISOString()
+    const credentialId = `oauth-cred-44-${opts.idSuffix}`
+    const createResult = await repos.credentials.create({
+      id: credentialId,
+      name: `work-${credentialId}`,
+      platformId,
+      profileName: "work",
+      kind: "oauth2",
+      secretRef: accessRef,
+      oauthMeta: {
+        refreshTokenRef: refreshRef,
+        clientIdRef,
+        clientSecretRef,
+        ...(opts.legacyProviderId !== undefined ? { providerId: opts.legacyProviderId } : {}),
+        authMode: "authorization_code",
+        expiresAt: expiredAt,
+        needsReauth: false,
+      },
+    })
+    if (createResult.isErr()) throw createResult.error
+
+    const { createMcpProvider } = await import("@junction/mcp-client")
+    const stubProvider: ToolProvider = {
+      listTools: () => new ResultAsync(Promise.resolve(ok([]))),
+      callTool: () => new ResultAsync(Promise.resolve(ok({ content: [] }))),
+      close: vi.fn().mockResolvedValue(undefined),
+    }
+    vi.mocked(createMcpProvider).mockReturnValue(new ResultAsync(Promise.resolve(ok(stubProvider))))
+
+    return { repos, store, paths, credential: createResult.value, platformId }
+  }
+
+  it("platform.oauthProviderId sources the refresh call, not the credential's legacy providerId", async () => {
+    await withTempHome(async () => {
+      const { repos, store, paths, credential, platformId } = await setUpOAuthCredential({
+        idSuffix: "platform-wins",
+        platformOauthProviderId: "github-app",
+        legacyProviderId: "google", // deliberately wrong — must be ignored
+      })
+
+      refreshAccessToken.mockResolvedValueOnce({
+        data: { access_token: "rotated", expires_in: 3600 },
+        accessToken: () => "rotated",
+        hasRefreshToken: () => false,
+        accessTokenExpiresInSeconds: () => 3600,
+        hasScopes: () => false,
+      })
+
+      const resolveProvider = makeResolveProvider(repos, store, paths, { logPrefix: "test44" })
+      const result = await resolveProvider(
+        sourceRef({ platformId: PlatformIdSchema.parse(platformId), credentialId: credential.id }),
+      )
+
+      expect(result.isOk()).toBe(true)
+      expect(refreshAccessToken).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  it("orphan-equivalent: falls back to the credential's legacy providerId when platform.oauthProviderId is unset, and the fallback log fires", async () => {
+    await withTempHome(async () => {
+      const logs: string[] = []
+      const { repos, store, paths, credential, platformId } = await setUpOAuthCredential({
+        idSuffix: "fallback",
+        legacyProviderId: "github-app",
+      })
+
+      refreshAccessToken.mockResolvedValueOnce({
+        data: { access_token: "rotated-fallback", expires_in: 3600 },
+        accessToken: () => "rotated-fallback",
+        hasRefreshToken: () => false,
+        accessTokenExpiresInSeconds: () => 3600,
+        hasScopes: () => false,
+      })
+
+      const resolveProvider = makeResolveProvider(repos, store, paths, {
+        logPrefix: "test44fallback",
+        log: (msg) => logs.push(msg),
+      })
+      const result = await resolveProvider(
+        sourceRef({ platformId: PlatformIdSchema.parse(platformId), credentialId: credential.id }),
+      )
+
+      expect(result.isOk()).toBe(true)
+      expect(refreshAccessToken).toHaveBeenCalledTimes(1)
+      // The instrumented fallback log fired, tagged with context="refresh" and
+      // this credential's id — ids only, never token material.
+      const fallbackLog = logs.find((l) => l.includes("fell back to the credential's legacy"))
+      expect(fallbackLog).toBeDefined()
+      expect(fallbackLog).toContain("context=refresh")
+      expect(fallbackLog).toContain(`credentialId=${credential.id}`)
+      expect(fallbackLog).not.toContain("rotated-fallback")
+      expect(fallbackLog).not.toContain("old-access-token")
+    })
+  })
+
+  it("SECURITY: platform.oauthProviderId points at a nonexistent design → fails closed as auth-failed, refreshFn (arctic) is never called", async () => {
+    await withTempHome(async () => {
+      const { repos, store, paths, credential, platformId } = await setUpOAuthCredential({
+        idSuffix: "dangling",
+        platformOauthProviderId: "attacker-controlled-design",
+        legacyProviderId: "github-app", // present — must be ignored, not used as a fallback
+      })
+
+      const resolveProvider = makeResolveProvider(repos, store, paths, {
+        logPrefix: "test44dangle",
+      })
+      const result = await resolveProvider(
+        sourceRef({ platformId: PlatformIdSchema.parse(platformId), credentialId: credential.id }),
+      )
+
+      expect(result.isErr()).toBe(true)
+      if (result.isErr()) {
+        expect(result.error.kind).toBe("auth-failed")
+      }
+      expect(refreshAccessToken).not.toHaveBeenCalled()
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
 // 33.1 fix 2 — resolve-provider's kind gate now matches build-provider's
 // (mcp/openapi/graphql/http/cli), not just mcp/openapi. These three tests
 // prove a graphql/http/cli SourceRef no longer hits "unsupported-source-kind"

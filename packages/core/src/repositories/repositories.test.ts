@@ -3093,3 +3093,329 @@ describe("migration 0011 — credential standalone identity", () => {
     }
   })
 })
+
+// ---------------------------------------------------------------------------
+// Migration 0012 — increment 44 Phase 3 (R1): platforms gain their own
+// oauth_provider_id, backfilled from bound OAuth credentials'
+// oauth_meta.providerId. Non-destructive, fill-only-if-unset, conflict →
+// left unset, orphan-safe, idempotent.
+// ---------------------------------------------------------------------------
+
+describe("migration 0012 — platform oauth_provider_id backfill", () => {
+  const PRE_0012_TAGS = [
+    "0000_odd_amazoness",
+    "0001_illegal_kingpin",
+    "0002_natural_lady_bullseye",
+    "0003_add_openapi_column",
+    "0004_neat_spirit",
+    "0005_confused_swordsman",
+    "0006_violet_kinsey_walden",
+    "0007_burly_elektra",
+    "0008_sticky_marvel_boy",
+    "0009_dear_yellowjacket",
+    "0010_gifted_namor",
+    "0011_credential_standalone_identity",
+  ]
+
+  function readPlatformProviderId(rawDb: Database.Database, id: string): string | null {
+    const row = rawDb.prepare("SELECT oauth_provider_id FROM platforms WHERE id = ?").get(id) as
+      | { oauth_provider_id: string | null }
+      | undefined
+    return row?.oauth_provider_id ?? null
+  }
+
+  /**
+   * Re-run JUST the backfill UPDATE statement (0012's second statement), not
+   * the whole file — a real drizzle migrator never re-executes an already-
+   * applied .sql file (it's tracked in `__drizzle_migrations`), so a literal
+   * `ALTER TABLE ... ADD COLUMN` would correctly throw "duplicate column" on
+   * a naive whole-file re-run. What 0012's OWN idempotency guarantee actually
+   * covers is its UPDATE's WHERE clause (`oauth_provider_id IS NULL`) being
+   * safe to re-execute — this isolates exactly that statement.
+   */
+  async function rerunBackfillUpdateOnly(rawDb: Database.Database): Promise<void> {
+    const sqlText = await readFile(
+      join(migrationsDir, "0012_platform_oauth_provider_id.sql"),
+      "utf8",
+    )
+    const statements = sqlText
+      .split("--> statement-breakpoint")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
+    // A statement may be preceded by its own `-- ...` doc-comment lines
+    // (0012's UPDATE has one) — find by "contains an UPDATE" rather than
+    // "starts with", so the comment prefix doesn't break the match.
+    const updateStmt = statements.find((s) => /(^|\n)\s*UPDATE\s/i.test(s))
+    if (updateStmt === undefined) throw new Error("0012 UPDATE statement not found")
+    rawDb.exec(updateStmt)
+  }
+
+  it("backfills a platform whose single bound oauth2 credential carries a providerId; oauth_meta is untouched (non-destructive)", async () => {
+    const rawDb = new Database(":memory:")
+    try {
+      rawDb.pragma("foreign_keys = ON")
+      for (const tag of PRE_0012_TAGS) await applyMigration(rawDb, tag)
+
+      const credId = ulid(1_700_000_040_000)
+      rawDb.exec(`
+        INSERT INTO platforms (id, kind, display_name) VALUES ('gh', 'mcp', 'GitHub');
+        INSERT INTO credentials (id, name, platform_id, profile_name, kind, secret_ref, oauth_meta)
+          VALUES ('${credId}', 'gh-work', 'gh', 'work', 'oauth2', 'ref_a', '{"providerId":"github"}');
+      `)
+
+      await expect(
+        applyMigration(rawDb, "0012_platform_oauth_provider_id"),
+      ).resolves.toBeUndefined()
+
+      expect(readPlatformProviderId(rawDb, "gh")).toBe("github")
+
+      // Non-destructive: the credential's own oauth_meta.providerId survives untouched.
+      const credRow = rawDb
+        .prepare("SELECT oauth_meta FROM credentials WHERE id = ?")
+        .get(credId) as { oauth_meta: string }
+      expect(JSON.parse(credRow.oauth_meta)).toEqual({ providerId: "github" })
+    } finally {
+      rawDb.close()
+    }
+  })
+
+  it("a platform with NO bound OAuth credential is left with oauth_provider_id NULL", async () => {
+    const rawDb = new Database(":memory:")
+    try {
+      rawDb.pragma("foreign_keys = ON")
+      for (const tag of PRE_0012_TAGS) await applyMigration(rawDb, tag)
+
+      rawDb.exec(`
+        INSERT INTO platforms (id, kind, display_name) VALUES ('bare', 'http', 'Bare Platform');
+      `)
+
+      await expect(
+        applyMigration(rawDb, "0012_platform_oauth_provider_id"),
+      ).resolves.toBeUndefined()
+
+      expect(readPlatformProviderId(rawDb, "bare")).toBeNull()
+    } finally {
+      rawDb.close()
+    }
+  })
+
+  it("ORPHAN-SAFE: an OAuth credential with NULL platform_id (increment 42 unlinked) does not crash the migration and touches nothing", async () => {
+    const rawDb = new Database(":memory:")
+    try {
+      rawDb.pragma("foreign_keys = ON")
+      for (const tag of PRE_0012_TAGS) await applyMigration(rawDb, tag)
+
+      const orphanId = ulid(1_700_000_041_000)
+      rawDb.exec(`
+        INSERT INTO credentials (id, name, platform_id, profile_name, kind, secret_ref, oauth_meta)
+          VALUES ('${orphanId}', 'orphan-oauth', NULL, 'orphan-oauth', 'oauth2', 'ref_orphan', '{"providerId":"github"}');
+      `)
+
+      await expect(
+        applyMigration(rawDb, "0012_platform_oauth_provider_id"),
+      ).resolves.toBeUndefined()
+
+      // No platform row exists to backfill — nothing to assert on platforms;
+      // the migration must simply not throw (proven above) and the orphan
+      // credential's own row is untouched.
+      const credRow = rawDb
+        .prepare("SELECT platform_id, oauth_meta FROM credentials WHERE id = ?")
+        .get(orphanId) as { platform_id: string | null; oauth_meta: string }
+      expect(credRow.platform_id).toBeNull()
+      expect(JSON.parse(credRow.oauth_meta)).toEqual({ providerId: "github" })
+    } finally {
+      rawDb.close()
+    }
+  })
+
+  it("CONFLICT RULE: two oauth2 credentials on ONE platform disagreeing on providerId → left UNSET (never guessed)", async () => {
+    const rawDb = new Database(":memory:")
+    try {
+      rawDb.pragma("foreign_keys = ON")
+      for (const tag of PRE_0012_TAGS) await applyMigration(rawDb, tag)
+
+      const credA = ulid(1_700_000_042_000)
+      const credB = ulid(1_700_000_043_000)
+      rawDb.exec(`
+        INSERT INTO platforms (id, kind, display_name) VALUES ('shared', 'mcp', 'Shared Platform');
+        INSERT INTO credentials (id, name, platform_id, profile_name, kind, secret_ref, oauth_meta)
+          VALUES ('${credA}', 'shared-a', 'shared', 'a', 'oauth2', 'ref_a', '{"providerId":"github"}');
+        INSERT INTO credentials (id, name, platform_id, profile_name, kind, secret_ref, oauth_meta)
+          VALUES ('${credB}', 'shared-b', 'shared', 'b', 'oauth2', 'ref_b', '{"providerId":"google"}');
+      `)
+
+      await expect(
+        applyMigration(rawDb, "0012_platform_oauth_provider_id"),
+      ).resolves.toBeUndefined()
+
+      expect(readPlatformProviderId(rawDb, "shared")).toBeNull()
+
+      // Neither credential's own oauth_meta was touched (non-destructive even
+      // on the conflict path).
+      const rows = rawDb
+        .prepare("SELECT id, oauth_meta FROM credentials WHERE platform_id = 'shared' ORDER BY id")
+        .all() as Array<{ id: string; oauth_meta: string }>
+      expect(rows.map((r) => JSON.parse(r.oauth_meta).providerId).sort()).toEqual([
+        "github",
+        "google",
+      ])
+    } finally {
+      rawDb.close()
+    }
+  })
+
+  it("MALFORMED oauth_meta on a bound oauth2 credential does NOT throw/brick the migration — the row is SKIPPED (data-migration review, inc 44)", async () => {
+    // SQLite's json_extract() THROWS "malformed JSON" (does NOT degrade to NULL)
+    // on a non-JSON value; since drizzle wraps all pending migrations in ONE
+    // transaction, an unguarded json_extract would abort the WHOLE migration →
+    // the vault can't open (the 0011 brick class). The migration guards every
+    // json_extract with `CASE WHEN json_valid(...)`. This asserts:
+    //   (a) the migration RESOLVES (does not throw) on malformed/empty meta;
+    //   (b) a platform whose only oauth2 cred is malformed is left UNSET (skipped,
+    //       not guessed);
+    //   (c) a malformed SIBLING does not poison an otherwise-agreeing platform.
+    const rawDb = new Database(":memory:")
+    try {
+      rawDb.pragma("foreign_keys = ON")
+      for (const tag of PRE_0012_TAGS) await applyMigration(rawDb, tag)
+
+      const cTrunc = ulid(1_700_000_045_000)
+      const cEmpty = ulid(1_700_000_046_000)
+      const cGood = ulid(1_700_000_047_000)
+      const cBadSibling = ulid(1_700_000_048_000)
+      // Insert malformed values via prepared statements so the JS string, not a
+      // SQL literal, reaches the column verbatim (a truncated object + an empty
+      // string — the two shapes the reviewer reproduced as throwing).
+      const ins = rawDb.prepare(
+        "INSERT INTO credentials (id, name, platform_id, profile_name, kind, secret_ref, oauth_meta) VALUES (?,?,?,?,?,?,?)",
+      )
+      rawDb.exec(`
+        INSERT INTO platforms (id, kind, display_name) VALUES ('malformed', 'mcp', 'Malformed Only');
+        INSERT INTO platforms (id, kind, display_name) VALUES ('mixed', 'mcp', 'Valid + Malformed Sibling');
+      `)
+      ins.run(cTrunc, "m-trunc", "malformed", "a", "oauth2", "ref_t", '{"providerId":"github"')
+      ins.run(cEmpty, "m-empty", "malformed", "b", "oauth2", "ref_e", "")
+      ins.run(cGood, "mix-good", "mixed", "a", "oauth2", "ref_g", '{"providerId":"google"}')
+      ins.run(cBadSibling, "mix-bad", "mixed", "b", "oauth2", "ref_b", "not json at all")
+
+      // (a) must not throw.
+      await expect(
+        applyMigration(rawDb, "0012_platform_oauth_provider_id"),
+      ).resolves.toBeUndefined()
+
+      // (b) malformed-only platform: left unset (the fallback covers it at refresh).
+      expect(readPlatformProviderId(rawDb, "malformed")).toBeNull()
+      // (c) valid credential wins; the malformed sibling is skipped, not a conflict.
+      expect(readPlatformProviderId(rawDb, "mixed")).toBe("google")
+    } finally {
+      rawDb.close()
+    }
+  })
+
+  it("FILL-ONLY-IF-UNSET: a platform with oauth_provider_id already set is never overwritten, even if a bound credential disagrees", async () => {
+    const rawDb = new Database(":memory:")
+    try {
+      rawDb.pragma("foreign_keys = ON")
+      for (const tag of PRE_0012_TAGS) await applyMigration(rawDb, tag)
+
+      const credId = ulid(1_700_000_044_000)
+      rawDb.exec(`
+        INSERT INTO platforms (id, kind, display_name) VALUES ('preset', 'mcp', 'Preset Platform');
+        INSERT INTO credentials (id, name, platform_id, profile_name, kind, secret_ref, oauth_meta)
+          VALUES ('${credId}', 'preset-a', 'preset', 'a', 'oauth2', 'ref_a', '{"providerId":"github"}');
+      `)
+      // Simulate an already-set field (e.g. a prior manual set, or a
+      // from-the-future re-run) BEFORE the migration under test runs.
+      await applyMigration(rawDb, "0012_platform_oauth_provider_id")
+      rawDb.exec(`UPDATE platforms SET oauth_provider_id = 'slack' WHERE id = 'preset'`)
+
+      // Re-running the migration's UPDATE statement directly must not clobber it.
+      await rerunBackfillUpdateOnly(rawDb)
+
+      expect(readPlatformProviderId(rawDb, "preset")).toBe("slack")
+    } finally {
+      rawDb.close()
+    }
+  })
+
+  it("IDEMPOTENT: re-running the migration twice back-to-back is a no-op the second time", async () => {
+    const rawDb = new Database(":memory:")
+    try {
+      rawDb.pragma("foreign_keys = ON")
+      for (const tag of PRE_0012_TAGS) await applyMigration(rawDb, tag)
+
+      const credId = ulid(1_700_000_045_000)
+      rawDb.exec(`
+        INSERT INTO platforms (id, kind, display_name) VALUES ('idem', 'mcp', 'Idempotent Platform');
+        INSERT INTO credentials (id, name, platform_id, profile_name, kind, secret_ref, oauth_meta)
+          VALUES ('${credId}', 'idem-a', 'idem', 'a', 'oauth2', 'ref_a', '{"providerId":"github"}');
+      `)
+
+      await applyMigration(rawDb, "0012_platform_oauth_provider_id")
+      expect(readPlatformProviderId(rawDb, "idem")).toBe("github")
+
+      // Re-run the backfill UPDATE — must not throw, and the value must be
+      // unchanged (a real migrator never re-applies the whole .sql file, so
+      // idempotency only needs to hold for this statement — see
+      // rerunBackfillUpdateOnly's doc-comment).
+      await expect(rerunBackfillUpdateOnly(rawDb)).resolves.toBeUndefined()
+      expect(readPlatformProviderId(rawDb, "idem")).toBe("github")
+    } finally {
+      rawDb.close()
+    }
+  })
+
+  it("a non-oauth2 credential (no oauth_meta) bound to a platform does not participate in the backfill", async () => {
+    const rawDb = new Database(":memory:")
+    try {
+      rawDb.pragma("foreign_keys = ON")
+      for (const tag of PRE_0012_TAGS) await applyMigration(rawDb, tag)
+
+      const bearerCred = ulid(1_700_000_046_000)
+      rawDb.exec(`
+        INSERT INTO platforms (id, kind, display_name) VALUES ('mixed', 'http', 'Mixed Platform');
+        INSERT INTO credentials (id, name, platform_id, profile_name, kind, secret_ref)
+          VALUES ('${bearerCred}', 'mixed-bearer', 'mixed', 'a', 'bearer', 'ref_bearer');
+      `)
+
+      await expect(
+        applyMigration(rawDb, "0012_platform_oauth_provider_id"),
+      ).resolves.toBeUndefined()
+
+      expect(readPlatformProviderId(rawDb, "mixed")).toBeNull()
+    } finally {
+      rawDb.close()
+    }
+  })
+
+  it("full getDatabase() migration path (all migrations from empty) round-trips through the repo layer — a fresh DB is unaffected", async () => {
+    const home = await mkdtemp(join(tmpdir(), "junction-m12-fresh-test-"))
+    const prevHome = process.env.JUNCTION_HOME
+    process.env.JUNCTION_HOME = home
+    try {
+      const dbResult = await getDatabase(getPaths())
+      if (dbResult.isErr()) throw dbResult.error
+      const repos = createRepositories(dbResult.value)
+
+      const platformId = newPlatformId()
+      const created = await repos.platforms.create({
+        id: platformId,
+        kind: "mcp" as const,
+        displayName: "GitHub",
+        oauthProviderId: "github",
+      })
+      expect(created.isOk()).toBe(true)
+      if (created.isOk()) {
+        expect(created.value.oauthProviderId).toBe("github")
+      }
+
+      const fetched = await repos.platforms.get(platformId)
+      expect(fetched.isOk()).toBe(true)
+      if (fetched.isOk()) expect(fetched.value.oauthProviderId).toBe("github")
+    } finally {
+      if (prevHome === undefined) delete process.env.JUNCTION_HOME
+      else process.env.JUNCTION_HOME = prevHome
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+})

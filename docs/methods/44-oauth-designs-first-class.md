@@ -3,7 +3,7 @@ increment: 44
 title: Phase 3 — OAuth designs first-class + credentials shed providerId
 depends_on: [42, 43]
 soft_after: []
-touches: [core/oauth, core/schema, core/db, source-runtime, web]
+touches: [core/oauth, core/schema, core/db, core/credentials, core/apps, source-runtime, web]
 parallel_group: A
 ---
 
@@ -42,7 +42,70 @@ credential, so the platform is in hand at refresh time. Re-point refresh:
   expiry) — no provider.
 - **Manually-added OAuth platforms** must carry a provider reference so refresh can source it.
   Catalog apps already declare `auth[].providerId`; ensure a manual OAuth platform stores its
-  design reference on the platform row (add a field if missing).
+  design reference on the platform row (add a field if missing). **See the pre-build ruling below —
+  the platform field is genuinely MISSING and this is a confirmed schema + migration change.**
+
+## Pre-build Fable ruling (Findings 1–3) — code-verified delta, MUST fold into the build
+
+A pre-build grounding pass against the CURRENT code found the plan under-specified in three ways;
+a Fable product-owner ruled on each (the earlier dead-field/string-URL/pkce/instrumented-fallback/
+no-edit/OIDC-deferred rulings all STAND — this only adds to them).
+
+### R1 — the platform provider field is genuinely missing (schema + migration)
+
+`PlatformSchema` has **no** provider field today; the provider is declared only on the app catalog
+(`auth[].providerId`) and denormalized on the credential (`oauthMeta.providerId`). A manually-added
+OAuth platform records its provider **only on the credential**. So:
+
+- **Add `oauthProviderId?: string`** to `PlatformSchema` + the platforms table (a reference to a
+  global OAuth design id; validated at use-time, NOT a Zod FK). Name matches the existing
+  `conn.oauthProviderId` vocabulary in `group.ts`. Flat scalar, not a nested object — per-tenant
+  concrete URLs live on the *design*, and per-tenant connection-config on the binding is already a
+  named deferred item; a nested object here would prematurely duplicate that.
+- **Migration 0012** backfills `platform.oauthProviderId` from each bound OAuth credential's
+  `oauthMeta.providerId` (credential.platformId → platform row). **Non-destructive** (never touches
+  the credential's copy), **fill-only-if-unset**, **idempotent**, **orphan-safe** (a credential with
+  null platformId has no platform to backfill).
+- **Conflict rule (deterministic):** if a platform's bound OAuth credentials *disagree* on
+  providerId, 0012 leaves the platform field **unset** + emits one structured log; the instrumented
+  fallback keeps both refreshing, a human resolves. Never guess, never overwrite an already-set value.
+- **Dangling-reference rule (SECURITY — fail closed):** if `platform.oauthProviderId` points to a
+  design that doesn't exist, refresh **fails closed with a typed error** — it does NOT fall back to
+  the credential. The fallback fires ONLY when the platform has *no* provider source at all.
+  Otherwise a misconfigured/maliciously-imported platform silently masks itself.
+
+### R2 — vault archive carries providerId on BOTH entities + import-time backfill (load-bearing)
+
+`export-vault.ts:249` writes `oauthMeta.providerId`; `import-vault.ts:696,1035` read it (both
+optional-chained). The vault manifest embeds `PlatformSchema` verbatim (`vault-manifest.ts`), so the
+new `platform.oauthProviderId` flows into the archive for free.
+
+- Archived **platform** carries `oauthProviderId` automatically (manifest reuse — zero extra work).
+- Archived **credential** KEEPS `oauthMeta.providerId` as **write-only-legacy** (identical treatment
+  to `profileName` in Phase 1 — comment mirrors that style). It is the fallback's data source on
+  re-import + old-junction import compat.
+- **Import performs the 0012-equivalent backfill INLINE** (same fill-only-if-unset + conflict rule)
+  when upserting/creating platforms. **This is load-bearing, not gold-plating:** without it, every
+  old-format archive import permanently pins the fallback above zero → the cleanup increment's drop
+  gate ("zero fallback hits") **can never fire** for a user who restored a vault → the transition
+  silently never ends. Treat the import backfill as a SECOND migration surface (data-migration
+  reviewer scrutinizes it as migration code).
+
+### R3 — ONE shared resolver (refresh + grouping must not diverge)
+
+Refresh and grouping diverging on which provider a credential belongs to is a **correctness bug**
+(a connection grouped under one app but refreshed via another), not mere duplication — so this is a
+"DRY the resolution primitive eagerly" case, not rule-of-three.
+
+- **New `packages/core/src/oauth/resolve-provider-id.ts`** (name at builder discretion) —
+  `resolveOAuthProviderId({ platform, appAuth, credential })`, fixed order:
+  **platform.oauthProviderId → app catalog `auth[].providerId` → credential's legacy
+  `oauthMeta.providerId` (instrumented fallback)**. Typed `Result`; dangling design reference =
+  typed error (fail closed, per R1); the fallback log carries a **`context: "refresh" | "group"`**
+  tag + ids only (never token material) so the drop gate's evidence is diagnosable.
+- `oauth/refresh.ts` + `source-runtime/resolve-provider.ts` consume it.
+- The connection-summary assembly that populates `conn.oauthProviderId` (feeding `group.ts`) consumes
+  it; `group.ts:90`'s matching logic is unchanged (it's already provider-id-shaped).
 - **Back-compat fallback (instrumented).** Existing OAuth credentials have `oauthMeta.providerId`.
   Keep reading it as a **fallback** during transition: source from platform first, fall back to the
   credential's stored providerId. **The fallback path MUST emit one structured log line when it
@@ -85,20 +148,49 @@ Per junction's no-dead-code discipline (knip) they get **removed**, not hidden:
   `CodeChallengeMethod.Plain`, so this is a one-word type change that unlocks the rare RFC-valid
   public client. Custom-design form defaults to `S256`.
 
-## Global OAuth designs, made first-class (R1) — list + create + delete-unreferenced only
+## Global OAuth designs surface (R1) — READ-ONLY this increment; CREATE/DELETE → inc 45
 
-The management surface is deliberately **minimal** this increment — enough to satisfy "apps set up
-providers directly, generic OAuth setups exist, credentials are provider-free," no more:
+> **SCOPE REVISION (Fable D5, mid-build ruling).** Custom-design **CREATE/DELETE is DEFERRED to inc
+> 45**. inc 44 ships only the **read-only** designs surface + the platform→design wiring + the refresh
+> re-source — which **fully satisfies the user's core requirement** ("credentials completely
+> provider-free": the shipped core slice already removed the credential's authoritative provider —
+> the platform's `oauthProviderId` + the fail-closed resolver own it now, legacy copy demoted to an
+> instrumented fallback). Custom authoring was deferred because it needs a new persistence store
+> (`oauth-designs.json`) + a signature change on the security-critical resolver, AND because **OIDC
+> discovery IS the right authoring UX** (paste an issuer URL → junction fills the endpoints), so
+> authoring + discovery belong together in inc 45. The existing `generic` escape hatch still covers
+> bespoke providers meanwhile. Fable pre-ruled inc 45's design (persistence, resolver-as-data,
+> `custom:<slug>` namespace, delete-if-unreferenced) — see `docs/futures/revisit-when.md`.
 
-- **List** the built-in designs (`github`/`google`/`slack`/`generic`) as read-only records.
-- **Create** a custom generic OAuth design (the field set below).
-- **Delete** a custom design **iff it is unreferenced** by any platform (referential safety).
-- **NO in-place edit this increment** (deferred — editing a referenced design's URLs raises live-token
-  invalidation semantics that deserve their own thought; see revisit-when).
+**This increment builds:**
 
-Apps/platforms reference a design by id (already the shape via `auth[].providerId`).
+- **List** the built-in designs (`github`/`google`/`slack`/`generic`) as **read-only** records
+  (id, displayName, endpoints, pkce, supportsRefresh, registrationHint), each showing which platforms
+  currently reference it.
+- **Platform→design wiring UI:** platform setup/edit binds `oauthProviderId` from the built-in list;
+  the binding validates the id resolves via `getProvider` (fail-closed at WRITE time, mirroring the
+  resolver's read-time guard).
+- **Refresh re-source surfaced:** platform detail shows the resolved design (and flags when resolution
+  used the legacy fallback — feeding the drop-gate evidence).
+- **The grouping re-source (R3) — CORRECTED SITE (Fable RB1).** The method file originally
+  mislabeled `mutations.server.ts:237,367` + `cli/commands/credential.ts:244,556` as "grouping" —
+  they are actually **verify-provider-hint** sites (they feed `verifyCredential`'s `oauthProviderId`,
+  i.e. which design's `userinfoUrl` to bearer-probe for Test Connection), a DIFFERENT concern that
+  the credential-security review already deferred to the column-drop increment. **The REAL grouping
+  site is web-only, ONE place:** `packages/web/src/server/data.server.ts` — the `buildGroupInput`
+  path (~line 483) that feeds core's pure `groupByApp`. Re-source THAT via `resolveOAuthProviderId`
+  (the platform is already in scope there via `platformById`; `legacyProviderId = c.oauthState?.providerId`;
+  a resolver error DEGRADES to "no hint" — omit `oauthProviderId`, never throw — grouping is
+  display-only; fire `onProviderFallback` so grouping's fallback hits feed the SAME drop gate as
+  refresh). Do NOT change `readCredentials`'s metadata shape. **No CLI work** (the CLI has no
+  app-grouping surface). The 4 verify-hint sites + all other legacy readers stay OUT (deferred to
+  the column-drop increment — see revisit-when).
 
-### Custom-design form field set (research §3)
+**Deferred to inc 45 (do NOT build now):** the custom-design create form (field set below, kept for
+inc 45's builder), the `oauth-designs.json` store, delete-if-unreferenced, the resolver-as-data
+signature change, OIDC discovery.
+
+### Custom-design form field set (research §3) — REFERENCE FOR INC 45, not built now
 
 **Must-ask (no safe default):**
 - `displayName`
@@ -153,6 +245,11 @@ a form control for an inert field lies (correctness-over-speed).
   fn-URL form; widen `pkce`), `packages/core/src/schema/{credential,platform}.ts`,
   `packages/core/src/db/schema.ts` (+ migration 0012), `packages/core/src/apps/group.ts` (grouping
   sources provider from platform, not credential).
+- **Add** `packages/core/src/oauth/resolve-provider-id.ts` — the shared `resolveOAuthProviderId`
+  (R3); `packages/core/src/schema/platform.ts` gains `oauthProviderId?`.
+- **Edit** `packages/core/src/credentials/{export-vault,import-vault}.ts` — export keeps
+  `oauthMeta.providerId` write-only-legacy; import keeps both legacy reads AND performs the
+  0012-equivalent inline backfill (R2).
 - **Edit/Add** web: the OAuth-designs surface (list built-ins + create custom + delete-if-unreferenced)
   + wire manual-OAuth-platform to a design reference.
 - Tests: (below).
@@ -160,15 +257,23 @@ a form control for an inert field lies (correctness-over-speed).
 ## Tests
 
 - An existing OAuth credential still refreshes with `providerId` removed from the credential
-  (sourced from platform).
+  (sourced from the platform via the shared resolver).
 - **The fallback fires for an orphan OAuth credential** (nullable platformId) and emits the
-  instrumented log line.
+  instrumented log line **with the `context` tag** (R3).
+- **Dangling-reference fails closed** (R1): `platform.oauthProviderId` → a non-existent design →
+  refresh returns a typed error, does NOT fall back to the credential.
+- **0012 conflict rule** (R1): two credentials on one platform disagreeing on providerId → the
+  platform field is left unset + a structured log; both still refresh via fallback.
+- **Vault round-trip** (R2): an OLD-format archive (credential carries providerId, platform doesn't)
+  imports → the platform GAINS `oauthProviderId` via the inline backfill → refresh works with the
+  fallback NOT hit (proves the drop gate can converge).
 - A custom generic design can be created (string URLs), listed, referenced by an app, and deleted
   only when unreferenced (delete-of-referenced is refused).
 - `pkce: "plain"` is accepted by the schema + form.
-- Grouping (`apps/group.ts`) still correct sourcing provider from the platform.
+- Grouping (`apps/group.ts`) still correct sourcing provider via the shared resolver.
 - Migration 0012: backfill populates the platform field; orphan credential is untouched and still
-  refreshes via fallback; `oauthMeta.providerId` is preserved (non-destructive).
+  refreshes via fallback; `oauthMeta.providerId` is preserved (non-destructive); idempotent
+  (re-running 0012 is a no-op).
 
 ## Constraints
 
@@ -178,7 +283,10 @@ a form control for an inert field lies (correctness-over-speed).
   correctness-over-speed).
 - Credentials end this phase **completely linkage-free** (no platformId reliance for identity, no
   providerId) — the user's requirement. Secrets-as-references unchanged.
-- `docs/rules/`. Migration generated via drizzle-kit, never hand-authored.
+- `docs/rules/`. Migration 0012 is a **hand-authored** `.sql` (the DDL is trivial `ADD COLUMN`; the
+  backfill logic — json_valid-guarded extract + conflict rule — is hand-written, same as 0011). The
+  `json_extract` MUST be `json_valid`-guarded (a malformed `oauth_meta` otherwise throws and bricks
+  the whole migration transaction — data-migration review, recorded in gotchas).
 - **Deleting inert fields is correctness work, not cleanup** — a form control (or catalog field)
   that silently does nothing violates correctness-over-speed.
 
@@ -186,8 +294,9 @@ a form control for an inert field lies (correctness-over-speed).
 
 | Deferred | Trigger to revisit |
 |---|---|
-| Drop the `oauthMeta.providerId` fallback + column | 0012 shipped + instrumented fallback shows **zero hits** |
-| OIDC discovery (`issuer`/`wellKnown`) — paste 1 URL, auto-resolve endpoints | Named **fast-follow (inc 45 candidate)**; the form is designed so an optional `issuer` field slots in without migration |
+| Drop the `oauthMeta.providerId` fallback + column | 0012 shipped + instrumented fallback shows **zero hits** (see the "Column-drop sweep checklist" in revisit-when — ALL 12 legacy readers must route through the resolver first) |
+| **Custom-design CREATE/DELETE + `oauth-designs.json` store + resolver-as-data + `custom:<slug>` namespace + OIDC discovery** (Fable D5) | **inc 45** — deferred as one coherent unit (custom authoring needs a persistence store + a security-critical resolver signature change, and OIDC discovery IS the authoring UX). Fable pre-ruled the whole design (D1–D4 in revisit-when). |
+| Route `verifyCredential` + the other 11 legacy readers through the resolver | the column-drop increment (do them all in one pass — piecemeal doesn't accelerate the drop) |
 | In-place edit of OAuth designs | First real need to change a *referenced* design's URLs (decide live-token-invalidation semantics then) |
 | Hand-rolled `client_secret_post` token client (bypassing arctic) | First provider whose token endpoint **rejects HTTP Basic** |
 | Per-tenant connection-config on the platform binding | First **tuned** per-tenant catalog entry (Okta/Auth0/Microsoft/GitLab-self-hosted) |

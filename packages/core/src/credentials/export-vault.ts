@@ -246,6 +246,14 @@ function resolveCredentials(
               oauthMeta: {
                 scopes: cred.oauthMeta.scopes,
                 expiresAt: cred.oauthMeta.expiresAt,
+                // Increment 44 — write-only-legacy, mirrors profileName's
+                // Phase 1 treatment (see CredentialSchema's doc-comment). No
+                // NEW code reads this for identity; it is kept solely as the
+                // instrumented fallback's (resolveOAuthProviderId) data
+                // source on re-import — see import-vault.ts's inline 0012-
+                // equivalent backfill, which is what lets the fallback's
+                // "zero hits" drop gate eventually converge even for a
+                // restored vault.
                 providerId: cred.oauthMeta.providerId,
                 authMode: cred.oauthMeta.authMode,
                 needsReauth: cred.oauthMeta.needsReauth,

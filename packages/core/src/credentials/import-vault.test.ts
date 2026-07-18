@@ -6,9 +6,11 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { errAsync } from "neverthrow"
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { getDatabase } from "../db/index.js"
 import { newPlatformId } from "../ids/index.js"
+import { refreshIfExpired } from "../oauth/refresh.js"
+import { resolveOAuthProviderId } from "../oauth/resolve-provider-id.js"
 import { ensureHome, getPaths } from "../paths/index.js"
 import type { Repositories } from "../repositories/index.js"
 import { createRepositories } from "../repositories/index.js"
@@ -1993,6 +1995,172 @@ describe("importVault", () => {
         expect(creds).toHaveLength(0)
         const platforms = (await dst.repos.platforms.list())._unsafeUnwrap()
         expect(platforms).toHaveLength(0)
+      })
+    })
+
+    // -------------------------------------------------------------------------
+    // Increment 44 (R2) — the inline 0012-equivalent backfill on import.
+    // -------------------------------------------------------------------------
+
+    describe("inline oauth_provider_id backfill (increment 44)", () => {
+      it("OLD-format archive (credential carries providerId, platform doesn't) → the imported platform GAINS oauthProviderId; refresh works via the resolver with the fallback NOT hit", async () => {
+        // Simulate an OLD (pre-44) archive: the platform manifest entry has
+        // NO oauthProviderId (as if exported before increment 44 added the
+        // field), but the credential's oauthMeta.providerId IS present (the
+        // write-only-legacy field, unchanged since Phase 1).
+        const platformA = await seedPlatform(src.repos, "OAuth Platform")
+
+        await src.store.set("ref-access-old", "ACCESS_TOKEN_OLD")
+        await src.store.set("ref-refresh-old", "REFRESH_TOKEN_OLD")
+        await src.store.set("ref-clientid-old", "CLIENT_ID_OLD")
+        await src.store.set("ref-clientsecret-old", "CLIENT_SECRET_OLD")
+        await src.repos.credentials.create({
+          id: "cred-oauth-old-format",
+          name: "oauth-account-cred-old",
+          platformId: String(platformA.id),
+          profileName: "oauth-account",
+          kind: "oauth2",
+          secretRef: "ref-access-old",
+          oauthMeta: {
+            providerId: "github",
+            authMode: "authorization_code",
+            refreshTokenRef: "ref-refresh-old",
+            clientIdRef: "ref-clientid-old",
+            clientSecretRef: "ref-clientsecret-old",
+            needsReauth: false,
+          },
+        })
+
+        const exportResult = await exportVault({
+          repos: src.repos,
+          store: src.store,
+          passphrase: "old-format-pass",
+        })
+        expect(exportResult.isOk()).toBe(true)
+        if (!exportResult.isOk()) return
+
+        // The source platform row itself has no oauthProviderId (never set on
+        // this pre-44-shaped source data) — the archive's platform entry
+        // (exportVault serializes the live row verbatim) genuinely models an
+        // "old-format" archive rather than asserting a tautology.
+        expect(platformA.oauthProviderId).toBeUndefined()
+
+        const importResult = await importVault({
+          repos: dst.repos,
+          store: dst.store,
+          archive: exportResult.value.archive,
+          passphrase: "old-format-pass",
+        })
+        expect(importResult.isOk()).toBe(true)
+        if (!importResult.isOk()) return
+        expect(importResult.value.credentials.added).toBe(1)
+        expect(importResult.value.platforms.added).toBe(1)
+
+        const dstPlatforms = (await dst.repos.platforms.list())._unsafeUnwrap()
+        expect(dstPlatforms).toHaveLength(1)
+        // The inline backfill (R2) fills the platform's oauthProviderId from
+        // the imported credential's legacy oauthMeta.providerId.
+        const dstPlatform = dstPlatforms[0]
+        expect(dstPlatform?.oauthProviderId).toBe("github")
+        if (dstPlatform === undefined) return
+
+        const dstCreds = (await dst.repos.credentials.list())._unsafeUnwrap()
+        const dstOauth = dstCreds.find((c) => c.kind === "oauth2")
+        expect(dstOauth).toBeDefined()
+        if (dstOauth === undefined) return
+
+        // Force an actual refresh (expiresAt in the past) so refreshIfExpired
+        // genuinely exercises resolveOAuthProviderId end-to-end — proves
+        // refresh works via platform.oauthProviderId, NOT the fallback, which
+        // is the whole point of R2 (a restored vault must let the drop gate's
+        // "zero fallback hits" eventually converge).
+        const onProviderFallback = vi.fn()
+        let seenProviderId: string | undefined
+        const refreshResult = await refreshIfExpired({
+          credential: {
+            ...dstOauth,
+            oauthMeta: { ...dstOauth.oauthMeta, expiresAt: new Date(0).toISOString() },
+          },
+          store: dst.store,
+          repos: { credentials: dst.repos.credentials },
+          refreshFn: async (args) => {
+            seenProviderId = args.providerId
+            return { ok: true, tokens: { accessToken: "NEW_ACCESS_TOKEN" } }
+          },
+          now: Date.now(),
+          platform: dstPlatform,
+          onProviderFallback,
+        })
+        expect(refreshResult.isOk()).toBe(true)
+        expect(seenProviderId).toBe("github")
+        expect(onProviderFallback).not.toHaveBeenCalled()
+      })
+
+      it("CONFLICT: two OLD-format oauth2 credentials on one platform disagreeing on providerId → the imported platform's oauthProviderId stays UNSET; both still resolve via the fallback", async () => {
+        const platformA = await seedPlatform(src.repos, "Conflicting OAuth Platform")
+
+        await src.store.set("ref-access-x", "ACCESS_X")
+        await src.repos.credentials.create({
+          id: "cred-conflict-x",
+          name: "conflict-x",
+          platformId: String(platformA.id),
+          profileName: "x",
+          kind: "oauth2",
+          secretRef: "ref-access-x",
+          oauthMeta: { providerId: "github", needsReauth: false },
+        })
+        await src.store.set("ref-access-y", "ACCESS_Y")
+        await src.repos.credentials.create({
+          id: "cred-conflict-y",
+          name: "conflict-y",
+          platformId: String(platformA.id),
+          profileName: "y",
+          kind: "oauth2",
+          secretRef: "ref-access-y",
+          oauthMeta: { providerId: "google", needsReauth: false },
+        })
+
+        const exportResult = await exportVault({
+          repos: src.repos,
+          store: src.store,
+          passphrase: "conflict-pass",
+        })
+        expect(exportResult.isOk()).toBe(true)
+        if (!exportResult.isOk()) return
+
+        const importResult = await importVault({
+          repos: dst.repos,
+          store: dst.store,
+          archive: exportResult.value.archive,
+          passphrase: "conflict-pass",
+        })
+        expect(importResult.isOk()).toBe(true)
+        if (!importResult.isOk()) return
+        expect(importResult.value.credentials.added).toBe(2)
+
+        const dstPlatforms = (await dst.repos.platforms.list())._unsafeUnwrap()
+        expect(dstPlatforms).toHaveLength(1)
+        // Conflict rule: left UNSET, never guessed.
+        expect(dstPlatforms[0]?.oauthProviderId).toBeUndefined()
+
+        // Both credentials still resolve their OWN providerId via the
+        // instrumented fallback (never blocked by the platform's unset field).
+        const dstCreds = (await dst.repos.credentials.list())._unsafeUnwrap()
+        const platform = dstPlatforms[0]
+        expect(platform).toBeDefined()
+        if (platform === undefined) return
+        for (const cred of dstCreds) {
+          const onFallback = vi.fn()
+          const resolved = resolveOAuthProviderId({
+            credentialId: cred.id,
+            context: "refresh",
+            platform,
+            legacyProviderId: cred.oauthMeta?.providerId,
+            onFallback,
+          })
+          expect(resolved.ok).toBe(true)
+          expect(onFallback).toHaveBeenCalledOnce()
+        }
       })
     })
   })

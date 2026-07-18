@@ -89,8 +89,6 @@ const GITHUB_PROVIDER = {
   tokenUrl: "https://github.com/login/oauth/access_token",
   pkce: "S256" as const,
   scopeSeparator: " " as const,
-  tokenAuthMethod: "client_secret_basic" as const,
-  bodyFormat: "form" as const,
   expiryStrategy: "none" as const,
   redirectMode: "loopback-fixed" as const,
   supportsRefresh: false,

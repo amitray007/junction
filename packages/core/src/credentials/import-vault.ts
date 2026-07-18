@@ -377,6 +377,18 @@ async function runImport(
     if (newId !== null) summary.credentials.added++
   }
 
+  // ---- 2b. inline 0012-equivalent backfill (increment 44, R2) ----
+  // Runs AFTER every credential in this import has landed (added, skipped-
+  // remapped-to-existing, or overwritten) so the DB now reflects the FULL
+  // picture — same fill-only-if-unset + conflict rule as migration 0012's
+  // batch SQL, just re-derived against live repos instead of raw SQL. This
+  // is what lets an OLD-format archive (credential carries providerId,
+  // platform doesn't) converge the platform's field on import — without it,
+  // every old-archive import would permanently pin the resolver's fallback
+  // above zero and the future cleanup increment's "zero fallback hits" drop
+  // gate could never fire (see docs/futures/revisit-when.md).
+  await backfillPlatformOAuthProviderId(manifest.platforms, repos)
+
   // ---- 3. profiles LAST (idMap is complete) ----
   if (includeProfiles && manifest.profiles !== undefined) {
     const profileSummary = {
@@ -437,6 +449,61 @@ async function runImport(
   }
 
   return ok(summary)
+}
+
+/**
+ * The inline import-time equivalent of migration 0012's backfill (increment
+ * 44, R2) — re-derived against LIVE repos (not raw SQL) so it sees the FULL
+ * post-import picture: pre-existing DB rows AND everything this import just
+ * wrote. Same three rules as 0012, restated here because they're safety-
+ * critical and this is a SECOND migration surface (data-migration review
+ * scrutinizes this the same as 0012's SQL):
+ *   - FILL-ONLY-IF-UNSET: a platform that already has `oauthProviderId` set
+ *     (from the manifest's own platform row, or a pre-existing DB row) is
+ *     left completely alone — this function never overwrites.
+ *   - CONFLICT RULE: if the platform's bound oauth2 credentials disagree on
+ *     `oauthMeta.providerId`, the field is left UNSET — never guessed.
+ *   - NON-DESTRUCTIVE: never touches any credential's `oauthMeta` — only
+ *     ever upserts the platform row's `oauthProviderId`.
+ * Best-effort per platform: a failure to read/write one platform's backfill
+ * is swallowed (never aborts the import) — this is a convenience backfill on
+ * top of an already-successful import, not a correctness-required write; the
+ * resolver's instrumented fallback keeps refresh working either way.
+ */
+async function backfillPlatformOAuthProviderId(
+  manifestPlatforms: readonly Platform[],
+  repos: Pick<Repositories, "credentials" | "platforms">,
+): Promise<void> {
+  for (const manifestPlatform of manifestPlatforms) {
+    const currentResult = await repos.platforms.get(manifestPlatform.id)
+    if (currentResult.isErr()) continue // platform not actually present — nothing to backfill
+    const current = currentResult.value
+
+    // Fill-only-if-unset — an already-set field (from the manifest itself,
+    // an --on-collision skip keeping a pre-existing set row, or a prior
+    // backfill) is never touched.
+    if (current.oauthProviderId !== undefined) continue
+
+    const boundResult = await repos.credentials.forPlatform(current.id)
+    if (boundResult.isErr()) continue
+
+    const providerIds = new Set<string>()
+    for (const cred of boundResult.value) {
+      if (cred.kind !== "oauth2") continue
+      const providerId = cred.oauthMeta?.providerId
+      if (providerId === undefined) continue
+      providerIds.add(providerId)
+    }
+
+    // Conflict rule: exactly one distinct providerId among bound oauth2
+    // credentials → backfill; zero (no oauth2 creds, or none carry a
+    // providerId) or MORE THAN ONE (disagreement) → leave unset.
+    if (providerIds.size !== 1) continue
+    const [onlyProviderId] = providerIds
+    if (onlyProviderId === undefined) continue // unreachable (size===1 guards this), narrows the type
+
+    await repos.platforms.upsert({ ...current, oauthProviderId: onlyProviderId })
+  }
 }
 
 // ===========================================================================

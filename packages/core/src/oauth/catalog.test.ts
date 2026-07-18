@@ -59,13 +59,43 @@ describe("tuned provider overrides", () => {
     if (!p) return
     expect(p.pkce).toBe("S256")
     expect(p.scopeSeparator).toBe(" ")
-    expect(p.tokenAuthMethod).toBe("client_secret_basic")
-    expect(p.bodyFormat).toBe("form")
     expect(p.expiryStrategy).toBe("expires_in")
     expect(p.redirectMode).toBe("loopback-fixed")
     expect(p.supportsRefresh).toBe(true)
     expect(p.authorizationUrl).toBe("")
     expect(p.tokenUrl).toBe("")
+  })
+})
+
+describe("catalog grep-clean (increment 44)", () => {
+  it("no provider carries the removed tokenAuthMethod/bodyFormat fields", () => {
+    for (const p of listProviders()) {
+      expect((p as Record<string, unknown>).tokenAuthMethod).toBeUndefined()
+      expect((p as Record<string, unknown>).bodyFormat).toBeUndefined()
+    }
+  })
+
+  it("authorizationUrl/tokenUrl are plain strings, never the removed fn form", () => {
+    for (const p of listProviders()) {
+      expect(typeof p.authorizationUrl).toBe("string")
+      expect(typeof p.tokenUrl).toBe("string")
+    }
+  })
+
+  it("pkce accepts 'plain' (widened alongside S256/disabled)", () => {
+    const plainProvider: OAuthProvider = {
+      id: "synthetic-plain-pkce",
+      displayName: "Synthetic Plain PKCE",
+      authorizationUrl: "https://example.com/authorize",
+      tokenUrl: "https://example.com/token",
+      pkce: "plain",
+      scopeSeparator: " ",
+      expiryStrategy: "expires_in",
+      redirectMode: "loopback-fixed",
+      supportsRefresh: true,
+      registrationHint: { redirectUri: "", scopes: "", docsUrl: "" },
+    }
+    expect(plainProvider.pkce).toBe("plain")
   })
 })
 
@@ -104,8 +134,6 @@ describe("buildAuthorizationParams", () => {
       tokenUrl: "https://example.com/token",
       pkce: "S256",
       scopeSeparator: " ",
-      tokenAuthMethod: "client_secret_post",
-      bodyFormat: "form",
       expiryStrategy: "expires_in",
       redirectMode: "loopback-fixed",
       defaultScopes: ["offline_access"],

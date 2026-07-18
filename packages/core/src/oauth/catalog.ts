@@ -34,16 +34,30 @@ export interface NormalizedTokens {
 export interface OAuthProvider {
   id: string
   displayName: string
-  /** Catalog-supplied for tuned providers; a function for {subdomain}-style connection_config. */
-  authorizationUrl: string | ((cfg: Record<string, string>) => string)
-  tokenUrl: string | ((cfg: Record<string, string>) => string)
+  /**
+   * Concrete, resolved URLs only (increment 44 — the `(cfg) => string`
+   * per-tenant function form was removed as dead code: the refresh path
+   * (source-runtime's `resolveTokenUrl`) and connect's `buildAuthorizeUrl`
+   * both already refused it, and no catalog entry ever used it. A custom
+   * design for a per-tenant provider takes the user's own resolved URL
+   * (e.g. `https://acme.okta.com/oauth2/v1/token`) as a plain string.
+   */
+  authorizationUrl: string
+  tokenUrl: string
   /** RFC 8628 device endpoint. Presence = device-code flow is offered for this provider. */
   deviceAuthorizationUrl?: string
-  pkce: "S256" | "disabled"
+  /** "plain" added in increment 44 — arctic supports CodeChallengeMethod.Plain. */
+  pkce: "S256" | "plain" | "disabled"
   scopeSeparator: " " | "," | "+"
   authorizationParams?: Record<string, string>
-  tokenAuthMethod: "client_secret_basic" | "client_secret_post" | "none"
-  bodyFormat: "form" | "json"
+  /**
+   * increment 44 — `tokenAuthMethod`/`bodyFormat` were removed as inert dead
+   * fields: arctic (the runtime executor) always sends HTTP Basic client
+   * auth when a client secret is present, and always sends a form-encoded
+   * token request body, ignoring both. A provider whose token endpoint
+   * rejects HTTP Basic needs a hand-rolled token client — see
+   * docs/futures/revisit-when.md.
+   */
   expiryStrategy: "expires_in" | "expires_at" | "none"
   /** Override the default token-response parse (e.g. Slack's {ok:false}-at-200). */
   parseTokenResponse?: (raw: unknown) => NormalizedTokens
@@ -144,11 +158,6 @@ const PROVIDERS: readonly OAuthProvider[] = [
     tokenUrl: "https://github.com/login/oauth/access_token",
     pkce: "S256",
     scopeSeparator: " ",
-    tokenAuthMethod: "client_secret_basic",
-    // GitHub's token endpoint defaults to form-encoded responses unless asked
-    // for JSON via an Accept header — that's an HTTP-layer concern (B), not a
-    // catalog concern. `bodyFormat` here describes the REQUEST body shape.
-    bodyFormat: "form",
     expiryStrategy: "none",
     redirectMode: "loopback-fixed",
     supportsRefresh: false,
@@ -179,8 +188,6 @@ const PROVIDERS: readonly OAuthProvider[] = [
     tokenUrl: "https://github.com/login/oauth/access_token",
     pkce: "S256",
     scopeSeparator: " ",
-    tokenAuthMethod: "client_secret_basic",
-    bodyFormat: "form",
     expiryStrategy: "expires_in",
     redirectMode: "loopback-fixed",
     supportsRefresh: true,
@@ -204,8 +211,6 @@ const PROVIDERS: readonly OAuthProvider[] = [
     tokenUrl: "https://slack.com/api/oauth.v2.access",
     pkce: "S256",
     scopeSeparator: ",",
-    tokenAuthMethod: "client_secret_post",
-    bodyFormat: "form",
     expiryStrategy: "expires_in",
     parseTokenResponse: parseSlackTokenResponse,
     redirectMode: "loopback-fixed",
@@ -235,8 +240,6 @@ const PROVIDERS: readonly OAuthProvider[] = [
     // access_type:offline + prompt:consent are REQUIRED or Google never issues
     // a refresh token (only on first consent otherwise).
     authorizationParams: { access_type: "offline", prompt: "consent" },
-    tokenAuthMethod: "client_secret_basic",
-    bodyFormat: "form",
     expiryStrategy: "expires_in",
     // Desktop-app pattern: no fixed registered redirect, a per-flow ephemeral
     // loopback port (RFC 8252).
@@ -263,8 +266,6 @@ const PROVIDERS: readonly OAuthProvider[] = [
     tokenUrl: "",
     pkce: "S256",
     scopeSeparator: " ",
-    tokenAuthMethod: "client_secret_basic",
-    bodyFormat: "form",
     expiryStrategy: "expires_in",
     redirectMode: "loopback-fixed",
     supportsRefresh: true,

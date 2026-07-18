@@ -104,15 +104,14 @@ export function buildAuthorizeUrl(args: BuildAuthorizeUrlArgs): BuildAuthorizeUr
   const state = generateState()
   const codeVerifier = generateCodeVerifier()
   const params = buildAuthorizationParams(provider, scopes)
-  const authorizationUrl =
-    typeof provider.authorizationUrl === "string" ? provider.authorizationUrl : undefined
+  const authorizationUrl = provider.authorizationUrl
 
-  if (authorizationUrl === undefined) {
-    // A fn-shaped authorizationUrl needs connection_config this fn doesn't
-    // take — callers building against such a provider must resolve the URL
-    // themselves before calling buildAuthorizeUrl. (Day-one tuned entries all
-    // have a fixed string URL; only a future {subdomain}-style entry hits this.)
-    throw new Error(`${provider.id}: authorizationUrl requires connection_config`)
+  if (authorizationUrl.length === 0) {
+    // Increment 44 — authorizationUrl is a concrete string (the fn-shaped
+    // per-tenant form was removed as dead code). An empty string is only the
+    // "generic" catalog placeholder before the connect descriptor fills it in
+    // from user input; reaching here with it still empty is a caller bug.
+    throw new Error(`${provider.id}: authorizationUrl is not configured`)
   }
 
   const url =
@@ -165,8 +164,8 @@ export async function exchangeCode(
   args: ExchangeCodeArgs,
 ): Promise<Result<NormalizedTokens, OAuthConnectError>> {
   const { provider, clientId, clientSecret, redirectUri, code, codeVerifier } = args
-  const tokenUrl = typeof provider.tokenUrl === "string" ? provider.tokenUrl : undefined
-  if (tokenUrl === undefined) {
+  const tokenUrl = provider.tokenUrl
+  if (tokenUrl.length === 0) {
     return err({ kind: "unknown-provider" })
   }
 
@@ -315,8 +314,8 @@ export async function devicePoll(
   args: DevicePollArgs,
 ): Promise<Result<NormalizedTokens, OAuthConnectError>> {
   const { provider, clientId, clientSecret, deviceCode } = args
-  const tokenUrl = typeof provider.tokenUrl === "string" ? provider.tokenUrl : undefined
-  if (tokenUrl === undefined) {
+  const tokenUrl = provider.tokenUrl
+  if (tokenUrl.length === 0) {
     return err({ kind: "unknown-provider" })
   }
 

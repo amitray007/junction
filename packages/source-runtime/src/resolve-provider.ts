@@ -140,8 +140,26 @@ export function makeResolveProvider(
           // core never makes it directly, keeping core HTTP-free.
           const refreshFn: RefreshTokenFn = oauthRefreshFn
 
+          // Increment 44 (R3) — source the OAuth design via the platform
+          // already resolved above (platformResult.value), not the
+          // credential's legacy oauthMeta.providerId. onProviderFallback logs
+          // ONE structured line (ids only, never token material) when
+          // resolution still had to fall back — the evidence the later
+          // cleanup increment's drop gate measures.
           const refreshResult = await refreshIfExpiredSingleFlight(credential.id, () =>
-            refreshIfExpired({ credential, store, repos, refreshFn, now: Date.now() }),
+            refreshIfExpired({
+              credential,
+              store,
+              repos,
+              refreshFn,
+              now: Date.now(),
+              platform,
+              onProviderFallback: (info) => {
+                log(
+                  `${logPrefix}: source "${sourceRef.toolNamespace}": oauth provider resolution fell back to the credential's legacy providerId (context=${info.context}, credentialId=${info.credentialId}, reason=${info.reason})`,
+                )
+              },
+            }),
           )
           if (refreshResult.isErr()) {
             if (refreshResult.error.kind === "needs-reauth") {
@@ -154,9 +172,11 @@ export function makeResolveProvider(
                 account: refreshResult.error.account,
               } satisfies UpstreamError)
             }
-            // refresh-failed | not-oauth (defensive) — a transient refresh
-            // failure surfaces as auth-failed, which is honest: the call
-            // cannot proceed with a trustworthy token right now.
+            // refresh-failed | not-oauth (defensive) | dangling-provider-reference
+            // | no-provider-source — all surface as auth-failed, which is
+            // honest: the call cannot proceed with a trustworthy token right
+            // now. A dangling-provider-reference is the SECURITY fail-closed
+            // case (R1) — it must NEVER fall through to a real call.
             // inc29: on-401 reactive refresh is a fast-follow (F1) — this is
             // the refresh-ahead path only.
             log(

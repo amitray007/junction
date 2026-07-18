@@ -8,11 +8,12 @@
 // exercised faithfully without touching sqlite.
 
 import { errAsync, okAsync, type ResultAsync } from "neverthrow"
-import { describe, expect, it } from "vitest"
+import { describe, expect, it, vi } from "vitest"
 import type { CredentialStore } from "../credentials/store.js"
 import type { DbError } from "../errors/index.js"
 import type { CredentialsRepo } from "../repositories/credentials.js"
 import type { Credential, OAuthMeta } from "../schema/credential.js"
+import type { Platform } from "../schema/platform.js"
 import {
   DEFAULT_REFRESH_BUFFER_MS,
   MAX_EXPIRES_IN_SECONDS,
@@ -742,5 +743,204 @@ describe("refreshIfExpired", () => {
     })
     expect(result.isOk()).toBe(true)
     if (result.isOk()) expect(result.value.accessToken).toBe("NAT")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// refreshIfExpired + resolveOAuthProviderId integration (increment 44, R1/R3)
+// ---------------------------------------------------------------------------
+
+describe("refreshIfExpired — provider-id resolution (increment 44)", () => {
+  function makeOAuthPlatform(overrides: Partial<Platform> = {}): Platform {
+    return {
+      id: "test-platform",
+      kind: "custom",
+      displayName: "Test Platform",
+      ...overrides,
+    }
+  }
+
+  it("platform.oauthProviderId (a real catalog design) sources the refresh call, NOT the credential's legacy providerId", async () => {
+    const expiresAt = new Date(NOW - 1_000).toISOString()
+    const credential = makeCredential(
+      {},
+      {
+        expiresAt,
+        // legacy field present but deliberately WRONG — must be ignored
+        // because the platform reference wins.
+        providerId: "slack",
+        refreshTokenRef: "rt",
+        clientIdRef: "ci",
+        clientSecretRef: "cs",
+      },
+    )
+    const store = createMemoryStore({
+      "access-ref-old": "old",
+      rt: "RT",
+      ci: "CID",
+      cs: "CSEC",
+    })
+    const { repo } = createFakeCredentialsRepo(credential)
+    const platform = makeOAuthPlatform({ oauthProviderId: "github" })
+
+    let seenProviderId: string | undefined
+    const refreshFn: RefreshTokenFn = async (args) => {
+      seenProviderId = args.providerId
+      return { ok: true, tokens: { accessToken: "NAT" } }
+    }
+    const onProviderFallback = vi.fn()
+
+    const result = await refreshIfExpired({
+      credential,
+      store,
+      repos: { credentials: repo },
+      refreshFn,
+      now: NOW,
+      platform,
+      onProviderFallback,
+    })
+
+    expect(result.isOk()).toBe(true)
+    expect(seenProviderId).toBe("github")
+    expect(onProviderFallback).not.toHaveBeenCalled()
+  })
+
+  it('the fallback fires for an orphan OAuth credential (no platform in hand) and emits the log with context:"refresh"', async () => {
+    const expiresAt = new Date(NOW - 1_000).toISOString()
+    const credential = makeCredential(
+      { platformId: null },
+      {
+        expiresAt,
+        providerId: "github",
+        refreshTokenRef: "rt",
+        clientIdRef: "ci",
+        clientSecretRef: "cs",
+      },
+    )
+    const store = createMemoryStore({
+      "access-ref-old": "old",
+      rt: "RT",
+      ci: "CID",
+      cs: "CSEC",
+    })
+    const { repo } = createFakeCredentialsRepo(credential)
+
+    let seenProviderId: string | undefined
+    const refreshFn: RefreshTokenFn = async (args) => {
+      seenProviderId = args.providerId
+      return { ok: true, tokens: { accessToken: "NAT" } }
+    }
+    const onProviderFallback = vi.fn()
+
+    const result = await refreshIfExpired({
+      credential,
+      store,
+      repos: { credentials: repo },
+      refreshFn,
+      now: NOW,
+      platform: null, // orphan — no platform to source from
+      onProviderFallback,
+    })
+
+    expect(result.isOk()).toBe(true)
+    expect(seenProviderId).toBe("github")
+    expect(onProviderFallback).toHaveBeenCalledExactlyOnceWith({
+      context: "refresh",
+      credentialId: credential.id,
+      providerId: "github",
+      reason: "unset",
+    })
+  })
+
+  it("SECURITY: platform.oauthProviderId pointing at a NONEXISTENT design fails closed with a typed error, does NOT fall back to the credential, refreshFn is never called", async () => {
+    const expiresAt = new Date(NOW - 1_000).toISOString()
+    const credential = makeCredential(
+      {},
+      {
+        expiresAt,
+        providerId: "github", // present — must be IGNORED, not used as a fallback
+        refreshTokenRef: "rt",
+        clientIdRef: "ci",
+        clientSecretRef: "cs",
+      },
+    )
+    const store = createMemoryStore({
+      "access-ref-old": "old",
+      rt: "RT",
+      ci: "CID",
+      cs: "CSEC",
+    })
+    const { repo } = createFakeCredentialsRepo(credential)
+    const platform = makeOAuthPlatform({ oauthProviderId: "attacker-controlled-design" })
+
+    let refreshFnCalls = 0
+    const refreshFn: RefreshTokenFn = async () => {
+      refreshFnCalls++
+      return { ok: true, tokens: { accessToken: "should-never-happen" } }
+    }
+    const onProviderFallback = vi.fn()
+
+    const result = await refreshIfExpired({
+      credential,
+      store,
+      repos: { credentials: repo },
+      refreshFn,
+      now: NOW,
+      platform,
+      onProviderFallback,
+    })
+
+    expect(result.isErr()).toBe(true)
+    if (result.isErr()) {
+      expect(result.error).toEqual({
+        kind: "dangling-provider-reference",
+        platformId: "test-platform",
+        providerId: "attacker-controlled-design",
+      })
+    }
+    expect(refreshFnCalls).toBe(0)
+    expect(onProviderFallback).not.toHaveBeenCalled()
+  })
+
+  it("no platform, no legacy providerId at all → needs-reauth (no-provider-source), refreshFn never called", async () => {
+    const expiresAt = new Date(NOW - 1_000).toISOString()
+    const credential = makeCredential(
+      { platformId: null },
+      {
+        expiresAt,
+        // no providerId at all
+        refreshTokenRef: "rt",
+        clientIdRef: "ci",
+        clientSecretRef: "cs",
+      },
+    )
+    const store = createMemoryStore({
+      "access-ref-old": "old",
+      rt: "RT",
+      ci: "CID",
+      cs: "CSEC",
+    })
+    const { repo } = createFakeCredentialsRepo(credential)
+
+    let refreshFnCalls = 0
+    const refreshFn: RefreshTokenFn = async () => {
+      refreshFnCalls++
+      return { ok: true, tokens: { accessToken: "should-never-happen" } }
+    }
+
+    const result = await refreshIfExpired({
+      credential,
+      store,
+      repos: { credentials: repo },
+      refreshFn,
+      now: NOW,
+      platform: null,
+    })
+
+    expect(result.isErr()).toBe(true)
+    if (result.isErr()) {
+      expect(result.error.kind).toBe("needs-reauth")
+    }
+    expect(refreshFnCalls).toBe(0)
   })
 })

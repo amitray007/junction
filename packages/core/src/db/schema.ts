@@ -21,6 +21,10 @@ export const platforms = sqliteTable("platforms", {
   cli: text("cli"),
   /** JSON-serialized HttpConnection — optional; meaningful when kind === "http" */
   http: text("http"),
+  // Increment 44 (Phase 3) — the platform's own OAuth design reference. See
+  // schema/platform.ts's PlatformSchema doc-comment. Nullable; backfilled for
+  // pre-44 rows by migration 0012 (fill-only-if-unset, conflict → left unset).
+  oauthProviderId: text("oauth_provider_id"),
 })
 
 export const credentials = sqliteTable(

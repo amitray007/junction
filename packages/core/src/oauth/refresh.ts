@@ -24,7 +24,9 @@ import { ulid } from "ulid"
 import type { CredentialStore } from "../credentials/store.js"
 import type { Repositories } from "../repositories/index.js"
 import type { Credential, OAuthMeta } from "../schema/credential.js"
+import type { Platform } from "../schema/platform.js"
 import type { NormalizedTokens } from "./catalog.js"
+import { type OnOAuthProviderFallbackFn, resolveOAuthProviderId } from "./resolve-provider-id.js"
 
 // ---------------------------------------------------------------------------
 // RefreshTokenFn — the injected provider refresh call (slice B implements it)
@@ -75,6 +77,16 @@ export type RefreshError =
   | { kind: "needs-reauth"; platformId: string; account: string }
   | { kind: "refresh-failed"; cause: unknown }
   | { kind: "not-oauth" }
+  /**
+   * Increment 44 (R1, SECURITY — fail closed): the platform's own
+   * `oauthProviderId` is SET but points at a design that doesn't exist. This
+   * refresh does NOT fall back to the credential's legacy providerId — a
+   * dangling/attacker-imported platform reference must never silently mask
+   * itself and route a refresh token to an attacker-chosen tokenUrl.
+   */
+  | { kind: "dangling-provider-reference"; platformId: string; providerId: string }
+  /** No provider source at all — no platform reference, no legacy fallback. */
+  | { kind: "no-provider-source" }
 
 // ---------------------------------------------------------------------------
 // shouldRefresh — pure expiry decision
@@ -151,6 +163,22 @@ export interface RefreshIfExpiredArgs {
   refreshFn: RefreshTokenFn
   now: number
   bufferMs?: number
+  /**
+   * Increment 44 (R3) — the credential's bound platform, when the caller has
+   * one in hand (resolve-provider.ts resolves the platform BEFORE the
+   * credential, so it always does). `null`/absent = orphan OAuth credential
+   * (nullable platformId, increment 42) — resolution falls straight to the
+   * legacy `credential.oauthMeta.providerId` fallback, which is its ONLY
+   * refresh path until it's re-bound.
+   */
+  platform?: Platform | null
+  /**
+   * Fired when provider-id resolution falls back to the credential's legacy
+   * `oauthMeta.providerId` (ids only, never token material) — the evidence
+   * the later cleanup increment's drop gate measures. Always tagged
+   * `context: "refresh"` by this function.
+   */
+  onProviderFallback?: OnOAuthProviderFallbackFn
 }
 
 /**
@@ -175,7 +203,7 @@ export interface RefreshIfExpiredArgs {
 export function refreshIfExpired(
   args: RefreshIfExpiredArgs,
 ): ResultAsync<{ accessToken: string | null }, RefreshError> {
-  const { credential, store, repos, refreshFn, now } = args
+  const { credential, store, repos, refreshFn, now, platform, onProviderFallback } = args
   const bufferMs = args.bufferMs ?? DEFAULT_REFRESH_BUFFER_MS
 
   if (credential.kind !== "oauth2") {
@@ -202,7 +230,16 @@ export function refreshIfExpired(
     return readCurrentToken(store, credential.secretRef)
   }
 
-  return performRefresh(credential, meta, store, repos, refreshFn, now)
+  return performRefresh(
+    credential,
+    meta,
+    store,
+    repos,
+    refreshFn,
+    now,
+    platform,
+    onProviderFallback,
+  )
 }
 
 /**
@@ -231,12 +268,36 @@ function performRefresh(
   repos: Pick<Repositories, "credentials">,
   refreshFn: RefreshTokenFn,
   now: number,
+  platform: Platform | null | undefined,
+  onProviderFallback: OnOAuthProviderFallbackFn | undefined,
 ): ResultAsync<{ accessToken: string | null }, RefreshError> {
   // oauth2 credentials always carry a platformId (see the identical comment
   // above in refreshIfExpired) — the `?? ""` fallback is unreachable.
   const platformId = credential.platformId ?? ""
   const account = credential.profileName
   const needsReauth = (): RefreshError => ({ kind: "needs-reauth", platformId, account })
+
+  // Increment 44 (R1/R3) — resolve the design BEFORE any store I/O, so a
+  // dangling platform.oauthProviderId (SECURITY: fail closed) or a
+  // no-provider-source credential never reaches the store/refreshFn at all.
+  const resolved = resolveOAuthProviderId({
+    credentialId: credential.id,
+    context: "refresh",
+    platform: platform ?? null,
+    legacyProviderId: meta?.providerId,
+    onFallback: onProviderFallback,
+  })
+  if (!resolved.ok) {
+    if (resolved.error.kind === "dangling-provider-reference") {
+      return errAsync(resolved.error)
+    }
+    // no-provider-source — no platform reference AND no legacy fallback data.
+    // Mirrors the missing-refresh-material case below: a reconnect is the
+    // only way forward, so surface it as needs-reauth rather than a generic
+    // failure the caller can't act on.
+    return errAsync(needsReauth())
+  }
+  const providerId = resolved.providerId
 
   const refreshTokenRef = meta?.refreshTokenRef
   const clientIdRef = meta?.clientIdRef
@@ -275,6 +336,7 @@ function performRefresh(
                 refreshToken,
                 clientId,
                 clientSecret,
+                providerId,
               )
             })
         })
@@ -306,12 +368,20 @@ function callRefreshAndPersist(
   refreshToken: string,
   clientId: string,
   clientSecret: string,
+  providerId: string,
 ): ResultAsync<{ accessToken: string }, RefreshError> {
   // oauth2 credentials always carry a platformId (see the identical comment
   // in refreshIfExpired above) — the `?? ""` fallback is unreachable.
   const platformId = credential.platformId ?? ""
   const account = credential.profileName
-  const providerId = meta?.providerId ?? ""
+  // providerId is now RESOLVED (increment 44, R3 — platform.oauthProviderId →
+  // app catalog → legacy oauthMeta.providerId fallback), sourced by the
+  // caller (performRefresh) via resolveOAuthProviderId — no longer read
+  // directly off meta here. NOTE: on the REFRESH path the middle step
+  // (appAuthProviderId) is not populated — refresh resolves platform →
+  // legacy-fallback only (tighter/safer: fewer authoritative sources). The
+  // app-catalog step is exercised by the grouping caller, not refresh
+  // (credential-security review, inc 44).
   // Capture the OLD refs at entry (mirrors rotateCredential capturing
   // oldSecretRef up front) — the final best-effort deletes below use these
   // locals, not a re-read of `credential`/`meta`, so the atomicity holds

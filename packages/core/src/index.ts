@@ -213,6 +213,17 @@ export {
   shouldRefresh,
   toExpiresAt,
 } from "./oauth/refresh.js"
+// Shared OAuth provider-id resolution (increment 44 Phase 3, R3) — the ONE
+// primitive refresh + grouping both consume so they can never diverge on
+// which design a credential belongs to.
+export {
+  type OAuthProviderIdContext,
+  type OAuthProviderIdFallbackReason,
+  type OnOAuthProviderFallbackFn,
+  type ResolveOAuthProviderIdArgs,
+  type ResolveOAuthProviderIdError,
+  resolveOAuthProviderId,
+} from "./oauth/resolve-provider-id.js"
 export type {
   ApiKeyRecord,
   ApiKeyScope,

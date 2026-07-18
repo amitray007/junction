@@ -16,19 +16,14 @@ import { getProvider, type RefreshResult, type RefreshTokenFn } from "@junction/
 import { ArcticFetchError, OAuth2Client, OAuth2RequestError } from "arctic"
 
 /**
- * Resolve a provider's token endpoint to a plain string, or `undefined` if it
- * can't be resolved without connection-level config this fn doesn't have
- * (the `{subdomain}`-style function form — treated as unknown/unrefreshable
- * here; a tuned catalog entry's refresh in practice always has a fixed URL).
+ * Resolve a provider's token endpoint to a plain string, or `undefined` if
+ * it's unset (increment 44 — `tokenUrl` is a concrete string; the fn-shaped
+ * per-tenant form was removed as dead code — see catalog.ts). Only the
+ * "generic" catalog placeholder is ever empty before a connect descriptor
+ * fills it in.
  */
-function resolveTokenUrl(
-  tokenUrl: string | ((cfg: Record<string, string>) => string),
-): string | undefined {
-  if (typeof tokenUrl === "string") return tokenUrl.length > 0 ? tokenUrl : undefined
-  // A fn-shaped tokenUrl needs connection_config (e.g. Atlassian's
-  // {subdomain}) that isn't available at this seam — refuse rather than call
-  // the fn with a guessed/empty config.
-  return undefined
+function resolveTokenUrl(tokenUrl: string): string | undefined {
+  return tokenUrl.length > 0 ? tokenUrl : undefined
 }
 
 /**

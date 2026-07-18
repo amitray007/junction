@@ -6,17 +6,27 @@
 import { createFileRoute, useRouter } from "@tanstack/react-router"
 import { useState } from "react"
 import { toast } from "sonner"
-import type { SettingsData } from "../server/data.functions.js"
-import { getSettings } from "../server/data.functions.js"
+import type { OAuthDesignMeta, SettingsData } from "../server/data.functions.js"
+import { getOAuthDesigns, getSettings } from "../server/data.functions.js"
 import { setMcpHostFn } from "../server/settings.functions.js"
+import { Badge } from "../ui/badge.js"
 import { Button } from "../ui/button.js"
+import { MonoChip, MonoCode } from "../ui/code.js"
 import { Field } from "../ui/field.js"
 import { Input } from "../ui/input.js"
 import { PageHeader } from "../ui/page-header.js"
 import { ThemeToggle } from "../ui/sidebar.js"
 
+type SettingsLoaderData = {
+  settings: SettingsData
+  oauthDesigns: OAuthDesignMeta[]
+}
+
 export const Route = createFileRoute("/settings")({
-  loader: () => getSettings(),
+  loader: async (): Promise<SettingsLoaderData> => {
+    const [settings, oauthDesigns] = await Promise.all([getSettings(), getOAuthDesigns()])
+    return { settings, oauthDesigns }
+  },
   component: SettingsPage,
 })
 
@@ -218,6 +228,168 @@ function AppearanceSection() {
   )
 }
 
+// ── OAuth designs section (increment 44, R1 — READ-ONLY) ──────────────────────
+
+/** One design's flow-shape line: pkce + refresh support, as small badges. */
+function DesignFlowBadges({ design }: { readonly design: OAuthDesignMeta }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+      <Badge variant="neutral">PKCE {design.pkce}</Badge>
+      <Badge variant={design.supportsRefresh ? "ok" : "off"}>
+        {design.supportsRefresh ? "Refresh supported" : "No refresh"}
+      </Badge>
+    </div>
+  )
+}
+
+/** The list of platforms referencing a design, or a muted "none yet". */
+function DesignReferences({ platformIds }: { readonly platformIds: readonly string[] }) {
+  if (platformIds.length === 0) {
+    return (
+      <span style={{ fontSize: "var(--text-caption)", color: "var(--gray-600)" }}>
+        No platforms reference this design yet.
+      </span>
+    )
+  }
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+      <span style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)" }}>
+        Referenced by {platformIds.length === 1 ? "1 platform" : `${platformIds.length} platforms`}:
+      </span>
+      {platformIds.map((id) => (
+        <MonoChip key={id}>{id}</MonoChip>
+      ))}
+    </div>
+  )
+}
+
+/** A URL line, or an em-dash placeholder for the template's empty endpoints. */
+function DesignUrl({ label, url }: { readonly label: string; readonly url: string }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "2px", minWidth: 0 }}>
+      <span
+        style={{
+          fontSize: "var(--text-caption)",
+          color: "var(--gray-600)",
+          fontFamily: "var(--font-mono)",
+        }}
+      >
+        {label}
+      </span>
+      {url === "" ? (
+        <span style={{ fontSize: "var(--text-mono)", color: "var(--gray-600)" }}>
+          — user-supplied
+        </span>
+      ) : (
+        <MonoCode style={{ wordBreak: "break-all" }}>{url}</MonoCode>
+      )}
+    </div>
+  )
+}
+
+function DesignCard({ design }: { readonly design: OAuthDesignMeta }) {
+  return (
+    <li
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: "12px",
+        padding: "16px",
+        border: "1px solid var(--alpha-200)",
+        borderRadius: "var(--radius-12)",
+        listStyle: "none",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+        <h3
+          style={{
+            fontSize: "var(--text-label)",
+            fontWeight: 600,
+            color: "var(--gray-1000)",
+            margin: 0,
+          }}
+        >
+          {design.displayName}
+        </h3>
+        <MonoChip>{design.id}</MonoChip>
+        {design.isTemplate && <Badge variant="noauth">Template</Badge>}
+      </div>
+
+      {design.isTemplate && (
+        <p style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)", margin: 0 }}>
+          The escape-hatch template for a bespoke provider — you supply the concrete authorization
+          and token URLs per platform.
+        </p>
+      )}
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+          gap: "12px",
+        }}
+      >
+        <DesignUrl label="authorization_url" url={design.authorizationUrl} />
+        <DesignUrl label="token_url" url={design.tokenUrl} />
+      </div>
+
+      <DesignFlowBadges design={design} />
+
+      {design.docsUrl !== "" && (
+        <a
+          href={design.docsUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            fontSize: "var(--text-caption)",
+            color: "var(--blue-text)",
+            width: "fit-content",
+          }}
+        >
+          Registration docs ↗
+        </a>
+      )}
+
+      <DesignReferences platformIds={design.referencedByPlatformIds} />
+    </li>
+  )
+}
+
+function OAuthDesignsSection({ designs }: { readonly designs: readonly OAuthDesignMeta[] }) {
+  return (
+    <section
+      aria-labelledby="oauth-designs-heading"
+      style={{ display: "flex", flexDirection: "column", gap: "16px" }}
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+        <h2
+          id="oauth-designs-heading"
+          style={{
+            fontSize: "var(--text-label)",
+            fontWeight: 600,
+            color: "var(--gray-1000)",
+            margin: 0,
+          }}
+        >
+          OAuth designs
+        </h2>
+        <p style={{ fontSize: "var(--text-body)", color: "var(--gray-700)", margin: 0 }}>
+          The built-in OAuth provider designs Junction ships with — the authorization/token
+          endpoints and flow shape a platform binds to. Read-only: these are Junction&apos;s
+          built-in catalog. Client IDs and secrets are never part of a design; you enter those per
+          credential when you connect.
+        </p>
+      </div>
+
+      <ul style={{ display: "flex", flexDirection: "column", gap: "12px", margin: 0, padding: 0 }}>
+        {designs.map((design) => (
+          <DesignCard key={design.id} design={design} />
+        ))}
+      </ul>
+    </section>
+  )
+}
+
 // ── Separator ─────────────────────────────────────────────────────────────────
 
 function SectionDivider() {
@@ -232,7 +404,7 @@ function SectionDivider() {
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 function SettingsPage() {
-  const data = Route.useLoaderData()
+  const { settings, oauthDesigns } = Route.useLoaderData()
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
@@ -241,9 +413,11 @@ function SettingsPage() {
       {/* Constrain to a readable form column — settings fields shouldn't stretch the
           full 1216px content width (agentation feedback: "horizontally too long"). */}
       <div style={{ display: "flex", flexDirection: "column", gap: "32px", maxWidth: "40rem" }}>
-        <McpHostSection data={data} />
+        <McpHostSection data={settings} />
         <SectionDivider />
         <AppearanceSection />
+        <SectionDivider />
+        <OAuthDesignsSection designs={oauthDesigns} />
       </div>
     </div>
   )

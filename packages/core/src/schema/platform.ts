@@ -60,6 +60,20 @@ export const PlatformSchema = z.object({
    * Meaningful when kind === "http". No vendor-specific fields.
    */
   http: HttpConnectionSchema.optional(),
+  /**
+   * Increment 44 (Phase 3, R1) — references a global OAuth design id
+   * (`oauth/catalog.ts`'s `OAuthProvider.id`), the platform's OWN source of
+   * provider identity. Validated at USE-TIME (resolveOAuthProviderId), NOT a
+   * Zod FK — a dangling reference to a nonexistent design must fail closed at
+   * refresh, not fail schema validation at read (the reference could be
+   * created before a design exists in an unusual ordering, and a strict FK
+   * here couldn't distinguish "not yet created" from "attacker-supplied").
+   * Flat scalar, not a nested object — per-tenant concrete URLs live on the
+   * design; per-tenant connection-config on the platform binding is a
+   * deferred, separate surface (see docs/futures/revisit-when.md) that would
+   * duplicate this if folded in prematurely.
+   */
+  oauthProviderId: z.string().min(1).optional(),
 })
 
 export type Platform = z.infer<typeof PlatformSchema>

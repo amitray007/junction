@@ -25,6 +25,7 @@ import {
   loadConfigState,
   type Platform,
   type Repositories,
+  resolveOAuthProviderId,
 } from "@junction/core"
 import { probeSurface, type ToolListResult } from "./probe.server.js"
 import { getDb } from "./shared.server.js"
@@ -141,6 +142,15 @@ export type PlatformMeta = {
    */
   compatibleKinds: string[]
   /**
+   * Increment 44 (Phase 3, R1) — the platform's OWN reference to a global
+   * OAuth design id (`oauth/catalog.ts`'s `OAuthProvider.id`), when set. This
+   * is the AUTHORITATIVE source of a platform's provider identity, fed to
+   * `resolveOAuthProviderId` for grouping (readAppGroups) and surfaced by the
+   * read-only OAuth-designs list. Metadata-only: a design-id reference,
+   * validated at use-time (never a secret/token).
+   */
+  oauthProviderId?: string
+  /**
    * Whether verify-on-add / test-connection can run a REAL check for this
    * platform (mcp/graphql → true; openapi → only when verifyOperationId is
    * set; cli → always false — running a command has side effects). See
@@ -186,6 +196,7 @@ export async function readPlatforms(): Promise<PlatformMeta[]> {
       kind: p.kind,
       displayName: p.displayName,
       ...(p.baseUrl !== undefined ? { baseUrl: p.baseUrl } : {}),
+      ...(p.oauthProviderId !== undefined ? { oauthProviderId: p.oauthProviderId } : {}),
       compatibleKinds: compatibleCredentialKinds(p),
       verifiable: isVerifiable(p),
     }))
@@ -282,6 +293,71 @@ export function readOAuthProviders(): OAuthProviderMeta[] {
     redirectMode: p.redirectMode,
     defaultScopes: p.defaultScopes ?? [],
     registrationHint: p.registrationHint,
+  }))
+}
+
+// ---------------------------------------------------------------------------
+// OAuth designs (increment 44, R1) — the READ-ONLY global "OAuth designs"
+// surface in Settings. A richer projection of the SAME catalog than
+// readOAuthProviders (which is scoped to the connect picker's needs): here we
+// expose the endpoints + flow shape a human reads to understand a design, plus
+// a join onto the platforms that currently reference each design.
+//
+// SECURITY: metadata-only. Every field is public catalog data — the
+// authorization/token URLs are the provider's own public OAuth endpoints (the
+// same ones registrationHint.docsUrl documents), NOT secrets. Client id/secret
+// are entered per-credential at connect time and live only in the store; NONE
+// of that is in the OAuthProvider catalog or reachable from here. `generic` is
+// included and flagged as the escape-hatch template (empty endpoints — the
+// user supplies concrete URLs per platform).
+// ---------------------------------------------------------------------------
+
+export type OAuthDesignMeta = {
+  id: string
+  displayName: string
+  /** Provider's public authorization endpoint. Empty string for the `generic` template. */
+  authorizationUrl: string
+  /** Provider's public token endpoint. Empty string for the `generic` template. */
+  tokenUrl: string
+  pkce: "S256" | "plain" | "disabled"
+  supportsRefresh: boolean
+  /** registrationHint.docsUrl — where the user registers their own BYO client. Empty when none. */
+  docsUrl: string
+  /** True for the `generic` catalog entry — the bespoke-provider escape hatch (user-supplied URLs). */
+  isTemplate: boolean
+  /** Ids of the platforms that currently reference this design via platform.oauthProviderId. */
+  referencedByPlatformIds: string[]
+}
+
+/**
+ * The read-only OAuth-designs list + which platforms reference each design.
+ * DB-backed (unlike readOAuthProviders) because it joins the pure catalog
+ * against live platform rows (readPlatforms() — already metadata-only, now
+ * carrying oauthProviderId). Degrades to zero references (empty arrays) if the
+ * DB is unavailable, same graceful pattern as the other readers here.
+ */
+export async function readOAuthDesigns(): Promise<OAuthDesignMeta[]> {
+  const platforms = await readPlatforms()
+
+  // design id → referencing platform ids. A single pass over platforms.
+  const referencesByDesign = new Map<string, string[]>()
+  for (const p of platforms) {
+    if (p.oauthProviderId === undefined) continue
+    const list = referencesByDesign.get(p.oauthProviderId) ?? []
+    list.push(p.id)
+    referencesByDesign.set(p.oauthProviderId, list)
+  }
+
+  return listProviders().map((p) => ({
+    id: p.id,
+    displayName: p.displayName,
+    authorizationUrl: p.authorizationUrl,
+    tokenUrl: p.tokenUrl,
+    pkce: p.pkce,
+    supportsRefresh: p.supportsRefresh,
+    docsUrl: p.registrationHint.docsUrl,
+    isTemplate: p.id === "generic",
+    referencedByPlatformIds: referencesByDesign.get(p.id) ?? [],
   }))
 }
 
@@ -461,6 +537,10 @@ export type AppsData = {
 async function readAppGroups(): Promise<AppGroupMeta[]> {
   const [platforms, credentials] = await Promise.all([readPlatforms(), readCredentials()])
 
+  // Platform lookup — needed both to re-source the OAuth design (below) and to
+  // re-attach connection metadata (further down). Built once, before grouping.
+  const platformById = new Map(platforms.map((p) => [p.id, p]))
+
   // Core's groupByApp is pure and only needs {platformId, account, oauthProviderId}
   // per credential — map CredentialMeta's nested oauthState.providerId onto the
   // flat oauthProviderId field groupByApp expects (review C2 — skipping this
@@ -477,20 +557,47 @@ async function readAppGroups(): Promise<AppGroupMeta[]> {
     // "Unlinked" vault view instead).
     credentials: credentials
       .filter((c): c is typeof c & { platformId: string } => c.platformId !== null)
-      .map((c) => ({
-        platformId: c.platformId,
-        account: c.account,
-        ...(c.oauthState?.providerId !== undefined
-          ? { oauthProviderId: c.oauthState.providerId }
-          : {}),
-      })),
+      .map((c) => {
+        // Increment 44 (R3) — source the grouping provider id through the SAME
+        // shared resolver refresh uses, so grouping and refresh can never
+        // diverge on which OAuth design a connection belongs to. The platform's
+        // own `oauthProviderId` is authoritative; the credential's legacy
+        // `oauthState.providerId` is only the instrumented fallback. Grouping
+        // is display-only, so a `{ok:false}` (dangling design reference, or no
+        // source at all) DEGRADES to "no hint" — the connection simply falls
+        // through appIdForConnection's later id/alias matching (never throws,
+        // never breaks the /app page). onFallback fires ONE structured log line
+        // (ids only, context "group") so grouping's fallback hits feed the SAME
+        // "zero fallback hits" drop gate as refresh.
+        const resolved = resolveOAuthProviderId({
+          credentialId: c.id,
+          context: "group",
+          platform: platformById.get(c.platformId),
+          legacyProviderId: c.oauthState?.providerId,
+          onFallback: (info) => {
+            // Match the refresh path's fallback log VERBATIM (resolve-provider.ts)
+            // — both feed the ONE "zero fallback hits" drop gate, so the evidence
+            // must be uniformly greppable ("fell back to the credential's legacy
+            // providerId"). A structured-vs-string shape divergence would make the
+            // gate miss grouping's fallbacks. stderr, ids only, never token material.
+            process.stderr.write(
+              `oauth provider resolution fell back to the credential's legacy providerId (context=${info.context}, credentialId=${info.credentialId}, reason=${info.reason})\n`,
+            )
+          },
+        })
+        return {
+          platformId: c.platformId,
+          account: c.account,
+          ...(resolved.ok ? { oauthProviderId: resolved.providerId } : {}),
+        }
+      }),
   }
   const groups = groupByApp(groupInput)
 
   // Lookups to re-attach full connection metadata: platform displayName/kind,
   // and (when the connection has a real credential) its status fields. A
   // credential-less connection (account === "—") has no CredentialMeta match.
-  const platformById = new Map(platforms.map((p) => [p.id, p]))
+  // (platformById is built above.)
   const credentialByPlatformAndAccount = new Map(
     credentials.map((c) => [`${c.platformId} ${c.account}`, c]),
   )

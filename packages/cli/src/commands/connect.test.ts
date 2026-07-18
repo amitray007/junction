@@ -53,8 +53,6 @@ vi.mock("@junction/core", async (importOriginal) => {
     deviceAuthorizationUrl: "https://example.com/oauth/device/code",
     pkce: "S256",
     scopeSeparator: " ",
-    tokenAuthMethod: "client_secret_basic",
-    bodyFormat: "form",
     expiryStrategy: "expires_in",
     redirectMode: "loopback-ephemeral",
     supportsRefresh: true,
