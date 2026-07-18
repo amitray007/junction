@@ -11,6 +11,7 @@ import { assertLocalHost, requireString } from "./fn-guards.server.js"
 import type {
   AddFullAccessCliPlatformInput,
   AddPlatformInput,
+  BindCredentialToPlatformInput,
   CliConnectionInput,
   CliToolArgInput,
   CliToolInput,
@@ -24,8 +25,10 @@ import type {
 import {
   discoverCliBinary,
   getPlatformDetail,
+  listUnlinkedCredentials,
   mutateAddFullAccessCliPlatform,
   mutateAddPlatform,
+  mutateBindCredentialToPlatform,
   mutateDeletePlatform,
   mutateRefreshPlatform,
   mutateSetFullAccessCliShortcuts,
@@ -38,10 +41,12 @@ import {
 export type {
   AddFullAccessCliPlatformResult,
   AddPlatformInput,
+  BindCredentialToPlatformResult,
   CliBinaryCandidate,
   CliConnectionInput,
   CliToolArgInput,
   CliToolInput,
+  CredentialMutationMetaLike,
   DiscoverCliBinaryResult,
   HttpConnectionInput,
   HttpParamInput,
@@ -406,4 +411,39 @@ export const setFullAccessCliShortcutsFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     assertLocalHost()
     return mutateSetFullAccessCliShortcuts(data)
+  })
+
+// ---------------------------------------------------------------------------
+// Inline credential bind (increment 43, Phase 2) — Add-Platform / Full CLI
+// Access panel's "use an existing unlinked credential" step.
+// docs/methods/43-platform-inline-credential-bind.md Slice B (B0).
+// ---------------------------------------------------------------------------
+
+function validateListUnlinkedCredentialsInput(raw: unknown): { kind?: string } {
+  const d = raw as Record<string, unknown> | undefined
+  return { kind: typeof d?.kind === "string" && d.kind.trim() !== "" ? d.kind.trim() : undefined }
+}
+
+/** List the vault's unlinked credentials — metadata only, optionally kind-filtered. */
+export const listUnlinkedCredentialsFn = createServerFn({ method: "GET" })
+  .validator(validateListUnlinkedCredentialsInput)
+  .handler(async ({ data }) => {
+    assertLocalHost()
+    return listUnlinkedCredentials(data.kind)
+  })
+
+function validateBindCredentialToPlatformInput(raw: unknown): BindCredentialToPlatformInput {
+  const d = raw as Record<string, unknown>
+  return {
+    credentialId: requireString(d.credentialId, "credentialId"),
+    platformId: requireString(d.platformId, "platformId"),
+  }
+}
+
+/** Bind an existing (unlinked) credential to a platform — verify-then-commit for a verifiable platform kind, confirm-then-commit otherwise. */
+export const bindCredentialToPlatformFn = createServerFn({ method: "POST" })
+  .validator(validateBindCredentialToPlatformInput)
+  .handler(async ({ data }) => {
+    assertLocalHost()
+    return mutateBindCredentialToPlatform(data)
   })

@@ -175,6 +175,29 @@ export function createCredentialsRepo(db: Db) {
       }
     },
 
+    /**
+     * Update a credential row's platformId (bind an unlinked credential to a
+     * platform, or re-point an already-linked one) — used by
+     * bindCredentialToPlatform (increment 43). Only the platformId column is
+     * modified; id, profileName, kind, secretRef, and oauthMeta are untouched.
+     * Read-before-write so a not-found surfaces (and the full updated
+     * Credential is returned). No schema change (increment 42 already made
+     * the column nullable) and NO uniqueness enforcement here — the
+     * duplicate-account guard is an APP-level check the caller
+     * (bindCredentialToPlatform) runs BEFORE calling this (see
+     * docs/futures/gotchas.md — migration 0011 dropped the DB-level unique).
+     */
+    setPlatformId(id: string, platformId: string): ResultAsync<Credential, DbError> {
+      try {
+        const found = fetchRowOrNotFound(db, id)
+        if (!found.ok) return errAsync(found.error)
+        db.update(credentials).set({ platformId }).where(eq(credentials.id, id)).run()
+        return okAsync(rowToCredential({ ...found.row, platformId }))
+      } catch (cause) {
+        return errAsync(mapDbError(cause))
+      }
+    },
+
     delete(id: string): ResultAsync<void, DbError> {
       try {
         const result = db.delete(credentials).where(eq(credentials.id, id)).run()

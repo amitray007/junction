@@ -36,3 +36,25 @@ export function credentialEnvVarError(name: string): string | undefined {
   }
   return undefined
 }
+
+// A credential NAME slug — mirrors core's CredentialNameSchema (^[a-z0-9][a-z0-9-]*$).
+// Duplicated here (not imported) for the same server-only-core reason as above:
+// this is a client component path and must not pull @junction/core into the
+// bundle. Keep in lock-step with core/schema/credential.ts CredentialNameSchema.
+const CREDENTIAL_NAME_RE = /^[a-z0-9][a-z0-9-]*$/
+
+/**
+ * Validate the inline "Create new credential" NAME field (full-access panel).
+ * Returns an inline field error so an invalid slug is caught BEFORE submit —
+ * otherwise addCredentialFn's validator throws a 400 that the panel's outer
+ * catch turns into a misleading "install failed" toast even though the platform
+ * installed fine (inc 43 web-review should-fix). Empty is not flagged here — the
+ * submit path requires a name only when mode === "new" (handled at submit).
+ */
+export function credentialNameError(name: string): string | undefined {
+  if (name === "") return undefined
+  if (!CREDENTIAL_NAME_RE.test(name)) {
+    return "A lowercase slug — letters, digits, hyphens; must start with a letter or digit (e.g. github-work)"
+  }
+  return undefined
+}

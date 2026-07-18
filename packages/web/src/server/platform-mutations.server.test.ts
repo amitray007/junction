@@ -21,8 +21,10 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import {
   discoverCliBinary,
+  listUnlinkedCredentials,
   mutateAddFullAccessCliPlatform,
   mutateAddPlatform,
+  mutateBindCredentialToPlatform,
   mutateDeletePlatform,
   mutateRefreshPlatform,
   mutateSetFullAccessCliShortcuts,
@@ -771,6 +773,198 @@ describe("platform-mutations.server", () => {
       expect(result.ok).toBe(false)
       if (result.ok) return
       expect(result.fieldErrors).toBeDefined()
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // Inline credential bind (increment 43, Phase 2, Slice B) — listUnlinkedCredentials
+  // + mutateBindCredentialToPlatform. Uses a declared "cli" platform (isVerifiable
+  // is always false for cli — see data.server.ts) so the confirmThenBind path
+  // exercises with NO network dependency, per the method file's B0 note that
+  // verify-none kinds (env/cli/http) must route to confirmThenBind, not
+  // verifyThenBind.
+  // ---------------------------------------------------------------------------
+
+  describe("listUnlinkedCredentials + mutateBindCredentialToPlatform", () => {
+    /** A minimal declared "cli" platform — isVerifiable(p) is false for "cli". */
+    async function seedCliPlatform(id = newPlatformId()) {
+      const repos = await makeRepos(tmpHome)
+      await repos.platforms.upsert({
+        id,
+        kind: "cli",
+        displayName: "Bind Test CLI",
+        cli: {
+          mode: "declared" as const,
+          tools: [
+            {
+              name: "echo",
+              argv: [
+                { kind: "literal", value: "/bin/echo" },
+                { kind: "arg", name: "msg" },
+              ],
+              args: [{ name: "msg", type: "string" as const, required: false }],
+              policy: {
+                cwd: "/tmp",
+                readPaths: ["/tmp"],
+                writePaths: [],
+                allowNet: [],
+                timeoutMs: 5_000,
+                envAllow: {},
+              },
+            },
+          ],
+        },
+      })
+      // Return the branded PlatformId (not String(id), which strips the brand)
+      // so callers can pass it straight to repos.credentials.create, whose
+      // platformId is a branded PlatformId. A PlatformId is still assignable to
+      // the plain-string server-fn inputs the other callers use.
+      return id
+    }
+
+    /** An UNLINKED (platformId: null) "env" credential — listUnlinked's target row shape. */
+    async function seedUnlinkedCredential(profileName = "default", name = "unlinked-cred") {
+      const repos = await makeRepos(tmpHome)
+      const id = newCredentialId()
+      await repos.credentials.create({
+        id,
+        name,
+        platformId: null,
+        profileName,
+        kind: "env",
+        secretRef: `keyring://junction/ref_${name}`,
+      })
+      return String(id)
+    }
+
+    it("listUnlinkedCredentials returns metadata only — NO secret/secretRef field", async () => {
+      await seedUnlinkedCredential("default", "unlinked-a")
+      const result = await listUnlinkedCredentials()
+      expect(result.length).toBeGreaterThan(0)
+      for (const c of result) {
+        expect(c).not.toHaveProperty("secret")
+        expect(c).not.toHaveProperty("secretRef")
+        expect(c.platformId).toBeNull()
+      }
+    })
+
+    it("listUnlinkedCredentials excludes a platform-linked credential", async () => {
+      const platformId = await seedCliPlatform()
+      const repos = await makeRepos(tmpHome)
+      await repos.credentials.create({
+        id: newCredentialId(),
+        name: "linked-cred",
+        platformId,
+        profileName: "default",
+        kind: "env",
+        secretRef: "keyring://junction/ref_linked",
+      })
+      const result = await listUnlinkedCredentials()
+      expect(result.some((c) => c.name === "linked-cred")).toBe(false)
+    })
+
+    it("listUnlinkedCredentials(kind) filters by kind", async () => {
+      await seedUnlinkedCredential("default", "env-cred")
+      const repos = await makeRepos(tmpHome)
+      await repos.credentials.create({
+        id: newCredentialId(),
+        name: "bearer-cred",
+        platformId: null,
+        profileName: "default",
+        kind: "bearer",
+        secretRef: "keyring://junction/ref_bearer",
+      })
+      const result = await listUnlinkedCredentials("env")
+      expect(result.every((c) => c.kind === "env")).toBe(true)
+      expect(result.some((c) => c.name === "bearer-cred")).toBe(false)
+    })
+
+    it("binds an unlinked credential to a verify-none (cli) platform via confirmThenBind — unverified:false", async () => {
+      const platformId = await seedCliPlatform()
+      const credentialId = await seedUnlinkedCredential()
+
+      const result = await mutateBindCredentialToPlatform({ credentialId, platformId })
+      expect(result.ok).toBe(true)
+      if (!result.ok) throw new Error("expected ok")
+      expect(result.verified).toBe(false)
+      expect(result.credential.platformId).toBe(platformId)
+
+      const repos = await makeRepos(tmpHome)
+      const stored = await repos.credentials.get(credentialId)
+      expect(stored.isOk()).toBe(true)
+      if (stored.isOk()) expect(stored.value.platformId).toBe(platformId)
+
+      // No longer unlinked.
+      const unlinked = await listUnlinkedCredentials()
+      expect(unlinked.some((c) => c.id === credentialId)).toBe(false)
+    })
+
+    it("a not-found credentialId reports a clean error, not a throw", async () => {
+      const platformId = await seedCliPlatform()
+      const result = await mutateBindCredentialToPlatform({
+        credentialId: "does-not-exist",
+        platformId,
+      })
+      expect(result.ok).toBe(false)
+    })
+
+    it("a not-found platformId reports a clean error, not a throw", async () => {
+      const credentialId = await seedUnlinkedCredential()
+      const result = await mutateBindCredentialToPlatform({
+        credentialId,
+        platformId: "does-not-exist",
+      })
+      expect(result.ok).toBe(false)
+    })
+
+    it("kind-incompatible: binding a non-accepted kind to the platform is refused by core", async () => {
+      // A cli platform's kind-compat matrix accepts ["env","file","bearer"]
+      // (bearer is always accepted, back-compat) — "api-key" is NOT in that
+      // set, so this exercises the SAME isKindAccepted gate addCredential
+      // uses, from the bind path.
+      const platformId = await seedCliPlatform()
+      const repos = await makeRepos(tmpHome)
+      const id = newCredentialId()
+      await repos.credentials.create({
+        id,
+        name: "api-key-cred",
+        platformId: null,
+        profileName: "default",
+        kind: "api-key",
+        secretRef: "keyring://junction/ref_api_key",
+      })
+      const result = await mutateBindCredentialToPlatform({
+        credentialId: String(id),
+        platformId,
+      })
+      expect(result.ok).toBe(false)
+      if (result.ok) throw new Error("expected error")
+      if (!("error" in result)) throw new Error("expected an error message, not verifyFailed")
+      expect(result.error).toMatch(/not accepted/i)
+    })
+
+    it("duplicate-account: a second credential with the SAME profileName on the SAME platform is refused (not a silent overwrite)", async () => {
+      const platformId = await seedCliPlatform()
+      const firstId = await seedUnlinkedCredential("default", "first-cred")
+      const firstBind = await mutateBindCredentialToPlatform({
+        credentialId: firstId,
+        platformId,
+      })
+      expect(firstBind.ok).toBe(true)
+
+      const secondId = await seedUnlinkedCredential("default", "second-cred")
+      const secondBind = await mutateBindCredentialToPlatform({
+        credentialId: secondId,
+        platformId,
+      })
+      expect(secondBind.ok).toBe(false)
+      if (secondBind.ok) throw new Error("expected error")
+      if (!("error" in secondBind)) throw new Error("expected an error message, not verifyFailed")
+      expect(secondBind.error).toMatch(/already connected/i)
+
+      // The second credential is STILL unlinked — no partial/silent write.
+      const stillUnlinked = await listUnlinkedCredentials()
+      expect(stillUnlinked.some((c) => c.id === secondId)).toBe(true)
     })
   })
 })

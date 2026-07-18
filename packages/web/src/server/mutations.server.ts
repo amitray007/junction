@@ -104,17 +104,26 @@ export type AddVerifyResult =
   | { status: "not-verifiable"; reason: string }
 
 /**
- * Map an addCredential/addStandaloneCredential failure to a human-readable
- * message — shared by mutateAddCredential's two branches (standalone vs.
- * platform-linked) so the mapping can't drift between them (increment 42
- * introduced the standalone branch; this factor-out is what keeps the two
- * from becoming near-duplicate switch statements). `scope` tailors the
- * kind-incompatible wording to whether a platform is in play — pass "" for
- * the standalone (no-platform) path (which can never hit duplicate-account —
- * addStandaloneCredential has no account concept — but the branch is kept
- * for type-exhaustiveness against the shared CredentialError union).
+ * Map an addCredential/addStandaloneCredential/bindCredentialToPlatform
+ * failure to a human-readable message — shared by mutateAddCredential's two
+ * branches (standalone vs. platform-linked) so the mapping can't drift
+ * between them (increment 42 introduced the standalone branch; this
+ * factor-out is what keeps the two from becoming near-duplicate switch
+ * statements). Increment 43 — exported so platform-mutations.server.ts's
+ * bind path reuses the SAME kind-incompatible/duplicate-account copy rather
+ * than inventing new wording (bindCredentialToPlatform's core error shapes
+ * are identical to addCredential's — both come from the same isKindAccepted
+ * gate + the same forPlatform-scoped duplicate-account guard). `scope`
+ * tailors the kind-incompatible wording to whether a platform is in play —
+ * pass "" for the standalone (no-platform) path (which can never hit
+ * duplicate-account — addStandaloneCredential has no account concept — but
+ * the branch is kept for type-exhaustiveness against the shared
+ * CredentialError union).
  */
-function addCredentialErrorMessage(e: CredentialError | DbError, scope: "platform" | ""): string {
+export function addCredentialErrorMessage(
+  e: CredentialError | DbError,
+  scope: "platform" | "",
+): string {
   if (e.kind === "invalid-input") return e.reason
   if (e.kind === "kind-incompatible") {
     const suffix = scope === "platform" ? " for this platform" : ""

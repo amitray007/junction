@@ -17,6 +17,7 @@ export {
   type AddStandaloneCredentialInput,
   addStandaloneCredential,
 } from "./add-standalone-credential.js"
+export { bindCredentialToPlatform } from "./bind-credential-to-platform.js"
 export { deriveCredentialName } from "./derive-name.js"
 export { type ExportVaultInput, type ExportVaultResult, exportVault } from "./export-vault.js"
 export {

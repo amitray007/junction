@@ -16,11 +16,32 @@ import { Plus, X } from "lucide-react"
 import {
   type CliBinaryCandidate,
   discoverCliBinaryFn,
+  listUnlinkedCredentialsFn,
 } from "../../../server/platform-mutations.functions.js"
-import { Button, Field, Input } from "../../../ui/index.js"
-import { credentialEnvVarError } from "./credential-env-var.js"
-import type { CliPathFormState, FullAccessFormState } from "./types.js"
+import {
+  Button,
+  Field,
+  Input,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../../../ui/index.js"
+import { credentialEnvVarError, credentialNameError } from "./credential-env-var.js"
+import type {
+  CliPathFormState,
+  FullAccessCredentialFormState,
+  FullAccessCredentialMode,
+  FullAccessFormState,
+} from "./types.js"
 import { emptyPathRow } from "./types.js"
+
+// The Full CLI Access credential kind (increment 43) — the inline section
+// only ever creates/binds "env" credentials, matching credentialEnvVar's
+// injection mechanism. "Use existing" filters the unlinked list to this kind
+// client-side (core re-gates kind-compat authoritatively at bind time).
+const FULL_ACCESS_CREDENTIAL_KIND = "env"
 
 interface FullAccessPanelProps {
   readonly fullAccess: FullAccessFormState
@@ -72,6 +93,230 @@ function AllowNetRepeater({
         Add Host
       </Button>
     </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Credential section (increment 43, Slice B1/B2) — skip (default, public
+// CLI) / use an existing unlinked "env" credential / create one inline.
+// Binding/creating itself happens AFTER platform install (platforms.tsx's
+// handleFullAccessSubmit, once platform.id exists) — this component only
+// collects the choice + inline-create fields and surfaces bind/create errors
+// the route hands back via `credential.error`/`duplicateAccount`.
+// ---------------------------------------------------------------------------
+
+interface CredentialSectionProps {
+  readonly credential: FullAccessCredentialFormState
+  readonly onChange: (credential: FullAccessCredentialFormState) => void
+}
+
+function CredentialSection({ credential, onChange }: CredentialSectionProps) {
+  function set<K extends keyof FullAccessCredentialFormState>(
+    key: K,
+    value: FullAccessCredentialFormState[K],
+  ) {
+    onChange({ ...credential, [key]: value })
+  }
+
+  // Fetch the unlinked "env" credentials on-demand (explicit call, not a
+  // watched effect — avoids the exhaustive-deps churn of re-running on every
+  // `credential` field change) the first time the user opts into "Use
+  // existing". No reason to hit the server for a panel that defaults to
+  // "skip" and may never need the list.
+  function setMode(mode: FullAccessCredentialMode) {
+    onChange({ ...credential, mode, error: undefined, duplicateAccount: undefined })
+    if (mode !== "existing") return
+    if (credential.unlinkedOptions.length > 0 || credential.loadingUnlinked) return
+    onChange({
+      ...credential,
+      mode,
+      error: undefined,
+      duplicateAccount: undefined,
+      loadingUnlinked: true,
+    })
+    listUnlinkedCredentialsFn({ data: { kind: FULL_ACCESS_CREDENTIAL_KIND } })
+      .then((options) => {
+        onChange({ ...credential, mode, loadingUnlinked: false, unlinkedOptions: options })
+      })
+      .catch(() => {
+        onChange({
+          ...credential,
+          mode,
+          loadingUnlinked: false,
+          error: "Failed to load unlinked credentials",
+        })
+      })
+  }
+
+  // Inline slug validation for the "Create new credential" name — caught here so
+  // an invalid slug never reaches addCredentialFn's 400 (which the submit path's
+  // catch would mis-report as "install failed" even though the platform
+  // installed fine — inc 43 web-review should-fix). Only relevant in "new" mode.
+  const nameError = credential.mode === "new" ? credentialNameError(credential.newName) : undefined
+
+  return (
+    <fieldset className="flex flex-col gap-3">
+      <legend style={{ fontSize: "var(--text-label)", fontWeight: 500, color: "var(--gray-1000)" }}>
+        Credential
+      </legend>
+      <div role="radiogroup" aria-label="Credential source" className="flex flex-col gap-2">
+        <label className="flex items-center gap-2" style={{ fontSize: "var(--text-body)" }}>
+          <input
+            type="radio"
+            name="fa-credential-mode"
+            checked={credential.mode === "skip"}
+            onChange={() => setMode("skip")}
+          />
+          Skip — install without a secret
+        </label>
+        <label className="flex items-center gap-2" style={{ fontSize: "var(--text-body)" }}>
+          <input
+            type="radio"
+            name="fa-credential-mode"
+            checked={credential.mode === "existing"}
+            onChange={() => setMode("existing")}
+          />
+          Use an existing credential
+        </label>
+        <label className="flex items-center gap-2" style={{ fontSize: "var(--text-body)" }}>
+          <input
+            type="radio"
+            name="fa-credential-mode"
+            checked={credential.mode === "new"}
+            onChange={() => setMode("new")}
+          />
+          Create a new credential
+        </label>
+      </div>
+
+      {credential.mode === "existing" && (
+        <Field id="fa-credential-existing" label="Unlinked credential">
+          {credential.loadingUnlinked ? (
+            <p style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)" }}>Loading…</p>
+          ) : credential.unlinkedOptions.length === 0 ? (
+            <p style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)" }}>
+              No unlinked "env" credentials in the vault — create one instead, or add one from
+              /credentials first.
+            </p>
+          ) : (
+            <Select
+              value={credential.selectedCredentialId}
+              onValueChange={(v) => set("selectedCredentialId", v)}
+            >
+              <SelectTrigger id="fa-credential-existing">
+                <SelectValue placeholder="Select a credential" />
+              </SelectTrigger>
+              <SelectContent>
+                {credential.unlinkedOptions.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.name} ({c.account})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        </Field>
+      )}
+
+      {credential.mode === "new" && (
+        <div className="flex flex-col gap-3">
+          <Field
+            id="fa-credential-new-name"
+            label="Name"
+            description="A lowercase slug — e.g. github-work."
+            error={nameError}
+          >
+            <Input
+              id="fa-credential-new-name"
+              placeholder="e.g. github-work"
+              value={credential.newName}
+              onChange={(e) => set("newName", e.target.value)}
+              hasError={!!nameError}
+            />
+          </Field>
+          <Field id="fa-credential-new-secret" label="Secret">
+            <Input
+              id="fa-credential-new-secret"
+              type="password"
+              autoComplete="new-password"
+              value={credential.newSecret}
+              onChange={(e) => set("newSecret", e.target.value)}
+            />
+          </Field>
+          <Field
+            id="fa-credential-new-account"
+            label="Account label"
+            description='Optional — defaults to "default".'
+          >
+            <Input
+              id="fa-credential-new-account"
+              placeholder="e.g. work"
+              value={credential.newAccount}
+              onChange={(e) => set("newAccount", e.target.value)}
+            />
+          </Field>
+        </div>
+      )}
+
+      {credential.duplicateAccount && (
+        <div
+          role="alert"
+          className="flex flex-col gap-2 rounded-[var(--radius-6)] border px-3 py-2"
+          style={{ borderColor: "var(--status-warning-fg)", fontSize: "var(--text-caption)" }}
+        >
+          <p style={{ margin: 0 }}>
+            An account named "{credential.duplicateAccount}" already has a credential on this
+            platform.
+          </p>
+          {!credential.replacingSecret ? (
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() =>
+                  onChange({
+                    ...credential,
+                    mode: "existing",
+                    selectedCredentialId: credential.duplicateCredentialId ?? "",
+                    duplicateAccount: undefined,
+                  })
+                }
+              >
+                Use it
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => set("replacingSecret", true)}
+              >
+                Replace its secret
+              </Button>
+            </div>
+          ) : (
+            <Field id="fa-credential-replace-secret" label="New secret">
+              <Input
+                id="fa-credential-replace-secret"
+                type="password"
+                autoComplete="new-password"
+                value={credential.replaceSecretValue}
+                onChange={(e) => set("replaceSecretValue", e.target.value)}
+              />
+            </Field>
+          )}
+        </div>
+      )}
+
+      {credential.error && (
+        <p
+          role="alert"
+          style={{ fontSize: "var(--text-caption)", color: "var(--status-error-fg)" }}
+        >
+          {credential.error}
+        </p>
+      )}
+    </fieldset>
   )
 }
 
@@ -292,6 +537,11 @@ export function FullAccessPanel({ fullAccess, onChange }: FullAccessPanelProps) 
           — visible to {binaryLabel} and anything it runs inside the sandbox.
         </p>
       )}
+
+      <CredentialSection
+        credential={fullAccess.credential}
+        onChange={(credential) => set("credential", credential)}
+      />
 
       <p style={{ fontSize: "var(--text-caption)", color: "var(--gray-700)", margin: 0 }}>
         Agents can run any{" "}

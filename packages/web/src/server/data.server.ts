@@ -149,8 +149,14 @@ export type PlatformMeta = {
   verifiable: boolean
 }
 
-/** Whether verify-on-add/test-connection can run a real check for `p` (28.9 honesty matrix). */
-function isVerifiable(p: Platform): boolean {
+/**
+ * Whether verify-on-add/test-connection can run a real check for `p` (28.9
+ * honesty matrix). Exported (increment 43) — platform-mutations.server.ts's
+ * bindCredentialToPlatform reuses this EXACT gate to decide verifyThenBind
+ * vs. confirmThenBind, mirroring connect.server.ts's `plan.verifiable`
+ * branch. Keep this the single source of truth; do not fork a second copy.
+ */
+export function isVerifiable(p: Platform): boolean {
   switch (p.kind) {
     case "mcp":
     case "graphql":

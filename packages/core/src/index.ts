@@ -151,6 +151,7 @@ export {
   type AddStandaloneCredentialInput,
   addCredential,
   addStandaloneCredential,
+  bindCredentialToPlatform,
   type CredentialStore,
   compatibleCredentialKinds,
   createCredentialStore,

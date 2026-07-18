@@ -10,6 +10,16 @@
 // handler shape, a serving concern that stays in cli (see method file 28,
 // "Boundary note — why adaptToMcpHandlers stays in cli").
 
+// bindCredentialToPlatform verify-then-commit wrappers (increment 43) — mirror
+// verifyThenAdd/confirmThenAdd (connect-from-catalog.ts) but bind an EXISTING
+// credential to a platform instead of minting a fresh one.
+export type {
+  BindError,
+  BindResult,
+  ConfirmThenBindArgs,
+  VerifyThenBindArgs,
+} from "./bind-credential.js"
+export { confirmThenBind, verifyThenBind } from "./bind-credential.js"
 export type { ResolvedSecret } from "./build-provider.js"
 export { buildProvider, toResolvedSecret } from "./build-provider.js"
 // Catalog-driven one-click connect (increment 30.11) — the verify-gated

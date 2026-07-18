@@ -28,7 +28,9 @@ import type {
 } from "@junction/core"
 import {
   CliConnectionSchema,
+  createRepositories,
   discoverBinary,
+  getPaths,
   HttpConnectionSchema,
   isFullAccess,
 } from "@junction/core"
@@ -42,10 +44,14 @@ import {
   refreshOpenApiPlatform,
   setFullAccessCliShortcuts,
 } from "@junction/platform-orchestration"
+import type { BindResult } from "@junction/source-runtime"
+import { confirmThenBind, verifyThenBind } from "@junction/source-runtime"
 import { errAsync, type ResultAsync } from "neverthrow"
 import type { CliArgInput, CliPolicyInput } from "../lib/cli-command.js"
 import { tokenizeCommandLine } from "../lib/cli-command.js"
-import { withRepos } from "./shared.server.js"
+import { type CredentialMeta, isVerifiable, readCredentials } from "./data.server.js"
+import { addCredentialErrorMessage } from "./mutations.server.js"
+import { getDb, withRepos } from "./shared.server.js"
 
 // Structural shape of a Zod error's issues — avoids a direct `zod` type import
 // (web has no zod dep; zod is core's boundary validator). Matches what
@@ -1072,4 +1078,153 @@ function argvToCommandLineLocal(argv: DeclaredCliConnection["tools"][number]["ar
 
 function toolIsReversible(tool: DeclaredCliConnection["tools"][number]): boolean {
   return isReversible({ argv: tool.argv, args: tool.args })
+}
+
+// ---------------------------------------------------------------------------
+// Inline credential bind (increment 43, Phase 2) — the Add-Platform /
+// Full CLI Access panel's "use an existing unlinked credential" step.
+// docs/methods/43-platform-inline-credential-bind.md Slice B (B0).
+// ---------------------------------------------------------------------------
+
+/**
+ * List the vault's UNLINKED (platformId: null) credentials, metadata only —
+ * reuses data.server.ts's readCredentials()/CredentialMeta (the SAME
+ * metadata-only mapper /credentials already relies on) rather than hand-
+ * rolling a second Credential→client shape, per docs/rules/web.md's
+ * metadata-only discipline. `kind` filtering is a pure convenience for the
+ * caller's Select — core's bindCredentialToPlatform re-gates kind-compat
+ * authoritatively regardless of what this list contains.
+ */
+export async function listUnlinkedCredentials(kind?: string): Promise<CredentialMeta[]> {
+  const all = await readCredentials()
+  return all.filter((c) => c.platformId === null && (kind === undefined || c.kind === kind))
+}
+
+export interface BindCredentialToPlatformInput {
+  credentialId: string
+  platformId: string
+}
+
+export type BindCredentialToPlatformResult =
+  | { ok: true; verified: true; credential: CredentialMutationMetaLike }
+  | { ok: true; verified: false; credential: CredentialMutationMetaLike }
+  | { ok: false; verifyFailed: "auth-failed" | "unreachable"; detail?: string }
+  | { ok: false; error: string }
+
+/**
+ * The bind result's credential echo — intentionally the SAME metadata-only
+ * shape mutations.server.ts's CredentialMutationMeta uses (id/name/
+ * platformId/account/kind, never secret/secretRef). Declared locally (rather
+ * than importing CredentialMutationMeta) to keep this module's only
+ * cross-import from mutations.server.ts limited to the pure error-message
+ * mapper — the shape itself is small enough that a structural duplicate
+ * costs less than a coupling edge between the two mutation modules.
+ */
+export interface CredentialMutationMetaLike {
+  id: string
+  name: string
+  platformId: string | null
+  account: string
+  kind: string
+}
+
+function toBindCredentialMeta(c: {
+  id: string
+  name: string
+  platformId: string | null
+  profileName: string
+  kind: string
+}): CredentialMutationMetaLike {
+  return {
+    id: c.id,
+    name: c.name,
+    platformId: c.platformId,
+    account: c.profileName,
+    kind: c.kind,
+  }
+}
+
+/**
+ * Bind an existing (typically unlinked) credential to a platform. Picks
+ * verifyThenBind (verify the credential's secret against the target platform
+ * BEFORE writing) for a VERIFIABLE platform kind, or confirmThenBind (skip
+ * verify, write directly — the honestly-unverified path) for a non-
+ * verifiable kind (cli/http today — mirrors PlatformMeta.verifiable /
+ * data.server.ts's isVerifiable, the SAME gate the Add-Platform verify-on-add
+ * flow already keys off). This is NOT a credential-kind decision (e.g. "env
+ * kinds skip verify") — it is the TARGET PLATFORM's verifiability, exactly
+ * like connectSurface's `plan.verifiable` branch (connect.server.ts) that
+ * this mirrors. A verify-none platform (cli) binding an "env" credential is
+ * the acute Full CLI Access case B2 exists for.
+ */
+export async function mutateBindCredentialToPlatform(
+  input: BindCredentialToPlatformInput,
+): Promise<BindCredentialToPlatformResult> {
+  const db = await getDb()
+  if (db === null) return { ok: false, error: "Database unavailable" }
+  const repos = createRepositories(db)
+
+  const platformResult = await repos.platforms.get(input.platformId)
+  if (platformResult.isErr()) {
+    return { ok: false, error: dbErrorMessage(platformResult.error.kind) }
+  }
+  const platform = platformResult.value
+
+  if (!isVerifiable(platform)) {
+    const result = await confirmThenBind({
+      credentialId: input.credentialId,
+      platformId: input.platformId,
+      repos,
+    })
+    if (result.isErr()) {
+      return { ok: false, error: addCredentialErrorMessage(result.error, "platform") }
+    }
+    return toBindCredentialResult(result.value)
+  }
+
+  const result = await verifyThenBind({
+    credentialId: input.credentialId,
+    platformId: input.platformId,
+    paths: getPaths(),
+    repos,
+  })
+  if (result.isErr()) {
+    const e = result.error
+    // BindError's own kinds (bind-failed/store-unavailable/secret-unresolvable)
+    // wrap a CredentialError|DbError cause for bind-failed; the other two are
+    // infra failures with no core error-kind mapping.
+    if ("cause" in e && e.kind === "bind-failed") {
+      return { ok: false, error: addCredentialErrorMessage(e.cause, "platform") }
+    }
+    if (e.kind === "store-unavailable" || e.kind === "secret-unresolvable") {
+      return { ok: false, error: "Credential store unavailable" }
+    }
+    return { ok: false, error: addCredentialErrorMessage(e, "platform") }
+  }
+  return toBindCredentialResult(result.value)
+}
+
+/**
+ * Map source-runtime's BindResult (the union both verifyThenBind's Ok branch
+ * and confirmThenBind's Ok branch return) to this module's public result
+ * shape. Shared by both call sites in mutateBindCredentialToPlatform so the
+ * verified/unverified/verify-failed discrimination lives in exactly one
+ * place, mirroring connect.server.ts's mapVerifyThenAddResult precedent.
+ */
+function toBindCredentialResult(value: BindResult): BindCredentialToPlatformResult {
+  if ("verified" in value && value.verified) {
+    return { ok: true, verified: true, credential: toBindCredentialMeta(value.credential) }
+  }
+  if ("unverified" in value) {
+    return { ok: true, verified: false, credential: toBindCredentialMeta(value.credential) }
+  }
+  // { verified: false, outcome } — auth-failed or unreachable. ZERO writes
+  // happened (verifyThenBind's contract) — the credential is still unlinked.
+  return {
+    ok: false,
+    verifyFailed: value.outcome.status,
+    ...("detail" in value.outcome && value.outcome.detail !== undefined
+      ? { detail: value.outcome.detail }
+      : {}),
+  }
 }

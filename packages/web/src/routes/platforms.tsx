@@ -13,10 +13,12 @@ import { toast } from "sonner"
 import type { TableColumn } from "../lib/use-table-view.js"
 import { useTableView } from "../lib/use-table-view.js"
 import { getCredentials, getPlatforms, type PlatformMeta } from "../server/data.functions.js"
+import { addCredentialFn, rotateCredentialFn } from "../server/mutations.functions.js"
 import {
   type AddPlatformInput,
   addFullAccessCliPlatformFn,
   addPlatformFn,
+  bindCredentialToPlatformFn,
   deletePlatformFn,
   getPlatformDetailFn,
   type PlatformDetail,
@@ -340,11 +342,177 @@ function PlatformDialog({ mode, platform, open, onOpenChange, onSuccess }: Platf
   }
 
   /**
+   * After a successful Full CLI Access install, bind/create the chosen
+   * credential against the just-installed platform.id (increment 43, Slice
+   * B2). Skip → no-op (unchanged public-CLI behavior). The platform is
+   * ALREADY installed by the time this runs — a bind/create failure here is
+   * reported as "platform installed, credential not bound" and does NOT roll
+   * back the platform (it's a legitimately-installed public CLI until a
+   * secret is added; see the method file's B2 note).
+   *
+   * Returns true if the credential step is fully resolved (including "skip"
+   * and a duplicate-account collision, which stays open for the user to
+   * recover from inline) — the caller uses this to decide whether to close
+   * the dialog.
+   */
+  async function resolveFullAccessCredential(platformId: string): Promise<boolean> {
+    const fa = state.cli.fullAccess
+    const cred = fa.credential
+
+    if (cred.mode === "skip") return true
+
+    if (cred.mode === "existing") {
+      if (!cred.selectedCredentialId) {
+        toast.error("Choose an existing credential, or switch to Skip / Create new")
+        return false
+      }
+      // "Use it" recovery (see CredentialSection): the selected credential IS
+      // duplicateCredentialId — it's already bound to THIS platform+account
+      // (that's precisely why create-new collided). Re-calling bind would
+      // hit the SAME duplicate-account guard against itself (core has no
+      // own-row exclusion — bindCredentialToPlatform's contract is "not yet
+      // on this platform"). Nothing to do — it's already correctly bound.
+      if (
+        cred.duplicateAccount !== undefined &&
+        cred.selectedCredentialId === cred.duplicateCredentialId
+      ) {
+        toast.success("Using the existing credential for this account")
+        return true
+      }
+      const result = await bindCredentialToPlatformFn({
+        data: { credentialId: cred.selectedCredentialId, platformId },
+      })
+      if (result.ok) {
+        toast.success(
+          result.verified
+            ? "Credential bound and verified"
+            : "Credential bound (not verified — this platform can't run a live check)",
+        )
+        return true
+      }
+      if ("verifyFailed" in result) {
+        toast.error(
+          `Platform installed, but the credential failed verification (${result.verifyFailed}${result.detail ? `: ${result.detail}` : ""}) — it was NOT bound. Retry from /credentials.`,
+        )
+        set("cli", {
+          ...state.cli,
+          fullAccess: { ...fa, credential: { ...cred, error: result.verifyFailed } },
+        })
+        return false
+      }
+      toast.error(`Platform installed, but binding the credential failed: ${result.error}`)
+      set("cli", {
+        ...state.cli,
+        fullAccess: { ...fa, credential: { ...cred, error: result.error } },
+      })
+      return false
+    }
+
+    // cred.mode === "new" but the user clicked "Use it" on a duplicate-account
+    // collision (CredentialSection flips mode to "existing" for that click —
+    // this branch is unreachable in practice but kept as a defensive no-op:
+    // the colliding credential is ALREADY bound to this platform+account, so
+    // there is nothing to bind — re-calling bindCredentialToPlatformFn would
+    // hit its own duplicate-account guard against itself).
+
+    // cred.mode === "new" — replace-secret recovery takes priority: the user
+    // already resolved a duplicate-account collision and typed a new secret.
+    if (cred.duplicateAccount && cred.replacingSecret) {
+      if (!cred.replaceSecretValue) {
+        toast.error("Enter the new secret")
+        return false
+      }
+      if (!cred.duplicateCredentialId) {
+        toast.error("Could not identify the existing credential to replace — reload and retry")
+        return false
+      }
+      const rotateResult = await rotateCredentialFn({
+        data: { credentialId: cred.duplicateCredentialId, newSecret: cred.replaceSecretValue },
+      })
+      if (!rotateResult.ok) {
+        toast.error(`Platform installed, but replacing the secret failed: ${rotateResult.error}`)
+        return false
+      }
+      toast.success("Secret replaced")
+      return true
+    }
+
+    // A collision is already surfaced and awaiting the user's explicit
+    // choice (Use it / Replace its secret) — do not re-submit create.
+    if (cred.duplicateAccount) return false
+
+    if (!cred.newName.trim() || !cred.newSecret) {
+      toast.error(
+        "Enter a name and secret for the new credential, or switch to Skip / Use existing",
+      )
+      return false
+    }
+    // Slug pre-check (inc 43 web-review should-fix): an invalid credential name
+    // otherwise reaches addCredentialFn's validator, which throws a 400 that the
+    // outer catch mis-reports as "install failed" — even though the platform
+    // installed fine. Refuse it here with an actionable message instead.
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(cred.newName.trim())) {
+      toast.error(
+        "Credential name must be a lowercase slug (letters, digits, hyphens; starts with a letter or digit) — e.g. github-work",
+      )
+      return false
+    }
+    const createResult = await addCredentialFn({
+      data: {
+        platformId,
+        account: cred.newAccount.trim() || "default",
+        name: cred.newName.trim(),
+        kind: "env",
+        secret: cred.newSecret,
+      },
+    })
+    if (createResult.ok) {
+      toast.success("Credential created and bound")
+      return true
+    }
+    // Duplicate-account collision: surface the explicit use-existing/replace
+    // recovery — NEVER silently overwrite (R4, method file B1). Resolve the
+    // colliding credential's id by re-fetching the (already metadata-only)
+    // credential list and matching on {platformId, account} — addCredentialFn
+    // returns only a human message, not a structured error, so this is the
+    // one lookup available to find WHICH credential to offer for "Use it" /
+    // "Replace its secret".
+    const accountLabel = cred.newAccount.trim() || "default"
+    if (createResult.error.includes("already connected")) {
+      const allCredentials = await getCredentials()
+      const existing = allCredentials.find(
+        (c) => c.platformId === platformId && c.account === accountLabel,
+      )
+      set("cli", {
+        ...state.cli,
+        fullAccess: {
+          ...fa,
+          credential: {
+            ...cred,
+            duplicateAccount: accountLabel,
+            duplicateCredentialId: existing?.id,
+          },
+        },
+      })
+      return false
+    }
+    toast.error(`Platform installed, but creating the credential failed: ${createResult.error}`)
+    set("cli", {
+      ...state.cli,
+      fullAccess: { ...fa, credential: { ...cred, error: createResult.error } },
+    })
+    return false
+  }
+
+  /**
    * Full CLI access install (inc 41.4): resolve the chosen binary path (manual
    * override or the discovery picker's selection), then call
    * addFullAccessCliPlatformFn directly — discover→extract→upsert happens
    * server-side. Shows the "Mapped N commands…" summary inline rather than
    * closing the dialog immediately, so the user sees what got learned.
+   * Increment 43 (Slice B2): after a successful install, resolves the inline
+   * Credential section's choice (skip/existing/new) against the newly
+   * installed platform.id.
    */
   async function handleFullAccessSubmit() {
     const fa = state.cli.fullAccess
@@ -383,7 +551,17 @@ function PlatformDialog({ mode, platform, open, onOpenChange, onSuccess }: Platf
       const summary = `Mapped ${result.nodeCount} command node(s)${result.truncated ? " (partial — some branches deferred)" : ""}`
       set("cli", { ...state.cli, fullAccess: { ...fa, installSummary: summary } })
       toast.success(`Platform "${result.platform.displayName}" installed — ${summary}`)
+
+      const credentialResolved = await resolveFullAccessCredential(result.platform.id)
       setSubmitting(false)
+      if (!credentialResolved) {
+        // Platform IS installed — leave the dialog open so the user can see
+        // and act on the credential error/recovery UI, per the method file's
+        // "do NOT roll back the platform" instruction. onSuccess() still
+        // refreshes the table so the new platform shows up immediately.
+        onSuccess()
+        return
+      }
       handleOpenChange(false)
       onSuccess()
     } catch {
