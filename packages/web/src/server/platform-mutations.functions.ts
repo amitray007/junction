@@ -7,7 +7,13 @@
 //   validator (pure: trim, requireString, type checks) → handler (assertLocalHost → thin server helper).
 
 import { createServerFn } from "@tanstack/react-start"
-import { assertLocalHost, requireString } from "./fn-guards.server.js"
+import {
+  assertLocalHost,
+  optionalString,
+  optionalStringArray,
+  optionalStringRecord,
+  requireString,
+} from "./fn-guards.server.js"
 import type {
   AddFullAccessCliPlatformInput,
   AddPlatformInput,
@@ -57,32 +63,15 @@ export type {
 } from "./platform-mutations.server.js"
 
 // ---------------------------------------------------------------------------
-// Validator helpers — pure, no I/O, no core.
+// Validator helpers — pure, no I/O, no core. optionalString/optionalStringArray/
+// optionalStringRecord moved to fn-guards.server.ts (increment 45) once
+// oauth-design-mutations.functions.ts became a second verbatim consumer.
 // ---------------------------------------------------------------------------
-
-function optionalString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined
-}
 
 /** Shared pure validator for the id-only mutations (delete, refresh, detail). */
 function validateIdOnly(raw: unknown): { id: string } {
   const d = raw as Record<string, unknown>
   return { id: requireString(d.id, "id") }
-}
-
-function optionalStringArray(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) return undefined
-  return value.filter((v): v is string => typeof v === "string")
-}
-
-/** Validate an optional record<string,string> — used for stdio env + tool envAllow. */
-function optionalStringRecord(value: unknown): Record<string, string> | undefined {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined
-  const out: Record<string, string> = {}
-  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-    if (typeof v === "string") out[k] = v
-  }
-  return Object.keys(out).length > 0 ? out : undefined
 }
 
 function stringRecord(value: unknown): Record<string, string> {

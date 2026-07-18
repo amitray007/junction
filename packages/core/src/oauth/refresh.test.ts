@@ -6,14 +6,20 @@
 // a fixed `now` — no HTTP, no real DB. The credentials repo is a hand-rolled
 // stub over an in-memory row so setOAuthTokens's merge semantics (A1) are
 // exercised faithfully without touching sqlite.
+//
+// Increment 45, Slice E — the legacy `oauthMeta.providerId` fallback is GONE.
+// Every test that resolves a design now passes a `platform: {id,
+// oauthProviderId}` argument (the ONLY source `resolveOAuthProviderId`
+// consults besides the app catalog) instead of seeding `oauthMeta.providerId`.
 
 import { errAsync, okAsync, type ResultAsync } from "neverthrow"
-import { describe, expect, it, vi } from "vitest"
+import { describe, expect, it } from "vitest"
 import type { CredentialStore } from "../credentials/store.js"
 import type { DbError } from "../errors/index.js"
 import type { CredentialsRepo } from "../repositories/credentials.js"
 import type { Credential, OAuthMeta } from "../schema/credential.js"
 import type { Platform } from "../schema/platform.js"
+import { mergeDesigns } from "./catalog.js"
 import {
   DEFAULT_REFRESH_BUFFER_MS,
   MAX_EXPIRES_IN_SECONDS,
@@ -22,6 +28,23 @@ import {
   shouldRefresh,
   toExpiresAt,
 } from "./refresh.js"
+
+// increment 45 (D2) — refreshIfExpired now takes the merged design lookup as
+// data. Every test here exercises only built-in ids (github/google/etc), so
+// an empty custom list is enough — mergeDesigns([]) is just the built-in
+// catalog. designs-store.test.ts / catalog.test.ts cover the custom-design
+// merge behavior itself.
+const BUILT_INS_ONLY = mergeDesigns([])
+
+/** The default bound platform every test uses unless it overrides `oauthProviderId`. */
+function makeOAuthPlatform(overrides: Partial<Platform> = {}): Platform {
+  return {
+    id: "test-platform",
+    kind: "custom",
+    displayName: "Test Platform",
+    ...overrides,
+  }
+}
 
 // ---------------------------------------------------------------------------
 // toExpiresAt — the shared expires_in → expiresAt clamp (used by BOTH the
@@ -106,7 +129,6 @@ function createFakeCredentialsRepo(initial: Credential): {
       if (patch.scopes !== undefined) merged.scopes = patch.scopes
       if (patch.needsReauth !== undefined) merged.needsReauth = patch.needsReauth
       if (patch.obtainedAt !== undefined) merged.obtainedAt = patch.obtainedAt
-      if (patch.providerId !== undefined) merged.providerId = patch.providerId
       if (patch.authMode !== undefined) merged.authMode = patch.authMode
       if (patch.clientIdRef !== undefined) merged.clientIdRef = patch.clientIdRef
       if (patch.clientSecretRef !== undefined) merged.clientSecretRef = patch.clientSecretRef
@@ -208,6 +230,7 @@ describe("refreshIfExpired", () => {
       repos: { credentials: repo },
       refreshFn,
       now: NOW,
+      designs: BUILT_INS_ONLY,
     })
     expect(result.isOk()).toBe(true)
     if (result.isOk()) expect(result.value.accessToken).toBe("current-token")
@@ -216,7 +239,7 @@ describe("refreshIfExpired", () => {
 
   it("expires_in absent → non-expiring: shouldRefresh false, no refresh, returns current token", async () => {
     const store = createMemoryStore({ "access-ref-old": "current-token" })
-    const credential = makeCredential({}, { providerId: "github" }) // no expiresAt
+    const credential = makeCredential({}, {}) // no expiresAt
     const { repo } = createFakeCredentialsRepo(credential)
     let calls = 0
     const refreshFn: RefreshTokenFn = async () => {
@@ -230,6 +253,8 @@ describe("refreshIfExpired", () => {
       repos: { credentials: repo },
       refreshFn,
       now: NOW,
+      platform: makeOAuthPlatform({ oauthProviderId: "github" }),
+      designs: BUILT_INS_ONLY,
     })
     expect(result.isOk()).toBe(true)
     if (result.isOk()) expect(result.value.accessToken).toBe("current-token")
@@ -239,7 +264,7 @@ describe("refreshIfExpired", () => {
   it("needsReauth already true → immediate needs-reauth, no refresh attempt", async () => {
     const store = createMemoryStore({ "access-ref-old": "current-token" })
     const expiresAt = new Date(NOW - 5_000).toISOString()
-    const credential = makeCredential({}, { expiresAt, needsReauth: true, providerId: "google" })
+    const credential = makeCredential({}, { expiresAt, needsReauth: true })
     const { repo } = createFakeCredentialsRepo(credential)
     let calls = 0
     const refreshFn: RefreshTokenFn = async () => {
@@ -253,6 +278,8 @@ describe("refreshIfExpired", () => {
       repos: { credentials: repo },
       refreshFn,
       now: NOW,
+      platform: makeOAuthPlatform({ oauthProviderId: "google" }),
+      designs: BUILT_INS_ONLY,
     })
     expect(result.isErr()).toBe(true)
     if (result.isErr()) {
@@ -271,7 +298,6 @@ describe("refreshIfExpired", () => {
       {},
       {
         expiresAt,
-        providerId: "google",
         refreshTokenRef: "refresh-ref-old",
         clientIdRef: "client-id-ref",
         clientSecretRef: "client-secret-ref",
@@ -288,6 +314,9 @@ describe("refreshIfExpired", () => {
     const refreshFn: RefreshTokenFn = async (args) => {
       expect(args).toEqual({
         providerId: "google",
+        // Increment 45: the orchestrator now passes the ALREADY-RESOLVED design
+        // (from the merged set) so oauthRefreshFn doesn't re-look-up built-ins-only.
+        design: BUILT_INS_ONLY.get("google"),
         refreshToken: "old-refresh-token",
         clientId: "the-client-id",
         clientSecret: "the-client-secret",
@@ -309,6 +338,8 @@ describe("refreshIfExpired", () => {
       repos: { credentials: repo },
       refreshFn,
       now: NOW,
+      platform: makeOAuthPlatform({ oauthProviderId: "google" }),
+      designs: BUILT_INS_ONLY,
     })
 
     expect(result.isOk()).toBe(true)
@@ -340,7 +371,6 @@ describe("refreshIfExpired", () => {
       {},
       {
         expiresAt,
-        providerId: "google",
         refreshTokenRef: "refresh-ref-old",
         clientIdRef: "client-id-ref",
         clientSecretRef: "client-secret-ref",
@@ -365,6 +395,8 @@ describe("refreshIfExpired", () => {
       repos: { credentials: repo },
       refreshFn,
       now: NOW,
+      platform: makeOAuthPlatform({ oauthProviderId: "google" }),
+      designs: BUILT_INS_ONLY,
     })
 
     expect(result.isOk()).toBe(true)
@@ -388,7 +420,6 @@ describe("refreshIfExpired", () => {
       {},
       {
         expiresAt,
-        providerId: "slack",
         refreshTokenRef: "refresh-ref-old",
         clientIdRef: "client-id-ref",
         clientSecretRef: "client-secret-ref",
@@ -410,6 +441,8 @@ describe("refreshIfExpired", () => {
       repos: { credentials: repo },
       refreshFn,
       now: NOW,
+      platform: makeOAuthPlatform({ oauthProviderId: "slack" }),
+      designs: BUILT_INS_ONLY,
     })
 
     expect(result.isErr()).toBe(true)
@@ -433,7 +466,6 @@ describe("refreshIfExpired", () => {
       {},
       {
         expiresAt,
-        providerId: "google",
         refreshTokenRef: "refresh-ref-old",
         clientIdRef: "client-id-ref",
         clientSecretRef: "client-secret-ref",
@@ -459,6 +491,8 @@ describe("refreshIfExpired", () => {
       repos: { credentials: repo },
       refreshFn,
       now: NOW,
+      platform: makeOAuthPlatform({ oauthProviderId: "google" }),
+      designs: BUILT_INS_ONLY,
     })
 
     expect(result.isErr()).toBe(true)
@@ -481,7 +515,6 @@ describe("refreshIfExpired", () => {
       {},
       {
         expiresAt,
-        providerId: "google",
         refreshTokenRef: "refresh-ref-old",
         clientIdRef: "client-id-ref",
         clientSecretRef: "client-secret-ref",
@@ -517,6 +550,8 @@ describe("refreshIfExpired", () => {
       repos: { credentials: repo },
       refreshFn,
       now: NOW,
+      platform: makeOAuthPlatform({ oauthProviderId: "google" }),
+      designs: BUILT_INS_ONLY,
     })
 
     expect(result.isErr()).toBe(true)
@@ -544,7 +579,7 @@ describe("refreshIfExpired", () => {
 
   it("absent refresh token ref → needs-reauth (nothing to refresh with)", async () => {
     const expiresAt = new Date(NOW - 1_000).toISOString()
-    const credential = makeCredential({}, { expiresAt, providerId: "google" }) // no refreshTokenRef
+    const credential = makeCredential({}, { expiresAt }) // no refreshTokenRef
     const store = createMemoryStore({ "access-ref-old": "old-access-token" })
     const { repo } = createFakeCredentialsRepo(credential)
     let calls = 0
@@ -559,6 +594,8 @@ describe("refreshIfExpired", () => {
       repos: { credentials: repo },
       refreshFn,
       now: NOW,
+      platform: makeOAuthPlatform({ oauthProviderId: "google" }),
+      designs: BUILT_INS_ONLY,
     })
     expect(result.isErr()).toBe(true)
     if (result.isErr()) expect(result.error.kind).toBe("needs-reauth")
@@ -580,7 +617,6 @@ describe("refreshIfExpired", () => {
         refreshTokenRef: "rt",
         clientIdRef: "ci",
         clientSecretRef: "cs",
-        providerId: "google",
       },
     )
     const store = createMemoryStore({}) // access ref absent → store.get → null
@@ -592,6 +628,8 @@ describe("refreshIfExpired", () => {
       repos: { credentials: repo },
       refreshFn,
       now: NOW,
+      platform: makeOAuthPlatform({ oauthProviderId: "google" }),
+      designs: BUILT_INS_ONLY,
     })
     expect(result.isOk()).toBe(true)
     if (result.isOk()) expect(result.value.accessToken).toBeNull()
@@ -605,7 +643,6 @@ describe("refreshIfExpired", () => {
         refreshTokenRef: "rt",
         clientIdRef: "ci",
         clientSecretRef: "cs",
-        providerId: "google",
       },
     )
     const store = createMemoryStore({
@@ -626,6 +663,8 @@ describe("refreshIfExpired", () => {
       repos: { credentials: repo },
       refreshFn,
       now: NOW,
+      platform: makeOAuthPlatform({ oauthProviderId: "google" }),
+      designs: BUILT_INS_ONLY,
     })
     expect(result.isErr()).toBe(true)
     if (result.isErr()) expect(result.error.kind).toBe("needs-reauth")
@@ -641,7 +680,6 @@ describe("refreshIfExpired", () => {
         refreshTokenRef: "refresh-ref-old",
         clientIdRef: "ci",
         clientSecretRef: "cs",
-        providerId: "google",
       },
     )
     const store = createMemoryStore({
@@ -661,6 +699,8 @@ describe("refreshIfExpired", () => {
       repos: { credentials: repo },
       refreshFn,
       now: NOW,
+      platform: makeOAuthPlatform({ oauthProviderId: "google" }),
+      designs: BUILT_INS_ONLY,
     })
     expect(result.isOk()).toBe(true)
     // patch OMITS refreshTokenRef (keep-old); the old refresh ref is untouched.
@@ -678,7 +718,6 @@ describe("refreshIfExpired", () => {
         refreshTokenRef: "rt",
         clientIdRef: "ci",
         clientSecretRef: "cs",
-        providerId: "google",
         scopes: ["a"],
       },
     )
@@ -702,6 +741,8 @@ describe("refreshIfExpired", () => {
       repos: { credentials: repo },
       refreshFn,
       now: NOW,
+      platform: makeOAuthPlatform({ oauthProviderId: "google" }),
+      designs: BUILT_INS_ONLY,
     })
     expect(result.isOk()).toBe(true)
     // The bogus negative expires_in is ignored → expiresAt is the prior value
@@ -719,7 +760,6 @@ describe("refreshIfExpired", () => {
         refreshTokenRef: "rt",
         clientIdRef: "ci",
         clientSecretRef: "cs",
-        providerId: "google",
       },
     )
     const store = createMemoryStore({
@@ -740,6 +780,8 @@ describe("refreshIfExpired", () => {
       repos: { credentials: repo },
       refreshFn,
       now: NOW,
+      platform: makeOAuthPlatform({ oauthProviderId: "google" }),
+      designs: BUILT_INS_ONLY,
     })
     expect(result.isOk()).toBe(true)
     if (result.isOk()) expect(result.value.accessToken).toBe("NAT")
@@ -747,28 +789,18 @@ describe("refreshIfExpired", () => {
 })
 
 // ---------------------------------------------------------------------------
-// refreshIfExpired + resolveOAuthProviderId integration (increment 44, R1/R3)
+// refreshIfExpired + resolveOAuthProviderId integration (increment 44, R1/R3;
+// narrowed increment 45 Slice E — the legacy oauthMeta.providerId fallback
+// arm is GONE)
 // ---------------------------------------------------------------------------
 
-describe("refreshIfExpired — provider-id resolution (increment 44)", () => {
-  function makeOAuthPlatform(overrides: Partial<Platform> = {}): Platform {
-    return {
-      id: "test-platform",
-      kind: "custom",
-      displayName: "Test Platform",
-      ...overrides,
-    }
-  }
-
-  it("platform.oauthProviderId (a real catalog design) sources the refresh call, NOT the credential's legacy providerId", async () => {
+describe("refreshIfExpired — provider-id resolution (increment 44/45)", () => {
+  it("platform.oauthProviderId (a real catalog design) sources the refresh call", async () => {
     const expiresAt = new Date(NOW - 1_000).toISOString()
     const credential = makeCredential(
       {},
       {
         expiresAt,
-        // legacy field present but deliberately WRONG — must be ignored
-        // because the platform reference wins.
-        providerId: "slack",
         refreshTokenRef: "rt",
         clientIdRef: "ci",
         clientSecretRef: "cs",
@@ -788,7 +820,6 @@ describe("refreshIfExpired — provider-id resolution (increment 44)", () => {
       seenProviderId = args.providerId
       return { ok: true, tokens: { accessToken: "NAT" } }
     }
-    const onProviderFallback = vi.fn()
 
     const result = await refreshIfExpired({
       credential,
@@ -797,21 +828,19 @@ describe("refreshIfExpired — provider-id resolution (increment 44)", () => {
       refreshFn,
       now: NOW,
       platform,
-      onProviderFallback,
+      designs: BUILT_INS_ONLY,
     })
 
     expect(result.isOk()).toBe(true)
     expect(seenProviderId).toBe("github")
-    expect(onProviderFallback).not.toHaveBeenCalled()
   })
 
-  it('the fallback fires for an orphan OAuth credential (no platform in hand) and emits the log with context:"refresh"', async () => {
+  it("increment 45 Slice E: an orphan OAuth credential (no platform in hand) → no-provider-source, refreshFn never called (the legacy fallback no longer exists)", async () => {
     const expiresAt = new Date(NOW - 1_000).toISOString()
     const credential = makeCredential(
       { platformId: null },
       {
         expiresAt,
-        providerId: "github",
         refreshTokenRef: "rt",
         clientIdRef: "ci",
         clientSecretRef: "cs",
@@ -825,12 +854,11 @@ describe("refreshIfExpired — provider-id resolution (increment 44)", () => {
     })
     const { repo } = createFakeCredentialsRepo(credential)
 
-    let seenProviderId: string | undefined
-    const refreshFn: RefreshTokenFn = async (args) => {
-      seenProviderId = args.providerId
-      return { ok: true, tokens: { accessToken: "NAT" } }
+    let refreshFnCalls = 0
+    const refreshFn: RefreshTokenFn = async () => {
+      refreshFnCalls++
+      return { ok: true, tokens: { accessToken: "should-never-happen" } }
     }
-    const onProviderFallback = vi.fn()
 
     const result = await refreshIfExpired({
       credential,
@@ -838,27 +866,23 @@ describe("refreshIfExpired — provider-id resolution (increment 44)", () => {
       repos: { credentials: repo },
       refreshFn,
       now: NOW,
-      platform: null, // orphan — no platform to source from
-      onProviderFallback,
+      platform: null, // orphan — no platform to source from, no fallback either
+      designs: BUILT_INS_ONLY,
     })
 
-    expect(result.isOk()).toBe(true)
-    expect(seenProviderId).toBe("github")
-    expect(onProviderFallback).toHaveBeenCalledExactlyOnceWith({
-      context: "refresh",
-      credentialId: credential.id,
-      providerId: "github",
-      reason: "unset",
-    })
+    expect(result.isErr()).toBe(true)
+    if (result.isErr()) {
+      expect(result.error.kind).toBe("needs-reauth") // no-provider-source surfaces as needs-reauth
+    }
+    expect(refreshFnCalls).toBe(0)
   })
 
-  it("SECURITY: platform.oauthProviderId pointing at a NONEXISTENT design fails closed with a typed error, does NOT fall back to the credential, refreshFn is never called", async () => {
+  it("SECURITY: platform.oauthProviderId pointing at a NONEXISTENT design fails closed with a typed error, does NOT fall back, refreshFn is never called", async () => {
     const expiresAt = new Date(NOW - 1_000).toISOString()
     const credential = makeCredential(
       {},
       {
         expiresAt,
-        providerId: "github", // present — must be IGNORED, not used as a fallback
         refreshTokenRef: "rt",
         clientIdRef: "ci",
         clientSecretRef: "cs",
@@ -878,7 +902,6 @@ describe("refreshIfExpired — provider-id resolution (increment 44)", () => {
       refreshFnCalls++
       return { ok: true, tokens: { accessToken: "should-never-happen" } }
     }
-    const onProviderFallback = vi.fn()
 
     const result = await refreshIfExpired({
       credential,
@@ -887,7 +910,7 @@ describe("refreshIfExpired — provider-id resolution (increment 44)", () => {
       refreshFn,
       now: NOW,
       platform,
-      onProviderFallback,
+      designs: BUILT_INS_ONLY,
     })
 
     expect(result.isErr()).toBe(true)
@@ -899,16 +922,14 @@ describe("refreshIfExpired — provider-id resolution (increment 44)", () => {
       })
     }
     expect(refreshFnCalls).toBe(0)
-    expect(onProviderFallback).not.toHaveBeenCalled()
   })
 
-  it("no platform, no legacy providerId at all → needs-reauth (no-provider-source), refreshFn never called", async () => {
+  it("no platform, no app-catalog source → needs-reauth (no-provider-source), refreshFn never called", async () => {
     const expiresAt = new Date(NOW - 1_000).toISOString()
     const credential = makeCredential(
       { platformId: null },
       {
         expiresAt,
-        // no providerId at all
         refreshTokenRef: "rt",
         clientIdRef: "ci",
         clientSecretRef: "cs",
@@ -935,6 +956,50 @@ describe("refreshIfExpired — provider-id resolution (increment 44)", () => {
       refreshFn,
       now: NOW,
       platform: null,
+      designs: BUILT_INS_ONLY,
+    })
+
+    expect(result.isErr()).toBe(true)
+    if (result.isErr()) {
+      expect(result.error.kind).toBe("needs-reauth")
+    }
+    expect(refreshFnCalls).toBe(0)
+  })
+
+  it("a platform with NO oauthProviderId set at all → needs-reauth (no-provider-source), refreshFn never called", async () => {
+    const expiresAt = new Date(NOW - 1_000).toISOString()
+    const credential = makeCredential(
+      {},
+      {
+        expiresAt,
+        refreshTokenRef: "rt",
+        clientIdRef: "ci",
+        clientSecretRef: "cs",
+      },
+    )
+    const store = createMemoryStore({
+      "access-ref-old": "old",
+      rt: "RT",
+      ci: "CID",
+      cs: "CSEC",
+    })
+    const { repo } = createFakeCredentialsRepo(credential)
+    const platform = makeOAuthPlatform() // no oauthProviderId
+
+    let refreshFnCalls = 0
+    const refreshFn: RefreshTokenFn = async () => {
+      refreshFnCalls++
+      return { ok: true, tokens: { accessToken: "should-never-happen" } }
+    }
+
+    const result = await refreshIfExpired({
+      credential,
+      store,
+      repos: { credentials: repo },
+      refreshFn,
+      now: NOW,
+      platform,
+      designs: BUILT_INS_ONLY,
     })
 
     expect(result.isErr()).toBe(true)

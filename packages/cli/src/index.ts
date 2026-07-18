@@ -9,6 +9,7 @@ import { debugCommand } from "./commands/debug.js"
 import { initCommand } from "./commands/init.js"
 import { keysCommand } from "./commands/keys.js"
 import { mcpCommand } from "./commands/mcp.js"
+import { oauthDesignCommand } from "./commands/oauth-design.js"
 import { platformCommand } from "./commands/platform.js"
 import { profileCommand } from "./commands/profile.js"
 import { runCommand } from "./commands/run.js"
@@ -31,6 +32,7 @@ const main = defineCommand({
   subCommands: {
     init: initCommand,
     mcp: mcpCommand,
+    "oauth-design": oauthDesignCommand,
     platform: platformCommand,
     credential: credentialCommand,
     connect: connectCommand,

@@ -12,7 +12,7 @@
 // `.data` (arctic's raw response — carries tokens), never
 // `JSON.stringify(err)`. Map failures via `.code` / `.constructor.name` only.
 
-import { getProvider, type RefreshResult, type RefreshTokenFn } from "@junction/core"
+import type { RefreshResult, RefreshTokenFn } from "@junction/core"
 import { ArcticFetchError, OAuth2Client, OAuth2RequestError } from "arctic"
 
 /**
@@ -39,11 +39,12 @@ export const oauthRefreshFn: RefreshTokenFn = async (args) => {
     return { ok: false, reason: "unknown", detail: "empty providerId" }
   }
 
-  const provider = getProvider(providerId)
-  if (provider === undefined) {
-    return { ok: false, reason: "unknown", detail: "unknown provider" }
-  }
-
+  // Increment 45 (credential-security review): use the ALREADY-RESOLVED design
+  // the orchestrator passed (resolved against the MERGED built-in + custom set),
+  // NOT a getProvider(providerId) re-lookup — getProvider is built-ins-only, so
+  // re-looking-up would dead-end every `custom:<slug>` design's refresh. The
+  // design's tokenUrl is where the refresh token is POSTed.
+  const provider = args.design
   const tokenUrl = resolveTokenUrl(provider.tokenUrl)
   if (tokenUrl === undefined) {
     return { ok: false, reason: "unknown", detail: "token endpoint unresolvable" }

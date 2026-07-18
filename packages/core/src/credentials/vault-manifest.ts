@@ -17,6 +17,14 @@ export function describeDbError(e: DbError): string {
       return `not found: ${e.entity} ${e.id}`
     case "duplicate-namespace":
       return `duplicate namespace: ${e.namespace}`
+    // Increment 45, Slice E — this migration-boot-only error kind is never
+    // actually produced by a repo/store call vault import/export makes
+    // (it's raised by getDatabase before migrate() runs); handled explicitly
+    // so this switch stays exhaustive rather than falling into a
+    // `String(e.cause)` default that doesn't type-check for a variant with
+    // no `cause` field.
+    case "migration-refused":
+      return `migration "${e.migration}" refused — ${e.remediation}`
     default:
       return String(e.cause)
   }

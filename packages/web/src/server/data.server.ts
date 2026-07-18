@@ -18,11 +18,14 @@ import {
   groupByApp,
   intersectSurfaces,
   type JunctionPaths,
+  listAllDesigns,
   listApps,
   listCatalogEntries,
   listProviders,
   loadConfig,
   loadConfigState,
+  loadCustomDesigns,
+  mergeDesigns,
   type Platform,
   type Repositories,
   resolveOAuthProviderId,
@@ -224,15 +227,23 @@ export type CredentialMeta = {
    */
   lastVerifyResult?: "ok" | "auth-failed" | "unreachable"
   /**
-   * OAuth-only metadata (increment 29) — the catalog provider key, token
-   * expiry (ISO string), the first-class needsReauth state, and whether a
-   * refresh token is on file (a BOOLEAN — never the ref value — so the badge
-   * can tell an auto-refreshable credential from one that will need a manual
-   * reconnect). Absent for non-oauth2 credentials. NEVER includes a token/ref
-   * value — see core's OAuthMetaSchema (docs/rules/security.md refs-not-values).
+   * OAuth-only metadata (increment 29) — token expiry (ISO string), the
+   * first-class needsReauth state, and whether a refresh token is on file (a
+   * BOOLEAN — never the ref value — so the badge can tell an auto-refreshable
+   * credential from one that will need a manual reconnect). Absent for
+   * non-oauth2 credentials. NEVER includes a token/ref value — see core's
+   * OAuthMetaSchema (docs/rules/security.md refs-not-values).
+   *
+   * Increment 45, Slice E — `providerId` DROPPED from this shape: it was
+   * never actually rendered anywhere in the web UI (grep confirms only
+   * `needsReauth`/`hasRefreshToken`/`expiresAt` are consumed by
+   * credentials.tsx / app.$id.tsx) — its sole purpose was feeding
+   * `readAppGroups`'s now-removed `legacyProviderId` fallback argument. A
+   * credential's OAuth design is sourced exclusively from its bound
+   * platform's `oauthProviderId` (see `readPlatforms`' `PlatformMeta
+   * .oauthProviderId`).
    */
   oauthState?: {
-    providerId: string
     expiresAt: string | null
     needsReauth: boolean
     hasRefreshToken: boolean
@@ -252,10 +263,9 @@ export async function readCredentials(): Promise<CredentialMeta[]> {
       kind: c.kind,
       ...(c.lastVerifiedAt !== undefined ? { lastVerifiedAt: c.lastVerifiedAt } : {}),
       ...(c.lastVerifyResult !== undefined ? { lastVerifyResult: c.lastVerifyResult } : {}),
-      ...(c.kind === "oauth2" && c.oauthMeta?.providerId !== undefined
+      ...(c.kind === "oauth2" && c.oauthMeta !== undefined
         ? {
             oauthState: {
-              providerId: c.oauthMeta.providerId,
               expiresAt: c.oauthMeta.expiresAt ?? null,
               needsReauth: c.oauthMeta.needsReauth ?? false,
               // boolean-only — presence of a refresh token, never the ref value
@@ -325,19 +335,41 @@ export type OAuthDesignMeta = {
   docsUrl: string
   /** True for the `generic` catalog entry — the bespoke-provider escape hatch (user-supplied URLs). */
   isTemplate: boolean
+  /**
+   * Increment 45 (Slice D) — true for a user-authored `custom:<slug>` design
+   * (loaded from oauth-designs.json), false for a built-in catalog entry.
+   * Drives the web/CLI list's built-in-vs-custom split and whether a Delete
+   * action is offered (custom-only, D4).
+   */
+  isCustom: boolean
   /** Ids of the platforms that currently reference this design via platform.oauthProviderId. */
   referencedByPlatformIds: string[]
 }
 
 /**
- * The read-only OAuth-designs list + which platforms reference each design.
+ * The OAuth-designs list (built-ins + custom, increment 45 Slice D extends
+ * the inc-44 built-ins-only read) + which platforms reference each design.
  * DB-backed (unlike readOAuthProviders) because it joins the pure catalog
  * against live platform rows (readPlatforms() — already metadata-only, now
  * carrying oauthProviderId). Degrades to zero references (empty arrays) if the
  * DB is unavailable, same graceful pattern as the other readers here.
+ *
+ * A custom-designs LOAD ERROR degrades to built-ins-only (mirrors
+ * readAppGroups' degrade-not-fail choice, D1 doc comment) — this is a
+ * READ surface, not the refresh path; the designs-store's own fail-closed
+ * behavior still protects the resolver/refresh path independently.
  */
 export async function readOAuthDesigns(): Promise<OAuthDesignMeta[]> {
-  const platforms = await readPlatforms()
+  const [platforms, listedResult] = await Promise.all([readPlatforms(), listAllDesigns(getPaths())])
+
+  if (listedResult.isErr()) {
+    process.stderr.write(
+      `readOAuthDesigns: custom OAuth designs store failed to load (${listedResult.error.kind === "store-error" ? listedResult.error.cause.kind : listedResult.error.kind}) — list degraded to built-ins only\n`,
+    )
+  }
+  const listed = listedResult.isOk()
+    ? listedResult.value
+    : listProviders().map((p) => ({ ...p, isCustom: false }))
 
   // design id → referencing platform ids. A single pass over platforms.
   const referencesByDesign = new Map<string, string[]>()
@@ -348,7 +380,7 @@ export async function readOAuthDesigns(): Promise<OAuthDesignMeta[]> {
     referencesByDesign.set(p.oauthProviderId, list)
   }
 
-  return listProviders().map((p) => ({
+  return listed.map((p) => ({
     id: p.id,
     displayName: p.displayName,
     authorizationUrl: p.authorizationUrl,
@@ -357,6 +389,7 @@ export async function readOAuthDesigns(): Promise<OAuthDesignMeta[]> {
     supportsRefresh: p.supportsRefresh,
     docsUrl: p.registrationHint.docsUrl,
     isTemplate: p.id === "generic",
+    isCustom: p.isCustom,
     referencedByPlatformIds: referencesByDesign.get(p.id) ?? [],
   }))
 }
@@ -511,7 +544,6 @@ export type ConnectionMeta = {
   lastVerifiedAt?: number
   lastVerifyResult?: "ok" | "auth-failed" | "unreachable"
   oauthState?: {
-    providerId: string
     expiresAt: string | null
     needsReauth: boolean
     hasRefreshToken: boolean
@@ -537,14 +569,34 @@ export type AppsData = {
 async function readAppGroups(): Promise<AppGroupMeta[]> {
   const [platforms, credentials] = await Promise.all([readPlatforms(), readCredentials()])
 
+  // Increment 45 (Slice A, D2) — load custom OAuth designs + merge with
+  // built-ins so grouping can resolve a `custom:<slug>` platform reference
+  // the SAME way refresh does (resolve-provider.ts). DELIBERATE CHOICE
+  // (different from the refresh caller): grouping is DISPLAY-ONLY — it never
+  // touches a token or decides whether a call is authorized — so a designs-
+  // store LOAD ERROR here DEGRADES to built-ins-only rather than failing the
+  // whole /app page. A connection bound to a now-unreadable custom design
+  // just falls through resolveOAuthProviderId's dangling-reference path (same
+  // as today) and appIdForConnection's later id/alias matching, same as any
+  // other unresolvable oauthProviderId — never a hard failure for a read-only
+  // surface. The error is logged so the degradation is diagnosable.
+  const designsResult = await loadCustomDesigns(getPaths())
+  if (designsResult.isErr()) {
+    process.stderr.write(
+      `readAppGroups: custom OAuth designs store failed to load (${designsResult.error.kind}) — grouping degraded to built-in designs only\n`,
+    )
+  }
+  const designs = mergeDesigns(designsResult.isOk() ? designsResult.value : [])
+
   // Platform lookup — needed both to re-source the OAuth design (below) and to
   // re-attach connection metadata (further down). Built once, before grouping.
   const platformById = new Map(platforms.map((p) => [p.id, p]))
 
   // Core's groupByApp is pure and only needs {platformId, account, oauthProviderId}
-  // per credential — map CredentialMeta's nested oauthState.providerId onto the
-  // flat oauthProviderId field groupByApp expects (review C2 — skipping this
-  // silently buckets every OAuth connection into "other").
+  // per credential — resolve each credential's design id via the shared
+  // resolver and map it onto the flat oauthProviderId field groupByApp
+  // expects (review C2 — skipping this silently buckets every OAuth
+  // connection into "other").
   const groupInput = {
     platforms: platforms.map((p) => ({
       id: p.id,
@@ -560,30 +612,18 @@ async function readAppGroups(): Promise<AppGroupMeta[]> {
       .map((c) => {
         // Increment 44 (R3) — source the grouping provider id through the SAME
         // shared resolver refresh uses, so grouping and refresh can never
-        // diverge on which OAuth design a connection belongs to. The platform's
-        // own `oauthProviderId` is authoritative; the credential's legacy
-        // `oauthState.providerId` is only the instrumented fallback. Grouping
-        // is display-only, so a `{ok:false}` (dangling design reference, or no
-        // source at all) DEGRADES to "no hint" — the connection simply falls
-        // through appIdForConnection's later id/alias matching (never throws,
-        // never breaks the /app page). onFallback fires ONE structured log line
-        // (ids only, context "group") so grouping's fallback hits feed the SAME
-        // "zero fallback hits" drop gate as refresh.
+        // diverge on which OAuth design a connection belongs to. Increment 45,
+        // Slice E — the credential's legacy `oauthMeta.providerId` fallback is
+        // GONE: the platform's own `oauthProviderId` is now the ONLY source.
+        // Grouping is display-only, so a `{ok:false}` (dangling design
+        // reference, or no source at all) DEGRADES to "no hint" — the
+        // connection simply falls through appIdForConnection's later
+        // id/alias matching (never throws, never breaks the /app page).
         const resolved = resolveOAuthProviderId({
           credentialId: c.id,
           context: "group",
           platform: platformById.get(c.platformId),
-          legacyProviderId: c.oauthState?.providerId,
-          onFallback: (info) => {
-            // Match the refresh path's fallback log VERBATIM (resolve-provider.ts)
-            // — both feed the ONE "zero fallback hits" drop gate, so the evidence
-            // must be uniformly greppable ("fell back to the credential's legacy
-            // providerId"). A structured-vs-string shape divergence would make the
-            // gate miss grouping's fallbacks. stderr, ids only, never token material.
-            process.stderr.write(
-              `oauth provider resolution fell back to the credential's legacy providerId (context=${info.context}, credentialId=${info.credentialId}, reason=${info.reason})\n`,
-            )
-          },
+          designs,
         })
         return {
           platformId: c.platformId,

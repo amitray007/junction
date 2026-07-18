@@ -92,6 +92,13 @@
       "when": 1784405188167,
       "tag": "0012_platform_oauth_provider_id",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1784405288167,
+      "tag": "0013_drop_oauth_meta_provider_id",
+      "breakpoints": true
     }
   ]
 }

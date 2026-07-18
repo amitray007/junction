@@ -9,10 +9,12 @@ import {
   buildAuthorizationParams,
   getProvider,
   listProviders,
+  mergeDesigns,
   normalizeTokenResponse,
   type OAuthProvider,
   resolveScopeString,
 } from "./catalog.js"
+import type { CustomOAuthDesign } from "./designs-store.js"
 
 describe("getProvider / listProviders", () => {
   it("getProvider returns undefined for an unknown id", () => {
@@ -22,6 +24,72 @@ describe("getProvider / listProviders", () => {
   it("listProviders returns exactly github/github-app/slack/google/generic", () => {
     const ids = listProviders().map((p) => p.id)
     expect(ids).toEqual(["github", "github-app", "slack", "google", "generic"])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// mergeDesigns (increment 45, Fable D2/D3)
+// ---------------------------------------------------------------------------
+
+function makeCustomDesign(overrides: Partial<CustomOAuthDesign> = {}): CustomOAuthDesign {
+  return {
+    id: "custom:acme-oauth",
+    displayName: "Acme OAuth",
+    authorizationUrl: "https://acme.example.com/oauth/authorize",
+    tokenUrl: "https://acme.example.com/oauth/token",
+    scopeSeparator: " ",
+    pkce: "S256",
+    supportsRefresh: true,
+    expiryStrategy: "expires_in",
+    redirectMode: "loopback-fixed",
+    registrationHint: { redirectUri: "", scopes: "", docsUrl: "" },
+    ...overrides,
+  }
+}
+
+describe("mergeDesigns", () => {
+  it("empty custom list → merged set is exactly the built-in catalog", () => {
+    const merged = mergeDesigns([])
+    expect([...merged.keys()].sort()).toEqual(
+      listProviders()
+        .map((p) => p.id)
+        .sort(),
+    )
+  })
+
+  it("a custom:<slug> id resolves to the custom design in the merged set", () => {
+    const custom = makeCustomDesign()
+    const merged = mergeDesigns([custom])
+    expect(merged.get("custom:acme-oauth")).toEqual(custom)
+    // Built-ins are still present alongside it.
+    expect(merged.get("github")).toEqual(getProvider("github"))
+  })
+
+  it("SECURITY (D3): a custom design colliding with a built-in id → the BUILT-IN wins, never overwritten", () => {
+    // Structurally shouldn't happen (custom ids are namespace-enforced by the
+    // Zod schema at create+load), but mergeDesigns defends in depth anyway —
+    // a design object claiming a built-in id must never shadow it.
+    const impostor = makeCustomDesign({
+      id: "github",
+      tokenUrl: "https://attacker.example.com/steal-tokens",
+    })
+    const merged = mergeDesigns([impostor])
+    expect(merged.get("github")).toEqual(getProvider("github"))
+    expect(merged.get("github")?.tokenUrl).not.toBe("https://attacker.example.com/steal-tokens")
+  })
+
+  it("getProvider/listProviders stay PURE built-ins-only — unaffected by mergeDesigns calls", () => {
+    mergeDesigns([makeCustomDesign()])
+    expect(getProvider("custom:acme-oauth")).toBeUndefined()
+    expect(listProviders().map((p) => p.id)).not.toContain("custom:acme-oauth")
+  })
+
+  it("multiple custom designs all resolve, none collide with each other", () => {
+    const a = makeCustomDesign({ id: "custom:a" })
+    const b = makeCustomDesign({ id: "custom:b" })
+    const merged = mergeDesigns([a, b])
+    expect(merged.get("custom:a")).toEqual(a)
+    expect(merged.get("custom:b")).toEqual(b)
   })
 })
 

@@ -18,9 +18,12 @@ import {
   createCredentialStore,
   createRepositories,
   getPaths,
+  loadCustomDesigns,
+  mergeDesigns,
   refreshIfExpired,
   removeCredential,
   renameCredential,
+  resolveCredentialProviderId,
   rotateCredential,
 } from "@junction/core"
 import {
@@ -232,10 +235,24 @@ export async function mutateAddCredential(input: {
     // testCredential (above, keyed off store.get's stored-secretRef lookup)
     // does not apply on this path. No change needed here (verify-honesty
     // review, see STORED_SECRET_MISSING_DETAIL).
+    //
+    // Increment 45 (Slice C) — source the userinfo-probe providerId hint via
+    // the SAME shared resolver refresh/grouping use (resolveCredentialProviderId),
+    // not `credential.oauthMeta.providerId` directly. This credential's kind
+    // is never oauth2 here (input.kind excludes it) — the hint only matters
+    // when the platform itself declares an oauth2 catalog design (a non-oauth2
+    // credential can still be probed against a platform's userinfoUrl). A
+    // `{ok:false}`/degraded resolution yields `undefined`, which verifyCredential
+    // already treats as "no OAuth userinfo hint" — verify falls through to the
+    // normal per-kind verify, never fails outright over a missing hint.
+    const oauthProviderId = await resolveCredentialProviderId({
+      repos,
+      paths: getPaths(),
+      credential,
+      context: "group",
+    })
     const verifyResult = (
-      await verifyCredential(platform, secret, getPaths(), {
-        oauthProviderId: credential.oauthMeta?.providerId,
-      })
+      await verifyCredential(platform, secret, getPaths(), { oauthProviderId })
     ).unwrapOr({
       status: "unreachable" as const,
       detail: "verify failed unexpectedly",
@@ -359,12 +376,25 @@ async function loadPlatformForCredential(
     }
   }
 
+  // Increment 45 (Slice C) — source the verify-hint providerId via the shared
+  // resolver (resolveCredentialProviderId), not `credential.oauthMeta.providerId`
+  // directly. Degrades to `undefined` on a dangling/no-source resolution —
+  // verifyCredential treats that as "no OAuth userinfo hint" and falls
+  // through to the normal per-kind verify; Test Connection is never failed
+  // outright over an unresolvable hint.
+  const oauthProviderId = await resolveCredentialProviderId({
+    repos,
+    paths: getPaths(),
+    credential,
+    context: "group",
+  })
+
   return {
     ok: true,
     platform: platformResult.value,
     credential,
     secretRef: credential.secretRef,
-    oauthProviderId: credential.oauthMeta?.providerId,
+    oauthProviderId,
   }
 }
 
@@ -400,16 +430,45 @@ const NEEDS_REAUTH_DETAIL = "needs reconnect"
  * Returns a small tagged union rather than a `VerifyOutcome` directly: the
  * caller still has to call `verifyCredential` with the resolved token, so
  * this only decides WHICH token (or terminal outcome) feeds that call.
+ *
+ * FIXED (increment 45, Slice C): this call site now passes `platform` — the
+ * gap noted in Slice A (this refresh-ahead helper only ever exercised
+ * `resolveOAuthProviderId`'s legacy-fallback arm, since `platform` was never
+ * threaded through) is closed here. `testCredential` already resolves the
+ * platform via `loadPlatformForCredential` before calling this helper, so it
+ * costs nothing extra to pass it in. Custom designs are loaded + merged the
+ * same way refresh's real caller (source-runtime's resolve-provider.ts)
+ * does — a `custom:*` platform reference is now reachable from Test
+ * Connection too, not just live refresh via `mcp serve`/`serve`.
+ * (Slice E note: the legacy-fallback arm referenced above no longer exists
+ * at all — resolution is platform.oauthProviderId → app-catalog only.)
  */
 async function resolveTokenForTest(
   credential: Credential,
+  platform: Platform,
   store: CredentialStore,
   repos: ReturnType<typeof createRepositories>,
 ): Promise<
   { kind: "token"; value: string } | { kind: "lost" } | { kind: "auth-failed"; detail?: string }
 > {
+  const designsResult = await loadCustomDesigns(getPaths())
+  if (designsResult.isErr()) {
+    process.stderr.write(
+      `resolveTokenForTest: custom OAuth designs store failed to load (${designsResult.error.kind}) — refresh skipped\n`,
+    )
+    return { kind: "auth-failed" }
+  }
+  const designs = mergeDesigns(designsResult.value)
   const refreshResult = await refreshIfExpiredSingleFlight(credential.id, () =>
-    refreshIfExpired({ credential, store, repos, refreshFn: oauthRefreshFn, now: Date.now() }),
+    refreshIfExpired({
+      credential,
+      store,
+      repos,
+      refreshFn: oauthRefreshFn,
+      now: Date.now(),
+      platform,
+      designs,
+    }),
   )
 
   if (refreshResult.isErr()) {
@@ -457,7 +516,7 @@ export async function testCredential(credentialId: string): Promise<TestCredenti
     // token's — see resolveTokenForTest for the full rationale. This is the
     // ONE oauth2-specific branch in testCredential; non-oauth2 credentials
     // fall through to the unchanged plain-store-read path below.
-    const resolved = await resolveTokenForTest(credential, store, repos)
+    const resolved = await resolveTokenForTest(credential, platform, store, repos)
     if (resolved.kind === "auth-failed") {
       result = { status: "auth-failed" }
       authFailedDetail = resolved.detail

@@ -408,7 +408,10 @@ export interface PersistOAuthTokensArgs {
 }
 
 export interface PersistOAuthTokensUpdateArgs {
-  repos: Pick<Repositories, "credentials">
+  // "platforms" added (increment 45, Slice E) — the reconnect path now also
+  // best-effort backfills the bound platform's oauthProviderId when unset
+  // (see the identical note in the create branch, below).
+  repos: Pick<Repositories, "credentials" | "platforms">
   store: CredentialStore
   tokens: NormalizedTokens
   providerId: string
@@ -542,11 +545,14 @@ export function persistOAuthTokens(
         profileName: args.account,
         kind: "oauth2",
         secretRef: accessRef,
+        // Increment 45, Slice E — `providerId` no longer exists on
+        // OAuthMetaSchema; the design this credential belongs to is now
+        // sourced EXCLUSIVELY from `platform.oauthProviderId`
+        // (resolveOAuthProviderId), never a denormalized copy here.
         oauthMeta: {
           refreshTokenRef: refreshRef,
           clientIdRef,
           clientSecretRef,
-          providerId,
           authMode,
           scopes: tokens.scopes,
           expiresAt,
@@ -572,10 +578,43 @@ export function persistOAuthTokens(
       const platformBuild = args.platformBuild
       const platformWasCreatedHere = platformBuild !== undefined && !platformBuild.preExisting
       if (platformBuild !== undefined) {
-        const upsertResult = await args.repos.platforms.upsert(platformBuild.platform)
+        // Increment 45, Slice E (correctness fix — NOT optional): with the
+        // legacy oauthMeta.providerId fallback removed, refresh/grouping
+        // resolve EXCLUSIVELY via platform.oauthProviderId → app-catalog.
+        // Nothing else in the connect path ever set this — before this fix,
+        // a fresh catalog OAuth connect silently depended on the
+        // now-deleted fallback to ever refresh again. FILL-ONLY-IF-UNSET
+        // (never clobber an operator's explicit custom-design binding, same
+        // conflict discipline as migration 0012/0013's backfill).
+        const platformToUpsert =
+          platformBuild.platform.oauthProviderId === undefined
+            ? { ...platformBuild.platform, oauthProviderId: providerId }
+            : platformBuild.platform
+        const upsertResult = await args.repos.platforms.upsert(platformToUpsert)
         if (upsertResult.isErr()) {
           await cleanup(store, written)
           return err({ kind: "persist-failed", cause: upsertResult.error })
+        }
+      } else {
+        // No platformBuild — the raw /credentials flow (CLI `connect`, or a
+        // web flow with no catalog surface payload): the platform ALREADY
+        // exists (this is mode:"create" for the CREDENTIAL, not the
+        // platform). Same fill-only-if-unset stamp, applied to the existing
+        // row instead of a freshly-assembled one. Best-effort in the sense
+        // that a lookup/upsert failure here does NOT abort the connect (the
+        // credential still gets created — refresh would otherwise strand on
+        // no-provider-source until an operator manually binds the design,
+        // which is a strictly better failure mode than losing the whole
+        // connect over a courtesy backfill).
+        const existingPlatformResult = await args.repos.platforms.get(args.platformId)
+        if (
+          existingPlatformResult.isOk() &&
+          existingPlatformResult.value.oauthProviderId === undefined
+        ) {
+          await args.repos.platforms.upsert({
+            ...existingPlatformResult.value,
+            oauthProviderId: providerId,
+          })
         }
       }
 
@@ -610,12 +649,34 @@ export function persistOAuthTokens(
     const oldClientIdRef = existingResult.value.oauthMeta?.clientIdRef
     const oldClientSecretRef = existingResult.value.oauthMeta?.clientSecretRef
 
+    // Increment 45, Slice E (correctness fix, same as the create branch
+    // above) — a reconnect is also an opportunity to backfill the bound
+    // platform's oauthProviderId if it was never set (a credential created
+    // before increment 44/45's platform-provider linkage existed, or one
+    // whose platform was assembled through a path that predates this fix).
+    // Fill-only-if-unset; best-effort — a lookup/upsert failure here never
+    // blocks the reconnect itself.
+    const reconnectPlatformId = existingResult.value.platformId
+    if (reconnectPlatformId !== null) {
+      const existingPlatformResult = await args.repos.platforms.get(reconnectPlatformId)
+      if (
+        existingPlatformResult.isOk() &&
+        existingPlatformResult.value.oauthProviderId === undefined
+      ) {
+        await args.repos.platforms.upsert({
+          ...existingPlatformResult.value,
+          oauthProviderId: providerId,
+        })
+      }
+    }
+
+    // Increment 45, Slice E — `providerId` no longer exists on
+    // OAuthMetaSchema/setOAuthTokens's patch; see the identical note above.
     const setTokensResult = await repos.credentials.setOAuthTokens(args.credentialId, {
       secretRef: accessRef,
       ...(refreshRef !== undefined ? { refreshTokenRef: refreshRef } : {}),
       clientIdRef,
       clientSecretRef,
-      providerId,
       authMode,
       scopes: tokens.scopes,
       expiresAt,

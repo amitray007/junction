@@ -1710,7 +1710,6 @@ describe("repositories", () => {
         scopes: ["repo", "read:user"],
         needsReauth: false,
         obtainedAt: "2025-12-31T00:00:00Z",
-        providerId: "github",
         authMode: "authorization_code",
       })
       expect(result.isOk()).toBe(true)
@@ -1722,7 +1721,6 @@ describe("repositories", () => {
         scopes: ["repo", "read:user"],
         needsReauth: false,
         obtainedAt: "2025-12-31T00:00:00Z",
-        providerId: "github",
         authMode: "authorization_code",
       })
 
@@ -1738,11 +1736,11 @@ describe("repositories", () => {
         refreshTokenRef: "ref-refresh-1",
         expiresAt: "2026-01-01T00:00:00Z",
         scopes: ["repo"],
-        providerId: "github",
+        authMode: "authorization_code",
       })
       expect(first.isOk()).toBe(true)
 
-      // Only patch needsReauth — refreshTokenRef/scopes/providerId are ABSENT
+      // Only patch needsReauth — refreshTokenRef/scopes/authMode are ABSENT
       // from this patch and must be RETAINED, not nulled/wiped.
       const second = await repos.credentials.setOAuthTokens(id, { needsReauth: true })
       expect(second.isOk()).toBe(true)
@@ -1750,7 +1748,7 @@ describe("repositories", () => {
       expect(second.value.oauthMeta?.needsReauth).toBe(true)
       expect(second.value.oauthMeta?.refreshTokenRef).toBe("ref-refresh-1")
       expect(second.value.oauthMeta?.scopes).toEqual(["repo"])
-      expect(second.value.oauthMeta?.providerId).toBe("github")
+      expect(second.value.oauthMeta?.authMode).toBe("authorization_code")
       // secretRef (access token column) is untouched by an oauthMeta-only patch.
       expect(second.value.secretRef).toBe("ref-access-1")
     })
@@ -1769,7 +1767,7 @@ describe("repositories", () => {
         secretRef: "ref-access-1",
         refreshTokenRef: "ref-refresh-1",
         scopes: ["repo"],
-        providerId: "github",
+        authMode: "authorization_code",
       })
       expect(seeded.isOk()).toBe(true)
 
@@ -1787,7 +1785,7 @@ describe("repositories", () => {
       expect(patched.value.oauthMeta?.needsReauth).toBe(true)
       // Untouched fields survive too.
       expect(patched.value.oauthMeta?.scopes).toEqual(["repo"])
-      expect(patched.value.oauthMeta?.providerId).toBe("github")
+      expect(patched.value.oauthMeta?.authMode).toBe("authorization_code")
     })
 
     it("expiresAt: null is written (non-expiring), distinct from absent", async () => {
@@ -1824,7 +1822,7 @@ describe("repositories", () => {
       const first = await repos.credentials.setOAuthTokens(id, {
         secretRef: "ref-access-1",
         refreshTokenRef: "ref-refresh-1",
-        providerId: "google",
+        authMode: "authorization_code",
       })
       expect(first.isOk()).toBe(true)
 
@@ -1833,7 +1831,7 @@ describe("repositories", () => {
       if (!second.isOk()) return
       expect(second.value.secretRef).toBe("ref-access-2")
       expect(second.value.oauthMeta?.refreshTokenRef).toBe("ref-refresh-1")
-      expect(second.value.oauthMeta?.providerId).toBe("google")
+      expect(second.value.oauthMeta?.authMode).toBe("authorization_code")
     })
 
     it("a raw token value can never reach oauth_meta — OAuthMetaSchema.parse strips it at the persistence chokepoint", async () => {
@@ -1846,7 +1844,7 @@ describe("repositories", () => {
       const id = await createOAuthCredential()
       const patch = {
         refreshTokenRef: "ref-refresh-1",
-        providerId: "github",
+        authMode: "authorization_code",
         // Stray raw-value keys a misbehaving caller might smuggle in —
         // NOT part of the patch type, bypassed via `as never`.
         refreshToken: "RAW_REFRESH_TOKEN_DO_NOT_STORE",
@@ -1862,7 +1860,7 @@ describe("repositories", () => {
       expect(serializedReturn).not.toContain("RAW_ACCESS_TOKEN_DO_NOT_STORE")
       // ...and the legit refs still made it through.
       expect(result.value.oauthMeta?.refreshTokenRef).toBe("ref-refresh-1")
-      expect(result.value.oauthMeta?.providerId).toBe("github")
+      expect(result.value.oauthMeta?.authMode).toBe("authorization_code")
 
       // Read the raw persisted row back — the on-disk oauth_meta JSON must
       // not carry the raw values either.

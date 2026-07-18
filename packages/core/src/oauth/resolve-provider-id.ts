@@ -8,50 +8,39 @@
 //
 // SECURITY (R1 — fail closed): if platform.oauthProviderId is SET but points
 // at a design that doesn't exist, this returns a typed error and does NOT
-// fall through to the credential's legacy providerId. A misconfigured or
-// maliciously-imported platform must never silently mask itself behind the
-// fallback — a dangling/attacker-controlled reference could otherwise route
-// a refresh token to an attacker-chosen tokenUrl. The fallback fires ONLY
-// when the platform has NO provider source at all (unset field, or no
-// platform in hand).
+// fall through to any other source. A misconfigured or maliciously-imported
+// platform must never silently mask itself behind a lower-precedence source —
+// a dangling/attacker-controlled reference could otherwise route a refresh
+// token to an attacker-chosen tokenUrl.
+//
+// DESIGNS-AS-DATA (increment 45, Fable D2): this resolver takes the merged
+// built-in + custom design lookup as a PARAM (`designs`), not a catalog
+// import — it stays pure/synchronous/no-I/O. The caller loads custom designs
+// at the I/O edge (`loadCustomDesigns`), merges via `mergeDesigns`, and
+// passes the result in. A per-process cache here would be WRONG — junction
+// is multi-process (CLI / web / `mcp serve`), and a CLI-created custom
+// design must be visible to an already-running web server without a
+// restart; re-reading the small designs file per resolve call (rare — only
+// on refresh/grouping) is the correct cost to pay for that, and it's the
+// CALLER's job (not this function's) to do that re-read.
+//
+// LEGACY FALLBACK REMOVED (increment 45, Slice E / Fable E1): the credential's
+// `oauthMeta.providerId` denormalized copy — and the instrumented fallback
+// arm that read it — are GONE. The resolver is now platform.oauthProviderId
+// → app-catalog auth[].providerId only. Migration 0013 verifies every
+// existing credential resolves via this narrower path BEFORE dropping the
+// column (see db/migrations/0013_drop_oauth_meta_provider_id.sql +
+// verify-provider-id-drop-safe.ts) — a platform with no provider source at
+// all now surfaces `no-provider-source` where it previously fell back.
 
-import { getProvider } from "./catalog.js"
+import type { OAuthProvider } from "./catalog.js"
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-/**
- * Why the resolution needed the credential's legacy `oauthMeta.providerId`
- * fallback (increment 42/44 transition — see docs/futures/revisit-when.md,
- * "Drop the oauthMeta.providerId fallback + column"). Two DISTINCT shapes,
- * both surfaced to `onFallback` so the drop gate's evidence is diagnosable:
- *   - "unset"    — the platform has no oauthProviderId set at all (including
- *                  an orphan credential with no platform in hand).
- *   - "conflict" — migration 0012's conflict rule left the platform's field
- *                  unset because its bound OAuth credentials disagreed; this
- *                  resolver doesn't re-detect the conflict itself (that's
- *                  0012/the inline import backfill's job) — from here it's
- *                  indistinguishable from "unset" without re-querying sibling
- *                  credentials, which this pure/single-credential resolver
- *                  deliberately does not do. Both fold to the "unset" reason.
- */
-export type OAuthProviderIdFallbackReason = "unset"
-
-/** Context tag distinguishing WHICH caller hit the fallback — refresh vs. app grouping. */
+/** Context tag distinguishing WHICH caller hit resolution — refresh vs. app grouping. */
 export type OAuthProviderIdContext = "refresh" | "group"
-
-/**
- * Fired every time resolution falls back to the credential's legacy
- * `oauthMeta.providerId` — the evidence the later cleanup increment's drop
- * gate ("zero fallback hits") measures. IDS ONLY — never token material.
- */
-export type OnOAuthProviderFallbackFn = (info: {
-  context: OAuthProviderIdContext
-  credentialId: string
-  providerId: string
-  reason: OAuthProviderIdFallbackReason
-}) => void
 
 export type ResolveOAuthProviderIdError =
   /**
@@ -59,23 +48,32 @@ export type ResolveOAuthProviderIdError =
    * exists — SECURITY: fail closed, never fall back (R1).
    */
   | { kind: "dangling-provider-reference"; platformId: string; providerId: string }
-  /** No provider source at all: no platform.oauthProviderId, no app-catalog
-   *  auth[].providerId, and no credential.oauthMeta.providerId fallback. */
+  /**
+   * No provider source at all: no platform.oauthProviderId and no app-catalog
+   * auth[].providerId. (Increment 45, Slice E — previously this also meant
+   * "no credential.oauthMeta.providerId fallback either"; that fallback no
+   * longer exists, so this fires strictly more often than before the drop.)
+   */
   | { kind: "no-provider-source"; credentialId: string }
 
 export interface ResolveOAuthProviderIdArgs {
-  /** The credential's id — for the fallback log + the no-source error, never logged with secrets. */
+  /** The credential's id — for the no-source error, never logged with secrets. */
   credentialId: string
-  /** Which caller is resolving — tags the fallback log so the drop gate's evidence is diagnosable. */
+  /** Which caller is resolving — refresh vs. grouping (kept for future diagnostics). */
   context: OAuthProviderIdContext
   /** The bound platform, if the caller has one in hand. `null`/`undefined` = orphan credential (no platform). */
   platform?: { id: string; oauthProviderId?: string | undefined } | null | undefined
   /** The app catalog's declared oauth2 providerId for this platform, if resolvable in this context. */
   appAuthProviderId?: string | undefined
-  /** The credential's legacy `oauthMeta.providerId` — the instrumented fallback's data source. */
-  legacyProviderId?: string | undefined
-  /** Fired when the fallback fires. Optional — a caller that doesn't care about the log may omit it. */
-  onFallback?: OnOAuthProviderFallbackFn | undefined
+  /**
+   * The merged built-in + custom design lookup (increment 45, D2) — the
+   * SOLE source this resolver consults to decide whether
+   * `platform.oauthProviderId` is a real, resolvable design (step 1's
+   * dangling-reference guard). Built by the caller via `mergeDesigns` over
+   * whatever `loadCustomDesigns` returned for THIS call; this function does
+   * no I/O and no per-process caching of its own.
+   */
+  designs: ReadonlyMap<string, OAuthProvider>
 }
 
 // ---------------------------------------------------------------------------
@@ -87,25 +85,26 @@ export interface ResolveOAuthProviderIdArgs {
  * Pure, synchronous, no I/O — a Result, not a ResultAsync (matches core's
  * "pure where possible" discipline; no caller here needs to await it).
  *
- * Fixed order (R1/R3):
+ * Fixed order (R1/R3, narrowed in increment 45 Slice E):
  *   1. `platform.oauthProviderId` if set → use it, UNLESS it's a dangling
- *      reference (no matching catalog design) → typed error, fail closed.
+ *      reference (no matching design in the MERGED set — built-in or
+ *      `custom:<slug>`) → typed error, fail closed.
  *   2. else `appAuthProviderId` (the app catalog's `auth[].providerId`),
  *      when the caller has resolved one for this context.
- *   3. else `legacyProviderId` (the credential's `oauthMeta.providerId`) →
- *      use it AND fire `onFallback` (ids only, never token material).
- *   4. none of the above → `{kind: "no-provider-source"}`.
+ *   3. none of the above → `{kind: "no-provider-source"}`.
  */
 export function resolveOAuthProviderId(
   args: ResolveOAuthProviderIdArgs,
 ): { ok: true; providerId: string } | { ok: false; error: ResolveOAuthProviderIdError } {
-  const { credentialId, context, platform, appAuthProviderId, legacyProviderId, onFallback } = args
+  const { credentialId, platform, appAuthProviderId, designs } = args
 
   // 1. Platform's own reference — authoritative when set. A SET-but-invalid
-  // reference fails closed (SECURITY, R1) rather than falling through to 2/3.
+  // reference fails closed (SECURITY, R1) rather than falling through to 2.
+  // "invalid" is checked against the MERGED set (increment 45, D2) — a
+  // `custom:<slug>` platform reference is just as valid here as a built-in.
   const platformProviderId = platform?.oauthProviderId
   if (platformProviderId !== undefined) {
-    const design = getProvider(platformProviderId)
+    const design = designs.get(platformProviderId)
     if (design === undefined) {
       return {
         ok: false,
@@ -126,17 +125,6 @@ export function resolveOAuthProviderId(
     return { ok: true, providerId: appAuthProviderId }
   }
 
-  // 3. Instrumented fallback — the credential's legacy denormalized copy.
-  if (legacyProviderId !== undefined) {
-    onFallback?.({
-      context,
-      credentialId,
-      providerId: legacyProviderId,
-      reason: "unset",
-    })
-    return { ok: true, providerId: legacyProviderId }
-  }
-
-  // 4. Nothing to source from at all.
+  // 3. Nothing to source from at all.
   return { ok: false, error: { kind: "no-provider-source", credentialId } }
 }

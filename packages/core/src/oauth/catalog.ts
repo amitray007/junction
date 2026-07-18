@@ -9,6 +9,7 @@
 // single source of truth shared with the web connect flow's redirect_uri (they
 // must be byte-identical or the registered redirect won't match). See config.
 import { OAUTH_CALLBACK_URI } from "../config/index.js"
+import type { CustomOAuthDesign } from "./designs-store.js"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -291,6 +292,40 @@ export function getProvider(id: string): OAuthProvider | undefined {
 /** All catalog entries, for the web provider picker. */
 export function listProviders(): OAuthProvider[] {
   return [...PROVIDERS]
+}
+
+// ---------------------------------------------------------------------------
+// mergeDesigns — built-ins + custom, as DATA (increment 45, Fable D2/D3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Merge the built-in catalog with user-authored custom designs into ONE
+ * lookup, for callers (the resolver, Slice D's list op) that need visibility
+ * into both. PURE — no I/O; the caller loads `custom` at the I/O edge (via
+ * `loadCustomDesigns`) and passes it in here.
+ *
+ * `getProvider`/`listProviders` above stay PURE BUILT-INS-ONLY on purpose
+ * (D2) — this is a SEPARATE function, not a mutation of those, so nothing
+ * that calls the catalog for built-ins-only reasons (e.g. the web provider
+ * picker's "built-in providers" section) accidentally starts seeing custom
+ * designs without opting in.
+ *
+ * BUILT-INS ALWAYS WIN (D3): a custom design is only ever installed into the
+ * merged map if no built-in already occupies that id. Custom ids are
+ * structurally namespaced (`custom:<slug>`, enforced by
+ * `CustomOAuthDesignSchema`'s regex at both create and load time) so a real
+ * collision should be impossible by construction — this precedence is
+ * belt-and-suspenders defense-in-depth, not the only guard: even if some
+ * future bug let a non-namespaced id slip through the schema, it could never
+ * shadow/override a built-in's tokenUrl here.
+ */
+export function mergeDesigns(custom: CustomOAuthDesign[]): Map<string, OAuthProvider> {
+  const merged = new Map<string, OAuthProvider>(PROVIDERS_BY_ID)
+  for (const design of custom) {
+    if (merged.has(design.id)) continue // built-in wins — never overwritten
+    merged.set(design.id, design)
+  }
+  return merged
 }
 
 /** Join scopes with the provider's separator. */

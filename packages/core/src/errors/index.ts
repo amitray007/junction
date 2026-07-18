@@ -11,6 +11,22 @@ export type ConfigError =
 
 export type DbError =
   | { kind: "migration-failed"; cause: unknown }
+  /**
+   * Increment 45, Slice E — the fail-closed pre-migration guard for dropping
+   * `credentials.oauth_meta`'s `providerId` key (migration 0013) refused to
+   * proceed: at least one OAuth credential would strand (its bound platform
+   * has no `oauth_provider_id` and none could be backfilled). `remediation`
+   * lists the affected credential ids + a human-actionable next step. The DB
+   * is left UNCHANGED — migration 0013 never runs — so this is safe to
+   * surface and retry after the operator reconnects/repoints the listed
+   * credentials.
+   */
+  | {
+      kind: "migration-refused"
+      migration: string
+      strandedCredentialIds: string[]
+      remediation: string
+    }
   | { kind: "constraint-violation"; cause: unknown }
   | { kind: "in-use"; cause: unknown }
   | { kind: "not-found"; entity: string; id: string }

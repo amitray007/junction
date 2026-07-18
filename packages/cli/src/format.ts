@@ -137,6 +137,8 @@ export function formatDbError(e: DbError): string {
       return `not found: ${e.entity} ${e.id}`
     case "migration-failed":
       return `database migration failed: ${String(e.cause)}`
+    case "migration-refused":
+      return `database migration "${e.migration}" refused — ${e.remediation} (affected credential ids: ${e.strandedCredentialIds.join(", ")})`
     case "constraint-violation":
       return `constraint violation (check that referenced platform/credential/profile exists): ${String(e.cause)}`
     case "in-use":

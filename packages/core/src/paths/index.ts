@@ -44,6 +44,17 @@ export type JunctionPaths = {
    * holds description/schema TEXT — hashes and names only.
    */
   pinsFile: string
+  /**
+   * Custom OAuth-design authoring store (increment 45, Slice A). A plain
+   * versioned JSON file (mirrors `pinsFile`'s file-not-DB-table shape) at
+   * `<home>/oauth-designs.json` holding user-authored `custom:<slug>` OAuth
+   * designs. Written 0600, lockfile-guarded batch write via the store in
+   * `oauth/designs-store.ts`. UNLIKE `pinsFile`, this store fails CLOSED on
+   * load corruption — a design's `tokenUrl` is where refresh tokens are
+   * POSTed, so a corrupt file must surface a typed error, never a silent
+   * empty set (see designs-store.ts's header for the full rationale).
+   */
+  oauthDesignsFile: string
 }
 
 export function resolveHome(): string {
@@ -64,6 +75,7 @@ export function getPaths(): JunctionPaths {
     auditLogFile: path.join(home, "audit.log"),
     runtimeDir: path.join(home, "run"),
     pinsFile: path.join(home, "tool-pins.json"),
+    oauthDesignsFile: path.join(home, "oauth-designs.json"),
   }
 }
 

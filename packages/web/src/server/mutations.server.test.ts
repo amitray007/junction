@@ -37,12 +37,33 @@ const refreshIfExpiredMock = vi.fn()
 // vi.fn stub) — it's pure plumbing (keys an in-memory Map by credentialId);
 // stubbing it would hide a wiring bug where testCredential forgets to call it.
 const refreshIfExpiredSingleFlightMock = vi.fn((_credentialId: string, run: () => unknown) => run())
+// Increment 45 (Slice C) — the verify-hint call sites (mutateAddCredential's
+// verify=true branch, loadPlatformForCredential, resolveTokenForTest) now go
+// through resolveCredentialProviderId, which loads custom designs at the I/O
+// edge. Stub it so these unit tests never touch the real filesystem —
+// default to "no custom designs" (ok([])), matching every existing fixture
+// (none reference a custom:<slug> design).
+const loadCustomDesignsMock = vi.fn((_paths?: unknown) => okAsync([]))
 
 vi.mock("@junction/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@junction/core")>()
   return {
     ...actual,
-    getPaths: vi.fn(() => ({ home: "/fake" }) as ReturnType<typeof actual.getPaths>),
+    // Increment 45 (Slice C) — `oauthDesignsFile` must be a real (but
+    // nonexistent) path: resolveCredentialProviderId/resolveTokenForTest call
+    // core's `loadCustomDesigns` INTERNALLY (a core-to-core import, not
+    // through this `@junction/core` mock), so it isn't intercepted by the
+    // `loadCustomDesignsMock` stub below — it always runs for real. A path
+    // whose directory doesn't exist resolves via ENOENT to a clean `ok([])`,
+    // matching the intended "no custom designs" default, instead of a noisy
+    // (but still gracefully-degraded) `read-failed` from `readFile(undefined)`.
+    getPaths: vi.fn(
+      () =>
+        ({ home: "/fake", oauthDesignsFile: "/fake/oauth-designs.json" }) as ReturnType<
+          typeof actual.getPaths
+        >,
+    ),
+    loadCustomDesigns: (...args: unknown[]) => loadCustomDesignsMock(...args),
     createCredentialStore: vi.fn(
       () =>
         okAsync({ get: storeGetMock, set: storeSetMock }) as unknown as ReturnType<
@@ -91,6 +112,8 @@ afterEach(() => {
   verifyCredentialMock.mockReset()
   refreshIfExpiredMock.mockReset()
   refreshIfExpiredSingleFlightMock.mockClear()
+  loadCustomDesignsMock.mockReset()
+  loadCustomDesignsMock.mockReturnValue(okAsync([]))
 })
 
 describe("mutateAddCredential — platform lookup error mapping", () => {
@@ -215,9 +238,18 @@ describe("mutateAddCredential — standalone (unlinked) create (increment 42)", 
 // suite above) rather than engineering a real sqlite/keyring/network failure.
 // ---------------------------------------------------------------------------
 
-const fakePlatform = { id: "plat-1", kind: "mcp", displayName: "Test" } as unknown as Parameters<
-  typeof verifyCredentialMock
->[0]
+// Increment 45, Slice E — `oauthProviderId` set here so the oauth2
+// refresh-ahead tests below (which resolve the design via the REAL
+// resolveCredentialProviderId → repos.platforms.get, mocked as `getMock`)
+// resolve a design instead of degrading to `undefined`. Harmless for the
+// other describe blocks in this file — none assert this shape narrower than
+// "the same object reference `getMock` was seeded with."
+const fakePlatform = {
+  id: "plat-1",
+  kind: "mcp",
+  displayName: "Test",
+  oauthProviderId: "google",
+} as unknown as Parameters<typeof verifyCredentialMock>[0]
 const fakeCredentialRow = { id: "cred-1", platformId: "plat-1", secretRef: "ref-1" }
 
 describe("testCredential", () => {
@@ -391,7 +423,10 @@ const fakeOAuthCredentialRow = {
   platformId: "plat-1",
   secretRef: "ref-1",
   kind: "oauth2" as const,
-  oauthMeta: { providerId: "google" },
+  // Increment 45, Slice E — `oauthMeta.providerId` no longer exists; the
+  // design ("google") is now sourced from `fakePlatform.oauthProviderId`
+  // via the real resolveCredentialProviderId → repos.platforms.get path.
+  oauthMeta: {},
 }
 
 describe("testCredential — oauth2 refresh-ahead (30.5 bug fix)", () => {

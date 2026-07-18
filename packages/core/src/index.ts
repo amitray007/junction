@@ -186,7 +186,11 @@ export {
   writeFile0600,
 } from "./credentials/index.js"
 // Database + repositories
-export { type Db, getDatabase } from "./db/index.js"
+export { type Db, getDatabase, verifyProviderIdDropSafe } from "./db/index.js"
+// Increment 45, Slice E — the fail-closed pre-migration guard's journal-`when`
+// pin (regression-tested to stay byte-identical to meta/_journal.json's 0013
+// entry) — exported for tests that need to seed __drizzle_migrations directly.
+export { MIGRATION_0013_WHEN } from "./db/verify-provider-id-drop-safe.js"
 export type { ApiKeyError, CredentialError, DbError, SandboxError } from "./errors/index.js"
 // ID generators — ids/ is the sole generator; see ids/index.ts for the swap-point comment
 export { newApiKeyId, newCredentialId, newPlatformId, newProfileId } from "./ids/index.js"
@@ -197,11 +201,40 @@ export {
   buildAuthorizationParams,
   getProvider,
   listProviders,
+  mergeDesigns,
   type NormalizedTokens,
   normalizeTokenResponse,
   type OAuthProvider,
   resolveScopeString,
 } from "./oauth/catalog.js"
+// Custom OAuth-design authoring ops (increment 45, Slice D / Fable D3/D4) —
+// add/list/delete on top of designs-store.ts's persistence primitives.
+export {
+  addCustomDesign,
+  type DesignOpError,
+  deleteCustomDesign,
+  type ListedDesign,
+  listAllDesigns,
+} from "./oauth/design-ops.js"
+// Custom OAuth-design authoring store (increment 45, Slice A / Fable D1/D3) —
+// the versioned `oauth-designs.json` file store + its schema/types.
+export {
+  CUSTOM_OAUTH_DESIGN_ID_PATTERN,
+  type CustomOAuthDesign,
+  CustomOAuthDesignSchema,
+  type DesignsStoreError,
+  loadCustomDesigns,
+  parseCustomOAuthDesign,
+  saveCustomDesigns,
+} from "./oauth/designs-store.js"
+// OIDC discovery — pure parse/shape (increment 45, Slice B). The fetch of
+// `<issuer>/.well-known/openid-configuration` lives in source-runtime; this
+// is the pure validate+map half.
+export {
+  discoveredDesignFromDoc,
+  type OidcDiscoveryError,
+  type OidcWellKnownDoc,
+} from "./oauth/oidc-discovery.js"
 export {
   DEFAULT_REFRESH_BUFFER_MS,
   MAX_EXPIRES_IN_SECONDS,
@@ -213,13 +246,18 @@ export {
   shouldRefresh,
   toExpiresAt,
 } from "./oauth/refresh.js"
+// Shared load-designs → merge → resolve → degrade helper (increment 45,
+// Slice C) — every LIVE display/verify-hint/reconnect reader of a
+// credential's OAuth design goes through this. The legacy
+// `credential.oauthMeta.providerId` fallback + its `formatFallbackLogLine`
+// instrumentation were dropped in Slice E — resolution is
+// platform.oauthProviderId → app-catalog only.
+export { resolveCredentialProviderId } from "./oauth/resolve-credential-provider-id.js"
 // Shared OAuth provider-id resolution (increment 44 Phase 3, R3) — the ONE
 // primitive refresh + grouping both consume so they can never diverge on
 // which design a credential belongs to.
 export {
   type OAuthProviderIdContext,
-  type OAuthProviderIdFallbackReason,
-  type OnOAuthProviderFallbackFn,
   type ResolveOAuthProviderIdArgs,
   type ResolveOAuthProviderIdError,
   resolveOAuthProviderId,

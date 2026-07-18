@@ -53,8 +53,15 @@ export const OAuthMetaSchema = z.object({
   // --- inc 29 additive ---
   /** Second minted ULID ref → the refresh token in the CredentialStore. NEVER the raw token. */
   refreshTokenRef: z.string().min(1).optional(),
-  /** Catalog provider key, e.g. "google" | "github" | "slack" | "generic" */
-  providerId: z.string().min(1).optional(),
+  // `providerId` (the catalog provider key) lived here through increment 44 —
+  // DROPPED in increment 45 Slice E (migration 0013). A credential's OAuth
+  // design is now sourced EXCLUSIVELY from its bound platform's
+  // `oauthProviderId` (resolveOAuthProviderId) — never a denormalized copy
+  // on the credential itself. The vault archive format (vault-manifest.ts's
+  // `ManifestOAuthMetaSchema`) keeps its OWN independent `providerId` field
+  // for pre-45 archive compat + platform backfill on import — that schema is
+  // NOT this one; do not reintroduce the field here to "fix" an archive
+  // round-trip.
   /** How this credential was obtained / is refreshed */
   authMode: z.enum(["authorization_code", "device_code", "client_credentials"]).optional(),
   /** BYO client credentials, stored as refs (the client_secret is a secret). */

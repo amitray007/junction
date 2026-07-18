@@ -13,6 +13,7 @@ import { ResultAsync } from "neverthrow"
 import type { DbError } from "../errors/index.js"
 import type { JunctionPaths } from "../paths/index.js"
 import * as schema from "./schema.js"
+import { verifyProviderIdDropSafe } from "./verify-provider-id-drop-safe.js"
 
 export type Db = ReturnType<typeof drizzle<typeof schema>>
 
@@ -27,11 +28,47 @@ export function getDatabase(paths: JunctionPaths): ResultAsync<Db, DbError> {
       const sqlite = new Database(paths.dbFile)
       sqlite.pragma("foreign_keys = ON")
       sqlite.pragma("journal_mode = WAL")
+
+      // Increment 45, Slice E — fail-closed verify-then-drop guard for
+      // migration 0013 (drops `oauth_meta.providerId`). MUST run BEFORE
+      // migrate(): drizzle's better-sqlite3 migrator applies every pending
+      // .sql file inside ONE transaction with no JS callback in between, so
+      // the TypeScript-only verification this needs (does every affected
+      // credential's platform have an oauth_provider_id) cannot be
+      // interleaved with the migration files themselves — it has to gate
+      // whether migrate() is even called this boot. See
+      // verify-provider-id-drop-safe.ts's header for the full rationale.
+      // Ok(undefined) on a DB where 0013 is already applied, or where
+      // nothing would strand (backfilled + snapshotted in that case).
+      const guardResult = verifyProviderIdDropSafe(sqlite)
+      if (guardResult.isErr()) {
+        sqlite.close()
+        throw guardResult.error
+      }
+
       const db = drizzle(sqlite, { schema })
       const migrationsFolder = fileURLToPath(new URL("./migrations", import.meta.url))
       migrate(db, { migrationsFolder })
       return db
     })(),
-    (cause): DbError => ({ kind: "migration-failed", cause }),
+    (cause): DbError => {
+      // verifyProviderIdDropSafe already produced a typed DbError (thrown
+      // above to unwind out of the async IIFE) — propagate it verbatim
+      // rather than re-wrapping it as an opaque migration-failed, so the
+      // migration-refused remediation list survives to the caller.
+      if (
+        typeof cause === "object" &&
+        cause !== null &&
+        "kind" in cause &&
+        (cause.kind === "migration-refused" || cause.kind === "migration-failed")
+      ) {
+        return cause as DbError
+      }
+      return { kind: "migration-failed", cause }
+    },
   )
 }
+
+// Re-exported so a caller that wants to inspect why a boot refused (e.g. a
+// CLI diagnostic) can do so without depending on the module's internal path.
+export { verifyProviderIdDropSafe } from "./verify-provider-id-drop-safe.js"

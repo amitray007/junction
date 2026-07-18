@@ -105,6 +105,18 @@ vi.mock("@junction/core", async (importOriginal) => {
     getProvider: (id: string) =>
       id === DEVICE_CODE_PROVIDER_ID ? syntheticDeviceProvider : actual.getProvider(id),
     listProviders: () => [...actual.listProviders(), syntheticDeviceProvider],
+    // Increment 45 (Slice C) — `credential reconnect` now resolves its design
+    // via the MERGED (built-in + custom) designs set, not `getProvider`
+    // directly (mergeDesigns(customDesigns) — see resolve-credential-provider
+    // -id.ts / credential.ts's reconnectCommand). The synthetic device-code
+    // provider above needs to be visible through THIS path too, or reconnect
+    // can't find a design object to drive the flow — patch mergeDesigns the
+    // same way getProvider/listProviders are patched.
+    mergeDesigns: (custom: Parameters<typeof actual.mergeDesigns>[0]) => {
+      const merged = actual.mergeDesigns(custom)
+      merged.set(DEVICE_CODE_PROVIDER_ID, syntheticDeviceProvider)
+      return merged
+    },
   }
 })
 
@@ -919,7 +931,7 @@ describe("credential list — verified column (unit)", () => {
 // ---------------------------------------------------------------------------
 
 /** Upsert an oauth2-scheme openapi platform into the temp-home DB. */
-async function setupOAuthPlatform(platformId: string) {
+async function setupOAuthPlatform(platformId: string, oauthProviderId = platformId) {
   const dbResult = await getDatabase(getPaths())
   if (dbResult.isErr()) throw new Error(`DB error: ${dbResult.error.kind}`)
   const repos = createRepositories(dbResult.value)
@@ -931,6 +943,12 @@ async function setupOAuthPlatform(platformId: string) {
       spec: { from: "url" as const, url: "https://example.com/openapi.json" },
       auth: { scheme: "oauth2" as const },
     },
+    // Increment 45, Slice E — the design now lives EXCLUSIVELY on the
+    // platform (the credential's legacy oauthMeta.providerId fallback is
+    // gone). Default to the platformId itself, matching this file's
+    // long-standing convention (seedOAuthCredential's legacy providerId was
+    // always set to the platformId too).
+    oauthProviderId,
   })
   await repos.platforms.upsert(platform)
   return repos
@@ -954,8 +972,10 @@ async function seedOAuthCredential(
     profileName: "work",
     kind: "oauth2" as const,
     secretRef: "ref-access-1",
+    // Increment 45, Slice E — the design lives on the PLATFORM
+    // (setupOAuthPlatform defaults oauthProviderId to this same platformId),
+    // never a denormalized copy in oauthMeta.
     oauthMeta: {
-      providerId: platformId,
       refreshTokenRef: "ref-refresh-1",
       clientIdRef: "ref-clientid-1",
       clientSecretRef: "ref-clientsecret-1",
@@ -989,13 +1009,32 @@ describe("credential list — oauth2 state derivation (D3, unit)", () => {
 
   it("a connected oauth2 credential (no needsReauth, no near expiry) → oauthState: connected", async () => {
     await withTempHome(async () => {
-      await seedOAuthCredential("oauth-connected-plat", {
-        oauthMeta: {
-          providerId: "oauth-connected-plat",
-          needsReauth: false,
-          expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-        } as Credential["oauthMeta"],
-      })
+      // Increment 45, Slice E — resolveOAuthProviderId fails CLOSED on a
+      // platform.oauthProviderId that doesn't match a REAL catalog design
+      // (SECURITY, R1) — setupOAuthPlatform's default (oauthProviderId =
+      // platformId) only works for this assertion when the platformId is
+      // itself a real built-in id. Use "github" explicitly so this test's
+      // `providerId` assertion below exercises a genuine resolution, not a
+      // dangling reference.
+      const repos = await setupOAuthPlatform("oauth-connected-plat", "github")
+      await repos.credentials.create(
+        CredentialSchema.parse({
+          id: "oauth-connected-plat-cred-1",
+          name: "oauth-connected-plat-work",
+          platformId: "oauth-connected-plat",
+          profileName: "work",
+          kind: "oauth2" as const,
+          secretRef: "ref-access-1",
+          oauthMeta: {
+            refreshTokenRef: "ref-refresh-1",
+            clientIdRef: "ref-clientid-1",
+            clientSecretRef: "ref-clientsecret-1",
+            authMode: "authorization_code" as const,
+            needsReauth: false,
+            expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          },
+        }),
+      )
 
       const list = getCredentialSubCmd("list")
       const out = await captureStdout(() =>
@@ -1008,7 +1047,7 @@ describe("credential list — oauth2 state derivation (D3, unit)", () => {
       }>
       expect(parsed).toHaveLength(1)
       expect(parsed[0]?.oauthState).toBe("connected")
-      expect(parsed[0]?.providerId).toBe("oauth-connected-plat")
+      expect(parsed[0]?.providerId).toBe("github")
     })
   })
 
@@ -1343,7 +1382,7 @@ describe("credential reconnect (D2, unit)", () => {
   it("reconnect on a device-incapable provider (github-app) fails BEFORE persistOAuthTokens — proves it reads the credential's own oauthMeta.providerId, not a hardcoded one", async () => {
     await withTempHome(async () => {
       const githubAppCred = await seedOAuthCredential("github-app", {
-        oauthMeta: { providerId: "github-app", needsReauth: true } as Credential["oauthMeta"],
+        oauthMeta: { needsReauth: true } as Credential["oauthMeta"],
       })
 
       fakeStdin()
@@ -1377,7 +1416,6 @@ describe("credential reconnect (D2, unit)", () => {
       // identical engine shape / fixture.
       const cred = await seedOAuthCredential(DEVICE_CODE_PROVIDER_ID, {
         oauthMeta: {
-          providerId: DEVICE_CODE_PROVIDER_ID,
           needsReauth: true,
         } as Credential["oauthMeta"],
       })
@@ -1436,7 +1474,6 @@ describe("credential reconnect (D2, unit)", () => {
     await withTempHome(async () => {
       const cred = await seedOAuthCredential(DEVICE_CODE_PROVIDER_ID, {
         oauthMeta: {
-          providerId: DEVICE_CODE_PROVIDER_ID,
           needsReauth: true,
         } as Credential["oauthMeta"],
       })
@@ -1460,7 +1497,6 @@ describe("credential reconnect (D2, unit)", () => {
     await withTempHome(async () => {
       const cred = await seedOAuthCredential(DEVICE_CODE_PROVIDER_ID, {
         oauthMeta: {
-          providerId: DEVICE_CODE_PROVIDER_ID,
           needsReauth: true,
           clientIdRef: "ref-stored-cid",
           clientSecretRef: "ref-stored-csec",

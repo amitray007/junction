@@ -270,7 +270,6 @@ export function createCredentialsRepo(db: Db) {
         scopes?: string[]
         needsReauth?: boolean
         obtainedAt?: string
-        providerId?: string
         authMode?: OAuthMeta["authMode"]
         clientIdRef?: string
         clientSecretRef?: string
@@ -290,7 +289,6 @@ export function createCredentialsRepo(db: Db) {
         if (patch.scopes !== undefined) merged.scopes = patch.scopes
         if (patch.needsReauth !== undefined) merged.needsReauth = patch.needsReauth
         if (patch.obtainedAt !== undefined) merged.obtainedAt = patch.obtainedAt
-        if (patch.providerId !== undefined) merged.providerId = patch.providerId
         if (patch.authMode !== undefined) merged.authMode = patch.authMode
         if (patch.clientIdRef !== undefined) merged.clientIdRef = patch.clientIdRef
         if (patch.clientSecretRef !== undefined) merged.clientSecretRef = patch.clientSecretRef

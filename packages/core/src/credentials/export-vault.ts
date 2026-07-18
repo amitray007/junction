@@ -246,15 +246,15 @@ function resolveCredentials(
               oauthMeta: {
                 scopes: cred.oauthMeta.scopes,
                 expiresAt: cred.oauthMeta.expiresAt,
-                // Increment 44 — write-only-legacy, mirrors profileName's
-                // Phase 1 treatment (see CredentialSchema's doc-comment). No
-                // NEW code reads this for identity; it is kept solely as the
-                // instrumented fallback's (resolveOAuthProviderId) data
-                // source on re-import — see import-vault.ts's inline 0012-
-                // equivalent backfill, which is what lets the fallback's
-                // "zero hits" drop gate eventually converge even for a
-                // restored vault.
-                providerId: cred.oauthMeta.providerId,
+                // Increment 45, Slice E — `providerId` no longer exists on
+                // the LIVE credential's OAuthMeta (dropped by migration
+                // 0013); nothing to forward here anymore. The archive's
+                // ManifestOAuthMetaSchema.providerId field stays (Zod
+                // `.optional()`) purely for BACKWARD READ compat — a pre-45
+                // archive that still carries it imports fine (import-vault.ts
+                // reads it only for the platform backfill, never writes it
+                // onto the new credential). A NEWLY exported archive simply
+                // omits the field.
                 authMode: cred.oauthMeta.authMode,
                 needsReauth: cred.oauthMeta.needsReauth,
                 obtainedAt: cred.oauthMeta.obtainedAt,

@@ -51,8 +51,10 @@ const BUILD_KIND_SUFFIXES = ["mcp", "openapi", "graphql", "http", "cli"] as cons
 /**
  * Resolve ONE connection's app id. Attribution order (NO fuzzy/substring
  * matching — that rots into false positives over time):
- *   1. authoritative: `oauthProviderId` (from `oauthMeta.providerId`), if
- *      present → the app whose `auth[]` contains {mode:"oauth2", providerId}.
+ *   1. authoritative: `oauthProviderId` (resolved via resolveOAuthProviderId —
+ *      increment 45, Slice E: sourced from the bound platform's own
+ *      `oauthProviderId`, never a credential-side copy), if present → the
+ *      app whose `auth[]` contains {mode:"oauth2", providerId}.
  *   2. exact, case-insensitive match of platform.id against AppDefinition.id.
  *   3. exact, case-insensitive match of platform.id against AppDefinition.aliases[].
  *   4. (NEW, 30.12) if platformId ends in `-<kind>` for kind in

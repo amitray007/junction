@@ -15,10 +15,13 @@ import {
   getCatalogEntry,
   getPaths,
   getProvider,
+  loadCustomDesigns,
+  mergeDesigns,
   OAUTH_CALLBACK_URI,
   type Platform,
   type PlatformInput,
   planConnect,
+  resolveOAuthProviderId,
 } from "@junction/core"
 import {
   assemblePlatform,
@@ -223,11 +226,39 @@ export async function startReconnect(input: StartReconnectInput): Promise<StartR
   if (credResult.isErr()) return { ok: false, error: "Credential not found" }
   const credential = credResult.value
 
-  const providerId = credential.oauthMeta?.providerId
-  if (providerId === undefined) {
+  // Increment 45 (Slice C/E) — source the reconnect-target providerId via the
+  // shared resolver (platform's design — the legacy `credential.oauthMeta
+  // .providerId` fallback is gone as of Slice E), not
+  // `credential.oauthMeta.providerId` directly — mirrors the CLI's
+  // `credential reconnect` fix so web and CLI reconnect can never target a
+  // different design for the same credential. A resolvable providerId must
+  // still map to a REAL design in the merged (built-in + custom) set to
+  // actually drive the flow — on failure, report the same honest errors.
+  const paths = getPaths()
+  const designsResult = await loadCustomDesigns(paths)
+  if (designsResult.isErr()) {
+    return {
+      ok: false,
+      error: `Custom OAuth designs store failed to load (${designsResult.error.kind})`,
+    }
+  }
+  const designs = mergeDesigns(designsResult.value)
+  let platform: Platform | null = null
+  if (credential.platformId !== null) {
+    const platformResult = await repos.platforms.get(credential.platformId)
+    if (platformResult.isOk()) platform = platformResult.value
+  }
+  const resolved = resolveOAuthProviderId({
+    credentialId: credential.id,
+    context: "group",
+    platform,
+    designs,
+  })
+  if (!resolved.ok) {
     return { ok: false, error: "Credential has no OAuth provider on file" }
   }
-  const provider = getProvider(providerId)
+  const providerId = resolved.providerId
+  const provider = designs.get(providerId)
   if (provider === undefined) return { ok: false, error: "Unknown OAuth provider" }
 
   // Reconnect REUSES the stored client_id/secret by default — resolve them

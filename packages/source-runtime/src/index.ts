@@ -66,6 +66,11 @@ export {
 // The arctic-backed RefreshTokenFn (increment 29, slice B) — the injected
 // provider refresh HTTP call core's refreshIfExpired orchestrates.
 export { oauthRefreshFn } from "./oauth-refresh-fn.js"
+// OIDC discovery — the fetch half (increment 45, Slice B). Fetches
+// `<issuer>/.well-known/openid-configuration` and shapes it into a partial
+// CustomOAuthDesign via core's discoveredDesignFromDoc.
+export type { OidcDiscoveryFetchError } from "./oidc-discovery-fetch.js"
+export { fetchOidcDiscovery } from "./oidc-discovery-fetch.js"
 export { refreshIfExpiredSingleFlight } from "./refresh-singleflight.js"
 export type { ResolveCredentialError } from "./resolve-credential.js"
 export { resolveCredentialSecret } from "./resolve-credential.js"

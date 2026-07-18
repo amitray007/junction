@@ -191,7 +191,6 @@ describe("data.server", () => {
       kind: "oauth2",
       secretRef: "FAKE_ACCESS_REF_NEVER_EXPOSE",
       oauthMeta: {
-        providerId: "github",
         refreshTokenRef: "FAKE_REFRESH_REF_NEVER_EXPOSE",
         clientIdRef: "FAKE_CLIENT_ID_REF",
         clientSecretRef: "FAKE_CLIENT_SECRET_REF_NEVER_EXPOSE",
@@ -206,8 +205,10 @@ describe("data.server", () => {
     const [cred] = creds
     if (!cred) throw new Error("no credential in result")
 
+    // Increment 45, Slice E — `providerId` dropped from oauthState (never
+    // rendered anywhere; its sole purpose was feeding the now-removed
+    // grouping fallback).
     expect(cred.oauthState).toEqual({
-      providerId: "github",
       expiresAt: "2026-01-01T00:00:00.000Z",
       needsReauth: false,
       // hasRefreshToken is a BOOLEAN derived from refreshTokenRef's presence —
@@ -216,9 +217,9 @@ describe("data.server", () => {
     })
 
     // SECURITY: no ref VALUES anywhere in the serialized credential — only the
-    // fields explicitly whitelisted onto oauthState (providerId/expiresAt/
-    // needsReauth/hasRefreshToken-as-a-bool). The FAKE_REFRESH_REF value below
-    // must be absent even though hasRefreshToken:true is derived from it.
+    // fields explicitly whitelisted onto oauthState (expiresAt/needsReauth/
+    // hasRefreshToken-as-a-bool). The FAKE_REFRESH_REF value below must be
+    // absent even though hasRefreshToken:true is derived from it.
     const serialized = JSON.stringify(cred)
     expect(serialized).not.toContain("FAKE_ACCESS_REF_NEVER_EXPOSE")
     expect(serialized).not.toContain("FAKE_REFRESH_REF_NEVER_EXPOSE")
@@ -380,7 +381,13 @@ describe("data.server", () => {
     const repos = createRepositories(dbResult.value)
 
     const platformId = newPlatformId()
-    await repos.platforms.create({ id: platformId, kind: "mcp", displayName: "My GitHub MCP" })
+    // Increment 45, Slice E — the design lives on the PLATFORM only.
+    await repos.platforms.create({
+      id: platformId,
+      kind: "mcp",
+      displayName: "My GitHub MCP",
+      oauthProviderId: "github",
+    })
     await repos.credentials.create({
       id: newCredentialId(),
       name: "work-5",
@@ -389,7 +396,6 @@ describe("data.server", () => {
       kind: "oauth2",
       secretRef: "FAKE_ACCESS_REF_NEVER_EXPOSE",
       oauthMeta: {
-        providerId: "github",
         expiresAt: "2026-01-01T00:00:00.000Z",
         needsReauth: false,
         scopes: ["repo"],
@@ -426,22 +432,20 @@ describe("data.server", () => {
   })
 
   // ---------------------------------------------------------------------------
-  // R3 grouping re-source (increment 44) — grouping must source the OAuth
-  // design through the SAME resolveOAuthProviderId refresh uses. The platform's
-  // own oauthProviderId is authoritative; the credential's legacy copy is only
-  // the instrumented fallback. These tests prove the resolver is actually in
-  // the path (a platform-set design WINS over a diverging credential copy) and
-  // that the fallback fires + logs when the platform has no design.
+  // R3 grouping re-source (increment 44; narrowed increment 45 Slice E) —
+  // grouping must source the OAuth design through the SAME
+  // resolveOAuthProviderId refresh uses. The platform's own oauthProviderId
+  // is the ONLY source (the credential's legacy copy no longer exists at
+  // all). These tests prove the resolver is actually in the path (a
+  // platform-set design groups correctly) and that a platform with no design
+  // set lands the connection in "other", never guessing.
   // ---------------------------------------------------------------------------
 
-  it("readApps R3: the PLATFORM's oauthProviderId wins over the credential's legacy copy", async () => {
+  it("readApps R3: the PLATFORM's oauthProviderId is the ONLY source grouping consults", async () => {
     const dbResult = await getDatabase(getPaths())
     if (dbResult.isErr()) throw new Error(String(dbResult.error))
     const repos = createRepositories(dbResult.value)
 
-    // Platform's design says "github"; the credential's LEGACY copy says
-    // "google". If grouping read the legacy copy directly (the pre-44 bug) this
-    // would land under google; sourcing via the resolver lands it under github.
     const platformId = newPlatformId()
     await repos.platforms.create({
       id: platformId,
@@ -457,7 +461,6 @@ describe("data.server", () => {
       kind: "oauth2",
       secretRef: "FAKE_ACCESS_REF_NEVER_EXPOSE",
       oauthMeta: {
-        providerId: "google", // legacy copy DISAGREES with the platform
         expiresAt: "2026-01-01T00:00:00.000Z",
         needsReauth: false,
         scopes: ["repo"],
@@ -466,19 +469,16 @@ describe("data.server", () => {
 
     const { groups } = await readApps()
     expect(groups.find((g) => g.appId === "github")?.connections).toHaveLength(1)
-    // NOT grouped under google (the stale legacy copy) — the resolver used the
-    // platform's authoritative design.
-    expect(groups.find((g) => g.appId === "google")).toBeUndefined()
   })
 
-  it("readApps R3: falls back to the credential's legacy providerId + logs when the platform has no design", async () => {
+  it("readApps R3 (Slice E): a platform with NO oauthProviderId set → the connection lands in 'other', no fallback exists to save it", async () => {
     const dbResult = await getDatabase(getPaths())
     if (dbResult.isErr()) throw new Error(String(dbResult.error))
     const repos = createRepositories(dbResult.value)
 
-    // Platform has NO oauthProviderId — the resolver must fall back to the
-    // credential's legacy oauthMeta.providerId ("github") AND emit one
-    // structured log line (context "group").
+    // Platform has NO oauthProviderId — increment 45 Slice E removed the
+    // legacy fallback that used to rescue this case, so resolution now
+    // degrades to "no hint" and the connection falls through to "other".
     const platformId = newPlatformId()
     await repos.platforms.create({ id: platformId, kind: "mcp", displayName: "Legacy GitHub" })
     await repos.credentials.create({
@@ -489,33 +489,16 @@ describe("data.server", () => {
       kind: "oauth2",
       secretRef: "FAKE_ACCESS_REF_NEVER_EXPOSE",
       oauthMeta: {
-        providerId: "github",
         expiresAt: "2026-01-01T00:00:00.000Z",
         needsReauth: false,
         scopes: ["repo"],
       },
     })
 
-    // The grouping fallback logs to stderr in the SAME string format as the
-    // refresh path (resolve-provider.ts) — both feed the one "zero fallback
-    // hits" drop gate, so the evidence must be uniformly greppable.
-    const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true)
-    try {
-      const { groups } = await readApps()
-      // Still grouped under github via the fallback.
-      expect(groups.find((g) => g.appId === "github")?.connections).toHaveLength(1)
-      // The fallback log fired — the refresh-verbatim phrase, ids only, context "group".
-      const line = stderrSpy.mock.calls
-        .map((c) => String(c[0]))
-        .find((s) => s.includes("fell back to the credential's legacy providerId"))
-      expect(line).toBeDefined()
-      expect(line).toContain("context=group")
-      expect(line).toContain("reason=unset")
-      // NEVER a token/secret in the log — ids only.
-      expect(line).not.toContain("FAKE_ACCESS_REF_NEVER_EXPOSE")
-    } finally {
-      stderrSpy.mockRestore()
-    }
+    const { groups } = await readApps()
+    expect(groups.find((g) => g.appId === "github")).toBeUndefined()
+    const other = groups.find((g) => g.appId === "other")
+    expect(other?.connections.some((c) => c.platformId === String(platformId))).toBe(true)
   })
 
   // ---------------------------------------------------------------------------
@@ -572,6 +555,44 @@ describe("data.server", () => {
     expect(google?.referencedByPlatformIds).toEqual([])
   })
 
+  it("readOAuthDesigns (increment 45, Slice D): built-ins are isCustom:false; a custom design added via addCustomDesign shows isCustom:true and its own referencedByPlatformIds", async () => {
+    const { addCustomDesign } = await import("@junction/core")
+    const paths = getPaths()
+
+    await addCustomDesign(paths, {
+      id: "custom:acme-oauth",
+      displayName: "Acme OAuth",
+      authorizationUrl: "https://acme.example.com/oauth/authorize",
+      tokenUrl: "https://acme.example.com/oauth/token",
+      scopeSeparator: " ",
+      pkce: "S256",
+      supportsRefresh: true,
+      expiryStrategy: "expires_in",
+      redirectMode: "loopback-fixed",
+      registrationHint: { redirectUri: "", scopes: "", docsUrl: "" },
+    })
+
+    const dbResult = await getDatabase(paths)
+    if (dbResult.isErr()) throw new Error(String(dbResult.error))
+    const repos = createRepositories(dbResult.value)
+    const platformId = newPlatformId()
+    await repos.platforms.create({
+      id: platformId,
+      kind: "mcp",
+      displayName: "Acme via custom design",
+      oauthProviderId: "custom:acme-oauth",
+    })
+
+    const designs = await readOAuthDesigns()
+    const github = designs.find((d) => d.id === "github")
+    expect(github?.isCustom).toBe(false)
+
+    const custom = designs.find((d) => d.id === "custom:acme-oauth")
+    expect(custom).toBeDefined()
+    expect(custom?.isCustom).toBe(true)
+    expect(custom?.referencedByPlatformIds).toEqual([String(platformId)])
+  })
+
   it("readApps: metadata only — no secret or secretRef anywhere in the serialized result", async () => {
     const dbResult = await getDatabase(getPaths())
     if (dbResult.isErr()) throw new Error(String(dbResult.error))
@@ -589,7 +610,6 @@ describe("data.server", () => {
       kind: "oauth2",
       secretRef: "FAKE_ACCESS_REF_NEVER_EXPOSE",
       oauthMeta: {
-        providerId: "github",
         refreshTokenRef: "FAKE_REFRESH_REF_NEVER_EXPOSE",
         clientIdRef: "FAKE_CLIENT_ID_REF",
         clientSecretRef: "FAKE_CLIENT_SECRET_REF_NEVER_EXPOSE",
@@ -633,7 +653,15 @@ describe("data.server", () => {
     const repos = createRepositories(dbResult.value)
 
     const platformId = newPlatformId()
-    await repos.platforms.create({ id: platformId, kind: "mcp", displayName: "GitHub" })
+    // Increment 45, Slice E — grouping now sources the design EXCLUSIVELY
+    // from the platform's own oauthProviderId (a random ULID platform id
+    // never matches "github" by id/alias on its own).
+    await repos.platforms.create({
+      id: platformId,
+      kind: "mcp",
+      displayName: "GitHub",
+      oauthProviderId: "github",
+    })
     await repos.credentials.create({
       id: newCredentialId(),
       name: "work-8",
@@ -641,7 +669,7 @@ describe("data.server", () => {
       profileName: "work",
       kind: "oauth2",
       secretRef: "REF1",
-      oauthMeta: { providerId: "github", needsReauth: false },
+      oauthMeta: { needsReauth: false },
     })
     await repos.credentials.create({
       id: newCredentialId(),
@@ -650,7 +678,7 @@ describe("data.server", () => {
       profileName: "personal",
       kind: "oauth2",
       secretRef: "REF2",
-      oauthMeta: { providerId: "github", needsReauth: false },
+      oauthMeta: { needsReauth: false },
     })
 
     const { groups } = await readApps()

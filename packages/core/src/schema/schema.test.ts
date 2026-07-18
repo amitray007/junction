@@ -383,7 +383,6 @@ describe("security: no plaintext secret survives Credential parse", () => {
       scopes: ["repo", "read:user"],
       expiresAt: "2026-01-01T00:00:00Z",
       refreshTokenRef: "ref_refresh_01",
-      providerId: "github",
       authMode: "authorization_code" as const,
       clientIdRef: "ref_client_id_01",
       clientSecretRef: "ref_client_secret_01",
@@ -396,13 +395,21 @@ describe("security: no plaintext secret survives Credential parse", () => {
     expect(result.data).toEqual(full)
   })
 
-  it("OAuthMetaSchema: unknown keys are stripped", () => {
+  // Increment 45, Slice E — `providerId` is DROPPED from OAuthMetaSchema (the
+  // catalog provider key now lives EXCLUSIVELY on `Platform.oauthProviderId`;
+  // see resolve-provider-id.ts). A blob still carrying it (a pre-45 DB row
+  // read once more before migration 0013 runs, or a hand-crafted object) must
+  // be silently stripped like any other unknown key — this is the SAME
+  // "unknown keys are stripped" behavior, just now exercised BY the field
+  // this schema used to declare.
+  it("OAuthMetaSchema: a stale providerId key (pre-45 shape) is stripped like any other unknown key", () => {
     const result = OAuthMetaSchema.safeParse({
       providerId: "google",
       someFutureField: "unexpected",
     })
     expect(result.success).toBe(true)
     if (!result.success) return
+    expect(Object.hasOwn(result.data, "providerId")).toBe(false)
     expect(Object.hasOwn(result.data, "someFutureField")).toBe(false)
   })
 

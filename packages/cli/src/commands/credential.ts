@@ -13,8 +13,13 @@ import {
   compatibleCredentialKinds,
   createCredentialStore,
   getPaths,
+  loadCustomDesigns,
+  mergeDesigns,
+  type Platform,
   removeCredential,
   renameCredential,
+  resolveCredentialProviderId,
+  resolveOAuthProviderId,
   rotateCredential,
 } from "@junction/core"
 import type { VerifyOutcome } from "@junction/source-runtime"
@@ -31,7 +36,7 @@ import {
   reportIdRemoved,
   reportInUseError,
 } from "../format.js"
-import { CONNECT_SHARED_ARGS, resolveProviderOrError, runConnectFlow } from "./connect.js"
+import { CONNECT_SHARED_ARGS, runConnectFlow } from "./connect.js"
 
 // ---------------------------------------------------------------------------
 // Lost-secret handling — shared between CLI `credential test` and web's
@@ -240,9 +245,19 @@ const addCommand = defineCommand({
     let persisted = true
     if (args.verify) {
       const paths = getPaths()
-      const outcomeResult = await verifyCredential(platform, secret, paths, {
-        oauthProviderId: credential.oauthMeta?.providerId,
+      // Increment 45 (Slice C) — source the userinfo-probe providerId hint via
+      // the shared resolver (resolveCredentialProviderId), not
+      // `credential.oauthMeta.providerId` directly. Degrades to `undefined`
+      // on a dangling/no-source resolution — verifyCredential treats that as
+      // "no OAuth userinfo hint" and falls through to the normal per-kind
+      // verify; --verify is never failed outright over an unresolvable hint.
+      const oauthProviderId = await resolveCredentialProviderId({
+        repos,
+        paths,
+        credential,
+        context: "group",
       })
+      const outcomeResult = await verifyCredential(platform, secret, paths, { oauthProviderId })
       // verifyCredential's contract is ALWAYS Ok — but stay defensive rather
       // than assume, since a future change could add an Err path.
       if (outcomeResult.isOk()) {
@@ -414,6 +429,7 @@ const listCommand = defineCommand({
       reportDbError(platformResult.error, json)
       return
     }
+    const platform = platformResult.value
 
     const credResult = await repos.credentials.forPlatform(
       args.platform as Parameters<typeof repos.credentials.forPlatform>[0],
@@ -423,25 +439,52 @@ const listCommand = defineCommand({
       return
     }
 
+    // Increment 45 (Slice C) — every credential in this list shares the SAME
+    // platform (already fetched above), so load+merge custom designs ONCE for
+    // the whole listing rather than per-row (the resolveCredentialProviderId
+    // helper does load+fetch-platform PER CALL, which would be wasteful in a
+    // loop over rows that all resolve against one already-known platform —
+    // call the lower-level resolver directly instead, same design set reused
+    // across every row). A designs-store load error degrades to built-ins-only
+    // (display is non-authoritative — never fail a listing over it).
+    const paths = getPaths()
+    const designsResult = await loadCustomDesigns(paths)
+    if (designsResult.isErr()) {
+      consola.warn(
+        `warning: custom OAuth designs store failed to load (${designsResult.error.kind}) — provider ids degraded to built-in designs only`,
+      )
+    }
+    const designs = mergeDesigns(designsResult.isOk() ? designsResult.value : [])
+
     // Map to metadata-only objects — NEVER include secret or secretRef.
     // lastVerifyResult/lastVerifiedAt are absent (never verified) or a
     // persisted event from `credential add --verify` / `credential test`.
-    // oauthState/expiresAt/providerId are derived from oauthMeta — metadata
-    // only, never the refs' values (D3).
+    // oauthState/expiresAt are derived from oauthMeta — metadata only, never
+    // the refs' values (D3). providerId is sourced via the shared resolver
+    // (the platform's design — increment 45, Slice E: the legacy
+    // oauthMeta.providerId fallback is gone) — never read directly (Slice C).
     const now = Date.now()
     const creds = credResult.value as Credential[]
-    const metaList = creds.map((c) => ({
-      id: c.id,
-      platformId: c.platformId,
-      account: c.profileName,
-      kind: c.kind,
-      lastVerifyResult: c.lastVerifyResult ?? null,
-      lastVerifiedAt:
-        c.lastVerifiedAt !== undefined ? new Date(c.lastVerifiedAt).toISOString() : null,
-      oauthState: deriveOAuthState(c, now),
-      expiresAt: c.oauthMeta?.expiresAt ?? null,
-      providerId: c.oauthMeta?.providerId ?? null,
-    }))
+    const metaList = creds.map((c) => {
+      const resolved = resolveOAuthProviderId({
+        credentialId: c.id,
+        context: "group",
+        platform,
+        designs,
+      })
+      return {
+        id: c.id,
+        platformId: c.platformId,
+        account: c.profileName,
+        kind: c.kind,
+        lastVerifyResult: c.lastVerifyResult ?? null,
+        lastVerifiedAt:
+          c.lastVerifiedAt !== undefined ? new Date(c.lastVerifiedAt).toISOString() : null,
+        oauthState: deriveOAuthState(c, now),
+        expiresAt: c.oauthMeta?.expiresAt ?? null,
+        providerId: resolved.ok ? resolved.providerId : null,
+      }
+    })
 
     if (json) {
       process.stdout.write(`${JSON.stringify(metaList)}\n`)
@@ -552,8 +595,18 @@ const testCommand = defineCommand({
     if (secret === null) {
       outcome = { status: "unreachable", detail: STORED_SECRET_MISSING_DETAIL }
     } else {
+      // Increment 45 (Slice C) — source the userinfo-probe providerId hint via
+      // the shared resolver, not `credential.oauthMeta.providerId` directly.
+      // Degrades to `undefined` on a dangling/no-source resolution —
+      // verifyCredential falls through to the normal per-kind verify.
+      const oauthProviderId = await resolveCredentialProviderId({
+        repos,
+        paths: getPaths(),
+        credential,
+        context: "group",
+      })
       const outcomeResult = await verifyCredential(platform, secret, getPaths(), {
-        oauthProviderId: credential.oauthMeta?.providerId,
+        oauthProviderId,
       })
       if (outcomeResult.isErr()) {
         // verifyCredential's contract is ALWAYS Ok; defensive fallback only.
@@ -826,17 +879,55 @@ const reconnectCommand = defineCommand({
       )
       return
     }
-    const providerId = existing.oauthMeta?.providerId
-    if (!providerId) {
+
+    // Increment 45 (Slice C) — source the reconnect-target providerId via the
+    // shared resolver, not `existing.oauthMeta.providerId` directly, so
+    // reconnect can never target a DIFFERENT design than refresh/grouping
+    // would for this same credential. Unlike the verify-hint/display sites,
+    // reconnect DOES need a real design object to drive the flow — so on a
+    // `{ok:false}` (dangling reference / no source) it reports the SAME
+    // "no recorded OAuth provider" error rather than silently degrading (a
+    // reconnect with no resolvable design has nothing to reconnect against).
+    const paths = getPaths()
+    const designsResult = await loadCustomDesigns(paths)
+    if (designsResult.isErr()) {
+      reportError(
+        json,
+        `custom OAuth designs store failed to load (${designsResult.error.kind}) — cannot reconnect`,
+      )
+      return
+    }
+    const designs = mergeDesigns(designsResult.value)
+    let platform: Platform | null = null
+    if (existing.platformId !== null) {
+      const platformResult = await repos.platforms.get(existing.platformId)
+      if (platformResult.isOk()) platform = platformResult.value
+    }
+    const resolved = resolveOAuthProviderId({
+      credentialId: existing.id,
+      context: "group",
+      platform,
+      designs,
+    })
+    if (!resolved.ok) {
       reportError(
         json,
         `credential "${credentialId}" has no recorded OAuth provider — cannot reconnect`,
       )
       return
     }
-
-    const provider = resolveProviderOrError(providerId, json)
-    if (provider === null) return
+    const provider = designs.get(resolved.providerId)
+    if (provider === undefined) {
+      // Defensive — resolveOAuthProviderId only returns an id present in
+      // `designs` (or the legacy fallback, which the merged set may not
+      // contain if the design was since deleted). Same honest error as an
+      // unresolvable provider.
+      reportError(
+        json,
+        `credential "${credentialId}"'s OAuth provider "${resolved.providerId}" is not a known design — cannot reconnect`,
+      )
+      return
+    }
 
     const ctx = await openDbAndStore(json)
     if (!ctx) return

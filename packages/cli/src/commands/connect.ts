@@ -63,12 +63,22 @@ export interface ConnectedCredentialMeta {
   providerId: string
 }
 
-export function credentialMeta(cred: Credential): ConnectedCredentialMeta {
+/**
+ * Increment 45 (Slice C) — `providerId` is now the design the connect flow
+ * JUST used (`provider.id` — already in hand and authoritative at every call
+ * site, see `runConnectFlow` below), not a re-read of the persisted
+ * credential's legacy `oauthMeta.providerId`. This is a "what did we just
+ * connect with" success DTO, not a "what does this credential currently
+ * resolve to" query — sourcing it from the provider already used avoids a
+ * redundant load-designs/fetch-platform round trip for a value the caller
+ * already knows, and can never disagree with what was actually persisted.
+ */
+export function credentialMeta(cred: Credential, providerId: string): ConnectedCredentialMeta {
   return {
     id: String(cred.id),
     platformId: String(cred.platformId),
     account: cred.profileName,
-    providerId: cred.oauthMeta?.providerId ?? "",
+    providerId,
   }
 }
 
@@ -573,7 +583,9 @@ export async function runConnectFlow(opts: {
   }
   const cred = persistResult.value
   if (json) {
-    process.stdout.write(`${JSON.stringify({ ok: true, credential: credentialMeta(cred) })}\n`)
+    process.stdout.write(
+      `${JSON.stringify({ ok: true, credential: credentialMeta(cred, provider.id) })}\n`,
+    )
   } else if (target.mode === "create") {
     consola.success(
       `Connected — platform: ${target.platformId}, account: ${target.account}, id: ${String(cred.id)}`,

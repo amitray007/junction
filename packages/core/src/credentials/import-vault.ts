@@ -387,7 +387,7 @@ async function runImport(
   // every old-archive import would permanently pin the resolver's fallback
   // above zero and the future cleanup increment's "zero fallback hits" drop
   // gate could never fire (see docs/futures/revisit-when.md).
-  await backfillPlatformOAuthProviderId(manifest.platforms, repos)
+  await backfillPlatformOAuthProviderId(manifest.platforms, manifest.credentials, repos)
 
   // ---- 3. profiles LAST (idMap is complete) ----
   if (includeProfiles && manifest.profiles !== undefined) {
@@ -452,12 +452,11 @@ async function runImport(
 }
 
 /**
- * The inline import-time equivalent of migration 0012's backfill (increment
- * 44, R2) — re-derived against LIVE repos (not raw SQL) so it sees the FULL
- * post-import picture: pre-existing DB rows AND everything this import just
- * wrote. Same three rules as 0012, restated here because they're safety-
- * critical and this is a SECOND migration surface (data-migration review
- * scrutinizes this the same as 0012's SQL):
+ * The inline import-time equivalent of migration 0012/0013's backfill
+ * (increment 44, R2; re-sourced increment 45, Slice E). Same three rules as
+ * 0012, restated here because they're safety-critical and this is a SECOND
+ * migration surface (data-migration review scrutinizes this the same as
+ * 0012's SQL):
  *   - FILL-ONLY-IF-UNSET: a platform that already has `oauthProviderId` set
  *     (from the manifest's own platform row, or a pre-existing DB row) is
  *     left completely alone — this function never overwrites.
@@ -465,15 +464,44 @@ async function runImport(
  *     `oauthMeta.providerId`, the field is left UNSET — never guessed.
  *   - NON-DESTRUCTIVE: never touches any credential's `oauthMeta` — only
  *     ever upserts the platform row's `oauthProviderId`.
+ *
+ * SOURCE CHANGED (increment 45, Slice E): the LIVE credential's
+ * `oauthMeta.providerId` no longer exists (dropped from OAuthMetaSchema) —
+ * there is nothing to read off `repos.credentials.forPlatform(...)` rows
+ * anymore. The archive's OWN `ManifestOAuthMetaSchema.providerId` (a
+ * SEPARATE, still-`providerId`-carrying schema kept for exactly this back-
+ * compat purpose — see vault-manifest.ts) is the source instead: this
+ * function now scans `manifest.credentials` directly (grouped by
+ * platformId), never a live DB read of credential rows. This is what lets a
+ * pre-45 archive (whose manifest entries still carry `oauthMeta.providerId`)
+ * continue converging the imported platform's `oauthProviderId` even though
+ * the field is gone from the live schema — the archive is the ONLY place
+ * that legacy copy still exists.
+ *
  * Best-effort per platform: a failure to read/write one platform's backfill
  * is swallowed (never aborts the import) — this is a convenience backfill on
- * top of an already-successful import, not a correctness-required write; the
- * resolver's instrumented fallback keeps refresh working either way.
+ * top of an already-successful import, not a correctness-required write; a
+ * credential whose platform can't be backfilled simply needs a manual
+ * `oauth-design`/platform-edit bind (or a reconnect) to refresh again.
  */
 async function backfillPlatformOAuthProviderId(
   manifestPlatforms: readonly Platform[],
-  repos: Pick<Repositories, "credentials" | "platforms">,
+  manifestCredentials: readonly ManifestCredential[],
+  repos: Pick<Repositories, "platforms">,
 ): Promise<void> {
+  // Group the ARCHIVE's legacy providerId copies by platformId once, up
+  // front — O(platforms + credentials) instead of a per-platform re-scan.
+  const providerIdsByPlatform = new Map<string, Set<string>>()
+  for (const mc of manifestCredentials) {
+    if (mc.kind !== "oauth2") continue
+    if (mc.platformId === undefined) continue
+    const legacyProviderId = mc.oauthMeta?.providerId
+    if (legacyProviderId === undefined) continue
+    const set = providerIdsByPlatform.get(mc.platformId) ?? new Set<string>()
+    set.add(legacyProviderId)
+    providerIdsByPlatform.set(mc.platformId, set)
+  }
+
   for (const manifestPlatform of manifestPlatforms) {
     const currentResult = await repos.platforms.get(manifestPlatform.id)
     if (currentResult.isErr()) continue // platform not actually present — nothing to backfill
@@ -484,20 +512,12 @@ async function backfillPlatformOAuthProviderId(
     // backfill) is never touched.
     if (current.oauthProviderId !== undefined) continue
 
-    const boundResult = await repos.credentials.forPlatform(current.id)
-    if (boundResult.isErr()) continue
+    const providerIds = providerIdsByPlatform.get(current.id)
+    if (providerIds === undefined) continue
 
-    const providerIds = new Set<string>()
-    for (const cred of boundResult.value) {
-      if (cred.kind !== "oauth2") continue
-      const providerId = cred.oauthMeta?.providerId
-      if (providerId === undefined) continue
-      providerIds.add(providerId)
-    }
-
-    // Conflict rule: exactly one distinct providerId among bound oauth2
-    // credentials → backfill; zero (no oauth2 creds, or none carry a
-    // providerId) or MORE THAN ONE (disagreement) → leave unset.
+    // Conflict rule: exactly one distinct providerId among the archive's
+    // bound oauth2 credentials → backfill; zero or MORE THAN ONE
+    // (disagreement) → leave unset.
     if (providerIds.size !== 1) continue
     const [onlyProviderId] = providerIds
     if (onlyProviderId === undefined) continue // unreachable (size===1 guards this), narrows the type
@@ -760,7 +780,12 @@ function buildCandidateForValidation(
       refreshTokenRef: mc.refreshToken !== undefined ? newCredentialId() : undefined,
       clientIdRef: mc.clientId !== undefined ? newCredentialId() : undefined,
       clientSecretRef: mc.clientSecret !== undefined ? newCredentialId() : undefined,
-      providerId: mc.oauthMeta?.providerId,
+      // Increment 45, Slice E — `providerId` no longer exists on
+      // OAuthMetaSchema (dropped from the credential; the archive's OWN
+      // ManifestOAuthMetaSchema.providerId is unaffected — see vault-
+      // manifest.ts). `mc.oauthMeta?.providerId` is read ONLY for the
+      // platform backfill (backfillPlatformOAuthProviderId, below), never
+      // written onto the imported credential itself.
       authMode: mc.oauthMeta?.authMode,
       scopes: mc.oauthMeta?.scopes,
       expiresAt: mc.oauthMeta?.expiresAt,
@@ -1099,7 +1124,9 @@ async function addOAuthImportedCredential(
       refreshTokenRef,
       clientIdRef,
       clientSecretRef,
-      providerId: mc.oauthMeta?.providerId,
+      // Increment 45, Slice E — `providerId` no longer exists on
+      // OAuthMetaSchema; see the identical note in buildCandidateForValidation
+      // above. The archive's copy still feeds backfillPlatformOAuthProviderId.
       authMode: mc.oauthMeta?.authMode,
       scopes: mc.oauthMeta?.scopes,
       expiresAt: mc.oauthMeta?.expiresAt,

@@ -6,9 +6,10 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { errAsync } from "neverthrow"
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import { getDatabase } from "../db/index.js"
 import { newPlatformId } from "../ids/index.js"
+import { mergeDesigns } from "../oauth/catalog.js"
 import { refreshIfExpired } from "../oauth/refresh.js"
 import { resolveOAuthProviderId } from "../oauth/resolve-provider-id.js"
 import { ensureHome, getPaths } from "../paths/index.js"
@@ -75,6 +76,11 @@ async function makeHome(prefix: string) {
 }
 
 type Fixture = Awaited<ReturnType<typeof makeHome>>
+
+// increment 45 (D2) — resolveOAuthProviderId/refreshIfExpired now take the
+// merged design lookup as data. Every test below exercises only built-in ids
+// (github/google), so an empty custom list is enough.
+const BUILT_INS_ONLY = mergeDesigns([])
 
 describe("importVault", () => {
   let src: Fixture
@@ -211,7 +217,6 @@ describe("importVault", () => {
           kind: "oauth2",
           secretRef: "ref-access-rt",
           oauthMeta: {
-            providerId: "github",
             authMode: "authorization_code",
             refreshTokenRef: "ref-refresh-rt",
             clientIdRef: "ref-clientid-rt",
@@ -284,7 +289,6 @@ describe("importVault", () => {
             "CLIENT_SECRET_RT",
           )
         }
-        expect(dstOauth.oauthMeta?.providerId).toBe("github")
         expect(dstOauth.oauthMeta?.scopes).toEqual(["repo", "read:user"])
       }
 
@@ -373,7 +377,6 @@ describe("importVault", () => {
           kind: "oauth2",
           secretRef: "ref-access-vs",
           oauthMeta: {
-            providerId: "github",
             authMode: "authorization_code",
             refreshTokenRef: "ref-refresh-vs",
             needsReauth: false,
@@ -1390,7 +1393,6 @@ describe("importVault", () => {
             kind: "oauth2",
             secretRef: "ref-access-comp",
             oauthMeta: {
-              providerId: "github",
               authMode: "authorization_code",
               needsReauth: false,
             },
@@ -2004,51 +2006,48 @@ describe("importVault", () => {
 
     describe("inline oauth_provider_id backfill (increment 44)", () => {
       it("OLD-format archive (credential carries providerId, platform doesn't) → the imported platform GAINS oauthProviderId; refresh works via the resolver with the fallback NOT hit", async () => {
-        // Simulate an OLD (pre-44) archive: the platform manifest entry has
+        // Simulate an OLD (pre-45) archive: the platform manifest entry has
         // NO oauthProviderId (as if exported before increment 44 added the
-        // field), but the credential's oauthMeta.providerId IS present (the
-        // write-only-legacy field, unchanged since Phase 1).
+        // field), and the credential manifest entry's oauthMeta.providerId
+        // IS present — the archive-only legacy field (ManifestOAuthMetaSchema
+        // keeps it for exactly this back-compat purpose; the LIVE
+        // OAuthMetaSchema dropped it in Slice E, so this can no longer be
+        // produced by seeding a live credential + exportVault — the manifest
+        // is hand-built directly instead, mirroring buildRawArchive's other
+        // uses in this file for archive-internal shapes the live schema
+        // can't produce anymore).
         const platformA = await seedPlatform(src.repos, "OAuth Platform")
-
-        await src.store.set("ref-access-old", "ACCESS_TOKEN_OLD")
-        await src.store.set("ref-refresh-old", "REFRESH_TOKEN_OLD")
-        await src.store.set("ref-clientid-old", "CLIENT_ID_OLD")
-        await src.store.set("ref-clientsecret-old", "CLIENT_SECRET_OLD")
-        await src.repos.credentials.create({
-          id: "cred-oauth-old-format",
-          name: "oauth-account-cred-old",
-          platformId: String(platformA.id),
-          profileName: "oauth-account",
-          kind: "oauth2",
-          secretRef: "ref-access-old",
-          oauthMeta: {
-            providerId: "github",
-            authMode: "authorization_code",
-            refreshTokenRef: "ref-refresh-old",
-            clientIdRef: "ref-clientid-old",
-            clientSecretRef: "ref-clientsecret-old",
-            needsReauth: false,
-          },
-        })
-
-        const exportResult = await exportVault({
-          repos: src.repos,
-          store: src.store,
-          passphrase: "old-format-pass",
-        })
-        expect(exportResult.isOk()).toBe(true)
-        if (!exportResult.isOk()) return
-
-        // The source platform row itself has no oauthProviderId (never set on
-        // this pre-44-shaped source data) — the archive's platform entry
-        // (exportVault serializes the live row verbatim) genuinely models an
-        // "old-format" archive rather than asserting a tautology.
         expect(platformA.oauthProviderId).toBeUndefined()
+
+        const manifest: VaultManifest = {
+          v: 1,
+          exportedAt: new Date().toISOString(),
+          platforms: [platformA],
+          credentials: [
+            {
+              name: "oauth-account-cred-old",
+              platformId: String(platformA.id),
+              account: "oauth-account",
+              kind: "oauth2",
+              oauthMeta: {
+                providerId: "github",
+                authMode: "authorization_code",
+                needsReauth: false,
+              },
+              secret: "ACCESS_TOKEN_OLD",
+              refreshToken: "REFRESH_TOKEN_OLD",
+              clientId: "CLIENT_ID_OLD",
+              clientSecret: "CLIENT_SECRET_OLD",
+              _srcId: "cred-oauth-old-format",
+            },
+          ],
+        }
+        const archive = await buildRawArchive(manifest, "old-format-pass")
 
         const importResult = await importVault({
           repos: dst.repos,
           store: dst.store,
-          archive: exportResult.value.archive,
+          archive,
           passphrase: "old-format-pass",
         })
         expect(importResult.isOk()).toBe(true)
@@ -2071,10 +2070,10 @@ describe("importVault", () => {
 
         // Force an actual refresh (expiresAt in the past) so refreshIfExpired
         // genuinely exercises resolveOAuthProviderId end-to-end — proves
-        // refresh works via platform.oauthProviderId, NOT the fallback, which
-        // is the whole point of R2 (a restored vault must let the drop gate's
-        // "zero fallback hits" eventually converge).
-        const onProviderFallback = vi.fn()
+        // refresh works via the backfilled platform.oauthProviderId (the
+        // archive's legacy providerId copy fed ONLY the platform backfill;
+        // increment 45 Slice E removed the fallback arm entirely, so this is
+        // now the ONLY path that can make this credential refresh again).
         let seenProviderId: string | undefined
         const refreshResult = await refreshIfExpired({
           credential: {
@@ -2089,49 +2088,50 @@ describe("importVault", () => {
           },
           now: Date.now(),
           platform: dstPlatform,
-          onProviderFallback,
+          designs: BUILT_INS_ONLY,
         })
         expect(refreshResult.isOk()).toBe(true)
         expect(seenProviderId).toBe("github")
-        expect(onProviderFallback).not.toHaveBeenCalled()
       })
 
       it("CONFLICT: two OLD-format oauth2 credentials on one platform disagreeing on providerId → the imported platform's oauthProviderId stays UNSET; both still resolve via the fallback", async () => {
         const platformA = await seedPlatform(src.repos, "Conflicting OAuth Platform")
 
-        await src.store.set("ref-access-x", "ACCESS_X")
-        await src.repos.credentials.create({
-          id: "cred-conflict-x",
-          name: "conflict-x",
-          platformId: String(platformA.id),
-          profileName: "x",
-          kind: "oauth2",
-          secretRef: "ref-access-x",
-          oauthMeta: { providerId: "github", needsReauth: false },
-        })
-        await src.store.set("ref-access-y", "ACCESS_Y")
-        await src.repos.credentials.create({
-          id: "cred-conflict-y",
-          name: "conflict-y",
-          platformId: String(platformA.id),
-          profileName: "y",
-          kind: "oauth2",
-          secretRef: "ref-access-y",
-          oauthMeta: { providerId: "google", needsReauth: false },
-        })
-
-        const exportResult = await exportVault({
-          repos: src.repos,
-          store: src.store,
-          passphrase: "conflict-pass",
-        })
-        expect(exportResult.isOk()).toBe(true)
-        if (!exportResult.isOk()) return
+        // Same archive-shape rationale as the previous test — the live
+        // credential schema can no longer carry `oauthMeta.providerId`
+        // (Slice E), so a "two archive entries disagree on the legacy
+        // providerId" scenario is only producible via a hand-built manifest.
+        const manifest: VaultManifest = {
+          v: 1,
+          exportedAt: new Date().toISOString(),
+          platforms: [platformA],
+          credentials: [
+            {
+              name: "conflict-x",
+              platformId: String(platformA.id),
+              account: "x",
+              kind: "oauth2",
+              oauthMeta: { providerId: "github", needsReauth: false },
+              secret: "ACCESS_X",
+              _srcId: "cred-conflict-x",
+            },
+            {
+              name: "conflict-y",
+              platformId: String(platformA.id),
+              account: "y",
+              kind: "oauth2",
+              oauthMeta: { providerId: "google", needsReauth: false },
+              secret: "ACCESS_Y",
+              _srcId: "cred-conflict-y",
+            },
+          ],
+        }
+        const archive = await buildRawArchive(manifest, "conflict-pass")
 
         const importResult = await importVault({
           repos: dst.repos,
           store: dst.store,
-          archive: exportResult.value.archive,
+          archive,
           passphrase: "conflict-pass",
         })
         expect(importResult.isOk()).toBe(true)
@@ -2143,23 +2143,26 @@ describe("importVault", () => {
         // Conflict rule: left UNSET, never guessed.
         expect(dstPlatforms[0]?.oauthProviderId).toBeUndefined()
 
-        // Both credentials still resolve their OWN providerId via the
-        // instrumented fallback (never blocked by the platform's unset field).
+        // Increment 45, Slice E — neither credential can resolve via a
+        // legacy fallback anymore (the field no longer exists on the LIVE
+        // credential; only the archive carried it, and that copy is used
+        // ONLY for the platform backfill, never written onto the imported
+        // row). With the platform's oauthProviderId left unset by the
+        // conflict rule, resolution now correctly fails closed for both.
         const dstCreds = (await dst.repos.credentials.list())._unsafeUnwrap()
         const platform = dstPlatforms[0]
         expect(platform).toBeDefined()
         if (platform === undefined) return
         for (const cred of dstCreds) {
-          const onFallback = vi.fn()
           const resolved = resolveOAuthProviderId({
             credentialId: cred.id,
             context: "refresh",
             platform,
-            legacyProviderId: cred.oauthMeta?.providerId,
-            onFallback,
+            designs: BUILT_INS_ONLY,
           })
-          expect(resolved.ok).toBe(true)
-          expect(onFallback).toHaveBeenCalledOnce()
+          expect(resolved.ok).toBe(false)
+          if (resolved.ok) continue
+          expect(resolved.error.kind).toBe("no-provider-source")
         }
       })
     })

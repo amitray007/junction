@@ -6,12 +6,15 @@
 import { createFileRoute, useRouter } from "@tanstack/react-router"
 import { useState } from "react"
 import { toast } from "sonner"
+import { CreateDesignDialog } from "../components/oauth-design-dialog.js"
 import type { OAuthDesignMeta, SettingsData } from "../server/data.functions.js"
 import { getOAuthDesigns, getSettings } from "../server/data.functions.js"
+import { deleteCustomDesignFn } from "../server/oauth-design-mutations.functions.js"
 import { setMcpHostFn } from "../server/settings.functions.js"
 import { Badge } from "../ui/badge.js"
 import { Button } from "../ui/button.js"
 import { MonoChip, MonoCode } from "../ui/code.js"
+import { ConfirmDialog } from "../ui/confirm-dialog.js"
 import { Field } from "../ui/field.js"
 import { Input } from "../ui/input.js"
 import { PageHeader } from "../ui/page-header.js"
@@ -287,7 +290,13 @@ function DesignUrl({ label, url }: { readonly label: string; readonly url: strin
   )
 }
 
-function DesignCard({ design }: { readonly design: OAuthDesignMeta }) {
+function DesignCard({
+  design,
+  onDeleteRequested,
+}: {
+  readonly design: OAuthDesignMeta
+  readonly onDeleteRequested: (design: OAuthDesignMeta) => void
+}) {
   return (
     <li
       style={{
@@ -313,6 +322,18 @@ function DesignCard({ design }: { readonly design: OAuthDesignMeta }) {
         </h3>
         <MonoChip>{design.id}</MonoChip>
         {design.isTemplate && <Badge variant="noauth">Template</Badge>}
+        {design.isCustom && <Badge variant="ok">Custom</Badge>}
+        {design.isCustom && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            style={{ marginLeft: "auto" }}
+            onClick={() => onDeleteRequested(design)}
+          >
+            Delete
+          </Button>
+        )}
       </div>
 
       {design.isTemplate && (
@@ -355,37 +376,89 @@ function DesignCard({ design }: { readonly design: OAuthDesignMeta }) {
   )
 }
 
-function OAuthDesignsSection({ designs }: { readonly designs: readonly OAuthDesignMeta[] }) {
+function OAuthDesignsSection({
+  designs,
+  onChanged,
+}: {
+  readonly designs: readonly OAuthDesignMeta[]
+  readonly onChanged: () => void
+}) {
+  const [createOpen, setCreateOpen] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<OAuthDesignMeta | null>(null)
+
+  async function handleDeleteConfirm(): Promise<boolean> {
+    if (!deleteTarget) return false
+    const result = await deleteCustomDesignFn({ data: { id: deleteTarget.id } })
+    if (!result.ok) {
+      toast.error(result.error)
+      return false
+    }
+    toast.success(`"${deleteTarget.displayName}" deleted`)
+    onChanged()
+    return true
+  }
+
   return (
     <section
       aria-labelledby="oauth-designs-heading"
       style={{ display: "flex", flexDirection: "column", gap: "16px" }}
     >
-      <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-        <h2
-          id="oauth-designs-heading"
-          style={{
-            fontSize: "var(--text-label)",
-            fontWeight: 600,
-            color: "var(--gray-1000)",
-            margin: 0,
-          }}
-        >
-          OAuth designs
-        </h2>
-        <p style={{ fontSize: "var(--text-body)", color: "var(--gray-700)", margin: 0 }}>
-          The built-in OAuth provider designs Junction ships with — the authorization/token
-          endpoints and flow shape a platform binds to. Read-only: these are Junction&apos;s
-          built-in catalog. Client IDs and secrets are never part of a design; you enter those per
-          credential when you connect.
-        </p>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "flex-start",
+          justifyContent: "space-between",
+          gap: "12px",
+        }}
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+          <h2
+            id="oauth-designs-heading"
+            style={{
+              fontSize: "var(--text-label)",
+              fontWeight: 600,
+              color: "var(--gray-1000)",
+              margin: 0,
+            }}
+          >
+            OAuth designs
+          </h2>
+          <p style={{ fontSize: "var(--text-body)", color: "var(--gray-700)", margin: 0 }}>
+            Junction&apos;s built-in designs, plus any custom designs you&apos;ve authored. Client
+            IDs and secrets are never part of a design; you enter those per credential when you
+            connect.
+          </p>
+        </div>
+        <Button type="button" variant="secondary" onClick={() => setCreateOpen(true)}>
+          Create design
+        </Button>
       </div>
 
       <ul style={{ display: "flex", flexDirection: "column", gap: "12px", margin: 0, padding: 0 }}>
         {designs.map((design) => (
-          <DesignCard key={design.id} design={design} />
+          <DesignCard key={design.id} design={design} onDeleteRequested={setDeleteTarget} />
         ))}
       </ul>
+
+      <CreateDesignDialog open={createOpen} onOpenChange={setCreateOpen} onCreated={onChanged} />
+
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title={`Delete "${deleteTarget?.displayName ?? ""}"?`}
+        description={
+          <>
+            This removes the custom design <MonoCode>{deleteTarget?.id}</MonoCode>. Any platform or
+            credential still referencing it must be unlinked first — deletion is refused otherwise.
+          </>
+        }
+        confirmLabel="Delete"
+        confirmingLabel="Deleting…"
+        variant="destructive"
+        onConfirm={handleDeleteConfirm}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null)
+        }}
+      />
     </section>
   )
 }
@@ -405,6 +478,7 @@ function SectionDivider() {
 
 function SettingsPage() {
   const { settings, oauthDesigns } = Route.useLoaderData()
+  const router = useRouter()
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
@@ -417,7 +491,12 @@ function SettingsPage() {
         <SectionDivider />
         <AppearanceSection />
         <SectionDivider />
-        <OAuthDesignsSection designs={oauthDesigns} />
+        <OAuthDesignsSection
+          designs={oauthDesigns}
+          onChanged={() => {
+            void router.invalidate()
+          }}
+        />
       </div>
     </div>
   )

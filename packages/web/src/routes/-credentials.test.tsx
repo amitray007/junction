@@ -990,7 +990,6 @@ describe("CredentialsPage — OAuth status badges (Expiring / Auth Failed) + Rec
         account: "alice",
         kind: "oauth2",
         oauthState: {
-          providerId: "github",
           expiresAt: soon,
           needsReauth: false,
           hasRefreshToken: false,
@@ -1012,7 +1011,6 @@ describe("CredentialsPage — OAuth status badges (Expiring / Auth Failed) + Rec
         account: "alice",
         kind: "oauth2",
         oauthState: {
-          providerId: "github",
           expiresAt: soon,
           needsReauth: false,
           hasRefreshToken: true,
@@ -1035,7 +1033,6 @@ describe("CredentialsPage — OAuth status badges (Expiring / Auth Failed) + Rec
         account: "alice",
         kind: "oauth2",
         oauthState: {
-          providerId: "github",
           expiresAt: farFuture,
           needsReauth: false,
           hasRefreshToken: false,
@@ -1057,7 +1054,6 @@ describe("CredentialsPage — OAuth status badges (Expiring / Auth Failed) + Rec
         account: "alice",
         kind: "oauth2",
         oauthState: {
-          providerId: "github",
           expiresAt: null,
           needsReauth: true,
           hasRefreshToken: false,
@@ -1079,7 +1075,6 @@ describe("CredentialsPage — OAuth status badges (Expiring / Auth Failed) + Rec
       account: "alice",
       kind: "oauth2",
       oauthState: {
-        providerId: "github",
         expiresAt: null,
         needsReauth: true,
         hasRefreshToken: false,

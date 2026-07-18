@@ -327,11 +327,15 @@ describe("makeResolveProvider — oauth2 wiring (inc29-B): the real arctic-backe
       if (dbResult.isErr()) return
       const repos = createRepositories(dbResult.value)
 
+      // Increment 45, Slice E — the design lives on the PLATFORM only
+      // (oauthProviderId); the credential's legacy oauthMeta.providerId
+      // fallback is gone.
       const platform = PlatformSchema.parse({
         id: PlatformIdSchema.parse("oauth-platform"),
         kind: "mcp" as const,
         displayName: "OAuth MCP",
         connection: { transport: "http" as const, url: "https://example.com/mcp" },
+        oauthProviderId: "github-app",
       })
       await repos.platforms.upsert(platform)
 
@@ -357,7 +361,6 @@ describe("makeResolveProvider — oauth2 wiring (inc29-B): the real arctic-backe
           refreshTokenRef: "refresh-ref",
           clientIdRef: "client-id-ref",
           clientSecretRef: "client-secret-ref",
-          providerId: "github-app",
           authMode: "authorization_code",
           expiresAt: expiredAt,
           needsReauth: false,
@@ -521,20 +524,12 @@ describe("makeResolveProvider — provider-id resolution (increment 44)", () => 
     })
   })
 
-  it("orphan-equivalent: falls back to the credential's legacy providerId when platform.oauthProviderId is unset, and the fallback log fires", async () => {
+  it("increment 45 Slice E: orphan-equivalent (platform.oauthProviderId unset, legacy providerId present but IGNORED) → auth-failed, refreshFn never called — the fallback arm no longer exists", async () => {
     await withTempHome(async () => {
       const logs: string[] = []
       const { repos, store, paths, credential, platformId } = await setUpOAuthCredential({
         idSuffix: "fallback",
-        legacyProviderId: "github-app",
-      })
-
-      refreshAccessToken.mockResolvedValueOnce({
-        data: { access_token: "rotated-fallback", expires_in: 3600 },
-        accessToken: () => "rotated-fallback",
-        hasRefreshToken: () => false,
-        accessTokenExpiresInSeconds: () => 3600,
-        hasScopes: () => false,
+        legacyProviderId: "github-app", // present but must be IGNORED — no fallback arm to consult it
       })
 
       const resolveProvider = makeResolveProvider(repos, store, paths, {
@@ -545,16 +540,15 @@ describe("makeResolveProvider — provider-id resolution (increment 44)", () => 
         sourceRef({ platformId: PlatformIdSchema.parse(platformId), credentialId: credential.id }),
       )
 
-      expect(result.isOk()).toBe(true)
-      expect(refreshAccessToken).toHaveBeenCalledTimes(1)
-      // The instrumented fallback log fired, tagged with context="refresh" and
-      // this credential's id — ids only, never token material.
+      // No platform.oauthProviderId and no fallback → no-provider-source,
+      // surfaced as needs-reauth by refreshIfExpired, which resolve-provider
+      // maps to auth-failed at this layer (see the dangling-reference test
+      // below for the identical mapping).
+      expect(result.isErr()).toBe(true)
+      expect(refreshAccessToken).not.toHaveBeenCalled()
+      // No fallback log line — the mechanism producing it no longer exists.
       const fallbackLog = logs.find((l) => l.includes("fell back to the credential's legacy"))
-      expect(fallbackLog).toBeDefined()
-      expect(fallbackLog).toContain("context=refresh")
-      expect(fallbackLog).toContain(`credentialId=${credential.id}`)
-      expect(fallbackLog).not.toContain("rotated-fallback")
-      expect(fallbackLog).not.toContain("old-access-token")
+      expect(fallbackLog).toBeUndefined()
     })
   })
 

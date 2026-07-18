@@ -6,6 +6,7 @@
 // sandbox probing, spec caching) lives in @junction/platform-orchestration.
 
 import type { Platform, Repositories } from "@junction/core"
+import { getPaths, loadCustomDesigns, mergeDesigns } from "@junction/core"
 import type {
   AddCliPlatformResult,
   AddGraphQlPlatformResult,
@@ -1044,6 +1045,70 @@ const cliShortcutCommand = defineCommand({
   },
 })
 
+// ---------------------------------------------------------------------------
+// set-oauth-design (increment 45, Slice D4) — bind a platform to an OAuth
+// design (built-in OR custom:<slug>), validated against the MERGED set (the
+// same lookup the resolver/refresh path uses) so a typo or a design that was
+// never created fails closed here rather than at the next refresh attempt.
+// Minimal, additive: does NOT touch the per-kind add/update assembly — a
+// platform's connection fields are unaffected, only oauthProviderId changes.
+// ---------------------------------------------------------------------------
+
+const setOAuthDesignCommand = defineCommand({
+  meta: {
+    name: "set-oauth-design",
+    description:
+      "Bind a platform to an OAuth design (built-in id or custom:<slug>) — validated against the live design set.",
+  },
+  args: {
+    platform: { type: "positional", description: "Platform ID", required: true },
+    design: {
+      type: "positional",
+      description: "OAuth design id — a built-in (e.g. github) or custom:<slug>",
+      required: true,
+    },
+    json: JSON_ARG,
+  },
+  async run({ args }) {
+    const json = args.json ?? false
+    const repos = await openDb(json)
+    if (!repos) return
+
+    const platformResult = await repos.platforms.get(args.platform)
+    if (platformResult.isErr()) {
+      reportDbError(platformResult.error, json)
+      return
+    }
+
+    const customResult = await loadCustomDesigns(getPaths())
+    if (customResult.isErr()) {
+      reportError(`custom designs store: ${customResult.error.kind}`, json)
+      return
+    }
+    const merged = mergeDesigns(customResult.value)
+    if (!merged.has(args.design)) {
+      reportError(
+        `unknown OAuth design "${args.design}" — not a built-in id and no custom design with that id exists`,
+        json,
+      )
+      return
+    }
+
+    const updated: Platform = { ...platformResult.value, oauthProviderId: args.design }
+    const upsertResult = await repos.platforms.upsert(updated)
+    if (upsertResult.isErr()) {
+      reportDbError(upsertResult.error, json)
+      return
+    }
+
+    if (json) {
+      process.stdout.write(`${JSON.stringify({ ok: true, platform: upsertResult.value })}\n`)
+    } else {
+      consola.success(`Platform "${args.platform}" bound to OAuth design "${args.design}"`)
+    }
+  },
+})
+
 export const platformCommand = defineCommand({
   meta: {
     name: "platform",
@@ -1055,5 +1120,6 @@ export const platformCommand = defineCommand({
     remove: removeCommand,
     refresh: refreshCommand,
     "cli-shortcut": cliShortcutCommand,
+    "set-oauth-design": setOAuthDesignCommand,
   },
 })

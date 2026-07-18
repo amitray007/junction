@@ -458,7 +458,17 @@ describe("persistOAuthTokens", () => {
       }
 
       expect(credential.oauthMeta?.needsReauth).toBe(false)
-      expect(credential.oauthMeta?.providerId).toBe("github-app")
+
+      // Increment 45, Slice E — the design this credential belongs to is no
+      // longer stamped onto oauthMeta at all; persistOAuthTokens now
+      // best-effort backfills the bound PLATFORM's oauthProviderId instead
+      // (fill-only-if-unset) — see the identical assertion pattern this
+      // proves against.
+      const platformResult = await repos.platforms.get("test-platform")
+      expect(platformResult.isOk()).toBe(true)
+      if (platformResult.isOk()) {
+        expect(platformResult.value.oauthProviderId).toBe("github-app")
+      }
     })
   })
 

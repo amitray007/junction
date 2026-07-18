@@ -38,7 +38,6 @@ const oauthConnection: ConnectionMeta = {
   platformDisplayName: "GitHub",
   kind: "openapi",
   oauthState: {
-    providerId: "github",
     expiresAt: "2026-01-01T00:00:00.000Z",
     needsReauth: false,
     hasRefreshToken: true,
@@ -52,7 +51,6 @@ const needsReauthConnection: ConnectionMeta = {
   platformDisplayName: "GitHub",
   kind: "openapi",
   oauthState: {
-    providerId: "github",
     expiresAt: "2026-01-01T00:00:00.000Z",
     needsReauth: true,
     hasRefreshToken: false,
