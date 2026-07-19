@@ -31,13 +31,14 @@ const platforms: PlatformMeta[] = [
 ]
 
 const populatedCredentials: CredentialMeta[] = [
-  { id: "cred-1", platformId: "github", account: "alice", kind: "bearer" },
-  { id: "cred-2", platformId: "linear", account: "alice", kind: "bearer" },
+  { id: "cred-1", name: "cred-1", platformId: "github", account: "alice", kind: "bearer" },
+  { id: "cred-2", name: "cred-2", platformId: "linear", account: "alice", kind: "bearer" },
 ]
 
 // Extended fixtures for pagination + sort tests.
 const manyCredentials: CredentialMeta[] = Array.from({ length: 7 }, (_, i) => ({
   id: `cred-${i + 1}`,
+  name: `cred-${i + 1}`,
   platformId: i < 4 ? "github" : "linear",
   account: i % 2 === 0 ? "alice" : "bob",
   kind: "bearer",
@@ -152,12 +153,14 @@ describe("CredentialsPage", () => {
     expect(getAllByRole("table")).toHaveLength(1)
   })
 
-  it("renders all expected column headers: ID, Platform, Account, Kind, Status", () => {
+  it("renders all expected column headers: Name, Platform, Account, Kind, Status", () => {
     mockUseLoaderData.mockReturnValue({ credentials: populatedCredentials, platforms })
     const { getByRole } = render(<CredentialsPage />)
     const table = getByRole("table")
-    // Column headers present (case-insensitive match via text content)
-    expect(table.textContent).toContain("ID")
+    // Column headers present (case-insensitive match via text content) —
+    // increment 42: "Name" (the credential's identity) replaces "ID" as the
+    // primary column.
+    expect(table.textContent).toContain("Name")
     expect(table.textContent).toContain("Platform")
     expect(table.textContent).toContain("Account")
     expect(table.textContent).toContain("Kind")
@@ -187,6 +190,39 @@ describe("CredentialsPage", () => {
     // Two platform groups (github, linear), each with one credential → two "1 credentials"
     // dividers. The "N credentials" wording (not a bare number) is the Variant-C fix.
     expect(getAllByText("1 credentials").length).toBe(2)
+  })
+
+  // ── Increment 42 — unlinked credentials group under "Unlinked" ─────────────
+
+  it("an unlinked credential (platformId: null) renders under an 'Unlinked' group divider", () => {
+    const creds: CredentialMeta[] = [
+      ...populatedCredentials,
+      {
+        id: "c-vault",
+        name: "my-vault-secret",
+        platformId: null,
+        account: "my-vault-secret",
+        kind: "bearer",
+      },
+    ]
+    mockUseLoaderData.mockReturnValue({ credentials: creds, platforms })
+    const { getAllByText } = render(<CredentialsPage />)
+    expect(getAllByText("Unlinked").length).toBeGreaterThanOrEqual(1)
+  })
+
+  it("an unlinked credential's Platform column shows '—' (no platform to name)", () => {
+    const creds: CredentialMeta[] = [
+      {
+        id: "c-vault",
+        name: "my-vault-secret",
+        platformId: null,
+        account: "my-vault-secret",
+        kind: "bearer",
+      },
+    ]
+    mockUseLoaderData.mockReturnValue({ credentials: creds, platforms })
+    const { getAllByText } = render(<CredentialsPage />)
+    expect(getAllByText("—").length).toBeGreaterThanOrEqual(1)
   })
 
   it("renders platform name in the Platform column for each credential row", () => {
@@ -241,8 +277,8 @@ describe("CredentialsPage", () => {
   it("search filters credentials by account (case-insensitive)", () => {
     // Put two accounts under the same platform to verify filtering.
     const creds: CredentialMeta[] = [
-      { id: "c1", platformId: "github", account: "alice", kind: "bearer" },
-      { id: "c2", platformId: "github", account: "bob", kind: "bearer" },
+      { id: "c1", name: "c1", platformId: "github", account: "alice", kind: "bearer" },
+      { id: "c2", name: "c2", platformId: "github", account: "bob", kind: "bearer" },
     ]
     mockUseLoaderData.mockReturnValue({ credentials: creds, platforms })
     const { getByRole, getAllByText, queryAllByText } = render(<CredentialsPage />)
@@ -331,8 +367,8 @@ describe("CredentialsPage", () => {
 
   it("sorting by Account drops group dividers and re-orders by account name", () => {
     const creds: CredentialMeta[] = [
-      { id: "c1", platformId: "github", account: "zara", kind: "bearer" },
-      { id: "c2", platformId: "linear", account: "alice", kind: "bearer" },
+      { id: "c1", name: "c1", platformId: "github", account: "zara", kind: "bearer" },
+      { id: "c2", name: "c2", platformId: "linear", account: "alice", kind: "bearer" },
     ]
     mockUseLoaderData.mockReturnValue({ credentials: creds, platforms })
     const { getByRole } = render(<CredentialsPage />)
@@ -442,7 +478,7 @@ describe("CredentialsPage", () => {
     })
   })
 
-  it("Add form validates required fields before calling mutation", async () => {
+  it("Add form validates required fields before calling mutation (increment 42: Name, not Platform)", async () => {
     mockUseLoaderData.mockReturnValue({ credentials: emptyCredentials, platforms })
     const { getByRole, getByText } = render(<CredentialsPage />)
 
@@ -454,9 +490,82 @@ describe("CredentialsPage", () => {
     expect(submitBtn).not.toBeNull()
     fireEvent.click(submitBtn)
     await waitFor(() => {
-      expect(getByText("Platform is required")).toBeInTheDocument()
+      expect(getByText("Name is required")).toBeInTheDocument()
     })
     expect(mockAddCredentialFn).not.toHaveBeenCalled()
+  })
+
+  it("Add dialog: no Platform field is rendered at all (increment 42 — standalone create, no picker)", async () => {
+    mockUseLoaderData.mockReturnValue({ credentials: emptyCredentials, platforms })
+    const { getByRole, queryByLabelText } = render(<CredentialsPage />)
+
+    fireEvent.click(getByRole("button", { name: /add credential/i }))
+    await waitFor(() => expect(getByRole("dialog")).toBeInTheDocument())
+
+    expect(queryByLabelText("Platform")).not.toBeInTheDocument()
+    expect(queryByLabelText("Account")).not.toBeInTheDocument()
+  })
+
+  it("Add dialog: a valid slug Name + Kind + Secret submits {name, kind, secret} with no platformId/account", async () => {
+    mockUseLoaderData.mockReturnValue({ credentials: emptyCredentials, platforms })
+    mockAddCredentialFn.mockResolvedValue({
+      ok: true,
+      credential: { id: "new-cred", name: "my-vault-secret", platformId: null, kind: "bearer" },
+    })
+    const { getByRole, getByLabelText } = render(<CredentialsPage />)
+
+    fireEvent.click(getByRole("button", { name: /add credential/i }))
+    await waitFor(() => expect(getByRole("dialog")).toBeInTheDocument())
+
+    fireEvent.change(getByLabelText("Name"), { target: { value: "my-vault-secret" } })
+    fireEvent.change(getByLabelText("Secret"), { target: { value: "my-secret-value" } })
+
+    const dialog = getByRole("dialog")
+    const submitBtn = dialog.querySelector("button[type='submit']") as HTMLButtonElement
+    fireEvent.click(submitBtn)
+
+    await waitFor(() => expect(mockAddCredentialFn).toHaveBeenCalled())
+    const call = mockAddCredentialFn.mock.calls[0]?.[0] as { data: Record<string, unknown> }
+    expect(call.data).toEqual({
+      name: "my-vault-secret",
+      kind: "bearer",
+      secret: "my-secret-value",
+    })
+    expect(call.data.platformId).toBeUndefined()
+    expect(call.data.account).toBeUndefined()
+  })
+
+  it("Add dialog: rejects a name with uppercase/spaces (slug validation, client-side honesty guard)", async () => {
+    mockUseLoaderData.mockReturnValue({ credentials: emptyCredentials, platforms })
+    const { getByRole, getByLabelText, getByText } = render(<CredentialsPage />)
+
+    fireEvent.click(getByRole("button", { name: /add credential/i }))
+    await waitFor(() => expect(getByRole("dialog")).toBeInTheDocument())
+
+    fireEvent.change(getByLabelText("Name"), { target: { value: "Not A Slug" } })
+    fireEvent.change(getByLabelText("Secret"), { target: { value: "secret" } })
+
+    const dialog = getByRole("dialog")
+    const submitBtn = dialog.querySelector("button[type='submit']") as HTMLButtonElement
+    fireEvent.click(submitBtn)
+
+    await waitFor(() => {
+      expect(getByText(/lowercase letters, digits, and hyphens only/i)).toBeInTheDocument()
+    })
+    expect(mockAddCredentialFn).not.toHaveBeenCalled()
+  })
+
+  it("Add dialog: Kind select offers only raw kinds (no oauth2 — OAuth stays on the Connect flow)", async () => {
+    mockUseLoaderData.mockReturnValue({ credentials: emptyCredentials, platforms })
+    const { getByRole } = render(<CredentialsPage />)
+
+    fireEvent.click(getByRole("button", { name: /add credential/i }))
+    await waitFor(() => expect(getByRole("dialog")).toBeInTheDocument())
+
+    const dialog = getByRole("dialog")
+    const kindTrigger = dialog.querySelector("#add-kind") as HTMLElement
+    expect(kindTrigger).not.toBeNull()
+    expect(kindTrigger.textContent).not.toMatch(/oauth/i)
   })
 
   it("Add form secret field is type=password (never plaintext in DOM)", async () => {
@@ -465,8 +574,8 @@ describe("CredentialsPage", () => {
 
     fireEvent.click(getByRole("button", { name: /add credential/i }))
 
-    await waitFor(() => expect(getByLabelText("Account")).toBeInTheDocument())
-    fireEvent.change(getByLabelText("Account"), { target: { value: "work" } })
+    await waitFor(() => expect(getByLabelText("Name")).toBeInTheDocument())
+    fireEvent.change(getByLabelText("Name"), { target: { value: "work" } })
     fireEvent.change(getByLabelText("Secret"), { target: { value: "my-secret" } })
 
     const secretInput = getByLabelText("Secret") as HTMLInputElement
@@ -542,17 +651,15 @@ describe("CredentialsPage", () => {
 
     mockAddCredentialFn.mockReturnValue(new Promise(() => {}))
 
-    const accountInput = dialog.querySelector("#add-account") as HTMLInputElement
+    const nameInput = dialog.querySelector("#add-name") as HTMLInputElement
     const secretInput = dialog.querySelector("#add-secret") as HTMLInputElement
-    fireEvent.change(accountInput, { target: { value: "work" } })
+    fireEvent.change(nameInput, { target: { value: "work" } })
     fireEvent.change(secretInput, { target: { value: "my-secret" } })
 
     expect(submitBtn.disabled).toBe(false)
 
     fireEvent.click(submitBtn)
-    // Validation fails (no platform selected) — submitting never set to true
-    expect(submitBtn.disabled).toBe(false)
-    expect(mockAddCredentialFn).not.toHaveBeenCalled()
+    await waitFor(() => expect(mockAddCredentialFn).toHaveBeenCalled())
   })
 
   // ── Field a11y (§3 fix) ────────────────────────────────────────────────────
@@ -569,20 +676,20 @@ describe("CredentialsPage", () => {
     expect(submitBtn).not.toBeNull()
     fireEvent.click(submitBtn)
 
-    await waitFor(() => expect(getByText("Account is required")).toBeInTheDocument())
-    const errorEl = getByText("Account is required")
-    expect(errorEl.id).toMatch(/add-account-error/)
+    await waitFor(() => expect(getByText("Name is required")).toBeInTheDocument())
+    const errorEl = getByText("Name is required")
+    expect(errorEl.id).toMatch(/add-name-error/)
 
-    const accountInput = getByLabelText("Account") as HTMLInputElement
-    expect(accountInput.getAttribute("aria-invalid")).toBe("true")
-    const describedBy = accountInput.getAttribute("aria-describedby")
+    const nameInput = getByLabelText("Name") as HTMLInputElement
+    expect(nameInput.getAttribute("aria-invalid")).toBe("true")
+    const describedBy = nameInput.getAttribute("aria-describedby")
     expect(describedBy).toBeTruthy()
     expect(describedBy).toContain(errorEl.id)
   })
 
-  // ── Kind select + verify checkbox (increment 28.9) ─────────────────────────
+  // ── Kind select (increment 42 — always visible, no platform gate) ──────────
 
-  it("Add dialog: no platform selected shows the no-kind placeholder (honesty guard)", async () => {
+  it("Add dialog: Kind select is always present (no platform to gate it on)", async () => {
     mockUseLoaderData.mockReturnValue({ credentials: emptyCredentials, platforms })
     const { getByRole } = render(<CredentialsPage />)
 
@@ -590,26 +697,21 @@ describe("CredentialsPage", () => {
     await waitFor(() => expect(getByRole("dialog")).toBeInTheDocument())
 
     const dialog = getByRole("dialog")
-    const kindInput = dialog.querySelector("#add-kind") as HTMLInputElement
-    expect(kindInput).not.toBeNull()
-    expect(kindInput.value).toBe("—")
-    expect(kindInput.disabled).toBe(true)
+    const kindTrigger = dialog.querySelector("#add-kind")
+    expect(kindTrigger).not.toBeNull()
   })
 
-  // Note: exercising the "select a platform → kind Select appears, pre-filtered to
-  // compatibleKinds, defaulting to the matrix's first entry" path needs to drive a
-  // Radix Select's portal open, which happy-dom cannot do (see the Platform/Account/Kind
-  // facet-filter tests above for the same documented limitation) — that interactive
-  // path is covered by the junction-web-verify browser pass instead.
+  // Note: exercising a Radix Select's portal open needs happy-dom support it
+  // doesn't have (see the Platform/Account/Kind facet-filter tests above for
+  // the same documented limitation) — covered by junction-web-verify instead.
 
-  it("Add dialog: Test connection checkbox is hidden until a verifiable platform is selected (defaults checked when shown)", async () => {
+  it("Add dialog: no verify checkbox is rendered (nothing to verify for a standalone credential)", async () => {
     mockUseLoaderData.mockReturnValue({ credentials: emptyCredentials, platforms })
     const { getByRole, queryByLabelText } = render(<CredentialsPage />)
 
     fireEvent.click(getByRole("button", { name: /add credential/i }))
     await waitFor(() => expect(getByRole("dialog")).toBeInTheDocument())
 
-    // No platform selected yet (and these fixtures are non-verifiable) — checkbox absent.
     expect(queryByLabelText(/test connection after adding/i)).not.toBeInTheDocument()
   })
 
@@ -617,7 +719,14 @@ describe("CredentialsPage", () => {
 
   it("badge mapping: lastVerifyResult 'ok' renders Connected", () => {
     const creds: CredentialMeta[] = [
-      { id: "c1", platformId: "github", account: "alice", kind: "bearer", lastVerifyResult: "ok" },
+      {
+        id: "c1",
+        name: "c1",
+        platformId: "github",
+        account: "alice",
+        kind: "bearer",
+        lastVerifyResult: "ok",
+      },
     ]
     mockUseLoaderData.mockReturnValue({ credentials: creds, platforms })
     const { getAllByText } = render(<CredentialsPage />)
@@ -628,6 +737,7 @@ describe("CredentialsPage", () => {
     const creds: CredentialMeta[] = [
       {
         id: "c1",
+        name: "c1",
         platformId: "github",
         account: "alice",
         kind: "bearer",
@@ -643,6 +753,7 @@ describe("CredentialsPage", () => {
     const creds: CredentialMeta[] = [
       {
         id: "c1",
+        name: "c1",
         platformId: "github",
         account: "alice",
         kind: "bearer",
@@ -670,6 +781,7 @@ describe("CredentialsPage", () => {
     const creds: CredentialMeta[] = [
       {
         id: "c1",
+        name: "c1",
         platformId: "github",
         account: "alice",
         kind: "bearer",
@@ -722,7 +834,7 @@ describe("CredentialsPage", () => {
       },
     ]
     const creds: CredentialMeta[] = [
-      { id: "c1", platformId: "mcp-src", account: "alice", kind: "bearer" },
+      { id: "c1", name: "c1", platformId: "mcp-src", account: "alice", kind: "bearer" },
     ]
     mockTestCredentialFn.mockResolvedValue({ ok: true, status: "ok" })
     mockUseLoaderData.mockReturnValue({ credentials: creds, platforms: verifiablePlatforms })
@@ -861,7 +973,7 @@ describe("CredentialsPage — Connect (OAuth) dialog", () => {
 describe("CredentialsPage — OAuth status badges (Expiring / Auth Failed) + Reconnect", () => {
   it("an oauth2 credential with no oauthState renders the ordinary Configured/Connected mapping", () => {
     const creds: CredentialMeta[] = [
-      { id: "c1", platformId: "github", account: "alice", kind: "oauth2" },
+      { id: "c1", name: "c1", platformId: "github", account: "alice", kind: "oauth2" },
     ]
     mockUseLoaderData.mockReturnValue({ credentials: creds, platforms, oauthProviders })
     const { getByText } = render(<CredentialsPage />)
@@ -873,11 +985,11 @@ describe("CredentialsPage — OAuth status badges (Expiring / Auth Failed) + Rec
     const creds: CredentialMeta[] = [
       {
         id: "c1",
+        name: "c1",
         platformId: "github",
         account: "alice",
         kind: "oauth2",
         oauthState: {
-          providerId: "github",
           expiresAt: soon,
           needsReauth: false,
           hasRefreshToken: false,
@@ -894,11 +1006,11 @@ describe("CredentialsPage — OAuth status badges (Expiring / Auth Failed) + Rec
     const creds: CredentialMeta[] = [
       {
         id: "c1",
+        name: "c1",
         platformId: "github",
         account: "alice",
         kind: "oauth2",
         oauthState: {
-          providerId: "github",
           expiresAt: soon,
           needsReauth: false,
           hasRefreshToken: true,
@@ -916,11 +1028,11 @@ describe("CredentialsPage — OAuth status badges (Expiring / Auth Failed) + Rec
     const creds: CredentialMeta[] = [
       {
         id: "c1",
+        name: "c1",
         platformId: "github",
         account: "alice",
         kind: "oauth2",
         oauthState: {
-          providerId: "github",
           expiresAt: farFuture,
           needsReauth: false,
           hasRefreshToken: false,
@@ -937,11 +1049,11 @@ describe("CredentialsPage — OAuth status badges (Expiring / Auth Failed) + Rec
     const creds: CredentialMeta[] = [
       {
         id: "c1",
+        name: "c1",
         platformId: "github",
         account: "alice",
         kind: "oauth2",
         oauthState: {
-          providerId: "github",
           expiresAt: null,
           needsReauth: true,
           hasRefreshToken: false,
@@ -958,11 +1070,11 @@ describe("CredentialsPage — OAuth status badges (Expiring / Auth Failed) + Rec
   const reconnectCred: CredentialMeta[] = [
     {
       id: "c1",
+      name: "c1",
       platformId: "github",
       account: "alice",
       kind: "oauth2",
       oauthState: {
-        providerId: "github",
         expiresAt: null,
         needsReauth: true,
         hasRefreshToken: false,

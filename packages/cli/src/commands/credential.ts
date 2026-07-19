@@ -7,13 +7,19 @@
 import { readFile } from "node:fs/promises"
 import {
   addCredential,
+  addStandaloneCredential,
   type Credential,
   type CredentialVerifyResult,
   compatibleCredentialKinds,
   createCredentialStore,
   getPaths,
+  loadCustomDesigns,
+  mergeDesigns,
+  type Platform,
   removeCredential,
   renameCredential,
+  resolveCredentialProviderId,
+  resolveOAuthProviderId,
   rotateCredential,
 } from "@junction/core"
 import type { VerifyOutcome } from "@junction/source-runtime"
@@ -30,7 +36,7 @@ import {
   reportIdRemoved,
   reportInUseError,
 } from "../format.js"
-import { CONNECT_SHARED_ARGS, resolveProviderOrError, runConnectFlow } from "./connect.js"
+import { CONNECT_SHARED_ARGS, runConnectFlow } from "./connect.js"
 
 // ---------------------------------------------------------------------------
 // Lost-secret handling — shared between CLI `credential test` and web's
@@ -57,20 +63,32 @@ const addCommand = defineCommand({
       "Add a credential for a platform (kind is derived from the platform's auth unless --kind is given).",
   },
   args: {
+    // Increment 42 — no longer required. Omitted → an UNLINKED (standalone)
+    // credential, which REQUIRES --name (there's no account to derive one
+    // from). Provided → the legacy platform-scoped path, unchanged.
     platform: {
       type: "string",
-      description: "Platform ID",
-      required: true,
+      description: "Platform ID (omit to create a standalone/unlinked credential; requires --name)",
     },
     account: {
       type: "string",
-      description: "Logical account label (e.g. work, personal)",
-      required: true,
+      description:
+        "Logical account label (e.g. work, personal). Required when --platform is given.",
+    },
+    // Increment 42 — the credential's identity slug. Optional when --platform
+    // + --account are BOTH given (derived as `<platform>-<account>`, `-2`/
+    // `-3` suffixed on collision — same rule the migration backfill uses).
+    // REQUIRED when --platform is omitted (a standalone credential has no
+    // account to derive a name from).
+    name: {
+      type: "string",
+      description:
+        "Credential identity slug (lowercase, digits, hyphens). Derived from --platform/--account when omitted; required for a standalone credential (no --platform).",
     },
     kind: {
       type: "string",
       description:
-        "Credential kind (api-key, bearer, env, file). Default: derived from the platform's auth.",
+        "Credential kind (api-key, bearer, env, file). Default: derived from the platform's auth (platform-scoped) or 'bearer' (standalone).",
     },
     "token-stdin": {
       type: "boolean",
@@ -93,13 +111,26 @@ const addCommand = defineCommand({
   async run({ args }) {
     const json = args.json ?? false
 
-    // Validate platform and account BEFORE reading the token — bad input must
-    // not cause a secret to be captured from stdin (nice-to-have 2 + FIX 2).
-    if (!args.platform || args.platform.trim() === "") {
-      const msg = "invalid input: --platform must not be empty"
-      reportError(json, msg)
+    const hasPlatform = args.platform !== undefined && args.platform.trim() !== ""
+
+    // Increment 42 — no --platform → standalone (unlinked) credential. Requires
+    // --name (no account to derive one from) and rejects --account (meaningless
+    // without a platform to scope it to).
+    if (!hasPlatform) {
+      if (!args.name || args.name.trim() === "") {
+        reportError(json, "invalid input: --name is required when --platform is omitted")
+        return
+      }
+      if (args.account !== undefined && args.account.trim() !== "") {
+        reportError(json, "invalid input: --account requires --platform")
+        return
+      }
+      await runAddStandalone(args, json)
       return
     }
+
+    // Validate platform and account BEFORE reading the token — bad input must
+    // not cause a secret to be captured from stdin (nice-to-have 2 + FIX 2).
     if (!args.account || args.account.trim() === "") {
       const msg = "invalid input: --account must not be empty"
       reportError(json, msg)
@@ -110,6 +141,8 @@ const addCommand = defineCommand({
       reportError(json, msg)
       return
     }
+    // biome-ignore lint/style/noNonNullAssertion: hasPlatform guarantees this above
+    const platformArg = args.platform!
 
     const ctx = await openDbAndStore(json)
     if (!ctx) return
@@ -118,7 +151,7 @@ const addCommand = defineCommand({
     // Fetch the platform BEFORE reading the secret — addCredential validates the
     // requested (or derived) kind against its kind-compat matrix, and the derived
     // default itself comes from this same platform row.
-    const platformResult = await repos.platforms.get(args.platform)
+    const platformResult = await repos.platforms.get(platformArg)
     if (platformResult.isErr()) {
       reportDbError(platformResult.error, json)
       return
@@ -132,7 +165,7 @@ const addCommand = defineCommand({
     if (kind === undefined) {
       const derived = compatibleCredentialKinds(platform)[0]
       if (derived === undefined) {
-        const msg = `platform "${args.platform}" declares no auth; credentials not accepted`
+        const msg = `platform "${platformArg}" declares no auth; credentials not accepted`
         reportError(json, msg)
         return
       }
@@ -167,7 +200,7 @@ const addCommand = defineCommand({
     } else {
       secret = await acquireSecret({
         fromStdin: args["token-stdin"],
-        promptMessage: `Secret (${kind}) for ${args.platform} (${args.account}):`,
+        promptMessage: `Secret (${kind}) for ${platformArg} (${args.account}):`,
         json,
       })
     }
@@ -181,10 +214,14 @@ const addCommand = defineCommand({
 
     const result = await addCredential(
       {
-        platformId: args.platform,
+        platformId: platformArg,
         account: args.account,
         kind: kind as Exclude<Parameters<typeof addCredential>[0]["kind"], "oauth2">,
         secret,
+        // Increment 42 — explicit --name passes through (validated inside
+        // addCredential); omitted → addCredential derives one itself
+        // (deriveCredentialName), keeping this call's behavior unchanged.
+        ...(args.name !== undefined && args.name.trim() !== "" ? { name: args.name.trim() } : {}),
       },
       platform,
       store,
@@ -208,9 +245,19 @@ const addCommand = defineCommand({
     let persisted = true
     if (args.verify) {
       const paths = getPaths()
-      const outcomeResult = await verifyCredential(platform, secret, paths, {
-        oauthProviderId: credential.oauthMeta?.providerId,
+      // Increment 45 (Slice C) — source the userinfo-probe providerId hint via
+      // the shared resolver (resolveCredentialProviderId), not
+      // `credential.oauthMeta.providerId` directly. Degrades to `undefined`
+      // on a dangling/no-source resolution — verifyCredential treats that as
+      // "no OAuth userinfo hint" and falls through to the normal per-kind
+      // verify; --verify is never failed outright over an unresolvable hint.
+      const oauthProviderId = await resolveCredentialProviderId({
+        repos,
+        paths,
+        credential,
+        context: "group",
       })
+      const outcomeResult = await verifyCredential(platform, secret, paths, { oauthProviderId })
       // verifyCredential's contract is ALWAYS Ok — but stay defensive rather
       // than assume, since a future change could add an Err path.
       if (outcomeResult.isOk()) {
@@ -237,6 +284,90 @@ const addCommand = defineCommand({
     writeCredentialMeta(credential, json, "added", verifyOutcome, persisted)
   },
 })
+
+// ---------------------------------------------------------------------------
+// Standalone (unlinked) credential add — increment 42. No --platform: a pure
+// secret with its own identity, no kind-compat matrix to validate against
+// (there's no platform to derive one from), no verify (nothing to test
+// against). Mirrors addCommand's secret-acquisition discipline (validate
+// input BEFORE touching stdin/prompt).
+// ---------------------------------------------------------------------------
+
+const STANDALONE_KINDS = ["api-key", "bearer", "env", "file"] as const
+
+async function runAddStandalone(
+  args: {
+    name?: string
+    kind?: string
+    "token-stdin": boolean
+    "secret-file"?: string
+  },
+  json: boolean,
+): Promise<void> {
+  // biome-ignore lint/style/noNonNullAssertion: caller validated --name is present+non-empty
+  const name = args.name!.trim()
+
+  if (args["secret-file"] && args["token-stdin"]) {
+    reportError(json, "invalid input: --secret-file and --token-stdin are mutually exclusive")
+    return
+  }
+
+  const kind = args.kind ?? "bearer"
+  if (!(STANDALONE_KINDS as readonly string[]).includes(kind)) {
+    reportError(
+      json,
+      `invalid input: --kind must be one of ${STANDALONE_KINDS.join(", ")} for a standalone credential (got "${kind}")`,
+    )
+    return
+  }
+
+  if (args["secret-file"] && kind !== "file") {
+    reportError(
+      json,
+      `invalid input: --secret-file is only valid for file-kind credentials (kind is "${kind}"); use --token-stdin for bearer/api-key`,
+    )
+    return
+  }
+
+  let secret: string | null
+  if (args["secret-file"]) {
+    const fileResult = await readSecretFile(args["secret-file"])
+    if (fileResult === null) {
+      reportError(json, `could not read --secret-file "${args["secret-file"]}"`)
+      return
+    }
+    secret = fileResult
+  } else {
+    secret = await acquireSecret({
+      fromStdin: args["token-stdin"],
+      promptMessage: `Secret (${kind}) for "${name}":`,
+      json,
+    })
+  }
+  if (secret === null) return
+
+  if (!secret) {
+    reportError(json, "token must not be empty")
+    return
+  }
+
+  const ctx = await openDbAndStore(json)
+  if (!ctx) return
+  const { repos, store } = ctx
+
+  const result = await addStandaloneCredential(
+    { name, kind: kind as (typeof STANDALONE_KINDS)[number], secret },
+    store,
+    repos.credentials,
+  )
+
+  if (result.isErr()) {
+    reportCredentialOpError(result.error, json)
+    return
+  }
+
+  writeCredentialMeta(result.value, json, "added")
+}
 
 /**
  * OAuth connection state for `credential list` (D3) — derived purely from
@@ -298,6 +429,7 @@ const listCommand = defineCommand({
       reportDbError(platformResult.error, json)
       return
     }
+    const platform = platformResult.value
 
     const credResult = await repos.credentials.forPlatform(
       args.platform as Parameters<typeof repos.credentials.forPlatform>[0],
@@ -307,25 +439,52 @@ const listCommand = defineCommand({
       return
     }
 
+    // Increment 45 (Slice C) — every credential in this list shares the SAME
+    // platform (already fetched above), so load+merge custom designs ONCE for
+    // the whole listing rather than per-row (the resolveCredentialProviderId
+    // helper does load+fetch-platform PER CALL, which would be wasteful in a
+    // loop over rows that all resolve against one already-known platform —
+    // call the lower-level resolver directly instead, same design set reused
+    // across every row). A designs-store load error degrades to built-ins-only
+    // (display is non-authoritative — never fail a listing over it).
+    const paths = getPaths()
+    const designsResult = await loadCustomDesigns(paths)
+    if (designsResult.isErr()) {
+      consola.warn(
+        `warning: custom OAuth designs store failed to load (${designsResult.error.kind}) — provider ids degraded to built-in designs only`,
+      )
+    }
+    const designs = mergeDesigns(designsResult.isOk() ? designsResult.value : [])
+
     // Map to metadata-only objects — NEVER include secret or secretRef.
     // lastVerifyResult/lastVerifiedAt are absent (never verified) or a
     // persisted event from `credential add --verify` / `credential test`.
-    // oauthState/expiresAt/providerId are derived from oauthMeta — metadata
-    // only, never the refs' values (D3).
+    // oauthState/expiresAt are derived from oauthMeta — metadata only, never
+    // the refs' values (D3). providerId is sourced via the shared resolver
+    // (the platform's design — increment 45, Slice E: the legacy
+    // oauthMeta.providerId fallback is gone) — never read directly (Slice C).
     const now = Date.now()
     const creds = credResult.value as Credential[]
-    const metaList = creds.map((c) => ({
-      id: c.id,
-      platformId: c.platformId,
-      account: c.profileName,
-      kind: c.kind,
-      lastVerifyResult: c.lastVerifyResult ?? null,
-      lastVerifiedAt:
-        c.lastVerifiedAt !== undefined ? new Date(c.lastVerifiedAt).toISOString() : null,
-      oauthState: deriveOAuthState(c, now),
-      expiresAt: c.oauthMeta?.expiresAt ?? null,
-      providerId: c.oauthMeta?.providerId ?? null,
-    }))
+    const metaList = creds.map((c) => {
+      const resolved = resolveOAuthProviderId({
+        credentialId: c.id,
+        context: "group",
+        platform,
+        designs,
+      })
+      return {
+        id: c.id,
+        platformId: c.platformId,
+        account: c.name,
+        kind: c.kind,
+        lastVerifyResult: c.lastVerifyResult ?? null,
+        lastVerifiedAt:
+          c.lastVerifiedAt !== undefined ? new Date(c.lastVerifiedAt).toISOString() : null,
+        oauthState: deriveOAuthState(c, now),
+        expiresAt: c.oauthMeta?.expiresAt ?? null,
+        providerId: resolved.ok ? resolved.providerId : null,
+      }
+    })
 
     if (json) {
       process.stdout.write(`${JSON.stringify(metaList)}\n`)
@@ -436,8 +595,18 @@ const testCommand = defineCommand({
     if (secret === null) {
       outcome = { status: "unreachable", detail: STORED_SECRET_MISSING_DETAIL }
     } else {
+      // Increment 45 (Slice C) — source the userinfo-probe providerId hint via
+      // the shared resolver, not `credential.oauthMeta.providerId` directly.
+      // Degrades to `undefined` on a dangling/no-source resolution —
+      // verifyCredential falls through to the normal per-kind verify.
+      const oauthProviderId = await resolveCredentialProviderId({
+        repos,
+        paths: getPaths(),
+        credential,
+        context: "group",
+      })
       const outcomeResult = await verifyCredential(platform, secret, getPaths(), {
-        oauthProviderId: credential.oauthMeta?.providerId,
+        oauthProviderId,
       })
       if (outcomeResult.isErr()) {
         // verifyCredential's contract is ALWAYS Ok; defensive fallback only.
@@ -710,17 +879,55 @@ const reconnectCommand = defineCommand({
       )
       return
     }
-    const providerId = existing.oauthMeta?.providerId
-    if (!providerId) {
+
+    // Increment 45 (Slice C) — source the reconnect-target providerId via the
+    // shared resolver, not `existing.oauthMeta.providerId` directly, so
+    // reconnect can never target a DIFFERENT design than refresh/grouping
+    // would for this same credential. Unlike the verify-hint/display sites,
+    // reconnect DOES need a real design object to drive the flow — so on a
+    // `{ok:false}` (dangling reference / no source) it reports the SAME
+    // "no recorded OAuth provider" error rather than silently degrading (a
+    // reconnect with no resolvable design has nothing to reconnect against).
+    const paths = getPaths()
+    const designsResult = await loadCustomDesigns(paths)
+    if (designsResult.isErr()) {
+      reportError(
+        json,
+        `custom OAuth designs store failed to load (${designsResult.error.kind}) — cannot reconnect`,
+      )
+      return
+    }
+    const designs = mergeDesigns(designsResult.value)
+    let platform: Platform | null = null
+    if (existing.platformId !== null) {
+      const platformResult = await repos.platforms.get(existing.platformId)
+      if (platformResult.isOk()) platform = platformResult.value
+    }
+    const resolved = resolveOAuthProviderId({
+      credentialId: existing.id,
+      context: "group",
+      platform,
+      designs,
+    })
+    if (!resolved.ok) {
       reportError(
         json,
         `credential "${credentialId}" has no recorded OAuth provider — cannot reconnect`,
       )
       return
     }
-
-    const provider = resolveProviderOrError(providerId, json)
-    if (provider === null) return
+    const provider = designs.get(resolved.providerId)
+    if (provider === undefined) {
+      // Defensive — resolveOAuthProviderId only returns an id present in
+      // `designs` (or the legacy fallback, which the merged set may not
+      // contain if the design was since deleted). Same honest error as an
+      // unresolvable provider.
+      reportError(
+        json,
+        `credential "${credentialId}"'s OAuth provider "${resolved.providerId}" is not a known design — cannot reconnect`,
+      )
+      return
+    }
 
     const ctx = await openDbAndStore(json)
     if (!ctx) return
@@ -868,7 +1075,7 @@ function reportCredentialOpError(
     e.kind === "io-failed" ||
     e.kind === "invalid-input" ||
     e.kind === "kind-incompatible" ||
-    e.kind === "duplicate-account"
+    e.kind === "duplicate-name"
   ) {
     reportCredentialError(e as Parameters<typeof reportCredentialError>[0], json)
   } else {
@@ -885,7 +1092,15 @@ function reportCredentialOpError(
  * other call site, e.g. rotate, unaffected).
  */
 function writeCredentialMeta(
-  cred: { id: unknown; platformId: unknown; profileName: string; kind: string },
+  cred: {
+    id: unknown
+    // Increment 42 — the credential's identity slug. Optional on the param
+    // type only so pre-42 call shapes still typecheck; every real Credential
+    // has one.
+    name?: string
+    platformId: unknown
+    kind: string
+  },
   json: boolean,
   successVerb: string,
   verifyOutcome?: VerifyOutcome,
@@ -893,8 +1108,9 @@ function writeCredentialMeta(
 ): void {
   const meta = {
     id: cred.id,
+    ...(cred.name !== undefined ? { name: cred.name } : {}),
     platformId: cred.platformId,
-    account: cred.profileName,
+    account: cred.name,
     kind: cred.kind,
   }
   if (json) {
@@ -907,9 +1123,16 @@ function writeCredentialMeta(
       })}\n`,
     )
   } else {
-    consola.success(
-      `Credential ${successVerb} — account: ${cred.profileName}, platform: ${String(cred.platformId)}, id: ${String(cred.id)}`,
-    )
+    const nameLabel = cred.name !== undefined ? `name: ${cred.name}, ` : ""
+    // An unlinked credential (platformId null, increment 42) has no
+    // meaningful account/platform to report — increment 46: `name` IS the
+    // account identity now, so the "account: X, platform: null" line would
+    // be redundant/confusing noise (X would equal nameLabel's X).
+    const scopeLabel =
+      cred.platformId === null
+        ? ""
+        : `account: ${cred.name ?? ""}, platform: ${String(cred.platformId)}, `
+    consola.success(`Credential ${successVerb} — ${nameLabel}${scopeLabel}id: ${String(cred.id)}`)
     if (verifyOutcome !== undefined) {
       consola.info(formatVerifyOutcome(verifyOutcome))
     }

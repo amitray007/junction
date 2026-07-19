@@ -122,3 +122,50 @@ export function requireSecretString(value: unknown, name: string): string {
   }
   return value
 }
+
+// ---------------------------------------------------------------------------
+// Optional-field helpers — pure, no I/O, no core import. Extracted here
+// (increment 45) when oauth-design-mutations.functions.ts became the SECOND
+// verbatim copy of platform-mutations.functions.ts's private versions (rule-
+// of-three for a primitive — DRY primitives eagerly per docs/principles/dry.md,
+// unlike a policy check like validatePlatformInput's per-kind switch, which
+// stays duplicated until it actually is one).
+// ---------------------------------------------------------------------------
+
+/** A present, non-empty (after trim) string, or undefined. */
+export function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined
+}
+
+/** An array's string members, or undefined if `value` isn't an array. */
+export function optionalStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  return value.filter((v): v is string => typeof v === "string")
+}
+
+/** A plain object's string-valued entries, or undefined if empty/not an object. */
+export function optionalStringRecord(value: unknown): Record<string, string> | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof v === "string") out[k] = v
+  }
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
+/**
+ * A `.validator()` factory for the recurring "one required string field"
+ * request shape (an id-only delete/detail GET, a single-URL POST, etc —
+ * e.g. getAppDetail's `{id}`, deleteCustomDesignFn's `{id}`, discoverOidcFn's
+ * `{issuerUrl}`). Collapses what would otherwise be a THIRD+ verbatim
+ * `(raw) => { const d = raw as Record<string, unknown>; return {
+ * [field]: requireString(d[field], field) } }` closure.
+ */
+export function requireSingleStringField<const K extends string>(
+  field: K,
+): (raw: unknown) => Record<K, string> {
+  return (raw: unknown) => {
+    const d = raw as Record<string, unknown>
+    return { [field]: requireString(d[field], field) } as Record<K, string>
+  }
+}

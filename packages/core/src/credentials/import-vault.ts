@@ -40,6 +40,7 @@ import type { Platform } from "../schema/platform.js"
 import { PlatformIdSchema } from "../schema/primitives.js"
 import { ProfileSchema } from "../schema/profile.js"
 import { addCredential, FILE_SECRET_MAX_BYTES } from "./add-credential.js"
+import { deriveCredentialName } from "./derive-name.js"
 import { isKindAccepted } from "./kind-compat.js"
 import { removeCredential } from "./remove-credential.js"
 import type { CredentialStore } from "./store.js"
@@ -60,8 +61,8 @@ function describeCredentialError(e: CredentialError): string {
       return e.reason
     case "kind-incompatible":
       return `kind "${e.requested}" not accepted; allowed: ${e.allowed.join(", ")}`
-    case "duplicate-account":
-      return `duplicate account for ${e.platformId}/${e.account}`
+    case "duplicate-name":
+      return `a credential named "${e.name}" already exists`
     case "rotate-refused":
       return e.reason
     case "export-failed":
@@ -97,7 +98,7 @@ export interface ImportSummary {
     added: number
     skipped: number
     overwritten: number
-    failed: Array<{ platformId: string; account: string; reason: string }>
+    failed: Array<{ platformId: string | null; account: string; reason: string }>
   }
   profiles?: {
     added: number
@@ -107,6 +108,25 @@ export interface ImportSummary {
 }
 
 type ManifestCredential = VaultManifest["credentials"][number]
+
+/**
+ * The manifest credential's EFFECTIVE identity (increment 46, Fable RD): a
+ * pre-46 archive already carries `name` (increment 42+) and that wins
+ * outright; a pre-42 archive has no `name` at all, so one is DERIVED from
+ * `account` as the seed (the `label` role of deriveCredentialName's 2nd
+ * param — see derive-name.ts). `existingNames` is passed in by the caller so
+ * the SAME derivation (and its collision-suffixing) can be evaluated against
+ * whatever "already claimed" set is appropriate for that call site (a DB
+ * read for the real collision check, an empty set for strict's shape-only
+ * prevalidation — mirrors buildCandidateForValidation's existing pattern).
+ */
+function effectiveCredentialName(
+  mc: Pick<ManifestCredential, "name" | "account">,
+  platformId: string,
+  existingNames: ReadonlySet<string>,
+): string {
+  return mc.name ?? deriveCredentialName(platformId, mc.account, existingNames)
+}
 
 /**
  * Import a `.jvlt` archive: decrypt (wrong passphrase / tamper → generic import-failed,
@@ -296,29 +316,53 @@ async function runImport(
   const idMap = new Map<string, string>()
 
   for (const mc of manifest.credentials) {
-    const label = `${mc.platformId}/${mc.account}`
-    const platform = platformById.get(mc.platformId)
+    const label = `${mc.platformId ?? "(unlinked)"}/${mc.account}`
+
+    // Increment 42 — an unlinked credential (no platformId) has nothing to
+    // resolve/upsert here. Importing a standalone secret is out of Phase 1's
+    // scope (vault import stays platform-scoped, as it always has been) —
+    // fail this ONE entry with an honest reason rather than crash the import.
+    if (mc.platformId === undefined) {
+      summary.credentials.failed.push({
+        platformId: null,
+        account: mc.account,
+        reason: `credential ${label} is unlinked (no platformId) — unlinked-credential vault import is not yet supported`,
+      })
+      continue
+    }
+    const mcPlatformId = mc.platformId
+
+    const platform = platformById.get(mcPlatformId)
     if (platform === undefined) {
       // Should not happen (platforms are upserted from the same manifest above),
       // but guard defensively rather than crash on a malformed archive.
       summary.credentials.failed.push({
-        platformId: mc.platformId,
+        platformId: mcPlatformId,
         account: mc.account,
         reason: `credential ${label} references a platform not present in the archive`,
       })
       continue
     }
 
-    const existingForPlatform = await repos.credentials.forPlatform(platform.id)
-    if (existingForPlatform.isErr()) {
+    // Increment 46 (Fable RD) — the collision check is a GLOBAL name match,
+    // not a per-platform account match: a credential's account identity IS
+    // its `name` (RA), globally unique via `credentials_name_unique` (RB).
+    // A per-platform check would let a credential pass here and then explode
+    // on that DB constraint at write — turning a clean skip/overwrite
+    // decision into an opaque failure. `repos.credentials.list()` (not
+    // `forPlatform`) is the read this now requires.
+    const allExisting = await repos.credentials.list()
+    if (allExisting.isErr()) {
       summary.credentials.failed.push({
-        platformId: mc.platformId,
+        platformId: mcPlatformId,
         account: mc.account,
-        reason: `failed to check for collision: ${describeDbError(existingForPlatform.error)}`,
+        reason: `failed to check for collision: ${describeDbError(allExisting.error)}`,
       })
       continue
     }
-    const collision = existingForPlatform.value.find((c) => c.profileName === mc.account)
+    const existingNames = new Set(allExisting.value.map((c) => c.name))
+    const effectiveName = effectiveCredentialName(mc, mcPlatformId, existingNames)
+    const collision = allExisting.value.find((c) => c.name === effectiveName)
 
     if (collision !== undefined) {
       if (onCollision === "error") {
@@ -337,7 +381,7 @@ async function runImport(
       if (removed.isErr()) {
         if (removed.error.kind === "in-use") {
           summary.credentials.failed.push({
-            platformId: mc.platformId,
+            platformId: mcPlatformId,
             account: mc.account,
             reason:
               "credential in use by a profile; cannot overwrite — remove the route first or use --on-collision skip",
@@ -345,7 +389,7 @@ async function runImport(
           continue
         }
         summary.credentials.failed.push({
-          platformId: mc.platformId,
+          platformId: mcPlatformId,
           account: mc.account,
           reason: `failed to remove existing credential: ${describeDbError(removed.error)}`,
         })
@@ -360,6 +404,18 @@ async function runImport(
     const newId = await addAndRecord(mc, platform, store, repos, summary, idMap)
     if (newId !== null) summary.credentials.added++
   }
+
+  // ---- 2b. inline 0012-equivalent backfill (increment 44, R2) ----
+  // Runs AFTER every credential in this import has landed (added, skipped-
+  // remapped-to-existing, or overwritten) so the DB now reflects the FULL
+  // picture — same fill-only-if-unset + conflict rule as migration 0012's
+  // batch SQL, just re-derived against live repos instead of raw SQL. This
+  // is what lets an OLD-format archive (credential carries providerId,
+  // platform doesn't) converge the platform's field on import — without it,
+  // every old-archive import would permanently pin the resolver's fallback
+  // above zero and the future cleanup increment's "zero fallback hits" drop
+  // gate could never fire (see docs/futures/revisit-when.md).
+  await backfillPlatformOAuthProviderId(manifest.platforms, manifest.credentials, repos)
 
   // ---- 3. profiles LAST (idMap is complete) ----
   if (includeProfiles && manifest.profiles !== undefined) {
@@ -421,6 +477,81 @@ async function runImport(
   }
 
   return ok(summary)
+}
+
+/**
+ * The inline import-time equivalent of migration 0012/0013's backfill
+ * (increment 44, R2; re-sourced increment 45, Slice E). Same three rules as
+ * 0012, restated here because they're safety-critical and this is a SECOND
+ * migration surface (data-migration review scrutinizes this the same as
+ * 0012's SQL):
+ *   - FILL-ONLY-IF-UNSET: a platform that already has `oauthProviderId` set
+ *     (from the manifest's own platform row, or a pre-existing DB row) is
+ *     left completely alone — this function never overwrites.
+ *   - CONFLICT RULE: if the platform's bound oauth2 credentials disagree on
+ *     `oauthMeta.providerId`, the field is left UNSET — never guessed.
+ *   - NON-DESTRUCTIVE: never touches any credential's `oauthMeta` — only
+ *     ever upserts the platform row's `oauthProviderId`.
+ *
+ * SOURCE CHANGED (increment 45, Slice E): the LIVE credential's
+ * `oauthMeta.providerId` no longer exists (dropped from OAuthMetaSchema) —
+ * there is nothing to read off `repos.credentials.forPlatform(...)` rows
+ * anymore. The archive's OWN `ManifestOAuthMetaSchema.providerId` (a
+ * SEPARATE, still-`providerId`-carrying schema kept for exactly this back-
+ * compat purpose — see vault-manifest.ts) is the source instead: this
+ * function now scans `manifest.credentials` directly (grouped by
+ * platformId), never a live DB read of credential rows. This is what lets a
+ * pre-45 archive (whose manifest entries still carry `oauthMeta.providerId`)
+ * continue converging the imported platform's `oauthProviderId` even though
+ * the field is gone from the live schema — the archive is the ONLY place
+ * that legacy copy still exists.
+ *
+ * Best-effort per platform: a failure to read/write one platform's backfill
+ * is swallowed (never aborts the import) — this is a convenience backfill on
+ * top of an already-successful import, not a correctness-required write; a
+ * credential whose platform can't be backfilled simply needs a manual
+ * `oauth-design`/platform-edit bind (or a reconnect) to refresh again.
+ */
+async function backfillPlatformOAuthProviderId(
+  manifestPlatforms: readonly Platform[],
+  manifestCredentials: readonly ManifestCredential[],
+  repos: Pick<Repositories, "platforms">,
+): Promise<void> {
+  // Group the ARCHIVE's legacy providerId copies by platformId once, up
+  // front — O(platforms + credentials) instead of a per-platform re-scan.
+  const providerIdsByPlatform = new Map<string, Set<string>>()
+  for (const mc of manifestCredentials) {
+    if (mc.kind !== "oauth2") continue
+    if (mc.platformId === undefined) continue
+    const legacyProviderId = mc.oauthMeta?.providerId
+    if (legacyProviderId === undefined) continue
+    const set = providerIdsByPlatform.get(mc.platformId) ?? new Set<string>()
+    set.add(legacyProviderId)
+    providerIdsByPlatform.set(mc.platformId, set)
+  }
+
+  for (const manifestPlatform of manifestPlatforms) {
+    const currentResult = await repos.platforms.get(manifestPlatform.id)
+    if (currentResult.isErr()) continue // platform not actually present — nothing to backfill
+    const current = currentResult.value
+
+    // Fill-only-if-unset — an already-set field (from the manifest itself,
+    // an --on-collision skip keeping a pre-existing set row, or a prior
+    // backfill) is never touched.
+    if (current.oauthProviderId !== undefined) continue
+
+    const providerIds = providerIdsByPlatform.get(current.id)
+    if (providerIds === undefined) continue
+
+    // Conflict rule: exactly one distinct providerId among the archive's
+    // bound oauth2 credentials → backfill; zero or MORE THAN ONE
+    // (disagreement) → leave unset.
+    if (providerIds.size !== 1) continue
+    const [onlyProviderId] = providerIds
+    if (onlyProviderId === undefined) continue // unreachable (size===1 guards this), narrows the type
+
+    await repos.platforms.upsert({ ...current, oauthProviderId: onlyProviderId })
+  }
 }
 
 // ===========================================================================
@@ -500,10 +631,32 @@ async function prevalidateStrict(
   }
 
   // ---- credentials: shape, kind-compat, file cap, archive-internal dups, DB collisions ----
-  const seenAccounts = new Set<string>()
+  // Increment 46 (Fable RD) — keyed by EFFECTIVE NAME, not [platformId, account]:
+  // the credential's real identity (and the DB's actual uniqueness invariant,
+  // `credentials_name_unique`) is `name`. Each entry's effective name is
+  // derived against an EMPTY set (mirrors buildCandidateForValidation's
+  // shape-only derivation) — NOT the accumulating `seenNames` set, which
+  // would feed deriveCredentialName's OWN collision-suffixing and mask a
+  // true duplicate as a `-2`-suffixed near-miss instead of catching it.
+  // `seenNames` is used ONLY to detect the duplicate, never to influence
+  // derivation.
+  const seenNames = new Set<string>()
   for (const mc of manifest.credentials) {
-    const label = `${mc.platformId}/${mc.account}`
-    const platform = platformById.get(mc.platformId)
+    const label = `${mc.platformId ?? "(unlinked)"}/${mc.account}`
+
+    // Increment 42 — unlinked-credential vault import is not yet supported
+    // (see runImport's identical guard); strict must catch it here too
+    // (zero writes) rather than let phase 2 discover it after secrets were
+    // written.
+    if (mc.platformId === undefined) {
+      return err({
+        kind: "import-failed",
+        reason: `credential ${label} is unlinked (no platformId) — unlinked-credential vault import is not yet supported`,
+      })
+    }
+    const mcPlatformId = mc.platformId
+
+    const platform = platformById.get(mcPlatformId)
     if (platform === undefined) {
       // Mirrors the non-strict dropped/missing-platform guard — this credential
       // would fail in phase 2 too, but strict must catch it here (zero writes).
@@ -513,17 +666,14 @@ async function prevalidateStrict(
       })
     }
 
-    // JSON-array key, NOT a delimiter-joined string — platform ids/accounts may
-    // themselves contain any delimiter we could pick (("a b","c") vs ("a","b c")
-    // would spuriously collide under a space-join).
-    const dupKey = JSON.stringify([mc.platformId, mc.account])
-    if (seenAccounts.has(dupKey)) {
+    const effectiveName = effectiveCredentialName(mc, mcPlatformId, new Set())
+    if (seenNames.has(effectiveName)) {
       return err({
         kind: "import-failed",
         reason: `archive contains a duplicate credential for ${label}`,
       })
     }
-    seenAccounts.add(dupKey)
+    seenNames.add(effectiveName)
 
     const candidateResult = buildCandidateForValidation(mc, platform)
     if (candidateResult.isErr()) {
@@ -555,14 +705,16 @@ async function prevalidateStrict(
     }
 
     if (onCollision === "error") {
-      const existingForPlatform = await repos.credentials.forPlatform(platform.id)
-      if (existingForPlatform.isErr()) {
+      // Global name match (RD) — mirrors runImport's collision check, not a
+      // per-platform `forPlatform` sweep (see the comment there for why).
+      const allExisting = await repos.credentials.list()
+      if (allExisting.isErr()) {
         return err({
           kind: "import-failed",
-          reason: `failed to check for collision on ${label}: ${describeDbError(existingForPlatform.error)}`,
+          reason: `failed to check for collision on ${label}: ${describeDbError(allExisting.error)}`,
         })
       }
-      const collision = existingForPlatform.value.find((c) => c.profileName === mc.account)
+      const collision = allExisting.value.find((c) => c.name === effectiveName)
       if (collision !== undefined) {
         return err({ kind: "import-failed", reason: `credential ${label} already exists` })
       }
@@ -630,11 +782,22 @@ function buildCandidateForValidation(
   mc: ManifestCredential,
   platform: Platform,
 ): Result<void, string> {
+  // Increment 42 — mirrors the real write path's back-compat derivation
+  // (addImportedCredential/addOAuthImportedCredential below): an archive from
+  // before increment 42 has no `name`; a throwaway derived name is enough to
+  // validate SHAPE here (empty existing-names set — TRUE global uniqueness is
+  // re-checked at the real DB write in phase 2, which strict's journal/
+  // compensation machinery already covers via the constraint-violation path).
+  // Increment 46 (Fable RD) — `profileName` is gone from CredentialSchema;
+  // `account` now feeds ONLY the name-derivation seed (effectiveCredentialName),
+  // never a stored field.
+  const candidateName = effectiveCredentialName(mc, platform.id, new Set())
+
   if (mc.kind !== "oauth2") {
     const parsed = CredentialSchema.safeParse({
       id: newCredentialId(),
+      name: candidateName,
       platformId: platform.id,
-      profileName: mc.account,
       kind: mc.kind,
       secretRef: newCredentialId(),
     })
@@ -646,15 +809,20 @@ function buildCandidateForValidation(
 
   const parsed = CredentialSchema.safeParse({
     id: newCredentialId(),
+    name: candidateName,
     platformId: platform.id,
-    profileName: mc.account,
     kind: "oauth2",
     secretRef: newCredentialId(),
     oauthMeta: {
       refreshTokenRef: mc.refreshToken !== undefined ? newCredentialId() : undefined,
       clientIdRef: mc.clientId !== undefined ? newCredentialId() : undefined,
       clientSecretRef: mc.clientSecret !== undefined ? newCredentialId() : undefined,
-      providerId: mc.oauthMeta?.providerId,
+      // Increment 45, Slice E — `providerId` no longer exists on
+      // OAuthMetaSchema (dropped from the credential; the archive's OWN
+      // ManifestOAuthMetaSchema.providerId is unaffected — see vault-
+      // manifest.ts). `mc.oauthMeta?.providerId` is read ONLY for the
+      // platform backfill (backfillPlatformOAuthProviderId, below), never
+      // written onto the imported credential itself.
       authMode: mc.oauthMeta?.authMode,
       scopes: mc.oauthMeta?.scopes,
       expiresAt: mc.oauthMeta?.expiresAt,
@@ -874,7 +1042,16 @@ async function addImportedCredential(
 ): Promise<Result<Credential, { reason: string }>> {
   if (mc.kind !== "oauth2") {
     const added = await addCredential(
-      { platformId: mc.platformId, account: mc.account, kind: mc.kind, secret: mc.secret },
+      {
+        platformId: platform.id,
+        account: mc.account,
+        kind: mc.kind,
+        secret: mc.secret,
+        // Increment 42 — use the manifest's name when present; addCredential
+        // derives one itself (deriveCredentialName) when absent, matching
+        // back-compat for a pre-42 archive with no `name` field.
+        ...(mc.name !== undefined ? { name: mc.name } : {}),
+      },
       platform,
       store,
       repos.credentials,
@@ -882,7 +1059,7 @@ async function addImportedCredential(
     if (added.isErr()) {
       const e = added.error
       return err({
-        reason: `import failed for ${mc.platformId}/${mc.account}: ${describeAddError(e)}`,
+        reason: `import failed for ${platform.id}/${mc.account}: ${describeAddError(e)}`,
       })
     }
     // Best-effort carry over the verify state — a formatting-only field, never
@@ -892,7 +1069,7 @@ async function addImportedCredential(
     }
     return ok(added.value)
   }
-  return addOAuthImportedCredential(mc, store, repos)
+  return addOAuthImportedCredential(mc, platform.id, store, repos)
 }
 
 /**
@@ -912,7 +1089,7 @@ async function addAndRecord(
   const added = await addImportedCredential(mc, platform, store, repos)
   if (added.isErr()) {
     summary.credentials.failed.push({
-      platformId: mc.platformId,
+      platformId: platform.id,
       account: mc.account,
       reason: added.error.reason,
     })
@@ -924,8 +1101,8 @@ async function addAndRecord(
 
 function describeAddError(e: { kind: string } & Record<string, unknown>): string {
   switch (e.kind) {
-    case "duplicate-account":
-      return "duplicate account (unexpected — collision was already checked)"
+    case "duplicate-name":
+      return "duplicate name (unexpected — collision was already checked)"
     case "kind-incompatible":
       return `kind "${String(e.requested)}" not accepted for this platform`
     case "invalid-input":
@@ -948,6 +1125,7 @@ function describeAddError(e: { kind: string } & Record<string, unknown>): string
  */
 async function addOAuthImportedCredential(
   mc: ManifestCredential,
+  platformId: string,
   store: CredentialStore,
   repos: Pick<Repositories, "credentials">,
 ): Promise<Result<Credential, { reason: string }>> {
@@ -957,17 +1135,34 @@ async function addOAuthImportedCredential(
   const clientIdRef = mc.clientId !== undefined ? newCredentialId() : undefined
   const clientSecretRef = mc.clientSecret !== undefined ? newCredentialId() : undefined
 
+  // Increment 42 — use the manifest's name when present; DERIVE one (against
+  // the CURRENT DB's existing names) when absent, matching back-compat for a
+  // pre-42 archive with no `name` field. A live list() read here (rather than
+  // the empty-set placeholder buildCandidateForValidation used for shape-only
+  // prevalidation) so a non-strict import's real write gets a truly-unique
+  // derived name, not just a schema-shaped one.
+  let name = mc.name
+  if (name === undefined) {
+    const existingResult = await repos.credentials.list()
+    const existingNames = existingResult.isOk()
+      ? new Set(existingResult.value.map((c) => c.name))
+      : new Set<string>()
+    name = deriveCredentialName(platformId, mc.account, existingNames)
+  }
+
   const credentialParse = CredentialSchema.safeParse({
     id,
-    platformId: mc.platformId,
-    profileName: mc.account,
+    name,
+    platformId,
     kind: "oauth2",
     secretRef,
     oauthMeta: {
       refreshTokenRef,
       clientIdRef,
       clientSecretRef,
-      providerId: mc.oauthMeta?.providerId,
+      // Increment 45, Slice E — `providerId` no longer exists on
+      // OAuthMetaSchema; see the identical note in buildCandidateForValidation
+      // above. The archive's copy still feeds backfillPlatformOAuthProviderId.
       authMode: mc.oauthMeta?.authMode,
       scopes: mc.oauthMeta?.scopes,
       expiresAt: mc.oauthMeta?.expiresAt,
@@ -983,7 +1178,7 @@ async function addOAuthImportedCredential(
   // DB insert → stranded store entries).
   if (!credentialParse.success) {
     return err({
-      reason: `invalid oauth2 credential shape for ${mc.platformId}/${mc.account}: ${credentialParse.error.issues.map((i) => i.message).join(", ")}`,
+      reason: `invalid oauth2 credential shape for ${platformId}/${mc.account}: ${credentialParse.error.issues.map((i) => i.message).join(", ")}`,
     })
   }
   const credential = credentialParse.data
@@ -1005,7 +1200,7 @@ async function addOAuthImportedCredential(
     if (setResult.isErr()) {
       await cleanupRefs(store, written)
       return err({
-        reason: `failed to write secret for ${mc.platformId}/${mc.account}: ${describeCredentialError(setResult.error)}`,
+        reason: `failed to write secret for ${platformId}/${mc.account}: ${describeCredentialError(setResult.error)}`,
       })
     }
     written.push(ref)
@@ -1015,7 +1210,7 @@ async function addOAuthImportedCredential(
   if (createResult.isErr()) {
     await cleanupRefs(store, written)
     return err({
-      reason: `failed to persist oauth2 credential for ${mc.platformId}/${mc.account}: ${describeDbError(createResult.error)}`,
+      reason: `failed to persist oauth2 credential for ${platformId}/${mc.account}: ${describeDbError(createResult.error)}`,
     })
   }
 

@@ -117,7 +117,7 @@ describe("resolveCredentialSecret", () => {
     })
   })
 
-  it("valid credential → {secret: stored value, account: profileName}", async () => {
+  it("valid credential → {secret: stored value, account: name}", async () => {
     await withTempHome(async () => {
       const paths = getPaths()
       const dbResult = await getDatabase(paths)
@@ -160,7 +160,10 @@ describe("resolveCredentialSecret", () => {
       expect(result.isOk()).toBe(true)
       if (result.isOk()) {
         expect(result.value.secret).toBe("test-secret-value")
-        expect(result.value.account).toBe("work")
+        // Increment 46 — `account` is now the credential's `name` (a
+        // credential's account identity IS its name, Fable RA); "work" was
+        // only a derivation SEED, so the derived name is "test-platform-work".
+        expect(result.value.account).toBe(credential.name)
       }
     })
   })
@@ -216,7 +219,9 @@ describe("resolveCredentialSecret", () => {
       if (result.isOk()) {
         expect(result.value.secret).toBeNull()
         expect(result.value.kind).toBe("bearer")
-        expect(result.value.account).toBe("work")
+        // Increment 46 — `account` is now the credential's `name` (a
+        // credential's account identity IS its name, Fable RA).
+        expect(result.value.account).toBe(credential.name)
       }
     })
   })

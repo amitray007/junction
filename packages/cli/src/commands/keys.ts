@@ -42,6 +42,8 @@ function formatMintError(e: ApiKeyError | DbError): string {
       return "failed to mint key: database error"
     case "migration-failed":
       return "failed to mint key: database migration failed"
+    case "migration-refused":
+      return "failed to mint key: database migration refused"
     case "constraint-violation":
       return "failed to mint key: constraint violation"
     case "in-use":

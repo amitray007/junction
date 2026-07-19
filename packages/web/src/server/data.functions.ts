@@ -14,6 +14,7 @@ import {
   readApps,
   readCredentials,
   readDashboard,
+  readOAuthDesigns,
   readOAuthProviders,
   readPlatforms,
   readProfiles,
@@ -33,6 +34,7 @@ export type {
   ConnectionMeta,
   CredentialMeta,
   DashboardData,
+  OAuthDesignMeta,
   OAuthProviderMeta,
   PlatformMeta,
   ProfileMeta,
@@ -88,6 +90,14 @@ export const getAppDetail = createServerFn({ method: "GET" })
 export const getOAuthProviders = createServerFn({ method: "GET" }).handler(async () => {
   assertLocalHost()
   return readOAuthProviders()
+})
+
+// OAuth designs (increment 44, R1) — the READ-ONLY global designs surface in
+// Settings. DB-backed (joins the catalog against platform references), so
+// unlike getOAuthProviders it awaits a real read.
+export const getOAuthDesigns = createServerFn({ method: "GET" }).handler(async () => {
+  assertLocalHost()
+  return readOAuthDesigns()
 })
 
 export const getProfiles = createServerFn({ method: "GET" }).handler(async () => {

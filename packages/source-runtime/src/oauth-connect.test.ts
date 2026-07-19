@@ -46,8 +46,6 @@ const DEVICE_CODE_PROVIDER: OAuthProvider = {
   pkce: "S256",
   scopeSeparator: " ",
   authorizationParams: { access_type: "offline", prompt: "consent" },
-  tokenAuthMethod: "client_secret_basic",
-  bodyFormat: "form",
   expiryStrategy: "expires_in",
   redirectMode: "loopback-ephemeral",
   supportsRefresh: true,
@@ -75,8 +73,6 @@ const COMMA_SCOPE_PROVIDER: OAuthProvider = {
   tokenUrl: "https://example.com/oauth/token",
   pkce: "S256",
   scopeSeparator: ",",
-  tokenAuthMethod: "client_secret_post",
-  bodyFormat: "form",
   expiryStrategy: "expires_in",
   parseTokenResponse: syntheticCommaScopeParser,
   redirectMode: "loopback-fixed",
@@ -462,15 +458,28 @@ describe("persistOAuthTokens", () => {
       }
 
       expect(credential.oauthMeta?.needsReauth).toBe(false)
-      expect(credential.oauthMeta?.providerId).toBe("github-app")
+
+      // Increment 45, Slice E — the design this credential belongs to is no
+      // longer stamped onto oauthMeta at all; persistOAuthTokens now
+      // best-effort backfills the bound PLATFORM's oauthProviderId instead
+      // (fill-only-if-unset) — see the identical assertion pattern this
+      // proves against.
+      const platformResult = await repos.platforms.get("test-platform")
+      expect(platformResult.isOk()).toBe(true)
+      if (platformResult.isOk()) {
+        expect(platformResult.value.oauthProviderId).toBe("github-app")
+      }
     })
   })
 
   // -------------------------------------------------------------------------
-  // 32.13 Slice B1 — duplicate-account guard on mode:"create"
+  // Increment 46 (RC) — RETIRES the 32.13 Slice B1 duplicate-account guard:
+  // a same-account-seed create no longer refuses; deriveCredentialName just
+  // suffixes -2. The DB-level `credentials_name_unique` backstop (a name
+  // collision, not an account-label collision) is what actually protects now.
   // -------------------------------------------------------------------------
 
-  it("mode create: a duplicate {platformId, account} -> typed duplicate-account, NOTHING written to the store", async () => {
+  it("mode create: a SAME account seed as an existing credential on the platform now succeeds — derivation suffixes -2, no duplicate-account guard", async () => {
     await withTempHome(async () => {
       const paths = getPaths()
       const dbResult = await getDatabase(paths)
@@ -486,11 +495,11 @@ describe("persistOAuthTokens", () => {
       }
       await repos.platforms.upsert(platform)
 
-      // Seed an EXISTING credential with account "work" on this platform.
+      // Seed an EXISTING credential derived from account seed "work" on this platform.
       await repos.credentials.create({
         id: "existing-cred-id",
+        name: "dup-platform-work",
         platformId: "dup-platform",
-        profileName: "work",
         kind: "oauth2",
         secretRef: "existing-access-ref",
         oauthMeta: {
@@ -530,31 +539,22 @@ describe("persistOAuthTokens", () => {
         now: Date.now(),
         mode: "create",
         platformId: "dup-platform",
-        account: "work", // SAME account label as the seeded credential
+        account: "work", // SAME account seed as the seeded credential
       })
 
-      expect(result.isErr()).toBe(true)
-      if (!result.isErr()) return
-      expect(result.error.kind).toBe("duplicate-account")
-      if (result.error.kind === "duplicate-account") {
-        expect(result.error.platformId).toBe("dup-platform")
-        expect(result.error.account).toBe("work")
-      }
+      expect(result.isOk()).toBe(true)
+      if (result.isOk()) expect(result.value.name).toBe("dup-platform-work-2")
 
-      // The store must NEVER be touched — the guard runs BEFORE any store write.
-      expect(setCalls).toEqual([])
-      expect(storeMap.size).toBe(0)
-
-      // Only the originally-seeded credential exists — no second row created.
+      // Both credentials now exist on the platform (no guard refused the 2nd).
       const all = await repos.credentials.list()
       expect(all.isOk()).toBe(true)
       if (all.isOk()) {
-        expect(all.value.filter((c) => String(c.platformId) === "dup-platform").length).toBe(1)
+        expect(all.value.filter((c) => String(c.platformId) === "dup-platform").length).toBe(2)
       }
     })
   })
 
-  it("mode create: a DIFFERENT account label on the same platform is NOT a duplicate", async () => {
+  it("mode create: a DIFFERENT account label on the same platform derives a distinct name", async () => {
     await withTempHome(async () => {
       const paths = getPaths()
       const dbResult = await getDatabase(paths)
@@ -572,8 +572,8 @@ describe("persistOAuthTokens", () => {
 
       await repos.credentials.create({
         id: "existing-cred-id-2",
+        name: "dup-platform-2-work",
         platformId: "dup-platform-2",
-        profileName: "work",
         kind: "oauth2",
         secretRef: "existing-access-ref-2",
         oauthMeta: {
@@ -615,7 +615,7 @@ describe("persistOAuthTokens", () => {
       })
 
       expect(result.isOk()).toBe(true)
-      if (result.isOk()) expect(result.value.profileName).toBe("personal")
+      if (result.isOk()) expect(result.value.name).toBe("dup-platform-2-personal")
     })
   })
 
@@ -637,6 +637,7 @@ describe("persistOAuthTokens", () => {
 
       await repos.credentials.create({
         id: "reconnect-cred-id",
+        name: "work-reconnect-cred-id",
         platformId: "dup-platform-3",
         profileName: "work",
         kind: "oauth2",
@@ -732,6 +733,7 @@ describe("persistOAuthTokens", () => {
 
       const createResult = await repos.credentials.create({
         id: "cred-reconnect-test",
+        name: "work-cred-reconnect-test",
         platformId: "test-platform-2",
         profileName: "work",
         kind: "oauth2",

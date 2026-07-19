@@ -12,23 +12,18 @@
 // `.data` (arctic's raw response — carries tokens), never
 // `JSON.stringify(err)`. Map failures via `.code` / `.constructor.name` only.
 
-import { getProvider, type RefreshResult, type RefreshTokenFn } from "@junction/core"
+import type { RefreshResult, RefreshTokenFn } from "@junction/core"
 import { ArcticFetchError, OAuth2Client, OAuth2RequestError } from "arctic"
 
 /**
- * Resolve a provider's token endpoint to a plain string, or `undefined` if it
- * can't be resolved without connection-level config this fn doesn't have
- * (the `{subdomain}`-style function form — treated as unknown/unrefreshable
- * here; a tuned catalog entry's refresh in practice always has a fixed URL).
+ * Resolve a provider's token endpoint to a plain string, or `undefined` if
+ * it's unset (increment 44 — `tokenUrl` is a concrete string; the fn-shaped
+ * per-tenant form was removed as dead code — see catalog.ts). Only the
+ * "generic" catalog placeholder is ever empty before a connect descriptor
+ * fills it in.
  */
-function resolveTokenUrl(
-  tokenUrl: string | ((cfg: Record<string, string>) => string),
-): string | undefined {
-  if (typeof tokenUrl === "string") return tokenUrl.length > 0 ? tokenUrl : undefined
-  // A fn-shaped tokenUrl needs connection_config (e.g. Atlassian's
-  // {subdomain}) that isn't available at this seam — refuse rather than call
-  // the fn with a guessed/empty config.
-  return undefined
+function resolveTokenUrl(tokenUrl: string): string | undefined {
+  return tokenUrl.length > 0 ? tokenUrl : undefined
 }
 
 /**
@@ -44,11 +39,12 @@ export const oauthRefreshFn: RefreshTokenFn = async (args) => {
     return { ok: false, reason: "unknown", detail: "empty providerId" }
   }
 
-  const provider = getProvider(providerId)
-  if (provider === undefined) {
-    return { ok: false, reason: "unknown", detail: "unknown provider" }
-  }
-
+  // Increment 45 (credential-security review): use the ALREADY-RESOLVED design
+  // the orchestrator passed (resolved against the MERGED built-in + custom set),
+  // NOT a getProvider(providerId) re-lookup — getProvider is built-ins-only, so
+  // re-looking-up would dead-end every `custom:<slug>` design's refresh. The
+  // design's tokenUrl is where the refresh token is POSTed.
+  const provider = args.design
   const tokenUrl = resolveTokenUrl(provider.tokenUrl)
   if (tokenUrl === undefined) {
     return { ok: false, reason: "unknown", detail: "token endpoint unresolvable" }

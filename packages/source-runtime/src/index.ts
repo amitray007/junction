@@ -10,6 +10,16 @@
 // handler shape, a serving concern that stays in cli (see method file 28,
 // "Boundary note — why adaptToMcpHandlers stays in cli").
 
+// bindCredentialToPlatform verify-then-commit wrappers (increment 43) — mirror
+// verifyThenAdd/confirmThenAdd (connect-from-catalog.ts) but bind an EXISTING
+// credential to a platform instead of minting a fresh one.
+export type {
+  BindError,
+  BindResult,
+  ConfirmThenBindArgs,
+  VerifyThenBindArgs,
+} from "./bind-credential.js"
+export { confirmThenBind, verifyThenBind } from "./bind-credential.js"
 export type { ResolvedSecret } from "./build-provider.js"
 export { buildProvider, toResolvedSecret } from "./build-provider.js"
 // Catalog-driven one-click connect (increment 30.11) — the verify-gated
@@ -56,6 +66,11 @@ export {
 // The arctic-backed RefreshTokenFn (increment 29, slice B) — the injected
 // provider refresh HTTP call core's refreshIfExpired orchestrates.
 export { oauthRefreshFn } from "./oauth-refresh-fn.js"
+// OIDC discovery — the fetch half (increment 45, Slice B). Fetches
+// `<issuer>/.well-known/openid-configuration` and shapes it into a partial
+// CustomOAuthDesign via core's discoveredDesignFromDoc.
+export type { OidcDiscoveryFetchError } from "./oidc-discovery-fetch.js"
+export { fetchOidcDiscovery } from "./oidc-discovery-fetch.js"
 export { refreshIfExpiredSingleFlight } from "./refresh-singleflight.js"
 export type { ResolveCredentialError } from "./resolve-credential.js"
 export { resolveCredentialSecret } from "./resolve-credential.js"

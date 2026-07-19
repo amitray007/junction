@@ -18,6 +18,7 @@ import {
   CredentialSchema,
   type CredentialStore,
   type DbError,
+  deriveCredentialName,
   err,
   getLogger,
   type NormalizedTokens,
@@ -63,12 +64,13 @@ export type OAuthConnectError =
   | { kind: "invalid-input"; reason: string }
   | { kind: "persist-failed"; cause: DbError }
   /**
-   * A credential with the same `{platformId, account}` already exists
-   * (increment 32.13 Slice B1) — mirrors core's addCredential duplicate-
-   * account guard (30.12). ONLY reachable on `mode: "create"`; `mode:
-   * "update"` repoints an EXISTING credential by id and never collides.
+   * A credential with the same `name` already exists (increment 46 — DB-
+   * enforced `credentials_name_unique`; RETIRES the 32.13 Slice B1
+   * `duplicate-account` kind, mirroring core's addCredential/RC). ONLY
+   * reachable on `mode: "create"`; `mode: "update"` repoints an EXISTING
+   * credential by id and never collides.
    */
-  | { kind: "duplicate-account"; platformId: string; account: string }
+  | { kind: "duplicate-name"; name: string }
 
 // ---------------------------------------------------------------------------
 // buildAuthorizeUrl — browser auth-code + PKCE
@@ -103,15 +105,14 @@ export function buildAuthorizeUrl(args: BuildAuthorizeUrlArgs): BuildAuthorizeUr
   const state = generateState()
   const codeVerifier = generateCodeVerifier()
   const params = buildAuthorizationParams(provider, scopes)
-  const authorizationUrl =
-    typeof provider.authorizationUrl === "string" ? provider.authorizationUrl : undefined
+  const authorizationUrl = provider.authorizationUrl
 
-  if (authorizationUrl === undefined) {
-    // A fn-shaped authorizationUrl needs connection_config this fn doesn't
-    // take — callers building against such a provider must resolve the URL
-    // themselves before calling buildAuthorizeUrl. (Day-one tuned entries all
-    // have a fixed string URL; only a future {subdomain}-style entry hits this.)
-    throw new Error(`${provider.id}: authorizationUrl requires connection_config`)
+  if (authorizationUrl.length === 0) {
+    // Increment 44 — authorizationUrl is a concrete string (the fn-shaped
+    // per-tenant form was removed as dead code). An empty string is only the
+    // "generic" catalog placeholder before the connect descriptor fills it in
+    // from user input; reaching here with it still empty is a caller bug.
+    throw new Error(`${provider.id}: authorizationUrl is not configured`)
   }
 
   const url =
@@ -164,8 +165,8 @@ export async function exchangeCode(
   args: ExchangeCodeArgs,
 ): Promise<Result<NormalizedTokens, OAuthConnectError>> {
   const { provider, clientId, clientSecret, redirectUri, code, codeVerifier } = args
-  const tokenUrl = typeof provider.tokenUrl === "string" ? provider.tokenUrl : undefined
-  if (tokenUrl === undefined) {
+  const tokenUrl = provider.tokenUrl
+  if (tokenUrl.length === 0) {
     return err({ kind: "unknown-provider" })
   }
 
@@ -314,8 +315,8 @@ export async function devicePoll(
   args: DevicePollArgs,
 ): Promise<Result<NormalizedTokens, OAuthConnectError>> {
   const { provider, clientId, clientSecret, deviceCode } = args
-  const tokenUrl = typeof provider.tokenUrl === "string" ? provider.tokenUrl : undefined
-  if (tokenUrl === undefined) {
+  const tokenUrl = provider.tokenUrl
+  if (tokenUrl.length === 0) {
     return err({ kind: "unknown-provider" })
   }
 
@@ -393,6 +394,12 @@ export interface PersistOAuthTokensArgs {
   /** Create a new credential row. */
   mode: "create"
   platformId: string
+  /**
+   * The OAuth provider's username/account label — a name-derivation SEED
+   * ONLY (increment 46, Fable RA). Never stored as a field; it feeds
+   * `deriveCredentialName` to produce the credential's `name`, then is
+   * discarded.
+   */
   account: string
   /**
    * OPTIONAL (increment 38) — when present, the caller has already assembled
@@ -408,7 +415,10 @@ export interface PersistOAuthTokensArgs {
 }
 
 export interface PersistOAuthTokensUpdateArgs {
-  repos: Pick<Repositories, "credentials">
+  // "platforms" added (increment 45, Slice E) — the reconnect path now also
+  // best-effort backfills the bound platform's oauthProviderId when unset
+  // (see the identical note in the create branch, below).
+  repos: Pick<Repositories, "credentials" | "platforms">
   store: CredentialStore
   tokens: NormalizedTokens
   providerId: string
@@ -446,18 +456,23 @@ export function persistOAuthTokens(
   const { repos, store, tokens, providerId, authMode, clientId, clientSecret, now } = args
   const written: string[] = []
 
+  // Increment 42 — derived name for a fresh oauth2 credential (mode:"create"
+  // only; mode:"update" repoints an EXISTING credential and never mints a
+  // new name). Populated inside the mode:"create" branch below.
+  let derivedName: string | undefined
+
   const work = async (): Promise<Result<Credential, OAuthConnectError>> => {
-    // Duplicate-account guard (32.13 Slice B1) — BEFORE any store write,
-    // mirroring core's addCredential (30.12): a same-{platformId,account}
-    // collision must surface as a typed duplicate-account error, not the
-    // generic/misleading persist-failed a DB constraint hit produces (the
-    // 32.9 unique index now backstops this at the DB layer too). Checked
-    // ONLY on mode:"create" — mode:"update" repoints an EXISTING credential
-    // by id and can never collide with itself.
+    // Increment 46 (RC) — the old 32.13 Slice B1 duplicate-account guard is
+    // GONE: once a credential's account identity IS its `name` (Fable RA),
+    // "same account on a platform" collapses to "same name," which the DB's
+    // `credentials_name_unique` index now enforces directly (the
+    // `credentials.create` constraint-violation branch below maps that to
+    // the typed `duplicate-name` error). Checked ONLY on mode:"create" —
+    // mode:"update" repoints an EXISTING credential by id and can never
+    // collide with itself.
     if (args.mode === "create") {
-      // Brand-validate platformId before it reaches forPlatform (which requires
-      // the branded PlatformId type) — an invalid id surfaces here rather than
-      // later at CredentialSchema.safeParse, but the check is identical.
+      // Brand-validate platformId before it reaches CredentialSchema.safeParse
+      // — an invalid id surfaces here with a clear reason.
       const platformIdParse = PlatformIdSchema.safeParse(args.platformId)
       if (!platformIdParse.success) {
         return err({
@@ -465,18 +480,17 @@ export function persistOAuthTokens(
           reason: `invalid platformId: ${platformIdParse.error.issues.map((i) => i.message).join(", ")}`,
         })
       }
-      const existingResult = await repos.credentials.forPlatform(platformIdParse.data)
-      if (existingResult.isErr()) {
-        return err({ kind: "persist-failed", cause: existingResult.error })
+      // list() — increment 42's name uniqueness is GLOBAL, so derivation
+      // needs every existing name, not just this platform's.
+      const allResult = await repos.credentials.list()
+      if (allResult.isErr()) {
+        return err({ kind: "persist-failed", cause: allResult.error })
       }
-      const duplicate = existingResult.value.some((c) => c.profileName === args.account)
-      if (duplicate) {
-        return err({
-          kind: "duplicate-account",
-          platformId: args.platformId,
-          account: args.account,
-        })
-      }
+      derivedName = deriveCredentialName(
+        platformIdParse.data,
+        args.account,
+        new Set(allResult.value.map((c) => c.name)),
+      )
     }
 
     const accessRef = newCredentialId()
@@ -516,15 +530,23 @@ export function persistOAuthTokens(
       // repos.credentials.create's internal parse to be the only guard.
       const credentialParse = CredentialSchema.safeParse({
         id: newCredentialId(),
+        // derivedName is always set on this branch — computed unconditionally
+        // above for mode:"create". The `?? ""` fallback is unreachable
+        // defensive code; an empty-string name would fail CredentialNameSchema
+        // below anyway, surfacing as a clean invalid-input rather than a
+        // TypeScript-only guarantee.
+        name: derivedName ?? "",
         platformId: args.platformId,
-        profileName: args.account,
         kind: "oauth2",
         secretRef: accessRef,
+        // Increment 45, Slice E — `providerId` no longer exists on
+        // OAuthMetaSchema; the design this credential belongs to is now
+        // sourced EXCLUSIVELY from `platform.oauthProviderId`
+        // (resolveOAuthProviderId), never a denormalized copy here.
         oauthMeta: {
           refreshTokenRef: refreshRef,
           clientIdRef,
           clientSecretRef,
-          providerId,
           authMode,
           scopes: tokens.scopes,
           expiresAt,
@@ -550,10 +572,43 @@ export function persistOAuthTokens(
       const platformBuild = args.platformBuild
       const platformWasCreatedHere = platformBuild !== undefined && !platformBuild.preExisting
       if (platformBuild !== undefined) {
-        const upsertResult = await args.repos.platforms.upsert(platformBuild.platform)
+        // Increment 45, Slice E (correctness fix — NOT optional): with the
+        // legacy oauthMeta.providerId fallback removed, refresh/grouping
+        // resolve EXCLUSIVELY via platform.oauthProviderId → app-catalog.
+        // Nothing else in the connect path ever set this — before this fix,
+        // a fresh catalog OAuth connect silently depended on the
+        // now-deleted fallback to ever refresh again. FILL-ONLY-IF-UNSET
+        // (never clobber an operator's explicit custom-design binding, same
+        // conflict discipline as migration 0012/0013's backfill).
+        const platformToUpsert =
+          platformBuild.platform.oauthProviderId === undefined
+            ? { ...platformBuild.platform, oauthProviderId: providerId }
+            : platformBuild.platform
+        const upsertResult = await args.repos.platforms.upsert(platformToUpsert)
         if (upsertResult.isErr()) {
           await cleanup(store, written)
           return err({ kind: "persist-failed", cause: upsertResult.error })
+        }
+      } else {
+        // No platformBuild — the raw /credentials flow (CLI `connect`, or a
+        // web flow with no catalog surface payload): the platform ALREADY
+        // exists (this is mode:"create" for the CREDENTIAL, not the
+        // platform). Same fill-only-if-unset stamp, applied to the existing
+        // row instead of a freshly-assembled one. Best-effort in the sense
+        // that a lookup/upsert failure here does NOT abort the connect (the
+        // credential still gets created — refresh would otherwise strand on
+        // no-provider-source until an operator manually binds the design,
+        // which is a strictly better failure mode than losing the whole
+        // connect over a courtesy backfill).
+        const existingPlatformResult = await args.repos.platforms.get(args.platformId)
+        if (
+          existingPlatformResult.isOk() &&
+          existingPlatformResult.value.oauthProviderId === undefined
+        ) {
+          await args.repos.platforms.upsert({
+            ...existingPlatformResult.value,
+            oauthProviderId: providerId,
+          })
         }
       }
 
@@ -569,6 +624,13 @@ export function persistOAuthTokens(
         // delete failure; never let cleanup mask the original persist error.
         if (platformWasCreatedHere && platformBuild !== undefined) {
           await cleanupOrphanPlatform(args.repos, platformBuild.platform.id)
+        }
+        // Increment 46 (RC) — a `credentials_name_unique` violation is the DB
+        // backstop for the deleted duplicate-account guard: surface it as the
+        // typed, friendly `duplicate-name` error rather than the generic
+        // persist-failed.
+        if (createResult.error.kind === "constraint-violation") {
+          return err({ kind: "duplicate-name", name: credentialParse.data.name })
         }
         return err({ kind: "persist-failed", cause: createResult.error })
       }
@@ -588,12 +650,34 @@ export function persistOAuthTokens(
     const oldClientIdRef = existingResult.value.oauthMeta?.clientIdRef
     const oldClientSecretRef = existingResult.value.oauthMeta?.clientSecretRef
 
+    // Increment 45, Slice E (correctness fix, same as the create branch
+    // above) — a reconnect is also an opportunity to backfill the bound
+    // platform's oauthProviderId if it was never set (a credential created
+    // before increment 44/45's platform-provider linkage existed, or one
+    // whose platform was assembled through a path that predates this fix).
+    // Fill-only-if-unset; best-effort — a lookup/upsert failure here never
+    // blocks the reconnect itself.
+    const reconnectPlatformId = existingResult.value.platformId
+    if (reconnectPlatformId !== null) {
+      const existingPlatformResult = await args.repos.platforms.get(reconnectPlatformId)
+      if (
+        existingPlatformResult.isOk() &&
+        existingPlatformResult.value.oauthProviderId === undefined
+      ) {
+        await args.repos.platforms.upsert({
+          ...existingPlatformResult.value,
+          oauthProviderId: providerId,
+        })
+      }
+    }
+
+    // Increment 45, Slice E — `providerId` no longer exists on
+    // OAuthMetaSchema/setOAuthTokens's patch; see the identical note above.
     const setTokensResult = await repos.credentials.setOAuthTokens(args.credentialId, {
       secretRef: accessRef,
       ...(refreshRef !== undefined ? { refreshTokenRef: refreshRef } : {}),
       clientIdRef,
       clientSecretRef,
-      providerId,
       authMode,
       scopes: tokens.scopes,
       expiresAt,

@@ -11,11 +11,36 @@ import { newPlatformId } from "../ids/index.js"
 import { ensureHome, getPaths } from "../paths/index.js"
 import { createRepositories } from "../repositories/index.js"
 import { addCredential } from "./add-credential.js"
+import { addStandaloneCredential } from "./add-standalone-credential.js"
 import { createEncryptedFileStore } from "./encrypted-file-store.js"
 import { exportVault } from "./export-vault.js"
+import { importVault } from "./import-vault.js"
 import { resolveMasterKey } from "./master-key.js"
 import type { CredentialStore } from "./store.js"
-import { VAULT_MAGIC } from "./vault-manifest.js"
+import { deriveKeyFromPassphrase, gcmDecrypt } from "./vault-crypto.js"
+import { VAULT_MAGIC, type VaultManifest } from "./vault-manifest.js"
+
+/** Decrypt a `.jvlt` archive back into its manifest — test-only inverse of
+ *  buildArchive, so export tests can assert on the manifest's actual field
+ *  values (not just counts). Mirrors import-vault.ts's parseHeader/gcmDecrypt
+ *  pairing. */
+async function decryptManifest(archive: Buffer, passphrase: string): Promise<VaultManifest> {
+  const salt = archive.subarray(6, 22)
+  const iv = archive.subarray(22, 34)
+  const tag = archive.subarray(34, 50)
+  const ct = archive.subarray(50)
+  const header = archive.subarray(0, 22)
+  const keyResult = await deriveKeyFromPassphrase(passphrase, salt)
+  if (keyResult.isErr()) throw keyResult.error
+  const key = keyResult.value
+  const plaintext = gcmDecrypt(key, header, {
+    iv: iv.toString("base64"),
+    tag: tag.toString("base64"),
+    ct: ct.toString("base64"),
+  })
+  key.fill(0)
+  return JSON.parse(plaintext) as VaultManifest
+}
 
 describe("exportVault", () => {
   let db: Db
@@ -110,8 +135,8 @@ describe("exportVault", () => {
     await store.set("ref-clientsecret-1", "CLIENT_SECRET_1")
     const created = await repos.credentials.create({
       id: "cred-oauth-1",
+      name: "oauth-work-1",
       platformId,
-      profileName: "work",
       kind: "oauth2",
       secretRef: "ref-access-1",
       oauthMeta: {
@@ -174,7 +199,11 @@ describe("exportVault", () => {
     if (!result.isOk()) return
     expect(result.value.credentialsExported).toBe(0)
     expect(result.value.skipped).toHaveLength(1)
-    expect(result.value.skipped[0]?.account).toBe("work")
+    // Increment 46 (RD) — `skipped[].account` is sourced from `cred.name` now
+    // (the account identity IS the name), not the raw "work" seed passed to
+    // addCredential — that seed only feeds derivation, never stored.
+    if (!cred.isOk()) throw cred.error
+    expect(result.value.skipped[0]?.account).toBe(cred.value.name)
   })
 
   it("empty passphrase → refused", async () => {
@@ -261,6 +290,122 @@ describe("exportVault", () => {
     if (skipResult.isOk()) {
       expect(skipResult.value.credentialsExported).toBe(0)
       expect(skipResult.value.skipped).toHaveLength(1)
+    }
+  })
+
+  // ---------------------------------------------------------------------------
+  // Increment 46 (Fable RD) — `account` is now sourced from `cred.name` for
+  // EVERY credential; the old linked/unlinked ternary collapses.
+  // ---------------------------------------------------------------------------
+
+  it("account === name for a LINKED credential (RD)", async () => {
+    const platformId = await seedPlatform()
+    const platform = (await repos.platforms.get(platformId))._unsafeUnwrap()
+    const cred = (
+      await addCredential(
+        { platformId, account: "work", kind: "bearer", secret: "s3cr3t" },
+        platform,
+        store,
+        repos.credentials,
+      )
+    )._unsafeUnwrap()
+
+    const result = await exportVault({ repos, store, passphrase: "rd-linked-pass" })
+    expect(result.isOk()).toBe(true)
+    if (!result.isOk()) return
+
+    const manifest = await decryptManifest(result.value.archive, "rd-linked-pass")
+    expect(manifest.credentials).toHaveLength(1)
+    // The seed "account" ("work") is NOT what lands in the manifest anymore —
+    // `cred.name` (derived from platformId+account, e.g. "<platformId>-work")
+    // is the credential's real identity and wins.
+    expect(manifest.credentials[0]?.account).toBe(cred.name)
+    expect(manifest.credentials[0]?.name).toBe(cred.name)
+  })
+
+  it("account === name for an UNLINKED (standalone) credential (RD)", async () => {
+    const cred = (
+      await addStandaloneCredential(
+        { name: "standalone-cred", kind: "bearer", secret: "s3cr3t" },
+        store,
+        repos.credentials,
+      )
+    )._unsafeUnwrap()
+
+    const result = await exportVault({ repos, store, passphrase: "rd-unlinked-pass" })
+    expect(result.isOk()).toBe(true)
+    if (!result.isOk()) return
+
+    const manifest = await decryptManifest(result.value.archive, "rd-unlinked-pass")
+    const manifestCred = manifest.credentials.find((c) => c._srcId === cred.id)
+    expect(manifestCred).toBeDefined()
+    expect(manifestCred?.account).toBe("standalone-cred")
+    expect(manifestCred?.name).toBe("standalone-cred")
+    expect(manifestCred?.platformId).toBeUndefined()
+  })
+
+  it("round-trip (export → import) is stable: re-exporting the imported credential yields the same name/account", async () => {
+    const platformId = await seedPlatform()
+    const platform = (await repos.platforms.get(platformId))._unsafeUnwrap()
+    await addCredential(
+      { platformId, account: "roundtrip", kind: "bearer", secret: "s3cr3t" },
+      platform,
+      store,
+      repos.credentials,
+    )
+
+    const exportResult = await exportVault({ repos, store, passphrase: "rt-stability-pass" })
+    expect(exportResult.isOk()).toBe(true)
+    if (!exportResult.isOk()) return
+    const firstManifest = await decryptManifest(exportResult.value.archive, "rt-stability-pass")
+
+    // Import into a FRESH home so the re-export reflects only the imported row.
+    const dstHome = await mkdtemp(join(tmpdir(), "junction-export-rt-dst-"))
+    const prevDstHome = process.env.JUNCTION_HOME
+    const prevDstStore = process.env.JUNCTION_STORE
+    process.env.JUNCTION_HOME = dstHome
+    process.env.JUNCTION_STORE = "file"
+    try {
+      await ensureHome()
+      const dstPaths = getPaths()
+      const dstDbResult = await getDatabase(dstPaths)
+      if (dstDbResult.isErr()) throw dstDbResult.error
+      const dstRepos = createRepositories(dstDbResult.value)
+      const dstKeyResult = await resolveMasterKey(dstPaths, process.env)
+      if (dstKeyResult.isErr()) throw dstKeyResult.error
+      const dstStore = createEncryptedFileStore(dstPaths, dstKeyResult.value)
+
+      const importResult = await importVault({
+        repos: dstRepos,
+        store: dstStore,
+        archive: exportResult.value.archive,
+        passphrase: "rt-stability-pass",
+      })
+      expect(importResult.isOk()).toBe(true)
+      if (!importResult.isOk()) return
+      expect(importResult.value.credentials.added).toBe(1)
+
+      const reExportResult = await exportVault({
+        repos: dstRepos,
+        store: dstStore,
+        passphrase: "rt-stability-pass-2",
+      })
+      expect(reExportResult.isOk()).toBe(true)
+      if (!reExportResult.isOk()) return
+      const secondManifest = await decryptManifest(
+        reExportResult.value.archive,
+        "rt-stability-pass-2",
+      )
+
+      expect(secondManifest.credentials).toHaveLength(1)
+      expect(secondManifest.credentials[0]?.name).toBe(firstManifest.credentials[0]?.name)
+      expect(secondManifest.credentials[0]?.account).toBe(firstManifest.credentials[0]?.account)
+    } finally {
+      if (prevDstHome === undefined) delete process.env.JUNCTION_HOME
+      else process.env.JUNCTION_HOME = prevDstHome
+      if (prevDstStore === undefined) delete process.env.JUNCTION_STORE
+      else process.env.JUNCTION_STORE = prevDstStore
+      await rm(dstHome, { recursive: true, force: true })
     }
   })
 })

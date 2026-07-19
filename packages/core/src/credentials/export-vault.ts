@@ -33,7 +33,7 @@ export interface ExportVaultResult {
   credentialsExported: number
   platformsExported: number
   profilesExported?: number
-  skipped: Array<{ platformId: string; account: string; reason: string }>
+  skipped: Array<{ platformId: string | null; account: string; reason: string }>
 }
 
 /**
@@ -134,43 +134,47 @@ function resolveCredentials(
   {
     manifestCredentials: ManifestCredential[]
     referencedPlatforms: Platform[]
-    skipped: Array<{ platformId: string; account: string; reason: string }>
+    skipped: Array<{ platformId: string | null; account: string; reason: string }>
   },
   CredentialError
 > {
   const platformById = new Map(allPlatforms.map((p) => [p.id, p]))
   const referencedPlatformIds = new Set<string>()
   const manifestCredentials: ManifestCredential[] = []
-  const skipped: Array<{ platformId: string; account: string; reason: string }> = []
+  const skipped: Array<{ platformId: string | null; account: string; reason: string }> = []
 
   type StepResult = Result<
     {
       manifestCredentials: ManifestCredential[]
       referencedPlatforms: Platform[]
-      skipped: Array<{ platformId: string; account: string; reason: string }>
+      skipped: Array<{ platformId: string | null; account: string; reason: string }>
     },
     CredentialError
   >
 
   const step = async (): Promise<StepResult> => {
     for (const cred of allCredentials) {
-      const label = `${cred.platformId}/${cred.profileName}`
+      const label = `${cred.platformId ?? "(unlinked)"}/${cred.name}`
 
-      // Orphan-platform check FIRST (I5) — a dangling FK must not reach the store.
-      const platform = platformById.get(cred.platformId)
-      if (platform === undefined) {
-        if (skipMissing) {
-          skipped.push({
-            platformId: cred.platformId,
-            account: cred.profileName,
-            reason: "references a missing platform",
+      // Increment 42 — an UNLINKED credential (platformId: null) has no
+      // platform to resolve or collision-check; skip straight to the secret
+      // read. Orphan-platform check (I5) only applies when platformId is set.
+      if (cred.platformId !== null) {
+        const platform = platformById.get(cred.platformId)
+        if (platform === undefined) {
+          if (skipMissing) {
+            skipped.push({
+              platformId: cred.platformId,
+              account: cred.name,
+              reason: "references a missing platform",
+            })
+            continue
+          }
+          return err({
+            kind: "export-failed",
+            reason: `credential ${label} references a missing platform`,
           })
-          continue
         }
-        return err({
-          kind: "export-failed",
-          reason: `credential ${label} references a missing platform`,
-        })
       }
 
       const secretResult = await store.get(cred.secretRef)
@@ -180,7 +184,7 @@ function resolveCredentials(
         if (skipMissing) {
           skipped.push({
             platformId: cred.platformId,
-            account: cred.profileName,
+            account: cred.name,
             reason: "secret missing from store",
           })
           continue
@@ -208,7 +212,7 @@ function resolveCredentials(
             if (skipMissing) {
               skipped.push({
                 platformId: cred.platformId,
-                account: cred.profileName,
+                account: cred.name,
                 reason: `oauth2 ${field} secret missing from store`,
               })
               skipThisCredential = true
@@ -227,17 +231,31 @@ function resolveCredentials(
 
       if (skipThisCredential) continue
 
-      referencedPlatformIds.add(cred.platformId)
+      if (cred.platformId !== null) referencedPlatformIds.add(cred.platformId)
       manifestCredentials.push({
-        platformId: cred.platformId,
-        account: cred.profileName,
+        name: cred.name,
+        ...(cred.platformId !== null ? { platformId: cred.platformId } : {}),
+        // account stays required in the manifest (ManifestCredentialSchema,
+        // schema v1 unchanged) — increment 46 (Fable RD) collapses the old
+        // linked/unlinked ternary: a credential's account identity IS its
+        // `name` now (RA), so every credential (linked or not) writes
+        // `account: cred.name`.
+        account: cred.name,
         kind: cred.kind,
         ...(cred.oauthMeta !== undefined
           ? {
               oauthMeta: {
                 scopes: cred.oauthMeta.scopes,
                 expiresAt: cred.oauthMeta.expiresAt,
-                providerId: cred.oauthMeta.providerId,
+                // Increment 45, Slice E — `providerId` no longer exists on
+                // the LIVE credential's OAuthMeta (dropped by migration
+                // 0013); nothing to forward here anymore. The archive's
+                // ManifestOAuthMetaSchema.providerId field stays (Zod
+                // `.optional()`) purely for BACKWARD READ compat — a pre-45
+                // archive that still carries it imports fine (import-vault.ts
+                // reads it only for the platform backfill, never writes it
+                // onto the new credential). A NEWLY exported archive simply
+                // omits the field.
                 authMode: cred.oauthMeta.authMode,
                 needsReauth: cred.oauthMeta.needsReauth,
                 obtainedAt: cred.oauthMeta.obtainedAt,

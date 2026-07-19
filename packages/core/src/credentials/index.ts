@@ -13,6 +13,12 @@ import { recoverInterruptedRekey } from "./rotate-master-key.js"
 import type { CredentialStore } from "./store.js"
 
 export { type AddCredentialInput, addCredential, FILE_SECRET_MAX_BYTES } from "./add-credential.js"
+export {
+  type AddStandaloneCredentialInput,
+  addStandaloneCredential,
+} from "./add-standalone-credential.js"
+export { bindCredentialToPlatform } from "./bind-credential-to-platform.js"
+export { deriveCredentialName } from "./derive-name.js"
 export { type ExportVaultInput, type ExportVaultResult, exportVault } from "./export-vault.js"
 export {
   type ImportSummary,

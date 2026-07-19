@@ -17,6 +17,14 @@ export function describeDbError(e: DbError): string {
       return `not found: ${e.entity} ${e.id}`
     case "duplicate-namespace":
       return `duplicate namespace: ${e.namespace}`
+    // Increment 45, Slice E — this migration-boot-only error kind is never
+    // actually produced by a repo/store call vault import/export makes
+    // (it's raised by getDatabase before migrate() runs); handled explicitly
+    // so this switch stays exhaustive rather than falling into a
+    // `String(e.cause)` default that doesn't type-check for a variant with
+    // no `cause` field.
+    case "migration-refused":
+      return `migration "${e.migration}" refused — ${e.remediation}`
     default:
       return String(e.cause)
   }
@@ -44,7 +52,21 @@ const ManifestOAuthMetaSchema = z.object({
 })
 
 const ManifestCredentialSchema = z.object({
-  platformId: z.string().min(1),
+  /**
+   * Increment 42 — the credential's identity slug. OPTIONAL for back-compat:
+   * an archive exported BEFORE increment 42 has no `name` field; import
+   * derives one (deriveCredentialName) the same way migration 0011's
+   * backfill and every other legacy create path does.
+   */
+  name: z.string().min(1).optional(),
+  /**
+   * Increment 42 — nullable/absent for an UNLINKED (standalone) credential.
+   * `account` stays required even for an unlinked credential — Phase 1's
+   * manifest reuses `profileName` (write-only legacy) as the field name
+   * carries; export-vault.ts sources it from `name` for an unlinked row
+   * (there is no meaningful "account" for a credential with no platform).
+   */
+  platformId: z.string().min(1).optional(),
   account: z.string().min(1),
   kind: CredentialKind,
   oauthMeta: ManifestOAuthMetaSchema.optional(),

@@ -137,6 +137,8 @@ export function formatDbError(e: DbError): string {
       return `not found: ${e.entity} ${e.id}`
     case "migration-failed":
       return `database migration failed: ${String(e.cause)}`
+    case "migration-refused":
+      return `database migration "${e.migration}" refused — ${e.remediation} (affected credential ids: ${e.strandedCredentialIds.join(", ")})`
     case "constraint-violation":
       return `constraint violation (check that referenced platform/credential/profile exists): ${String(e.cause)}`
     case "in-use":
@@ -166,8 +168,8 @@ export function formatCredentialError(e: CredentialError): string {
       return `invalid input: ${e.reason}`
     case "kind-incompatible":
       return `credential kind "${e.requested}" not accepted for this platform; allowed: ${e.allowed.join(", ")}`
-    case "duplicate-account":
-      return `an account named "${e.account}" is already connected to this platform`
+    case "duplicate-name":
+      return `a credential named "${e.name}" already exists`
     case "rotate-refused":
       return e.reason
     case "rotate-failed":

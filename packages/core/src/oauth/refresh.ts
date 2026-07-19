@@ -24,7 +24,9 @@ import { ulid } from "ulid"
 import type { CredentialStore } from "../credentials/store.js"
 import type { Repositories } from "../repositories/index.js"
 import type { Credential, OAuthMeta } from "../schema/credential.js"
-import type { NormalizedTokens } from "./catalog.js"
+import type { Platform } from "../schema/platform.js"
+import type { NormalizedTokens, OAuthProvider } from "./catalog.js"
+import { resolveOAuthProviderId } from "./resolve-provider-id.js"
 
 // ---------------------------------------------------------------------------
 // RefreshTokenFn — the injected provider refresh call (slice B implements it)
@@ -54,9 +56,18 @@ export type RefreshResult =
  * orchestrator (refreshIfExpired) just-in-time and passed in; the fn MUST NOT
  * log or persist them — it returns only NormalizedTokens (or a tokenless
  * failure reason).
+ *
+ * `design` is the ALREADY-RESOLVED OAuth design (increment 45, D2 / credential-
+ * security review): the orchestrator resolved `providerId` against the MERGED
+ * built-in + custom design set (a dangling id already failed closed above), so
+ * the fn receives the concrete design — including a `custom:<slug>` design's
+ * `tokenUrl` — and must NOT re-look-it-up built-ins-only (which would dead-end
+ * every custom-design refresh at `getProvider` returning undefined). `providerId`
+ * stays for logging/diagnostics; `design.tokenUrl` is what the HTTP call POSTs to.
  */
 export type RefreshTokenFn = (args: {
   providerId: string
+  design: OAuthProvider
   refreshToken: string
   clientId: string
   clientSecret: string
@@ -75,6 +86,21 @@ export type RefreshError =
   | { kind: "needs-reauth"; platformId: string; account: string }
   | { kind: "refresh-failed"; cause: unknown }
   | { kind: "not-oauth" }
+  /**
+   * Increment 44 (R1, SECURITY — fail closed): the platform's own
+   * `oauthProviderId` is SET but points at a design that doesn't exist. This
+   * refresh does NOT fall back to any other source — a dangling/attacker-
+   * imported platform reference must never silently mask itself and route a
+   * refresh token to an attacker-chosen tokenUrl.
+   */
+  | { kind: "dangling-provider-reference"; platformId: string; providerId: string }
+  /**
+   * No provider source at all — no platform.oauthProviderId, no app-catalog
+   * auth[].providerId. (Increment 45, Slice E — the legacy
+   * `oauthMeta.providerId` fallback that used to keep this from firing is
+   * gone; a platform with no design at all now surfaces this directly.)
+   */
+  | { kind: "no-provider-source" }
 
 // ---------------------------------------------------------------------------
 // shouldRefresh — pure expiry decision
@@ -151,6 +177,22 @@ export interface RefreshIfExpiredArgs {
   refreshFn: RefreshTokenFn
   now: number
   bufferMs?: number
+  /**
+   * Increment 44 (R3) — the credential's bound platform, when the caller has
+   * one in hand (resolve-provider.ts resolves the platform BEFORE the
+   * credential, so it always does). `null`/absent = orphan OAuth credential
+   * (nullable platformId, increment 42) — with no platform in hand and no
+   * legacy fallback (increment 45, Slice E), such a credential now resolves
+   * to `no-provider-source` until it's bound to a platform with a design.
+   */
+  platform?: Platform | null
+  /**
+   * The merged built-in + custom design lookup (increment 45, D2) — passed
+   * straight through to `resolveOAuthProviderId`. The caller (source-runtime's
+   * resolve-provider.ts) loads custom designs at the I/O edge and merges via
+   * `mergeDesigns`; this function and the rest of core stay HTTP/I/O-free.
+   */
+  designs: ReadonlyMap<string, OAuthProvider>
 }
 
 /**
@@ -175,7 +217,7 @@ export interface RefreshIfExpiredArgs {
 export function refreshIfExpired(
   args: RefreshIfExpiredArgs,
 ): ResultAsync<{ accessToken: string | null }, RefreshError> {
-  const { credential, store, repos, refreshFn, now } = args
+  const { credential, store, repos, refreshFn, now, platform, designs } = args
   const bufferMs = args.bufferMs ?? DEFAULT_REFRESH_BUFFER_MS
 
   if (credential.kind !== "oauth2") {
@@ -190,8 +232,11 @@ export function refreshIfExpired(
   if (meta?.needsReauth === true) {
     return errAsync({
       kind: "needs-reauth",
-      platformId: credential.platformId,
-      account: credential.profileName,
+      // oauth2 credentials always carry a platformId (OAuth is untouched by
+      // increment 42 — only raw-kind credentials can be unlinked); the `?? ""`
+      // fallback is unreachable defensive code, not a real null case.
+      platformId: credential.platformId ?? "",
+      account: credential.name,
     })
   }
 
@@ -199,7 +244,7 @@ export function refreshIfExpired(
     return readCurrentToken(store, credential.secretRef)
   }
 
-  return performRefresh(credential, meta, store, repos, refreshFn, now)
+  return performRefresh(credential, meta, store, repos, refreshFn, now, platform, designs)
 }
 
 /**
@@ -228,10 +273,51 @@ function performRefresh(
   repos: Pick<Repositories, "credentials">,
   refreshFn: RefreshTokenFn,
   now: number,
+  platform: Platform | null | undefined,
+  designs: ReadonlyMap<string, OAuthProvider>,
 ): ResultAsync<{ accessToken: string | null }, RefreshError> {
-  const platformId = credential.platformId
-  const account = credential.profileName
+  // oauth2 credentials always carry a platformId (see the identical comment
+  // above in refreshIfExpired) — the `?? ""` fallback is unreachable.
+  const platformId = credential.platformId ?? ""
+  const account = credential.name
   const needsReauth = (): RefreshError => ({ kind: "needs-reauth", platformId, account })
+
+  // Increment 44 (R1/R3) — resolve the design BEFORE any store I/O, so a
+  // dangling platform.oauthProviderId (SECURITY: fail closed) or a
+  // no-provider-source credential never reaches the store/refreshFn at all.
+  // Increment 45 (D2) — `designs` is the caller's already-merged built-in +
+  // custom lookup; this resolver call does no I/O of its own.
+  // Increment 45 (Slice E) — the legacy `oauthMeta.providerId` fallback is
+  // GONE: resolution is platform.oauthProviderId → app-catalog only.
+  const resolved = resolveOAuthProviderId({
+    credentialId: credential.id,
+    context: "refresh",
+    platform: platform ?? null,
+    designs,
+  })
+  if (!resolved.ok) {
+    if (resolved.error.kind === "dangling-provider-reference") {
+      return errAsync(resolved.error)
+    }
+    // no-provider-source — no platform reference at all. Mirrors the
+    // missing-refresh-material case below: a reconnect is the only way
+    // forward, so surface it as needs-reauth rather than a generic failure
+    // the caller can't act on.
+    return errAsync(needsReauth())
+  }
+  const providerId = resolved.providerId
+  // The design the HTTP refresh will POST to. The platform arm already
+  // validated presence in the merged set (dangling → failed closed above),
+  // but the app-catalog arm returns an id WITHOUT re-checking the merged set
+  // — so an id that resolves to no design is treated as needs-reauth here,
+  // never routed to a built-ins-only re-lookup. This is what lets a
+  // `custom:<slug>` design refresh: its concrete tokenUrl travels with the
+  // design object (credential-security review, inc 45), instead of
+  // oauthRefreshFn re-doing a getProvider() that only knows built-ins.
+  const design = designs.get(providerId)
+  if (design === undefined) {
+    return errAsync(needsReauth())
+  }
 
   const refreshTokenRef = meta?.refreshTokenRef
   const clientIdRef = meta?.clientIdRef
@@ -270,6 +356,8 @@ function performRefresh(
                 refreshToken,
                 clientId,
                 clientSecret,
+                providerId,
+                design,
               )
             })
         })
@@ -301,10 +389,24 @@ function callRefreshAndPersist(
   refreshToken: string,
   clientId: string,
   clientSecret: string,
+  providerId: string,
+  // The already-resolved design (increment 45) — passed through to refreshFn so
+  // it POSTs to the design's tokenUrl (incl. a custom:<slug> design) instead of
+  // a built-ins-only re-lookup. Threaded from performRefresh, which resolved it.
+  design: OAuthProvider,
 ): ResultAsync<{ accessToken: string }, RefreshError> {
-  const platformId = credential.platformId
-  const account = credential.profileName
-  const providerId = meta?.providerId ?? ""
+  // oauth2 credentials always carry a platformId (see the identical comment
+  // in refreshIfExpired above) — the `?? ""` fallback is unreachable.
+  const platformId = credential.platformId ?? ""
+  const account = credential.name
+  // providerId is now RESOLVED (increment 44, R3 — platform.oauthProviderId;
+  // increment 45, Slice E — the legacy oauthMeta.providerId fallback is
+  // gone), sourced by the caller (performRefresh) via resolveOAuthProviderId
+  // — no longer read directly off meta here. NOTE: on the REFRESH path the
+  // app-catalog step (appAuthProviderId) is not populated — refresh resolves
+  // via the platform's own reference only (tighter/safer: fewer
+  // authoritative sources). The app-catalog step is exercised by the
+  // grouping caller, not refresh (credential-security review, inc 44).
   // Capture the OLD refs at entry (mirrors rotateCredential capturing
   // oldSecretRef up front) — the final best-effort deletes below use these
   // locals, not a re-read of `credential`/`meta`, so the atomicity holds
@@ -315,7 +417,7 @@ function callRefreshAndPersist(
   const work = async (): Promise<Result<{ accessToken: string }, RefreshError>> => {
     let result: RefreshResult
     try {
-      result = await refreshFn({ providerId, refreshToken, clientId, clientSecret })
+      result = await refreshFn({ providerId, design, refreshToken, clientId, clientSecret })
     } catch (cause) {
       // The injected fn threw instead of returning a typed failure (arctic's
       // OAuth2Tokens accessors throw on absent fields) — treat as unknown /

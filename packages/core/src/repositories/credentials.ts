@@ -3,7 +3,7 @@
 // dry.md: no generic base. security.md: only secret_ref stored, never plaintext.
 // better-sqlite3 is sync; we present an async API for libsql-swap safety.
 
-import { eq } from "drizzle-orm"
+import { eq, isNull } from "drizzle-orm"
 import { errAsync, okAsync, type ResultAsync } from "neverthrow"
 import { mapDbError } from "../db/errors.js"
 import type { Db } from "../db/index.js"
@@ -28,11 +28,16 @@ function fetchRowOrNotFound(
   return { ok: true, row }
 }
 
+/**
+ * Boundary-validate a raw row into a Credential — nullable platformId parses
+ * (increment 42), `name` is required. Every read path goes through this, so a
+ * schema-drifted row fails loudly here rather than downstream.
+ */
 function rowToCredential(row: typeof credentials.$inferSelect): Credential {
   return CredentialSchema.parse({
     id: row.id,
+    name: row.name,
     platformId: row.platformId,
-    profileName: row.profileName,
     kind: row.kind,
     secretRef: row.secretRef,
     oauthMeta: row.oauthMeta
@@ -51,8 +56,8 @@ export function createCredentialsRepo(db: Db) {
         db.insert(credentials)
           .values({
             id: validated.id,
+            name: validated.name,
             platformId: validated.platformId,
-            profileName: validated.profileName,
             kind: validated.kind,
             secretRef: validated.secretRef,
             oauthMeta: validated.oauthMeta ? JSON.stringify(validated.oauthMeta) : null,
@@ -97,8 +102,22 @@ export function createCredentialsRepo(db: Db) {
     },
 
     /**
+     * Credentials with no platform link (increment 42 — the standalone vault
+     * view). `platformId IS NULL` — a credential created via the web
+     * standalone dialog or any create path that omitted platformId.
+     */
+    listUnlinked(): ResultAsync<Credential[], DbError> {
+      try {
+        const rows = db.select().from(credentials).where(isNull(credentials.platformId)).all()
+        return okAsync(rows.map(rowToCredential))
+      } catch (cause) {
+        return errAsync(mapDbError(cause))
+      }
+    },
+
+    /**
      * Update a credential row's secretRef (used by rotateCredential).
-     * Only the secretRef column is modified; id, platformId, profileName, and kind
+     * Only the secretRef column is modified; id, platformId, and kind
      * are immutable through this path.
      */
     setSecretRef(id: string, newSecretRef: string): ResultAsync<Credential, DbError> {
@@ -114,20 +133,44 @@ export function createCredentialsRepo(db: Db) {
     },
 
     /**
-     * Update a credential row's profileName (the account label) in place — used
-     * by renameCredential. Only the profileName column is modified; id,
-     * platformId, kind, secretRef, and oauthMeta are untouched. Read-before-write
-     * so a not-found surfaces (and the full updated Credential is returned).
+     * Update a credential row's `name` (the credential's SOLE identity,
+     * increment 42; the SOLE account label since increment 46 — `profileName`
+     * is gone) in place — used by renameCredential. Only the name column is
+     * modified; id, platformId, kind, secretRef, and oauthMeta are untouched.
+     * Read-before-write so a not-found surfaces (and the full updated
+     * Credential is returned). A collision with the global
+     * `credentials_name_unique` index surfaces as `constraint-violation` via
+     * mapDbError — callers map that to the typed `duplicate-name` error.
      */
-    setProfileName(id: string, newProfileName: string): ResultAsync<Credential, DbError> {
+    setName(id: string, newName: string): ResultAsync<Credential, DbError> {
       try {
         const found = fetchRowOrNotFound(db, id)
         if (!found.ok) return errAsync(found.error)
-        db.update(credentials)
-          .set({ profileName: newProfileName })
-          .where(eq(credentials.id, id))
-          .run()
-        return okAsync(rowToCredential({ ...found.row, profileName: newProfileName }))
+        db.update(credentials).set({ name: newName }).where(eq(credentials.id, id)).run()
+        return okAsync(rowToCredential({ ...found.row, name: newName }))
+      } catch (cause) {
+        return errAsync(mapDbError(cause))
+      }
+    },
+
+    /**
+     * Update a credential row's platformId (bind an unlinked credential to a
+     * platform, or re-point an already-linked one) — used by
+     * bindCredentialToPlatform (increment 43). Only the platformId column is
+     * modified; id, name, kind, secretRef, and oauthMeta are untouched.
+     * Read-before-write so a not-found surfaces (and the full updated
+     * Credential is returned). No schema change (increment 42 already made
+     * the column nullable) and NO uniqueness enforcement here — binding never
+     * touches `name` (increment 46, RC — the old duplicate-account guard is
+     * DELETED, not re-pointed; "same account on a platform" now collapses to
+     * "same name," globally DB-enforced by `credentials_name_unique`).
+     */
+    setPlatformId(id: string, platformId: string): ResultAsync<Credential, DbError> {
+      try {
+        const found = fetchRowOrNotFound(db, id)
+        if (!found.ok) return errAsync(found.error)
+        db.update(credentials).set({ platformId }).where(eq(credentials.id, id)).run()
+        return okAsync(rowToCredential({ ...found.row, platformId }))
       } catch (cause) {
         return errAsync(mapDbError(cause))
       }
@@ -205,7 +248,6 @@ export function createCredentialsRepo(db: Db) {
         scopes?: string[]
         needsReauth?: boolean
         obtainedAt?: string
-        providerId?: string
         authMode?: OAuthMeta["authMode"]
         clientIdRef?: string
         clientSecretRef?: string
@@ -225,7 +267,6 @@ export function createCredentialsRepo(db: Db) {
         if (patch.scopes !== undefined) merged.scopes = patch.scopes
         if (patch.needsReauth !== undefined) merged.needsReauth = patch.needsReauth
         if (patch.obtainedAt !== undefined) merged.obtainedAt = patch.obtainedAt
-        if (patch.providerId !== undefined) merged.providerId = patch.providerId
         if (patch.authMode !== undefined) merged.authMode = patch.authMode
         if (patch.clientIdRef !== undefined) merged.clientIdRef = patch.clientIdRef
         if (patch.clientSecretRef !== undefined) merged.clientSecretRef = patch.clientSecretRef

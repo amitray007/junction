@@ -78,6 +78,34 @@
       "when": 1783640810447,
       "tag": "0010_gifted_namor",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1784318788167,
+      "tag": "0011_credential_standalone_identity",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1784405188167,
+      "tag": "0012_platform_oauth_provider_id",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1784405288167,
+      "tag": "0013_drop_oauth_meta_provider_id",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1784491688167,
+      "tag": "0014_drop_credential_profile_name",
+      "breakpoints": true
     }
   ]
 }

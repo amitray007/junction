@@ -15,6 +15,10 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 const getMock = vi.fn()
 const credentialsGetMock = vi.fn()
 const forPlatformMock = vi.fn()
+// Increment 42 — addCredential now reads list() (not just forPlatform) to
+// derive a name when the caller doesn't supply one; every mutateAddCredential
+// mock scenario needs this stubbed alongside forPlatform.
+const credentialsListMock = vi.fn()
 const setVerifyStateMock = vi.fn()
 const storeGetMock = vi.fn()
 const storeSetMock = vi.fn()
@@ -33,12 +37,33 @@ const refreshIfExpiredMock = vi.fn()
 // vi.fn stub) — it's pure plumbing (keys an in-memory Map by credentialId);
 // stubbing it would hide a wiring bug where testCredential forgets to call it.
 const refreshIfExpiredSingleFlightMock = vi.fn((_credentialId: string, run: () => unknown) => run())
+// Increment 45 (Slice C) — the verify-hint call sites (mutateAddCredential's
+// verify=true branch, loadPlatformForCredential, resolveTokenForTest) now go
+// through resolveCredentialProviderId, which loads custom designs at the I/O
+// edge. Stub it so these unit tests never touch the real filesystem —
+// default to "no custom designs" (ok([])), matching every existing fixture
+// (none reference a custom:<slug> design).
+const loadCustomDesignsMock = vi.fn((_paths?: unknown) => okAsync([]))
 
 vi.mock("@junction/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@junction/core")>()
   return {
     ...actual,
-    getPaths: vi.fn(() => ({ home: "/fake" }) as ReturnType<typeof actual.getPaths>),
+    // Increment 45 (Slice C) — `oauthDesignsFile` must be a real (but
+    // nonexistent) path: resolveCredentialProviderId/resolveTokenForTest call
+    // core's `loadCustomDesigns` INTERNALLY (a core-to-core import, not
+    // through this `@junction/core` mock), so it isn't intercepted by the
+    // `loadCustomDesignsMock` stub below — it always runs for real. A path
+    // whose directory doesn't exist resolves via ENOENT to a clean `ok([])`,
+    // matching the intended "no custom designs" default, instead of a noisy
+    // (but still gracefully-degraded) `read-failed` from `readFile(undefined)`.
+    getPaths: vi.fn(
+      () =>
+        ({ home: "/fake", oauthDesignsFile: "/fake/oauth-designs.json" }) as ReturnType<
+          typeof actual.getPaths
+        >,
+    ),
+    loadCustomDesigns: (...args: unknown[]) => loadCustomDesignsMock(...args),
     createCredentialStore: vi.fn(
       () =>
         okAsync({ get: storeGetMock, set: storeSetMock }) as unknown as ReturnType<
@@ -52,6 +77,7 @@ vi.mock("@junction/core", async (importOriginal) => {
           credentials: {
             get: credentialsGetMock,
             forPlatform: forPlatformMock,
+            list: credentialsListMock,
             setVerifyState: setVerifyStateMock,
             create: credentialsCreateMock,
           },
@@ -78,6 +104,7 @@ afterEach(() => {
   getMock.mockReset()
   credentialsGetMock.mockReset()
   forPlatformMock.mockReset()
+  credentialsListMock.mockReset()
   setVerifyStateMock.mockReset()
   storeGetMock.mockReset()
   storeSetMock.mockReset()
@@ -85,6 +112,8 @@ afterEach(() => {
   verifyCredentialMock.mockReset()
   refreshIfExpiredMock.mockReset()
   refreshIfExpiredSingleFlightMock.mockClear()
+  loadCustomDesignsMock.mockReset()
+  loadCustomDesignsMock.mockReturnValue(okAsync([]))
 })
 
 describe("mutateAddCredential — platform lookup error mapping", () => {
@@ -138,6 +167,7 @@ describe("mutateAddCredential — verify-on-add secret discipline", () => {
   it("never leaks the plaintext secret or secretRef through the verify=true success result (stringify guard)", async () => {
     getMock.mockReturnValue(okAsync(verifyOnAddPlatform))
     forPlatformMock.mockReturnValue(okAsync([]))
+    credentialsListMock.mockReturnValue(okAsync([]))
     storeSetMock.mockReturnValue(okAsync(undefined))
     credentialsCreateMock.mockImplementation((c: { id: string }) => okAsync(c))
     verifyCredentialMock.mockReturnValue(okAsync({ status: "ok" }))
@@ -162,17 +192,83 @@ describe("mutateAddCredential — verify-on-add secret discipline", () => {
 })
 
 // ---------------------------------------------------------------------------
+// mutateAddCredential — increment 42: standalone (unlinked) create path.
+// No platformId → addStandaloneCredential, never touches platforms.get.
+// ---------------------------------------------------------------------------
+
+describe("mutateAddCredential — standalone (unlinked) create (increment 42)", () => {
+  it("no platformId + a valid name creates an unlinked credential, never touching platforms.get", async () => {
+    credentialsCreateMock.mockImplementation((c: { id: string }) => okAsync(c))
+    storeSetMock.mockReturnValue(okAsync(undefined))
+
+    const result = await mutateAddCredential({
+      name: "my-vault-secret",
+      kind: "bearer",
+      secret: "super-secret-plaintext-value",
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) throw new Error("expected success")
+    expect(result.credential.platformId).toBeNull()
+    expect(result.credential.name).toBe("my-vault-secret")
+    // The platform-lookup path (platforms.get) must never be touched — this
+    // is the whole point of "standalone": no platform to look up.
+    expect(getMock).not.toHaveBeenCalled()
+
+    const serialized = JSON.stringify(result)
+    expect(serialized).not.toContain("super-secret-plaintext-value")
+  })
+
+  it("no platformId and no name → clean error, no store write", async () => {
+    const result = await mutateAddCredential({
+      kind: "bearer",
+      secret: "some-secret",
+    })
+
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error("expected failure")
+    expect(result.error).toContain("name is required")
+    expect(storeSetMock).not.toHaveBeenCalled()
+  })
+})
+
+// ---------------------------------------------------------------------------
 // testCredential — 28.9 Test Connection. Mocks the repo/store/verify layers
 // per this file's established pattern (mutateAddCredential's platform-lookup
 // suite above) rather than engineering a real sqlite/keyring/network failure.
 // ---------------------------------------------------------------------------
 
-const fakePlatform = { id: "plat-1", kind: "mcp", displayName: "Test" } as unknown as Parameters<
-  typeof verifyCredentialMock
->[0]
+// Increment 45, Slice E — `oauthProviderId` set here so the oauth2
+// refresh-ahead tests below (which resolve the design via the REAL
+// resolveCredentialProviderId → repos.platforms.get, mocked as `getMock`)
+// resolve a design instead of degrading to `undefined`. Harmless for the
+// other describe blocks in this file — none assert this shape narrower than
+// "the same object reference `getMock` was seeded with."
+const fakePlatform = {
+  id: "plat-1",
+  kind: "mcp",
+  displayName: "Test",
+  oauthProviderId: "google",
+} as unknown as Parameters<typeof verifyCredentialMock>[0]
 const fakeCredentialRow = { id: "cred-1", platformId: "plat-1", secretRef: "ref-1" }
 
 describe("testCredential", () => {
+  it("increment 42: an UNLINKED credential (platformId: null) returns a clean ok:false — nothing to verify", async () => {
+    credentialsGetMock.mockReturnValue(
+      okAsync({ id: "cred-vault", platformId: null, secretRef: "ref-1" }),
+    )
+
+    const result = await testCredential("cred-vault")
+
+    expect(result).toEqual({
+      ok: false,
+      error: "This credential is not linked to a platform — nothing to verify",
+    })
+    // Never reaches the platform lookup or the store — the guard is up-front.
+    expect(getMock).not.toHaveBeenCalled()
+    expect(storeGetMock).not.toHaveBeenCalled()
+  })
+
   it('returns {ok:true, status:"ok"} and persists setVerifyState on a real ok verify', async () => {
     credentialsGetMock.mockReturnValue(okAsync(fakeCredentialRow))
     getMock.mockReturnValue(okAsync(fakePlatform))
@@ -327,7 +423,10 @@ const fakeOAuthCredentialRow = {
   platformId: "plat-1",
   secretRef: "ref-1",
   kind: "oauth2" as const,
-  oauthMeta: { providerId: "google" },
+  // Increment 45, Slice E — `oauthMeta.providerId` no longer exists; the
+  // design ("google") is now sourced from `fakePlatform.oauthProviderId`
+  // via the real resolveCredentialProviderId → repos.platforms.get path.
+  oauthMeta: {},
 }
 
 describe("testCredential — oauth2 refresh-ahead (30.5 bug fix)", () => {

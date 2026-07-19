@@ -48,6 +48,12 @@ const INTEGRATION_FILES = [
   "packages/cli/src/commands/mcp.test.ts",
   "packages/cli/src/commands/serve.test.ts",
   "packages/cli/src/commands/keys.test.ts",
+  // increment 45 (Slice D3/D4) — oauth-design add/list/rm + platform
+  // set-oauth-design are child-process "built bin" tests (execFileAsync
+  // against dist/index.js), same class as the other CLI integration suites
+  // above — must run serially or the spawned children starve under full
+  // parallel load (the exact failure mode the comment above documents).
+  "packages/cli/src/commands/oauth-design.test.ts",
   "packages/core/src/sandbox/sandbox.test.ts",
   // inc 28.9: the cli provider suite gained REAL-Seatbelt-spawning file-kind tests —
   // under full-parallel load the spawned children starve and a real run flakes

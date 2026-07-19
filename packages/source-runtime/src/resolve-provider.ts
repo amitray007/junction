@@ -11,6 +11,8 @@ import {
   type CredentialStore,
   err,
   type JunctionPaths,
+  loadCustomDesigns,
+  mergeDesigns,
   ok,
   type RefreshTokenFn,
   type Repositories,
@@ -140,8 +142,49 @@ export function makeResolveProvider(
           // core never makes it directly, keeping core HTTP-free.
           const refreshFn: RefreshTokenFn = oauthRefreshFn
 
+          // Increment 45 (Slice A, D2) — load custom OAuth designs at THIS
+          // I/O edge (never cached across calls — junction is multi-process,
+          // and a CLI-created design must be visible to an already-running
+          // `serve`/`mcp serve` without a restart) and merge with built-ins.
+          // FAIL CLOSED on a load error (D1): the designs store returns a
+          // typed error only on real corruption of oauth-designs.json (a
+          // missing file is `ok([])`, not an error) — proceeding with
+          // built-ins-only in that case would silently treat "the file is
+          // corrupt" as "there are no custom designs," which could route a
+          // credential bound to a now-invisible `custom:*` design through the
+          // WRONG (stale/partial) resolution instead of failing closed at the
+          // resolver's dangling-reference guard. So a load error here skips
+          // the refresh attempt entirely (mirrors the existing refresh-failed
+          // discipline: old tokens are left untouched, the call surfaces as
+          // auth-failed, and a retry can succeed once the file is repaired).
+          const designsResult = await loadCustomDesigns(paths)
+          if (designsResult.isErr()) {
+            log(
+              `${logPrefix}: source "${sourceRef.toolNamespace}": custom OAuth designs store failed to load (${designsResult.error.kind}) — refresh skipped`,
+            )
+            return err({
+              kind: "auth-failed" as const,
+              cause: designsResult.error,
+            } satisfies UpstreamError)
+          }
+          const designs = mergeDesigns(designsResult.value)
+
+          // Increment 44 (R3) — source the OAuth design via the platform
+          // already resolved above (platformResult.value). Increment 45,
+          // Slice E — the legacy `credential.oauthMeta.providerId` fallback
+          // is gone: resolution is platform.oauthProviderId → app-catalog
+          // only, so a platform with no design now surfaces
+          // `no-provider-source` directly instead of falling back.
           const refreshResult = await refreshIfExpiredSingleFlight(credential.id, () =>
-            refreshIfExpired({ credential, store, repos, refreshFn, now: Date.now() }),
+            refreshIfExpired({
+              credential,
+              store,
+              repos,
+              refreshFn,
+              now: Date.now(),
+              platform,
+              designs,
+            }),
           )
           if (refreshResult.isErr()) {
             if (refreshResult.error.kind === "needs-reauth") {
@@ -154,9 +197,11 @@ export function makeResolveProvider(
                 account: refreshResult.error.account,
               } satisfies UpstreamError)
             }
-            // refresh-failed | not-oauth (defensive) — a transient refresh
-            // failure surfaces as auth-failed, which is honest: the call
-            // cannot proceed with a trustworthy token right now.
+            // refresh-failed | not-oauth (defensive) | dangling-provider-reference
+            // | no-provider-source — all surface as auth-failed, which is
+            // honest: the call cannot proceed with a trustworthy token right
+            // now. A dangling-provider-reference is the SECURITY fail-closed
+            // case (R1) — it must NEVER fall through to a real call.
             // inc29: on-401 reactive refresh is a fast-follow (F1) — this is
             // the refresh-ahead path only.
             log(

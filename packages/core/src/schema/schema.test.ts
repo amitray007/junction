@@ -24,21 +24,21 @@ import { SourceRefSchema } from "./source-ref.js"
 // ---------------------------------------------------------------------------
 
 describe("multi-account wedge", () => {
-  it("allows two Credentials with the same platformId and different profileName", () => {
+  it("allows two Credentials with the same platformId and different name", () => {
     const platformId = newPlatformId()
 
     const credWork = CredentialSchema.safeParse({
       id: newCredentialId(),
+      name: "github-work",
       platformId,
-      profileName: "work",
       kind: "oauth2",
       secretRef: "keyring:github-work",
     })
 
     const credPersonal = CredentialSchema.safeParse({
       id: newCredentialId(),
+      name: "github-personal",
       platformId,
-      profileName: "personal",
       kind: "api-key",
       secretRef: "keyring:github-personal",
     })
@@ -52,9 +52,9 @@ describe("multi-account wedge", () => {
     expect(credWork.data.platformId).toBe(platformId)
     expect(credPersonal.data.platformId).toBe(platformId)
 
-    // But are distinct entities with different profileNames and IDs
-    expect(credWork.data.profileName).toBe("work")
-    expect(credPersonal.data.profileName).toBe("personal")
+    // But are distinct entities with different names and IDs
+    expect(credWork.data.name).toBe("github-work")
+    expect(credPersonal.data.name).toBe("github-personal")
     expect(credWork.data.id).not.toBe(credPersonal.data.id)
   })
 
@@ -121,8 +121,8 @@ describe("valid entity parsing", () => {
   it("parses a Credential with optional oauthMeta", () => {
     const result = CredentialSchema.safeParse({
       id: newCredentialId(),
+      name: "linear-work",
       platformId: newPlatformId(),
-      profileName: "work",
       kind: "oauth2",
       secretRef: "keyring:linear-work",
       oauthMeta: {
@@ -173,8 +173,8 @@ describe("invalid entity rejection", () => {
   it("rejects a Credential with a bad kind", () => {
     const result = CredentialSchema.safeParse({
       id: newCredentialId(),
+      name: "cred-work",
       platformId: newPlatformId(),
-      profileName: "work",
       kind: "password", // not a valid CredentialKind
       secretRef: "keyring:something",
     })
@@ -184,8 +184,8 @@ describe("invalid entity rejection", () => {
   it("rejects a Credential with empty id", () => {
     const result = CredentialSchema.safeParse({
       id: "",
+      name: "cred-work",
       platformId: newPlatformId(),
-      profileName: "work",
       kind: "api-key",
       secretRef: "keyring:something",
     })
@@ -323,8 +323,8 @@ describe("security: no plaintext secret survives Credential parse", () => {
     // Simulate a stray `secret` field on the raw input (e.g. from a bad serializer).
     const raw = {
       id: newCredentialId(),
+      name: "github-work",
       platformId: newPlatformId(),
-      profileName: "work",
       kind: "api-key" as const,
       secretRef: "keyring:github-work",
       // This field must NOT appear on the parsed result — Zod strips unknown keys.
@@ -379,7 +379,6 @@ describe("security: no plaintext secret survives Credential parse", () => {
       scopes: ["repo", "read:user"],
       expiresAt: "2026-01-01T00:00:00Z",
       refreshTokenRef: "ref_refresh_01",
-      providerId: "github",
       authMode: "authorization_code" as const,
       clientIdRef: "ref_client_id_01",
       clientSecretRef: "ref_client_secret_01",
@@ -392,13 +391,21 @@ describe("security: no plaintext secret survives Credential parse", () => {
     expect(result.data).toEqual(full)
   })
 
-  it("OAuthMetaSchema: unknown keys are stripped", () => {
+  // Increment 45, Slice E — `providerId` is DROPPED from OAuthMetaSchema (the
+  // catalog provider key now lives EXCLUSIVELY on `Platform.oauthProviderId`;
+  // see resolve-provider-id.ts). A blob still carrying it (a pre-45 DB row
+  // read once more before migration 0013 runs, or a hand-crafted object) must
+  // be silently stripped like any other unknown key — this is the SAME
+  // "unknown keys are stripped" behavior, just now exercised BY the field
+  // this schema used to declare.
+  it("OAuthMetaSchema: a stale providerId key (pre-45 shape) is stripped like any other unknown key", () => {
     const result = OAuthMetaSchema.safeParse({
       providerId: "google",
       someFutureField: "unexpected",
     })
     expect(result.success).toBe(true)
     if (!result.success) return
+    expect(Object.hasOwn(result.data, "providerId")).toBe(false)
     expect(Object.hasOwn(result.data, "someFutureField")).toBe(false)
   })
 

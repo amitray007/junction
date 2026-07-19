@@ -43,6 +43,7 @@ import {
   readApps,
   readCredentials,
   readDashboard,
+  readOAuthDesigns,
   readOAuthProviders,
   readPlatforms,
   readProfiles,
@@ -143,8 +144,8 @@ describe("data.server", () => {
     const credId = newCredentialId()
     const createResult = await repos.credentials.create({
       id: credId,
+      name: "work-1",
       platformId,
-      profileName: "work",
       kind: "bearer",
       secretRef: "FAKE_SECRET_REF_NEVER_EXPOSE",
     })
@@ -158,7 +159,8 @@ describe("data.server", () => {
     // Shape: expected metadata fields
     expect(cred.id).toBe(String(credId))
     expect(cred.platformId).toBe(String(platformId))
-    expect(cred.account).toBe("work")
+    // Increment 46 — a credential's account IS its name (profileName is gone).
+    expect(cred.account).toBe("work-1")
     expect(cred.kind).toBe("bearer")
 
     // SECURITY: no secret or secretRef keys
@@ -183,12 +185,11 @@ describe("data.server", () => {
     const credId = newCredentialId()
     const createResult = await repos.credentials.create({
       id: credId,
+      name: "work-2",
       platformId,
-      profileName: "work",
       kind: "oauth2",
       secretRef: "FAKE_ACCESS_REF_NEVER_EXPOSE",
       oauthMeta: {
-        providerId: "github",
         refreshTokenRef: "FAKE_REFRESH_REF_NEVER_EXPOSE",
         clientIdRef: "FAKE_CLIENT_ID_REF",
         clientSecretRef: "FAKE_CLIENT_SECRET_REF_NEVER_EXPOSE",
@@ -203,8 +204,10 @@ describe("data.server", () => {
     const [cred] = creds
     if (!cred) throw new Error("no credential in result")
 
+    // Increment 45, Slice E — `providerId` dropped from oauthState (never
+    // rendered anywhere; its sole purpose was feeding the now-removed
+    // grouping fallback).
     expect(cred.oauthState).toEqual({
-      providerId: "github",
       expiresAt: "2026-01-01T00:00:00.000Z",
       needsReauth: false,
       // hasRefreshToken is a BOOLEAN derived from refreshTokenRef's presence —
@@ -213,9 +216,9 @@ describe("data.server", () => {
     })
 
     // SECURITY: no ref VALUES anywhere in the serialized credential — only the
-    // fields explicitly whitelisted onto oauthState (providerId/expiresAt/
-    // needsReauth/hasRefreshToken-as-a-bool). The FAKE_REFRESH_REF value below
-    // must be absent even though hasRefreshToken:true is derived from it.
+    // fields explicitly whitelisted onto oauthState (expiresAt/needsReauth/
+    // hasRefreshToken-as-a-bool). The FAKE_REFRESH_REF value below must be
+    // absent even though hasRefreshToken:true is derived from it.
     const serialized = JSON.stringify(cred)
     expect(serialized).not.toContain("FAKE_ACCESS_REF_NEVER_EXPOSE")
     expect(serialized).not.toContain("FAKE_REFRESH_REF_NEVER_EXPOSE")
@@ -235,8 +238,8 @@ describe("data.server", () => {
     await repos.platforms.create({ id: platformId, kind: "mcp", displayName: "P" })
     await repos.credentials.create({
       id: newCredentialId(),
+      name: "work-3",
       platformId,
-      profileName: "work",
       kind: "bearer",
       secretRef: "REF",
     })
@@ -290,8 +293,8 @@ describe("data.server", () => {
     const credId = newCredentialId()
     await repos.credentials.create({
       id: credId,
+      name: "personal-4",
       platformId,
-      profileName: "personal",
       kind: "bearer",
       secretRef: "FAKE_REF",
     })
@@ -320,7 +323,8 @@ describe("data.server", () => {
     if (!src) throw new Error("no source in result")
     expect(src.namespace).toBe("my_ns")
     expect(src.platform).toBe(String(platformId))
-    expect(src.credentialAccount).toBe("personal")
+    // Increment 46 — a credential's account IS its name (profileName is gone).
+    expect(src.credentialAccount).toBe("personal-4")
     expect(src.enabled).toBe(true)
     // secretRef must not appear in the serialized profile output
     expect(JSON.stringify(profiles)).not.toContain("FAKE_REF")
@@ -375,15 +379,20 @@ describe("data.server", () => {
     const repos = createRepositories(dbResult.value)
 
     const platformId = newPlatformId()
-    await repos.platforms.create({ id: platformId, kind: "mcp", displayName: "My GitHub MCP" })
+    // Increment 45, Slice E — the design lives on the PLATFORM only.
+    await repos.platforms.create({
+      id: platformId,
+      kind: "mcp",
+      displayName: "My GitHub MCP",
+      oauthProviderId: "github",
+    })
     await repos.credentials.create({
       id: newCredentialId(),
+      name: "work-5",
       platformId,
-      profileName: "work",
       kind: "oauth2",
       secretRef: "FAKE_ACCESS_REF_NEVER_EXPOSE",
       oauthMeta: {
-        providerId: "github",
         expiresAt: "2026-01-01T00:00:00.000Z",
         needsReauth: false,
         scopes: ["repo"],
@@ -394,7 +403,8 @@ describe("data.server", () => {
     const github = groups.find((g) => g.appId === "github")
     expect(github).toBeDefined()
     expect(github?.connections).toHaveLength(1)
-    expect(github?.connections[0]?.account).toBe("work")
+    // Increment 46 — a credential's account IS its name (profileName is gone).
+    expect(github?.connections[0]?.account).toBe("work-5")
   })
 
   it("readApps: a platform with no matching id/provider lands in 'other' (negative control)", async () => {
@@ -406,8 +416,8 @@ describe("data.server", () => {
     await repos.platforms.create({ id: platformId, kind: "mcp", displayName: "Unrecognized Thing" })
     await repos.credentials.create({
       id: newCredentialId(),
+      name: "work-6",
       platformId,
-      profileName: "work",
       kind: "bearer",
       secretRef: "REF",
     })
@@ -416,6 +426,166 @@ describe("data.server", () => {
     const other = groups.find((g) => g.appId === "other")
     expect(other).toBeDefined()
     expect(other?.connections.some((c) => c.platformId === String(platformId))).toBe(true)
+  })
+
+  // ---------------------------------------------------------------------------
+  // R3 grouping re-source (increment 44; narrowed increment 45 Slice E) —
+  // grouping must source the OAuth design through the SAME
+  // resolveOAuthProviderId refresh uses. The platform's own oauthProviderId
+  // is the ONLY source (the credential's legacy copy no longer exists at
+  // all). These tests prove the resolver is actually in the path (a
+  // platform-set design groups correctly) and that a platform with no design
+  // set lands the connection in "other", never guessing.
+  // ---------------------------------------------------------------------------
+
+  it("readApps R3: the PLATFORM's oauthProviderId is the ONLY source grouping consults", async () => {
+    const dbResult = await getDatabase(getPaths())
+    if (dbResult.isErr()) throw new Error(String(dbResult.error))
+    const repos = createRepositories(dbResult.value)
+
+    const platformId = newPlatformId()
+    await repos.platforms.create({
+      id: platformId,
+      kind: "mcp",
+      displayName: "My GitHub MCP",
+      oauthProviderId: "github",
+    })
+    await repos.credentials.create({
+      id: newCredentialId(),
+      name: "work-r3a",
+      platformId,
+      kind: "oauth2",
+      secretRef: "FAKE_ACCESS_REF_NEVER_EXPOSE",
+      oauthMeta: {
+        expiresAt: "2026-01-01T00:00:00.000Z",
+        needsReauth: false,
+        scopes: ["repo"],
+      },
+    })
+
+    const { groups } = await readApps()
+    expect(groups.find((g) => g.appId === "github")?.connections).toHaveLength(1)
+  })
+
+  it("readApps R3 (Slice E): a platform with NO oauthProviderId set → the connection lands in 'other', no fallback exists to save it", async () => {
+    const dbResult = await getDatabase(getPaths())
+    if (dbResult.isErr()) throw new Error(String(dbResult.error))
+    const repos = createRepositories(dbResult.value)
+
+    // Platform has NO oauthProviderId — increment 45 Slice E removed the
+    // legacy fallback that used to rescue this case, so resolution now
+    // degrades to "no hint" and the connection falls through to "other".
+    const platformId = newPlatformId()
+    await repos.platforms.create({ id: platformId, kind: "mcp", displayName: "Legacy GitHub" })
+    await repos.credentials.create({
+      id: newCredentialId(),
+      name: "work-r3b",
+      platformId,
+      kind: "oauth2",
+      secretRef: "FAKE_ACCESS_REF_NEVER_EXPOSE",
+      oauthMeta: {
+        expiresAt: "2026-01-01T00:00:00.000Z",
+        needsReauth: false,
+        scopes: ["repo"],
+      },
+    })
+
+    const { groups } = await readApps()
+    expect(groups.find((g) => g.appId === "github")).toBeUndefined()
+    const other = groups.find((g) => g.appId === "other")
+    expect(other?.connections.some((c) => c.platformId === String(platformId))).toBe(true)
+  })
+
+  // ---------------------------------------------------------------------------
+  // readOAuthDesigns (increment 44, R1) — the read-only designs list + the
+  // "which platforms reference this design" join.
+  // ---------------------------------------------------------------------------
+
+  it("readOAuthDesigns: lists built-ins metadata-only + flags the generic template", async () => {
+    const designs = await readOAuthDesigns()
+    const github = designs.find((d) => d.id === "github")
+    expect(github).toBeDefined()
+    expect(github?.displayName).toBe("GitHub")
+    expect(github?.authorizationUrl).toBe("https://github.com/login/oauth/authorize")
+    expect(github?.isTemplate).toBe(false)
+
+    const generic = designs.find((d) => d.id === "generic")
+    expect(generic?.isTemplate).toBe(true)
+    expect(generic?.authorizationUrl).toBe("") // template: user-supplied endpoints
+
+    // Metadata-only: the public catalog carries no client secret / token value.
+    const serialized = JSON.stringify(designs)
+    expect(serialized).not.toContain('"secret"')
+    expect(serialized).not.toContain('"clientSecret"')
+  })
+
+  it("readOAuthDesigns: reports which platforms reference each design (and none when unreferenced)", async () => {
+    const dbResult = await getDatabase(getPaths())
+    if (dbResult.isErr()) throw new Error(String(dbResult.error))
+    const repos = createRepositories(dbResult.value)
+
+    // Two platforms reference github; none reference google.
+    const p1 = newPlatformId()
+    const p2 = newPlatformId()
+    await repos.platforms.create({
+      id: p1,
+      kind: "mcp",
+      displayName: "GH one",
+      oauthProviderId: "github",
+    })
+    await repos.platforms.create({
+      id: p2,
+      kind: "mcp",
+      displayName: "GH two",
+      oauthProviderId: "github",
+    })
+
+    const designs = await readOAuthDesigns()
+    const github = designs.find((d) => d.id === "github")
+    expect(github?.referencedByPlatformIds).toHaveLength(2)
+    expect(github?.referencedByPlatformIds).toContain(String(p1))
+    expect(github?.referencedByPlatformIds).toContain(String(p2))
+
+    const google = designs.find((d) => d.id === "google")
+    expect(google?.referencedByPlatformIds).toEqual([])
+  })
+
+  it("readOAuthDesigns (increment 45, Slice D): built-ins are isCustom:false; a custom design added via addCustomDesign shows isCustom:true and its own referencedByPlatformIds", async () => {
+    const { addCustomDesign } = await import("@junction/core")
+    const paths = getPaths()
+
+    await addCustomDesign(paths, {
+      id: "custom:acme-oauth",
+      displayName: "Acme OAuth",
+      authorizationUrl: "https://acme.example.com/oauth/authorize",
+      tokenUrl: "https://acme.example.com/oauth/token",
+      scopeSeparator: " ",
+      pkce: "S256",
+      supportsRefresh: true,
+      expiryStrategy: "expires_in",
+      redirectMode: "loopback-fixed",
+      registrationHint: { redirectUri: "", scopes: "", docsUrl: "" },
+    })
+
+    const dbResult = await getDatabase(paths)
+    if (dbResult.isErr()) throw new Error(String(dbResult.error))
+    const repos = createRepositories(dbResult.value)
+    const platformId = newPlatformId()
+    await repos.platforms.create({
+      id: platformId,
+      kind: "mcp",
+      displayName: "Acme via custom design",
+      oauthProviderId: "custom:acme-oauth",
+    })
+
+    const designs = await readOAuthDesigns()
+    const github = designs.find((d) => d.id === "github")
+    expect(github?.isCustom).toBe(false)
+
+    const custom = designs.find((d) => d.id === "custom:acme-oauth")
+    expect(custom).toBeDefined()
+    expect(custom?.isCustom).toBe(true)
+    expect(custom?.referencedByPlatformIds).toEqual([String(platformId)])
   })
 
   it("readApps: metadata only — no secret or secretRef anywhere in the serialized result", async () => {
@@ -429,12 +599,11 @@ describe("data.server", () => {
     const credId = newCredentialId()
     await repos.credentials.create({
       id: credId,
+      name: "work-7",
       platformId,
-      profileName: "work",
       kind: "oauth2",
       secretRef: "FAKE_ACCESS_REF_NEVER_EXPOSE",
       oauthMeta: {
-        providerId: "github",
         refreshTokenRef: "FAKE_REFRESH_REF_NEVER_EXPOSE",
         clientIdRef: "FAKE_CLIENT_ID_REF",
         clientSecretRef: "FAKE_CLIENT_SECRET_REF_NEVER_EXPOSE",
@@ -478,29 +647,38 @@ describe("data.server", () => {
     const repos = createRepositories(dbResult.value)
 
     const platformId = newPlatformId()
-    await repos.platforms.create({ id: platformId, kind: "mcp", displayName: "GitHub" })
-    await repos.credentials.create({
-      id: newCredentialId(),
-      platformId,
-      profileName: "work",
-      kind: "oauth2",
-      secretRef: "REF1",
-      oauthMeta: { providerId: "github", needsReauth: false },
+    // Increment 45, Slice E — grouping now sources the design EXCLUSIVELY
+    // from the platform's own oauthProviderId (a random ULID platform id
+    // never matches "github" by id/alias on its own).
+    await repos.platforms.create({
+      id: platformId,
+      kind: "mcp",
+      displayName: "GitHub",
+      oauthProviderId: "github",
     })
     await repos.credentials.create({
       id: newCredentialId(),
+      name: "work-8",
       platformId,
-      profileName: "personal",
+      kind: "oauth2",
+      secretRef: "REF1",
+      oauthMeta: { needsReauth: false },
+    })
+    await repos.credentials.create({
+      id: newCredentialId(),
+      name: "personal-9",
+      platformId,
       kind: "oauth2",
       secretRef: "REF2",
-      oauthMeta: { providerId: "github", needsReauth: false },
+      oauthMeta: { needsReauth: false },
     })
 
     const { groups } = await readApps()
     const github = groups.find((g) => g.appId === "github")
     expect(github?.connections).toHaveLength(2)
     const accounts = github?.connections.map((c) => c.account).sort()
-    expect(accounts).toEqual(["personal", "work"])
+    // Increment 46 — a credential's account IS its name (profileName is gone).
+    expect(accounts).toEqual(["personal-9", "work-8"])
   })
 
   // ---------------------------------------------------------------------------
@@ -693,8 +871,8 @@ describe("data.server", () => {
       const credA = newCredentialId()
       await repos.credentials.create({
         id: credA,
+        name: "healthy-no-tools-10",
         platformId,
-        profileName: "healthy-no-tools",
         kind: "bearer",
         secretRef: "REF_A",
       })
@@ -704,8 +882,8 @@ describe("data.server", () => {
       const credB = newCredentialId()
       await repos.credentials.create({
         id: credB,
+        name: "unhealthy-with-tools-11",
         platformId,
-        profileName: "unhealthy-with-tools",
         kind: "bearer",
         secretRef: "REF_B",
       })
@@ -737,8 +915,8 @@ describe("data.server", () => {
       const cred = newCredentialId()
       await repos.credentials.create({
         id: cred,
+        name: "healthy-with-tools-12",
         platformId,
-        profileName: "healthy-with-tools",
         kind: "bearer",
         secretRef: "REF",
       })

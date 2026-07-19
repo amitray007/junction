@@ -8,6 +8,20 @@ import { z } from "zod"
 import { CredentialIdSchema, PlatformIdSchema } from "./primitives.js"
 
 // ---------------------------------------------------------------------------
+// CredentialName — the credential's SOLE identity (increment 42, Phase 1 of
+// docs/specs/2026-07-17-credential-platform-normalization.md). Lowercase slug,
+// globally unique across ALL credentials (linked or not). No `_`/`__` contract
+// here — credential names never enter tool namespaces (those come from
+// profile/source wiring, see primitives.ts's ToolNamespaceSchema).
+// ---------------------------------------------------------------------------
+
+export const CredentialNameSchema = z.string().regex(/^[a-z0-9][a-z0-9-]*$/, {
+  message:
+    "name must match ^[a-z0-9][a-z0-9-]*$ (lowercase, digits, hyphens; must start alphanumeric)",
+})
+export type CredentialName = z.infer<typeof CredentialNameSchema>
+
+// ---------------------------------------------------------------------------
 // CredentialKind
 // ---------------------------------------------------------------------------
 
@@ -39,8 +53,15 @@ export const OAuthMetaSchema = z.object({
   // --- inc 29 additive ---
   /** Second minted ULID ref → the refresh token in the CredentialStore. NEVER the raw token. */
   refreshTokenRef: z.string().min(1).optional(),
-  /** Catalog provider key, e.g. "google" | "github" | "slack" | "generic" */
-  providerId: z.string().min(1).optional(),
+  // `providerId` (the catalog provider key) lived here through increment 44 —
+  // DROPPED in increment 45 Slice E (migration 0013). A credential's OAuth
+  // design is now sourced EXCLUSIVELY from its bound platform's
+  // `oauthProviderId` (resolveOAuthProviderId) — never a denormalized copy
+  // on the credential itself. The vault archive format (vault-manifest.ts's
+  // `ManifestOAuthMetaSchema`) keeps its OWN independent `providerId` field
+  // for pre-45 archive compat + platform backfill on import — that schema is
+  // NOT this one; do not reintroduce the field here to "fix" an archive
+  // round-trip.
   /** How this credential was obtained / is refreshed */
   authMode: z.enum(["authorization_code", "device_code", "client_credentials"]).optional(),
   /** BYO client credentials, stored as refs (the client_secret is a secret). */
@@ -70,10 +91,23 @@ export type CredentialVerifyResult = z.infer<typeof CredentialVerifyResult>
 export const CredentialSchema = z.object({
   /** Opaque stable credential ID */
   id: CredentialIdSchema,
-  /** FK → Platform. Multiple Credentials can share the same platformId (the wedge). */
-  platformId: PlatformIdSchema,
-  /** Logical account name within a profile, e.g. "work", "personal", "client-acme" */
-  profileName: z.string().min(1),
+  /**
+   * The credential's SOLE identity (increment 42 — Phase 1 of
+   * docs/specs/2026-07-17-credential-platform-normalization.md). Lowercase
+   * slug, globally UNIQUE across every credential (linked or not). Shown
+   * everywhere a credential is referenced (CLI `--credential`, web list,
+   * agent-facing displays). Required on every create path — see
+   * `deriveCredentialName` for paths that don't take a user-supplied name
+   * (OAuth connect, catalog connect, legacy CLI `--account`).
+   */
+  name: CredentialNameSchema,
+  /**
+   * FK → Platform. Multiple Credentials can share the same platformId (the
+   * wedge). NULLABLE as of increment 42 — a credential no longer requires a
+   * platform to exist (a standalone vault secret). Carries NO uniqueness role
+   * (identity lives entirely in `name`).
+   */
+  platformId: PlatformIdSchema.nullable(),
   /** Authentication mechanism kind */
   kind: CredentialKind,
   /**

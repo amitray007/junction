@@ -604,8 +604,8 @@ describe("probe.server", () => {
       const credId = newCredentialId()
       await repos.credentials.create({
         id: credId,
+        name: "work-13",
         platformId,
-        profileName: "work",
         kind: "bearer",
         secretRef: "FAKE_REF_NEVER_EXPOSE",
       })

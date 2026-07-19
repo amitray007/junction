@@ -35,6 +35,7 @@ vi.mock("@tanstack/react-router", () => ({
 
 vi.mock("../server/data.functions.js", () => ({
   getSettings: vi.fn(),
+  getOAuthDesigns: vi.fn(),
 }))
 
 const mockSetMcpHostFn = vi.fn()
@@ -59,15 +60,52 @@ const SettingsPage = (Route as any).options.component as React.FC
 
 // ── Fixtures -----------------------------------------------------------------
 
-const noHostData = { mcpHost: undefined, mcpHostSource: "none" as const }
-const configHostData = {
+// The loader returns { settings, oauthDesigns } (increment 44). Two built-in
+// designs cover the assertions below: a real provider (github, refresh:false)
+// referenced by a platform, and the `generic` template (empty endpoints,
+// unreferenced).
+const oauthDesigns = [
+  {
+    id: "github",
+    displayName: "GitHub",
+    authorizationUrl: "https://github.com/login/oauth/authorize",
+    tokenUrl: "https://github.com/login/oauth/access_token",
+    pkce: "S256" as const,
+    supportsRefresh: false,
+    docsUrl: "https://docs.github.com/en/apps/oauth-apps",
+    isTemplate: false,
+    referencedByPlatformIds: ["gh-work"],
+  },
+  {
+    id: "generic",
+    displayName: "Generic OAuth2",
+    authorizationUrl: "",
+    tokenUrl: "",
+    pkce: "S256" as const,
+    supportsRefresh: true,
+    docsUrl: "",
+    isTemplate: true,
+    referencedByPlatformIds: [],
+  },
+]
+
+/** Wrap a settings fixture in the full loader shape ({ settings, oauthDesigns }). */
+function loaderData(settings: {
+  mcpHost: string | undefined
+  mcpHostSource: "none" | "config" | "env"
+}) {
+  return { settings, oauthDesigns }
+}
+
+const noHostData = loaderData({ mcpHost: undefined, mcpHostSource: "none" })
+const configHostData = loaderData({
   mcpHost: "junction.example.com",
-  mcpHostSource: "config" as const,
-}
-const envHostData = {
+  mcpHostSource: "config",
+})
+const envHostData = loaderData({
   mcpHost: "env.example.com",
-  mcpHostSource: "env" as const,
-}
+  mcpHostSource: "env",
+})
 
 // ── Cleanup ------------------------------------------------------------------
 
@@ -196,5 +234,61 @@ describe("SettingsPage", () => {
     await waitFor(() => expect(mockSetMcpHostFn).toHaveBeenCalledTimes(1))
     expect(mockSetMcpHostFn).toHaveBeenCalledWith({ data: { host: "" } })
     await waitFor(() => expect(mockInvalidate).toHaveBeenCalled())
+  })
+
+  // ── OAuth designs section (increment 44, R1 — READ-ONLY) ────────────────────
+
+  it("renders the OAuth designs section heading", () => {
+    mockUseLoaderData.mockReturnValue(noHostData)
+    const { getByRole } = render(<SettingsPage />)
+    expect(getByRole("heading", { name: /oauth designs/i })).toBeInTheDocument()
+  })
+
+  it("lists each built-in design by display name and id", () => {
+    mockUseLoaderData.mockReturnValue(noHostData)
+    const { getByRole, getByText } = render(<SettingsPage />)
+    expect(getByRole("heading", { name: "GitHub" })).toBeInTheDocument()
+    expect(getByRole("heading", { name: "Generic OAuth2" })).toBeInTheDocument()
+    // ids shown as mono chips
+    expect(getByText("github")).toBeInTheDocument()
+    expect(getByText("generic")).toBeInTheDocument()
+  })
+
+  it("shows a design's public endpoints (authorization + token URLs)", () => {
+    mockUseLoaderData.mockReturnValue(noHostData)
+    const { getByText } = render(<SettingsPage />)
+    expect(getByText("https://github.com/login/oauth/authorize")).toBeInTheDocument()
+    expect(getByText("https://github.com/login/oauth/access_token")).toBeInTheDocument()
+  })
+
+  it("flags the generic design as a Template", () => {
+    mockUseLoaderData.mockReturnValue(noHostData)
+    const { getByText } = render(<SettingsPage />)
+    expect(getByText("Template")).toBeInTheDocument()
+  })
+
+  it("shows which platform(s) reference a design, and 'none yet' when unreferenced", () => {
+    mockUseLoaderData.mockReturnValue(noHostData)
+    const { getByText } = render(<SettingsPage />)
+    // github is referenced by gh-work
+    expect(getByText("gh-work")).toBeInTheDocument()
+    expect(getByText(/Referenced by 1 platform/i)).toBeInTheDocument()
+    // generic is unreferenced
+    expect(getByText(/No platforms reference this design yet/i)).toBeInTheDocument()
+  })
+
+  it("renders no secret/client material — only public catalog data", () => {
+    mockUseLoaderData.mockReturnValue(noHostData)
+    const { container } = render(<SettingsPage />)
+    const text = container.textContent ?? ""
+    // The designs surface is metadata-only: no client secret / credential value
+    // ever reaches it (the fixtures carry none, and the type has no such
+    // field). NOTE: the provider's public token ENDPOINT url legitimately
+    // contains the path segment "access_token" (github's token endpoint is
+    // .../oauth/access_token) — that's a public catalog URL, not a secret, so
+    // we assert on actual secret material (client secret / secretRef), never on
+    // the endpoint URL.
+    expect(text).not.toMatch(/client[_-]?secret/i)
+    expect(text).not.toMatch(/secretRef/i)
   })
 })

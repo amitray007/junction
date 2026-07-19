@@ -1,0 +1,43 @@
+-- Increment 45 Slice E (Fable E1/E4) — drop `oauthMeta.providerId` from
+-- `credentials.oauth_meta`. See docs/methods/45-custom-oauth-designs.md's
+-- "Slice E" section and packages/core/src/db/verify-provider-id-drop-safe.ts.
+--
+-- FAIL-CLOSED VERIFY-THEN-DROP: this .sql file is ONLY ever applied by
+-- drizzle's migrate() AFTER `verifyProviderIdDropSafe` (called by
+-- `getDatabase`, BEFORE migrate() is invoked) has already:
+--   1. backfilled `platforms.oauth_provider_id` from every bound oauth2
+--      credential's legacy `oauth_meta.providerId` (fill-only-if-unset, same
+--      conflict rule as migration 0012 — disagreement leaves it unset), and
+--   2. verified EVERY credential that still carries a legacy providerId now
+--      has a platform with `oauth_provider_id` SET, and
+--   3. written a recovery snapshot of `(credentialId → legacy providerId)`
+--      to the `_providerid_drop_backup` table.
+-- If any credential would strand, `getDatabase` returns a typed
+-- `migration-refused` error and NEVER calls migrate() at all this boot — so
+-- this file is never reached in that case. A pure .sql migration cannot do
+-- this verification itself: "does this credential resolve via the
+-- platform's design" is TypeScript logic (resolveOAuthProviderId, which also
+-- consults the merged built-in + custom OAuth design set) — not something
+-- json_extract/json_valid can express — and drizzle's better-sqlite3
+-- migrator runs every pending .sql file inside ONE transaction with no JS
+-- callback in between, so the verification cannot be interleaved between two
+-- migration files either. It has to run before migrate() is invoked at all.
+--
+-- THE DROP ITSELF: `oauth_meta` is a JSON TEXT column — this removes ONLY
+-- the `providerId` key via `json_remove`, never touching the column/table
+-- (the OTHER oauthMeta fields — scopes, expiresAt, refreshTokenRef,
+-- authMode, clientIdRef, clientSecretRef, needsReauth, obtainedAt — survive
+-- untouched). `json_valid`-guarded (inc-44 gotcha: an unguarded
+-- json_extract/json_remove call THROWS, not degrades to NULL, on malformed
+-- JSON, which would brick the whole migration transaction on a single bad
+-- row) — a row with malformed `oauth_meta` is simply skipped by the WHERE
+-- clause, left as-is (already unparseable; nothing this migration can safely
+-- do to it).
+--
+-- IDEMPOTENT: `json_remove` on a blob that has no `providerId` key is a
+-- no-op (the key is simply absent already) — re-running this migration
+-- (impossible under drizzle's own "already applied" tracking, but true by
+-- construction regardless) changes nothing.
+UPDATE `credentials`
+SET `oauth_meta` = json_remove(`oauth_meta`, '$.providerId')
+WHERE `oauth_meta` IS NOT NULL AND json_valid(`oauth_meta`);

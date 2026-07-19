@@ -9,6 +9,7 @@
 // single source of truth shared with the web connect flow's redirect_uri (they
 // must be byte-identical or the registered redirect won't match). See config.
 import { OAUTH_CALLBACK_URI } from "../config/index.js"
+import type { CustomOAuthDesign } from "./designs-store.js"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -34,16 +35,30 @@ export interface NormalizedTokens {
 export interface OAuthProvider {
   id: string
   displayName: string
-  /** Catalog-supplied for tuned providers; a function for {subdomain}-style connection_config. */
-  authorizationUrl: string | ((cfg: Record<string, string>) => string)
-  tokenUrl: string | ((cfg: Record<string, string>) => string)
+  /**
+   * Concrete, resolved URLs only (increment 44 — the `(cfg) => string`
+   * per-tenant function form was removed as dead code: the refresh path
+   * (source-runtime's `resolveTokenUrl`) and connect's `buildAuthorizeUrl`
+   * both already refused it, and no catalog entry ever used it. A custom
+   * design for a per-tenant provider takes the user's own resolved URL
+   * (e.g. `https://acme.okta.com/oauth2/v1/token`) as a plain string.
+   */
+  authorizationUrl: string
+  tokenUrl: string
   /** RFC 8628 device endpoint. Presence = device-code flow is offered for this provider. */
   deviceAuthorizationUrl?: string
-  pkce: "S256" | "disabled"
+  /** "plain" added in increment 44 — arctic supports CodeChallengeMethod.Plain. */
+  pkce: "S256" | "plain" | "disabled"
   scopeSeparator: " " | "," | "+"
   authorizationParams?: Record<string, string>
-  tokenAuthMethod: "client_secret_basic" | "client_secret_post" | "none"
-  bodyFormat: "form" | "json"
+  /**
+   * increment 44 — `tokenAuthMethod`/`bodyFormat` were removed as inert dead
+   * fields: arctic (the runtime executor) always sends HTTP Basic client
+   * auth when a client secret is present, and always sends a form-encoded
+   * token request body, ignoring both. A provider whose token endpoint
+   * rejects HTTP Basic needs a hand-rolled token client — see
+   * docs/futures/revisit-when.md.
+   */
   expiryStrategy: "expires_in" | "expires_at" | "none"
   /** Override the default token-response parse (e.g. Slack's {ok:false}-at-200). */
   parseTokenResponse?: (raw: unknown) => NormalizedTokens
@@ -144,11 +159,6 @@ const PROVIDERS: readonly OAuthProvider[] = [
     tokenUrl: "https://github.com/login/oauth/access_token",
     pkce: "S256",
     scopeSeparator: " ",
-    tokenAuthMethod: "client_secret_basic",
-    // GitHub's token endpoint defaults to form-encoded responses unless asked
-    // for JSON via an Accept header — that's an HTTP-layer concern (B), not a
-    // catalog concern. `bodyFormat` here describes the REQUEST body shape.
-    bodyFormat: "form",
     expiryStrategy: "none",
     redirectMode: "loopback-fixed",
     supportsRefresh: false,
@@ -179,8 +189,6 @@ const PROVIDERS: readonly OAuthProvider[] = [
     tokenUrl: "https://github.com/login/oauth/access_token",
     pkce: "S256",
     scopeSeparator: " ",
-    tokenAuthMethod: "client_secret_basic",
-    bodyFormat: "form",
     expiryStrategy: "expires_in",
     redirectMode: "loopback-fixed",
     supportsRefresh: true,
@@ -204,8 +212,6 @@ const PROVIDERS: readonly OAuthProvider[] = [
     tokenUrl: "https://slack.com/api/oauth.v2.access",
     pkce: "S256",
     scopeSeparator: ",",
-    tokenAuthMethod: "client_secret_post",
-    bodyFormat: "form",
     expiryStrategy: "expires_in",
     parseTokenResponse: parseSlackTokenResponse,
     redirectMode: "loopback-fixed",
@@ -235,8 +241,6 @@ const PROVIDERS: readonly OAuthProvider[] = [
     // access_type:offline + prompt:consent are REQUIRED or Google never issues
     // a refresh token (only on first consent otherwise).
     authorizationParams: { access_type: "offline", prompt: "consent" },
-    tokenAuthMethod: "client_secret_basic",
-    bodyFormat: "form",
     expiryStrategy: "expires_in",
     // Desktop-app pattern: no fixed registered redirect, a per-flow ephemeral
     // loopback port (RFC 8252).
@@ -263,8 +267,6 @@ const PROVIDERS: readonly OAuthProvider[] = [
     tokenUrl: "",
     pkce: "S256",
     scopeSeparator: " ",
-    tokenAuthMethod: "client_secret_basic",
-    bodyFormat: "form",
     expiryStrategy: "expires_in",
     redirectMode: "loopback-fixed",
     supportsRefresh: true,
@@ -290,6 +292,40 @@ export function getProvider(id: string): OAuthProvider | undefined {
 /** All catalog entries, for the web provider picker. */
 export function listProviders(): OAuthProvider[] {
   return [...PROVIDERS]
+}
+
+// ---------------------------------------------------------------------------
+// mergeDesigns — built-ins + custom, as DATA (increment 45, Fable D2/D3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Merge the built-in catalog with user-authored custom designs into ONE
+ * lookup, for callers (the resolver, Slice D's list op) that need visibility
+ * into both. PURE — no I/O; the caller loads `custom` at the I/O edge (via
+ * `loadCustomDesigns`) and passes it in here.
+ *
+ * `getProvider`/`listProviders` above stay PURE BUILT-INS-ONLY on purpose
+ * (D2) — this is a SEPARATE function, not a mutation of those, so nothing
+ * that calls the catalog for built-ins-only reasons (e.g. the web provider
+ * picker's "built-in providers" section) accidentally starts seeing custom
+ * designs without opting in.
+ *
+ * BUILT-INS ALWAYS WIN (D3): a custom design is only ever installed into the
+ * merged map if no built-in already occupies that id. Custom ids are
+ * structurally namespaced (`custom:<slug>`, enforced by
+ * `CustomOAuthDesignSchema`'s regex at both create and load time) so a real
+ * collision should be impossible by construction — this precedence is
+ * belt-and-suspenders defense-in-depth, not the only guard: even if some
+ * future bug let a non-namespaced id slip through the schema, it could never
+ * shadow/override a built-in's tokenUrl here.
+ */
+export function mergeDesigns(custom: CustomOAuthDesign[]): Map<string, OAuthProvider> {
+  const merged = new Map<string, OAuthProvider>(PROVIDERS_BY_ID)
+  for (const design of custom) {
+    if (merged.has(design.id)) continue // built-in wins — never overwritten
+    merged.set(design.id, design)
+  }
+  return merged
 }
 
 /** Join scopes with the provider's separator. */

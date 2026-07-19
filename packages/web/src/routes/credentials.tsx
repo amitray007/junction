@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Credentials route — flat paginated table with platform group-dividers (Variant C, F12).
-// Replaces the grouped-card layout (inc-24.5) with ONE table: columns ID · Platform ·
-// Account · Kind (true: bearer) · Status · ⋯, group-divider rows per platform, search,
-// sort (Platform/Account), and a TablePagination footer (page size 25).
+// Credentials route — flat paginated table with group-dividers (Variant C, F12).
+// Columns: Name · Platform · Account · Kind (true: bearer) · Status · ⋯ (the
+// credential id moved to a tooltip on the Name cell — inc 42). Group-divider
+// rows per platform, plus an "Unlinked" group for standalone credentials
+// (platformId null). Search, sort, TablePagination footer (page size 25).
+// inc 42 (Phase 1, credentials standalone): the "Add Credential" dialog is now
+// pure Name·Kind·Secret with NO platform picker — a credential is a standalone
+// secret; a platform binds it later (Phase 2). OAuth still comes via Connect.
 // The inc-24 add/rotate/delete mutations stay wired unchanged.
 // No @junction/core import. Secret is input-only; never rendered or returned.
 
@@ -27,7 +31,6 @@ import { startConnectFn, startReconnectFn } from "../server/oauth-connect.functi
 import { MonoCode } from "../ui/code.js"
 import {
   Button,
-  Checkbox,
   Dialog,
   DialogContent,
   DialogDescription,
@@ -140,6 +143,22 @@ const PAGE_SIZE = 25
 // Number of columns in the flat table — used for colSpan on group-divider + empty rows.
 const COL_COUNT = 6
 
+/**
+ * Shared dialog open-change handler used by every credential dialog on this
+ * page: reset the dialog's local form state when it closes, then propagate the
+ * open/closed change. The `reset` body differs per dialog (each owns its own
+ * fields); this factory shares the identical close-then-reset idiom.
+ */
+function makeDialogOpenChange(
+  reset: () => void,
+  onOpenChange: (open: boolean) => void,
+): (next: boolean) => void {
+  return (next: boolean) => {
+    if (!next) reset()
+    onOpenChange(next)
+  }
+}
+
 function CredentialsPending() {
   return (
     <div>
@@ -223,7 +242,6 @@ function SecretField({
 interface AddDialogProps {
   readonly open: boolean
   readonly onOpenChange: (open: boolean) => void
-  readonly platforms: PlatformMeta[]
   readonly onSuccess: () => void
 }
 
@@ -235,61 +253,48 @@ const KIND_LABELS: Record<string, string> = {
   file: "File",
 }
 
-function AddCredentialDialog({ open, onOpenChange, platforms, onSuccess }: AddDialogProps) {
-  const [platformId, setPlatformId] = useState("")
-  const [account, setAccount] = useState("")
-  const [kind, setKind] = useState("")
+// Increment 42 Phase 1 — the standalone dialog offers ONLY the raw kinds.
+// oauth2 is deliberately absent: OAuth still comes via the platform Connect
+// flow (ConnectOAuthDialog below), unchanged.
+const STANDALONE_KINDS = ["bearer", "api-key", "env", "file"] as const
+
+// Slug regex mirrors core's CredentialNameSchema (^[a-z0-9][a-z0-9-]*$) —
+// duplicated here as a light client-side validator; core re-validates
+// authoritatively server-side.
+const CREDENTIAL_NAME_RE = /^[a-z0-9][a-z0-9-]*$/
+
+/**
+ * Add Credential dialog (increment 42 Phase 1) — creates a STANDALONE
+ * (unlinked) secret: Name · Kind · Secret, no platform picker. Linking a
+ * credential to a platform happens elsewhere (Phase 2 — platform setup binds
+ * a credential inline; OAuth credentials come via the Connect flow, unchanged).
+ */
+function AddCredentialDialog({ open, onOpenChange, onSuccess }: AddDialogProps) {
+  const [name, setName] = useState("")
+  const [kind, setKind] = useState<string>("bearer")
   const [secret, setSecret] = useState("")
-  const [verify, setVerify] = useState(true)
-  const [errors, setErrors] = useState<{ platformId?: string; account?: string; secret?: string }>(
-    {},
-  )
+  const [errors, setErrors] = useState<{ name?: string; secret?: string }>({})
   const [submitting, setSubmitting] = useState(false)
 
-  const platformMap = useMemo(() => new Map(platforms.map((p) => [p.id, p])), [platforms])
-  const selectedPlatform = platformId ? platformMap.get(platformId) : undefined
-  const compatibleKinds = selectedPlatform?.compatibleKinds ?? []
-  const verifiable = selectedPlatform?.verifiable ?? false
-
-  function selectPlatform(id: string) {
-    setPlatformId(id)
-    // Default kind = the matrix's first (preferred) entry for the newly selected platform.
-    const platform = platformMap.get(id)
-    setKind(platform?.compatibleKinds[0] ?? "")
-    setVerify(platform?.verifiable ?? false)
-  }
-
   function reset() {
-    setPlatformId("")
-    setAccount("")
-    setKind("")
+    setName("")
+    setKind("bearer")
     setSecret("")
-    setVerify(true)
     setErrors({})
     setSubmitting(false)
   }
 
-  function handleOpenChange(next: boolean) {
-    if (!next) reset()
-    onOpenChange(next)
-  }
-
-  function toastVerifyOutcome(outcome: { status: string; detail?: string; reason?: string }) {
-    if (outcome.status === "ok") {
-      toast.success("Connected")
-    } else if (outcome.status === "auth-failed") {
-      toast.error("Auth failed — check the token")
-    } else if (outcome.status === "unreachable") {
-      toast.warning("Couldn't reach the source")
-    }
-    // "not-verifiable" is silent — the checkbox is hidden for non-verifiable platforms.
-  }
+  const handleOpenChange = makeDialogOpenChange(reset, onOpenChange)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     const newErrors: typeof errors = {}
-    if (!platformId) newErrors.platformId = "Platform is required"
-    if (!account.trim()) newErrors.account = "Account is required"
+    const trimmedName = name.trim()
+    if (!trimmedName) {
+      newErrors.name = "Name is required"
+    } else if (!CREDENTIAL_NAME_RE.test(trimmedName)) {
+      newErrors.name = "Lowercase letters, digits, and hyphens only (must start alphanumeric)"
+    }
     if (!secret) newErrors.secret = "Secret is required"
     if (Object.keys(newErrors).length > 0) {
       setErrors(newErrors)
@@ -299,11 +304,9 @@ function AddCredentialDialog({ open, onOpenChange, platforms, onSuccess }: AddDi
     try {
       const result = await addCredentialFn({
         data: {
-          platformId,
-          account: account.trim(),
-          kind: (kind || "bearer") as "bearer" | "api-key" | "env" | "file",
+          name: trimmedName,
+          kind: kind as "bearer" | "api-key" | "env" | "file",
           secret,
-          verify: verifiable && verify,
         },
       })
       if (!result.ok) {
@@ -312,7 +315,6 @@ function AddCredentialDialog({ open, onOpenChange, platforms, onSuccess }: AddDi
         return
       }
       toast.success("Credential added")
-      if (result.verify) toastVerifyOutcome(result.verify)
       onOpenChange(false)
       reset()
       onSuccess()
@@ -328,63 +330,41 @@ function AddCredentialDialog({ open, onOpenChange, platforms, onSuccess }: AddDi
         <DialogHeader>
           <DialogTitle>Add Credential</DialogTitle>
           <DialogDescription>
-            Add a credential for a platform. The secret is never stored in plaintext.
+            Add a secret to your vault. The secret is never stored in plaintext. Link it to a
+            platform later, or use it standalone.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} noValidate>
           <div className="flex flex-col gap-4">
-            <Field id="add-platform" label="Platform" error={errors.platformId}>
-              <Select value={platformId} onValueChange={selectPlatform}>
-                <SelectTrigger id="add-platform" aria-required="true">
-                  <SelectValue placeholder="Select a platform" />
+            <Field
+              id="add-name"
+              label="Name"
+              error={errors.name}
+              description="A lowercase slug — e.g. github-work, prod-api-key."
+            >
+              <Input
+                id="add-name"
+                placeholder="e.g. github-work"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                hasError={!!errors.name}
+                aria-required="true"
+              />
+            </Field>
+            <Field id="add-kind" label="Kind">
+              <Select value={kind} onValueChange={setKind}>
+                <SelectTrigger id="add-kind">
+                  <SelectValue placeholder="Select a kind" />
                 </SelectTrigger>
                 <SelectContent>
-                  {platforms.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.displayName}
+                  {STANDALONE_KINDS.map((k) => (
+                    <SelectItem key={k} value={k}>
+                      {KIND_LABELS[k] ?? k}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </Field>
-            <Field id="add-account" label="Account" error={errors.account}>
-              <Input
-                id="add-account"
-                placeholder="e.g. work, personal"
-                value={account}
-                onChange={(e) => setAccount(e.target.value)}
-                hasError={!!errors.account}
-                aria-required="true"
-              />
-            </Field>
-            {compatibleKinds.length > 0 ? (
-              <Field id="add-kind" label="Kind">
-                <Select value={kind} onValueChange={setKind}>
-                  <SelectTrigger id="add-kind">
-                    <SelectValue placeholder="Select a kind" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {compatibleKinds.map((k) => (
-                      <SelectItem key={k} value={k}>
-                        {KIND_LABELS[k] ?? k}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-            ) : (
-              <Field
-                id="add-kind"
-                label="Kind"
-                description={
-                  platformId
-                    ? "This platform does not accept a credential kind."
-                    : "Select a platform to see its supported kinds."
-                }
-              >
-                <Input id="add-kind" value="—" disabled aria-disabled="true" />
-              </Field>
-            )}
             <SecretField
               id="add-secret"
               label="Secret"
@@ -398,21 +378,6 @@ function AddCredentialDialog({ open, onOpenChange, platforms, onSuccess }: AddDi
               }
               multiline={kind === "file"}
             />
-            {verifiable && (
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="add-verify"
-                  checked={verify}
-                  onCheckedChange={(checked) => setVerify(checked === true)}
-                />
-                <label
-                  htmlFor="add-verify"
-                  style={{ fontSize: "var(--text-body)", color: "var(--gray-1000)" }}
-                >
-                  Test connection after adding
-                </label>
-              </div>
-            )}
           </div>
           <DialogFormFooter
             onCancel={() => handleOpenChange(false)}
@@ -531,10 +496,7 @@ function ConnectOAuthDialog({ open, onOpenChange, platforms, oauthProviders }: C
     setSubmitting(false)
   }
 
-  function handleOpenChange(next: boolean) {
-    if (!next) reset()
-    onOpenChange(next)
-  }
+  const handleOpenChange = makeDialogOpenChange(reset, onOpenChange)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -729,10 +691,7 @@ function ReconnectOAuthDialog({ credential, onOpenChange }: ReconnectDialogProps
     setSubmitting(false)
   }
 
-  function handleOpenChange(next: boolean) {
-    if (!next) reset()
-    onOpenChange(next)
-  }
+  const handleOpenChange = makeDialogOpenChange(reset, onOpenChange)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -858,6 +817,11 @@ interface FlatTableProps {
 // platform/account/kind + the search box, via useTableView's predicate).
 const ALL_FILTER = "all"
 
+// Increment 42 — local grouping key standing in for a null platformId
+// (unlinked credential). Never sent to the server or persisted — a display-
+// only sentinel for this table's group-by-platform logic.
+const UNLINKED_GROUP_KEY = "__unlinked__"
+
 export function FlatCredentialsTable({
   credentials,
   platforms,
@@ -882,6 +846,18 @@ export function FlatCredentialsTable({
     [platforms],
   )
 
+  // Increment 42 — an UNLINKED credential's platformId is null. groupKey()
+  // gives every grouping/filtering/sorting site below ONE non-null string to
+  // key off, so a null platformId never needs its own branch scattered
+  // through this component. Never persisted/sent anywhere — purely a local
+  // grouping key for this table.
+  const groupKey = useCallback((c: CredentialMeta) => c.platformId ?? UNLINKED_GROUP_KEY, [])
+  const groupLabel = useCallback(
+    (key: string) =>
+      key === UNLINKED_GROUP_KEY ? "Unlinked" : (platformMap.get(key)?.displayName ?? key),
+    [platformMap],
+  )
+
   const [platformFilter, setPlatformFilter] = useState(ALL_FILTER)
   const [accountFilter, setAccountFilter] = useState(ALL_FILTER)
   const [kindFilter, setKindFilter] = useState(ALL_FILTER)
@@ -890,14 +866,15 @@ export function FlatCredentialsTable({
   // hardcoded — Platform/Account naturally vary per install; Kind is currently
   // single-valued ("bearer") but derived the same way for when that changes).
   const platformOptions = useMemo(() => {
-    const seen = new Map<string, string>() // platformId -> displayName
+    const seen = new Map<string, string>() // groupKey -> displayName
     for (const c of credentials) {
-      if (!seen.has(c.platformId)) {
-        seen.set(c.platformId, platformMap.get(c.platformId)?.displayName ?? c.platformId)
+      const key = groupKey(c)
+      if (!seen.has(key)) {
+        seen.set(key, groupLabel(key))
       }
     }
     return Array.from(seen.entries()).sort((a, b) => a[1].localeCompare(b[1]))
-  }, [credentials, platformMap])
+  }, [credentials, groupKey, groupLabel])
 
   const accountOptions = useMemo(
     () => Array.from(new Set(credentials.map((c) => c.account))).sort((a, b) => a.localeCompare(b)),
@@ -911,10 +888,10 @@ export function FlatCredentialsTable({
 
   const predicate = useCallback(
     (c: CredentialMeta) =>
-      (platformFilter === ALL_FILTER || c.platformId === platformFilter) &&
+      (platformFilter === ALL_FILTER || groupKey(c) === platformFilter) &&
       (accountFilter === ALL_FILTER || c.account === accountFilter) &&
       (kindFilter === ALL_FILTER || c.kind === kindFilter),
-    [platformFilter, accountFilter, kindFilter],
+    [platformFilter, accountFilter, kindFilter, groupKey],
   )
 
   // Sortable columns — Platform sorts by the joined display name; Account by the
@@ -923,15 +900,11 @@ export function FlatCredentialsTable({
     () => [
       {
         key: "platform",
-        compare: (a, b) => {
-          const aN = platformMap.get(a.platformId)?.displayName ?? a.platformId
-          const bN = platformMap.get(b.platformId)?.displayName ?? b.platformId
-          return aN.localeCompare(bN)
-        },
+        compare: (a, b) => groupLabel(groupKey(a)).localeCompare(groupLabel(groupKey(b))),
       },
       { key: "account", compare: (a, b) => a.account.localeCompare(b.account) },
     ],
-    [platformMap],
+    [groupKey, groupLabel],
   )
 
   const {
@@ -950,9 +923,10 @@ export function FlatCredentialsTable({
     rows: credentials,
     searchFields: (c) => [
       c.id,
+      c.name,
       c.account,
-      c.platformId,
-      platformMap.get(c.platformId)?.displayName,
+      c.platformId ?? undefined,
+      groupLabel(groupKey(c)),
     ],
     columns,
     pageSize,
@@ -969,35 +943,35 @@ export function FlatCredentialsTable({
   }
 
   // Build the row content. When grouped, insert a TableGroupRow before the first
-  // credential of each new platform.
-  type TableItem =
-    | { type: "group"; platformId: string }
-    | { type: "row"; credential: CredentialMeta }
+  // credential of each new platform (or the Unlinked group).
+  type TableItem = { type: "group"; groupKey: string } | { type: "row"; credential: CredentialMeta }
 
   const tableItems: TableItem[] = useMemo(() => {
     if (!grouped) {
       return pageSlice.map((c) => ({ type: "row" as const, credential: c }))
     }
     const items: TableItem[] = []
-    let lastPlatformId: string | null = null
+    let lastGroupKey: string | null = null
     for (const c of pageSlice) {
-      if (c.platformId !== lastPlatformId) {
-        items.push({ type: "group", platformId: c.platformId })
-        lastPlatformId = c.platformId
+      const key = groupKey(c)
+      if (key !== lastGroupKey) {
+        items.push({ type: "group", groupKey: key })
+        lastGroupKey = key
       }
       items.push({ type: "row", credential: c })
     }
     return items
-  }, [grouped, pageSlice])
+  }, [grouped, pageSlice, groupKey])
 
-  // Count credentials per platform for the group-divider count badge.
+  // Count credentials per group for the group-divider count badge.
   const platformCounts = useMemo(() => {
     const counts = new Map<string, number>()
     for (const c of sorted) {
-      counts.set(c.platformId, (counts.get(c.platformId) ?? 0) + 1)
+      const key = groupKey(c)
+      counts.set(key, (counts.get(key) ?? 0) + 1)
     }
     return counts
-  }, [sorted])
+  }, [sorted, groupKey])
 
   const isEmptySearch =
     total === 0 &&
@@ -1049,7 +1023,9 @@ export function FlatCredentialsTable({
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>ID</TableHead>
+              {/* Increment 42 — Name (the credential's identity slug) replaces
+                  ID as the primary column; the ULID moves to a tooltip. */}
+              <TableHead>Name</TableHead>
               <TableHead
                 sortDirection={sortDirectionFor("platform")}
                 onSort={() => handleSort("platform")}
@@ -1085,23 +1061,29 @@ export function FlatCredentialsTable({
             ) : (
               tableItems.map((item) => {
                 if (item.type === "group") {
-                  const platform = platformMap.get(item.platformId)
+                  const key = item.groupKey
+                  const platform = key === UNLINKED_GROUP_KEY ? undefined : platformMap.get(key)
                   return (
                     <TableGroupRow
-                      key={`group-${item.platformId}`}
+                      key={`group-${key}`}
                       colSpan={COL_COUNT}
-                      label={platform?.displayName ?? item.platformId}
+                      label={groupLabel(key)}
                       kind={platform?.kind}
-                      count={platformCounts.get(item.platformId)}
+                      count={platformCounts.get(key)}
                       unit="credentials"
                     />
                   )
                 }
                 const c = item.credential
-                // Show full ULID — feedback: ID was over-truncating despite available width.
-                const platform = platformMap.get(c.platformId)
-                const platformName = platform?.displayName ?? c.platformId
-                const verifiable = platform?.verifiable ?? false
+                const cPlatformId = c.platformId
+                const isUnlinked = cPlatformId === null
+                const platform = cPlatformId === null ? undefined : platformMap.get(cPlatformId)
+                const platformName =
+                  cPlatformId === null ? "—" : (platform?.displayName ?? cPlatformId)
+                // Increment 42 — an unlinked credential has no platform to
+                // verify against; verify stays disabled regardless of
+                // whatever a (nonexistent) platform's verifiable flag would say.
+                const verifiable = !isUnlinked && (platform?.verifiable ?? false)
                 const isOAuth = c.kind === "oauth2"
                 // oauth2 status is derived from oauthState (Expiring/Reconnect wires, inc 29);
                 // every other kind keeps the existing persisted-verify mapping (28.9).
@@ -1116,7 +1098,7 @@ export function FlatCredentialsTable({
                       title={c.id}
                       style={{ color: "var(--gray-700)", minWidth: "250px", width: "250px" }}
                     >
-                      {c.id}
+                      {c.name}
                     </TableCellMono>
                     <TableCellMono>
                       <MonoCode>{platformName}</MonoCode>
@@ -1162,7 +1144,13 @@ export function FlatCredentialsTable({
                           <DropdownMenuItem
                             onSelect={() => onTestConnection(c)}
                             disabled={!verifiable || testingId === c.id}
-                            title={verifiable ? undefined : "not auto-verifiable for this source"}
+                            title={
+                              verifiable
+                                ? undefined
+                                : isUnlinked
+                                  ? "verify after linking this credential to a platform"
+                                  : "not auto-verifiable for this source"
+                            }
                           >
                             <TestTube className="h-4 w-4" aria-hidden="true" />
                             {testingId === c.id ? "Testing…" : "Test Connection"}
@@ -1216,7 +1204,9 @@ function credentialToTarget(credential: CredentialMeta | null): ConnectionTarget
   return {
     credentialId: credential.id,
     account: credential.account,
-    platformId: credential.platformId,
+    // Increment 42 — an unlinked credential's platformId is null;
+    // ConnectionTarget's optional field expects undefined, not null.
+    ...(credential.platformId !== null ? { platformId: credential.platformId } : {}),
   }
 }
 
@@ -1315,12 +1305,7 @@ function CredentialsPage() {
         }}
       />
 
-      <AddCredentialDialog
-        open={addOpen}
-        onOpenChange={setAddOpen}
-        platforms={platforms}
-        onSuccess={invalidate}
-      />
+      <AddCredentialDialog open={addOpen} onOpenChange={setAddOpen} onSuccess={invalidate} />
       <RotateSecretDialog
         target={credentialToTarget(rotatingCred)}
         onOpenChange={(open) => {

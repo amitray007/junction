@@ -28,15 +28,31 @@ const checkCollisionMock = vi.fn()
 const assemblePlatformMock = vi.fn()
 const getCatalogEntryMock = vi.fn()
 const planConnectMock = vi.fn()
+// Increment 45 (Slice C) — startReconnect now goes through the shared
+// resolveOAuthProviderId + loadCustomDesigns/mergeDesigns pipeline (mirrors
+// the CLI's `credential reconnect` fix). Stub loadCustomDesigns so these unit
+// tests never touch the real filesystem — default to "no custom designs"
+// (ok([])), matching every existing fixture (all built-in `github`).
+const loadCustomDesignsMock = vi.fn((_paths?: unknown) => okAsync([]))
 
 vi.mock("@junction/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@junction/core")>()
   return {
     ...actual,
-    getPaths: vi.fn(() => ({ home: "/fake" }) as ReturnType<typeof actual.getPaths>),
+    // Increment 45 (Slice C) — `oauthDesignsFile` must be a real (but
+    // nonexistent) path so a corrupt-store code path is never accidentally
+    // exercised by a mock that's incomplete rather than intentional (ENOENT
+    // resolves to a clean `ok([])`, matching the "no custom designs" default).
+    getPaths: vi.fn(
+      () =>
+        ({ home: "/fake", oauthDesignsFile: "/fake/oauth-designs.json" }) as ReturnType<
+          typeof actual.getPaths
+        >,
+    ),
     getProvider: (...args: unknown[]) => getProviderMock(...args),
     getCatalogEntry: (...args: unknown[]) => getCatalogEntryMock(...args),
     planConnect: (...args: unknown[]) => planConnectMock(...args),
+    loadCustomDesigns: (...args: unknown[]) => loadCustomDesignsMock(...args),
     createCredentialStore: vi.fn(
       () =>
         okAsync({
@@ -89,8 +105,6 @@ const GITHUB_PROVIDER = {
   tokenUrl: "https://github.com/login/oauth/access_token",
   pkce: "S256" as const,
   scopeSeparator: " " as const,
-  tokenAuthMethod: "client_secret_basic" as const,
-  bodyFormat: "form" as const,
   expiryStrategy: "none" as const,
   redirectMode: "loopback-fixed" as const,
   supportsRefresh: false,
@@ -120,6 +134,24 @@ afterEach(() => {
   exchangeCodeMock.mockReset()
   persistOAuthTokensMock.mockReset()
   checkCollisionMock.mockReset()
+  loadCustomDesignsMock.mockReset()
+  loadCustomDesignsMock.mockReturnValue(okAsync([]))
+  // Increment 45 (Slice C/E) — startReconnect looks up the credential's
+  // platform via repos.platforms.get before resolving providerId, and (Slice
+  // E) that platform's oauthProviderId is the ONLY source — the legacy
+  // oauthMeta.providerId fallback is gone. Default every test to a platform
+  // that resolves with `oauthProviderId: "github"` (matching the fixtures'
+  // GITHUB_PROVIDER expectations); a test that cares about a DIFFERENT
+  // platform shape (e.g. "no design source at all") overrides this
+  // explicitly.
+  platformsGetMock.mockReturnValue(
+    okAsync({
+      id: "github-platform",
+      kind: "http",
+      displayName: "GitHub",
+      oauthProviderId: "github",
+    }),
+  )
   assemblePlatformMock.mockReset()
   getCatalogEntryMock.mockReset()
   planConnectMock.mockReset()
@@ -487,17 +519,20 @@ describe("startConnect — surfaceSelector (inc 38 D2, re-derivation fixed post-
 // ---------------------------------------------------------------------------
 
 describe("startReconnect", () => {
-  it("reads providerId/scopes from the existing credential's oauthMeta and stashes mode:update", async () => {
+  it("reads scopes from the existing credential's oauthMeta + providerId from the bound platform, and stashes mode:update", async () => {
     credentialsGetMock.mockReturnValue(
       okAsync({
         id: "cred-1",
         platformId: "github-platform",
-        profileName: "work",
+        name: "work",
         kind: "oauth2",
         secretRef: "ref-access",
-        oauthMeta: { providerId: "github", scopes: ["repo"], needsReauth: true },
+        oauthMeta: { scopes: ["repo"], needsReauth: true },
       }),
     )
+    // Increment 45, Slice E — the design is sourced EXCLUSIVELY from the
+    // bound platform's oauthProviderId (the module-scope default mock
+    // already provides "github"; no override needed here).
     getProviderMock.mockReturnValue(GITHUB_PROVIDER)
     buildAuthorizeUrlMock.mockReturnValue({
       url: "https://github.com/login/oauth/authorize?reconnect=1",
@@ -526,11 +561,10 @@ describe("startReconnect", () => {
       okAsync({
         id: "cred-reuse",
         platformId: "github-platform",
-        profileName: "work",
+        name: "work",
         kind: "oauth2",
         secretRef: "ref-access",
         oauthMeta: {
-          providerId: "github",
           scopes: ["repo"],
           needsReauth: true,
           clientIdRef: "ref-client-id",
@@ -576,11 +610,11 @@ describe("startReconnect", () => {
       okAsync({
         id: "cred-norefs",
         platformId: "github-platform",
-        profileName: "work",
+        name: "work",
         kind: "oauth2",
         secretRef: "ref-access",
         // no clientIdRef/clientSecretRef
-        oauthMeta: { providerId: "github", scopes: ["repo"], needsReauth: true },
+        oauthMeta: { scopes: ["repo"], needsReauth: true },
       }),
     )
     getProviderMock.mockReturnValue(GITHUB_PROVIDER)
@@ -596,11 +630,10 @@ describe("startReconnect", () => {
       okAsync({
         id: "cred-partial",
         platformId: "github-platform",
-        profileName: "work",
+        name: "work",
         kind: "oauth2",
         secretRef: "ref-access",
         oauthMeta: {
-          providerId: "github",
           scopes: ["repo"],
           needsReauth: true,
           clientIdRef: "ref-client-id",
@@ -624,11 +657,14 @@ describe("startReconnect", () => {
       okAsync({
         id: "cred-2",
         platformId: "p",
-        profileName: "work",
+        name: "work",
         kind: "bearer",
         secretRef: "ref-1",
       }),
     )
+    // Override the module-scope default (which resolves "github") — this
+    // test's whole point is a platform with NO design source at all.
+    platformsGetMock.mockReturnValue(okAsync({ id: "p", kind: "http", displayName: "No design" }))
 
     const result = await startReconnect({
       credentialId: "cred-2",
@@ -687,7 +723,7 @@ describe("completeOAuthCallback", () => {
       value: { accessToken: "tok-access", refreshToken: "tok-refresh" },
     })
     persistOAuthTokensMock.mockReturnValue(
-      okAsync({ id: "cred-new", platformId: "github-platform", profileName: "work" }),
+      okAsync({ id: "cred-new", platformId: "github-platform", name: "work" }),
     )
 
     const result = await completeOAuthCallback("code-123", "state-ok")
@@ -710,7 +746,7 @@ describe("completeOAuthCallback", () => {
       value: { accessToken: "tok-access" },
     })
     persistOAuthTokensMock.mockReturnValue(
-      okAsync({ id: "cred-new", platformId: "github-platform", profileName: "work" }),
+      okAsync({ id: "cred-new", platformId: "github-platform", name: "work" }),
     )
 
     const first = await completeOAuthCallback("code-123", "state-reuse")
@@ -738,20 +774,18 @@ describe("completeOAuthCallback", () => {
     }
   })
 
-  it("32.13 Slice B1: a duplicate-account persist failure -> error outcome with reason 'duplicate-account' (not generic 'persist-failed')", async () => {
+  it("increment 46 (RC): a duplicate-name persist failure -> error outcome with reason 'duplicate-name' (not generic 'persist-failed'; RETIRES the 32.13 Slice B1 'duplicate-account' kind)", async () => {
     await seedPendingCreate("state-dup-account")
     exchangeCodeMock.mockResolvedValue({
       isErr: () => false,
       value: { accessToken: "tok-access" },
     })
-    persistOAuthTokensMock.mockReturnValue(
-      errAsync({ kind: "duplicate-account", platformId: "github-platform", account: "work" }),
-    )
+    persistOAuthTokensMock.mockReturnValue(errAsync({ kind: "duplicate-name", name: "work" }))
 
     const result = await completeOAuthCallback("code-123", "state-dup-account")
     expect(result.outcome).toBe("error")
     if (result.outcome === "error") {
-      expect(result.reason).toBe("duplicate-account")
+      expect(result.reason).toBe("duplicate-name")
       expect(result.reason).not.toBe("persist-failed")
     }
   })
@@ -763,7 +797,7 @@ describe("completeOAuthCallback", () => {
       value: { accessToken: "tok-access", refreshToken: "tok-refresh" },
     })
     persistOAuthTokensMock.mockReturnValue(
-      okAsync({ id: "cred-new", platformId: "github-platform", profileName: "work" }),
+      okAsync({ id: "cred-new", platformId: "github-platform", name: "work" }),
     )
 
     const result = await completeOAuthCallback("code-123", "state-sweep")
@@ -780,10 +814,10 @@ describe("completeOAuthCallback", () => {
       okAsync({
         id: "cred-reconnect",
         platformId: "github-platform",
-        profileName: "work",
+        name: "work",
         kind: "oauth2",
         secretRef: "ref-access",
-        oauthMeta: { providerId: "github", scopes: ["repo"], needsReauth: true },
+        oauthMeta: { scopes: ["repo"], needsReauth: true },
       }),
     )
     buildAuthorizeUrlMock.mockReturnValue({
@@ -802,7 +836,7 @@ describe("completeOAuthCallback", () => {
       value: { accessToken: "tok-access" },
     })
     persistOAuthTokensMock.mockReturnValue(
-      okAsync({ id: "cred-reconnect", platformId: "github-platform", profileName: "work" }),
+      okAsync({ id: "cred-reconnect", platformId: "github-platform", name: "work" }),
     )
 
     const result = await completeOAuthCallback("code-123", "state-reconnect-cb")
@@ -858,7 +892,7 @@ describe("completeOAuthCallback — surfacePlatform bind (inc 38 D1)", () => {
       value: { accessToken: "tok-access", refreshToken: "tok-refresh" },
     })
     persistOAuthTokensMock.mockReturnValue(
-      okAsync({ id: "cred-new", platformId: "github-mcp", profileName: "work" }),
+      okAsync({ id: "cred-new", platformId: "github-mcp", name: "work" }),
     )
 
     const result = await completeOAuthCallback("code-123", "state-bind-ok")
@@ -910,7 +944,7 @@ describe("completeOAuthCallback — surfacePlatform bind (inc 38 D1)", () => {
       value: { accessToken: "tok-access" },
     })
     persistOAuthTokensMock.mockReturnValue(
-      okAsync({ id: "cred-new", platformId: "github-mcp", profileName: "work" }),
+      okAsync({ id: "cred-new", platformId: "github-mcp", name: "work" }),
     )
 
     const result = await completeOAuthCallback("code-123", "state-bind-preexisting")
@@ -952,7 +986,7 @@ describe("completeOAuthCallback — surfacePlatform bind (inc 38 D1)", () => {
       value: { accessToken: "tok-access", refreshToken: "tok-refresh" },
     })
     persistOAuthTokensMock.mockReturnValue(
-      okAsync({ id: "cred-new", platformId: "github-mcp", profileName: "work" }),
+      okAsync({ id: "cred-new", platformId: "github-mcp", name: "work" }),
     )
 
     const result = await completeOAuthCallback("code-123", "state-bind-sweep")

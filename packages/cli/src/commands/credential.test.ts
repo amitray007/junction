@@ -95,8 +95,6 @@ vi.mock("@junction/core", async (importOriginal) => {
     deviceAuthorizationUrl: "https://example.com/oauth/device/code",
     pkce: "S256",
     scopeSeparator: " ",
-    tokenAuthMethod: "client_secret_basic",
-    bodyFormat: "form",
     expiryStrategy: "expires_in",
     redirectMode: "loopback-ephemeral",
     supportsRefresh: true,
@@ -107,6 +105,18 @@ vi.mock("@junction/core", async (importOriginal) => {
     getProvider: (id: string) =>
       id === DEVICE_CODE_PROVIDER_ID ? syntheticDeviceProvider : actual.getProvider(id),
     listProviders: () => [...actual.listProviders(), syntheticDeviceProvider],
+    // Increment 45 (Slice C) — `credential reconnect` now resolves its design
+    // via the MERGED (built-in + custom) designs set, not `getProvider`
+    // directly (mergeDesigns(customDesigns) — see resolve-credential-provider
+    // -id.ts / credential.ts's reconnectCommand). The synthetic device-code
+    // provider above needs to be visible through THIS path too, or reconnect
+    // can't find a design object to drive the flow — patch mergeDesigns the
+    // same way getProvider/listProviders are patched.
+    mergeDesigns: (custom: Parameters<typeof actual.mergeDesigns>[0]) => {
+      const merged = actual.mergeDesigns(custom)
+      merged.set(DEVICE_CODE_PROVIDER_ID, syntheticDeviceProvider)
+      return merged
+    },
   }
 })
 
@@ -359,6 +369,239 @@ describe("credential add — kind derivation + kind-compat (unit)", () => {
       const parsed = JSON.parse(out.trim()) as { ok: boolean; error?: string }
       expect(parsed.ok).toBe(false)
       expect(parsed.error).toContain("no auth")
+      expect(process.exitCode).toBe(1)
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Increment 42 — credential name (identity slug). `--name` derivation for
+// the legacy --platform/--account path, and the standalone (no --platform)
+// create path via addStandaloneCredential.
+// ---------------------------------------------------------------------------
+
+describe("credential add — name derivation + standalone create (inc 42, unit)", () => {
+  let prevStore: string | undefined
+  let prevExitCode: number | undefined
+
+  beforeEach(() => {
+    prevStore = process.env.JUNCTION_STORE
+    prevExitCode = process.exitCode
+    process.env.JUNCTION_STORE = "file"
+    process.exitCode = 0
+  })
+
+  afterEach(() => {
+    if (prevStore === undefined) delete process.env.JUNCTION_STORE
+    else process.env.JUNCTION_STORE = prevStore
+    process.exitCode = prevExitCode
+  })
+
+  it("the inc-style `--platform gh --account personal --token-stdin` (no --name) derives name gh-personal", async () => {
+    await withTempHome(async () => {
+      await setupApiKeyPlatform("gh")
+      mockPasswordValue = "some-token-value"
+
+      const add = getCredentialSubCmd("add")
+      const out = await captureStdout(() =>
+        add.run?.(
+          ctx({
+            platform: "gh",
+            account: "personal",
+            "token-stdin": false,
+            verify: false,
+            json: true,
+            kind: undefined,
+            name: undefined,
+          }),
+        ),
+      )
+
+      const parsed = JSON.parse(out.trim()) as {
+        ok: boolean
+        credential?: { name?: string; platformId?: string; account?: string }
+      }
+      expect(parsed.ok).toBe(true)
+      expect(parsed.credential?.name).toBe("gh-personal")
+      expect(parsed.credential?.platformId).toBe("gh")
+      // Increment 46 — a credential's account IS its name (profileName is
+      // gone); "personal" was only ever the derivation seed, discarded once
+      // `name` is minted.
+      expect(parsed.credential?.account).toBe("gh-personal")
+      expect(process.exitCode).toBe(0)
+    })
+  })
+
+  it("an explicit --name on a platform-scoped add is stored verbatim (not derived)", async () => {
+    await withTempHome(async () => {
+      await setupApiKeyPlatform("gh-named")
+      mockPasswordValue = "some-token-value"
+
+      const add = getCredentialSubCmd("add")
+      const out = await captureStdout(() =>
+        add.run?.(
+          ctx({
+            platform: "gh-named",
+            account: "personal",
+            "token-stdin": false,
+            verify: false,
+            json: true,
+            kind: undefined,
+            name: "my-custom-name",
+          }),
+        ),
+      )
+
+      const parsed = JSON.parse(out.trim()) as { ok: boolean; credential?: { name?: string } }
+      expect(parsed.ok).toBe(true)
+      expect(parsed.credential?.name).toBe("my-custom-name")
+      expect(process.exitCode).toBe(0)
+    })
+  })
+
+  it("a colliding derived name gets a -2 suffix (mirrors the migration backfill rule)", async () => {
+    await withTempHome(async () => {
+      await setupApiKeyPlatform("gh-collide")
+      mockPasswordValue = "token-1"
+
+      const add = getCredentialSubCmd("add")
+      // First add: an EXPLICIT --name that happens to equal what the SECOND
+      // add's derivation would naturally produce (`gh-collide-personal`).
+      await captureStdout(() =>
+        add.run?.(
+          ctx({
+            platform: "gh-collide",
+            account: "seed",
+            "token-stdin": false,
+            verify: false,
+            json: true,
+            kind: undefined,
+            name: "gh-collide-personal",
+          }),
+        ),
+      )
+
+      // Second add: omits --name → derives "gh-collide-personal", which
+      // collides with the first row's explicit name → suffixed "-2".
+      mockPasswordValue = "token-2"
+      const out = await captureStdout(() =>
+        add.run?.(
+          ctx({
+            platform: "gh-collide",
+            account: "personal",
+            "token-stdin": false,
+            verify: false,
+            json: true,
+            kind: undefined,
+            name: undefined,
+          }),
+        ),
+      )
+
+      const parsed = JSON.parse(out.trim()) as { ok: boolean; credential?: { name?: string } }
+      expect(parsed.ok).toBe(true)
+      expect(parsed.credential?.name).toBe("gh-collide-personal-2")
+      expect(process.exitCode).toBe(0)
+    })
+  })
+
+  it("--name required, no --platform → creates a standalone (unlinked) credential", async () => {
+    await withTempHome(async () => {
+      mockPasswordValue = "standalone-secret-value"
+
+      const add = getCredentialSubCmd("add")
+      const out = await captureStdout(() =>
+        add.run?.(
+          ctx({
+            platform: undefined,
+            account: undefined,
+            "token-stdin": false,
+            verify: false,
+            json: true,
+            kind: undefined,
+            name: "my-vault-secret",
+          }),
+        ),
+      )
+
+      const parsed = JSON.parse(out.trim()) as {
+        ok: boolean
+        credential?: { name?: string; platformId?: string | null }
+      }
+      expect(parsed.ok).toBe(true)
+      expect(parsed.credential?.name).toBe("my-vault-secret")
+      expect(parsed.credential?.platformId).toBeNull()
+      expect(process.exitCode).toBe(0)
+    })
+  })
+
+  it("no --platform and no --name → clean invalid-input error, no stdin read", async () => {
+    await withTempHome(async () => {
+      const add = getCredentialSubCmd("add")
+      const out = await captureStdout(() =>
+        add.run?.(
+          ctx({
+            platform: undefined,
+            account: undefined,
+            "token-stdin": true,
+            verify: false,
+            json: true,
+            kind: undefined,
+            name: undefined,
+          }),
+        ),
+      )
+
+      const parsed = JSON.parse(out.trim()) as { ok: boolean; error?: string }
+      expect(parsed.ok).toBe(false)
+      expect(parsed.error).toContain("--name")
+      expect(process.exitCode).toBe(1)
+    })
+  })
+
+  it("no --platform but --account given → clean invalid-input error (account is meaningless without a platform)", async () => {
+    await withTempHome(async () => {
+      const add = getCredentialSubCmd("add")
+      const out = await captureStdout(() =>
+        add.run?.(
+          ctx({
+            platform: undefined,
+            account: "work",
+            "token-stdin": true,
+            verify: false,
+            json: true,
+            kind: undefined,
+            name: "some-name",
+          }),
+        ),
+      )
+
+      const parsed = JSON.parse(out.trim()) as { ok: boolean; error?: string }
+      expect(parsed.ok).toBe(false)
+      expect(parsed.error).toContain("--account")
+      expect(process.exitCode).toBe(1)
+    })
+  })
+
+  it("standalone create rejects kind oauth2", async () => {
+    await withTempHome(async () => {
+      const add = getCredentialSubCmd("add")
+      const out = await captureStdout(() =>
+        add.run?.(
+          ctx({
+            platform: undefined,
+            account: undefined,
+            "token-stdin": true,
+            verify: false,
+            json: true,
+            kind: "oauth2",
+            name: "oauth-not-allowed",
+          }),
+        ),
+      )
+
+      const parsed = JSON.parse(out.trim()) as { ok: boolean; error?: string }
+      expect(parsed.ok).toBe(false)
       expect(process.exitCode).toBe(1)
     })
   })
@@ -691,7 +934,7 @@ describe("credential list — verified column (unit)", () => {
 // ---------------------------------------------------------------------------
 
 /** Upsert an oauth2-scheme openapi platform into the temp-home DB. */
-async function setupOAuthPlatform(platformId: string) {
+async function setupOAuthPlatform(platformId: string, oauthProviderId = platformId) {
   const dbResult = await getDatabase(getPaths())
   if (dbResult.isErr()) throw new Error(`DB error: ${dbResult.error.kind}`)
   const repos = createRepositories(dbResult.value)
@@ -703,6 +946,12 @@ async function setupOAuthPlatform(platformId: string) {
       spec: { from: "url" as const, url: "https://example.com/openapi.json" },
       auth: { scheme: "oauth2" as const },
     },
+    // Increment 45, Slice E — the design now lives EXCLUSIVELY on the
+    // platform (the credential's legacy oauthMeta.providerId fallback is
+    // gone). Default to the platformId itself, matching this file's
+    // long-standing convention (seedOAuthCredential's legacy providerId was
+    // always set to the platformId too).
+    oauthProviderId,
   })
   await repos.platforms.upsert(platform)
   return repos
@@ -721,12 +970,14 @@ async function seedOAuthCredential(
   const repos = await setupOAuthPlatform(platformId)
   const credential = CredentialSchema.parse({
     id: `${platformId}-cred-1`,
+    name: `${platformId}-work`,
     platformId,
-    profileName: "work",
     kind: "oauth2" as const,
     secretRef: "ref-access-1",
+    // Increment 45, Slice E — the design lives on the PLATFORM
+    // (setupOAuthPlatform defaults oauthProviderId to this same platformId),
+    // never a denormalized copy in oauthMeta.
     oauthMeta: {
-      providerId: platformId,
       refreshTokenRef: "ref-refresh-1",
       clientIdRef: "ref-clientid-1",
       clientSecretRef: "ref-clientsecret-1",
@@ -760,13 +1011,31 @@ describe("credential list — oauth2 state derivation (D3, unit)", () => {
 
   it("a connected oauth2 credential (no needsReauth, no near expiry) → oauthState: connected", async () => {
     await withTempHome(async () => {
-      await seedOAuthCredential("oauth-connected-plat", {
-        oauthMeta: {
-          providerId: "oauth-connected-plat",
-          needsReauth: false,
-          expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-        } as Credential["oauthMeta"],
-      })
+      // Increment 45, Slice E — resolveOAuthProviderId fails CLOSED on a
+      // platform.oauthProviderId that doesn't match a REAL catalog design
+      // (SECURITY, R1) — setupOAuthPlatform's default (oauthProviderId =
+      // platformId) only works for this assertion when the platformId is
+      // itself a real built-in id. Use "github" explicitly so this test's
+      // `providerId` assertion below exercises a genuine resolution, not a
+      // dangling reference.
+      const repos = await setupOAuthPlatform("oauth-connected-plat", "github")
+      await repos.credentials.create(
+        CredentialSchema.parse({
+          id: "oauth-connected-plat-cred-1",
+          name: "oauth-connected-plat-work",
+          platformId: "oauth-connected-plat",
+          kind: "oauth2" as const,
+          secretRef: "ref-access-1",
+          oauthMeta: {
+            refreshTokenRef: "ref-refresh-1",
+            clientIdRef: "ref-clientid-1",
+            clientSecretRef: "ref-clientsecret-1",
+            authMode: "authorization_code" as const,
+            needsReauth: false,
+            expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          },
+        }),
+      )
 
       const list = getCredentialSubCmd("list")
       const out = await captureStdout(() =>
@@ -779,7 +1048,7 @@ describe("credential list — oauth2 state derivation (D3, unit)", () => {
       }>
       expect(parsed).toHaveLength(1)
       expect(parsed[0]?.oauthState).toBe("connected")
-      expect(parsed[0]?.providerId).toBe("oauth-connected-plat")
+      expect(parsed[0]?.providerId).toBe("github")
     })
   })
 
@@ -923,7 +1192,7 @@ describe("credential rename (Task 5, unit)", () => {
       expect(parsed.credential?.account).toBe("work-primary")
       // Persisted.
       const reread = (await repos.credentials.get(added.value.id))._unsafeUnwrap()
-      expect(reread.profileName).toBe("work-primary")
+      expect(reread.name).toBe("work-primary")
       // The secret still resolves under the unchanged secretRef.
       const secret = (await storeResult.value.get(reread.secretRef))._unsafeUnwrap()
       expect(secret).toBe("v")
@@ -1114,7 +1383,7 @@ describe("credential reconnect (D2, unit)", () => {
   it("reconnect on a device-incapable provider (github-app) fails BEFORE persistOAuthTokens — proves it reads the credential's own oauthMeta.providerId, not a hardcoded one", async () => {
     await withTempHome(async () => {
       const githubAppCred = await seedOAuthCredential("github-app", {
-        oauthMeta: { providerId: "github-app", needsReauth: true } as Credential["oauthMeta"],
+        oauthMeta: { needsReauth: true } as Credential["oauthMeta"],
       })
 
       fakeStdin()
@@ -1148,7 +1417,6 @@ describe("credential reconnect (D2, unit)", () => {
       // identical engine shape / fixture.
       const cred = await seedOAuthCredential(DEVICE_CODE_PROVIDER_ID, {
         oauthMeta: {
-          providerId: DEVICE_CODE_PROVIDER_ID,
           needsReauth: true,
         } as Credential["oauthMeta"],
       })
@@ -1207,7 +1475,6 @@ describe("credential reconnect (D2, unit)", () => {
     await withTempHome(async () => {
       const cred = await seedOAuthCredential(DEVICE_CODE_PROVIDER_ID, {
         oauthMeta: {
-          providerId: DEVICE_CODE_PROVIDER_ID,
           needsReauth: true,
         } as Credential["oauthMeta"],
       })
@@ -1231,7 +1498,6 @@ describe("credential reconnect (D2, unit)", () => {
     await withTempHome(async () => {
       const cred = await seedOAuthCredential(DEVICE_CODE_PROVIDER_ID, {
         oauthMeta: {
-          providerId: DEVICE_CODE_PROVIDER_ID,
           needsReauth: true,
           clientIdRef: "ref-stored-cid",
           clientSecretRef: "ref-stored-csec",
@@ -1581,7 +1847,10 @@ describe.skipIf(!builtBinReady)("credential commands (built bin, child process)"
       expect(parsed.ok).toBe(true)
       const cred = parsed.credential ?? {}
       expect(cred).toHaveProperty("id")
-      expect(cred).toHaveProperty("account", "work")
+      // Increment 46 — a credential's account IS its name (profileName is
+      // gone); "work" was only the derivation seed, discarded once the
+      // derived name (add-meta-plat-work) is minted.
+      expect(cred).toHaveProperty("account", "add-meta-plat-work")
       expect(cred).toHaveProperty("kind", "bearer")
       // MUST NOT expose secret or secretRef
       expect(cred).not.toHaveProperty("secretRef")
@@ -1832,7 +2101,10 @@ describe.skipIf(!builtBinReady)("credential commands (built bin, child process)"
       // Output is metadata-only (no secretRef, no secret).
       const cred = rotateParsed.credential ?? {}
       expect(cred).toHaveProperty("id", credId)
-      expect(cred).toHaveProperty("account", "work")
+      // Increment 46 — a credential's account IS its name (profileName is
+      // gone); "work" was only the derivation seed, discarded once the
+      // derived name (rotate-plat-work) is minted.
+      expect(cred).toHaveProperty("account", "rotate-plat-work")
       expect(cred).toHaveProperty("kind", "bearer")
       expect(cred).not.toHaveProperty("secretRef")
       expect(cred).not.toHaveProperty("secret")

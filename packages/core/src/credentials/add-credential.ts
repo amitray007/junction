@@ -9,9 +9,10 @@ import type { CredentialError, DbError } from "../errors/index.js"
 import { newCredentialId } from "../ids/index.js"
 import type { CredentialsRepo } from "../repositories/credentials.js"
 import type { Credential, CredentialKind } from "../schema/credential.js"
-import { CredentialSchema } from "../schema/credential.js"
+import { CredentialNameSchema, CredentialSchema } from "../schema/credential.js"
 import type { Platform } from "../schema/platform.js"
 import { PlatformIdSchema } from "../schema/primitives.js"
+import { deriveCredentialName } from "./derive-name.js"
 import { compatibleCredentialKinds, isKindAccepted } from "./kind-compat.js"
 import type { CredentialStore } from "./store.js"
 
@@ -24,14 +25,67 @@ import type { CredentialStore } from "./store.js"
  */
 export const FILE_SECRET_MAX_BYTES = 32 * 1024
 
+/**
+ * Shared raw-secret validation PRIMITIVE (DRY, docs/principles/dry.md) used by
+ * BOTH addCredential and addStandaloneCredential: enforce the 32 KiB file-kind
+ * cap and validate an explicit `name` slug — BEFORE any store write. Returns the
+ * validated explicit name (or `undefined` when none was supplied, so the caller
+ * derives one). The oauth2 exclusion is NOT here — its `allowed` list differs
+ * per caller (platform-derived vs fixed) — so each caller keeps its own guard.
+ */
+export function validateRawSecretAndName(
+  kind: Exclude<CredentialKind, "oauth2">,
+  secret: string,
+  name: string | undefined,
+): { ok: true; name: string | undefined } | { ok: false; error: CredentialError } {
+  if (kind === "file") {
+    const byteLength = Buffer.byteLength(secret, "utf8")
+    if (byteLength > FILE_SECRET_MAX_BYTES) {
+      return {
+        ok: false,
+        error: {
+          kind: "invalid-input" as const,
+          reason: `file credential exceeds 32 KiB (got ${byteLength} bytes)`,
+        },
+      }
+    }
+  }
+  if (name !== undefined) {
+    const nameParse = CredentialNameSchema.safeParse(name)
+    if (!nameParse.success) {
+      return {
+        ok: false,
+        error: {
+          kind: "invalid-input" as const,
+          reason: `invalid name: ${nameParse.error.issues.map((i) => i.message).join(", ")}`,
+        },
+      }
+    }
+    return { ok: true, name: nameParse.data }
+  }
+  return { ok: true, name: undefined }
+}
+
 export interface AddCredentialInput {
   /** FK → Platform */
   platformId: string
   /**
-   * Logical account label, e.g. "work", "personal", "client-acme".
-   * Stored as profileName in the Credential row.
+   * OPTIONAL (increment 46, Fable RA) — a name-derivation SEED, e.g. "work",
+   * "personal", "client-acme". A credential's account identity IS its `name`
+   * now; `account` is used ONLY when `name` is absent, to derive one
+   * (`<platformId>-<account>`, `-2`/`-3` suffixed on collision — see
+   * deriveCredentialName), then DISCARDED — it is never stored on the row.
    */
-  account: string
+  account?: string
+  /**
+   * The credential's identity slug (increment 42). OPTIONAL — callers that
+   * don't take a user-supplied name (legacy CLI `credential add --account`
+   * with no `--name`) get one DERIVED deterministically as
+   * `<platformId>-<account>`, `-2`/`-3` suffixed on collision (see
+   * deriveCredentialName). Callers WITH a user-supplied name (the CLI's new
+   * `--name` flag) pass it through, validated against CredentialNameSchema.
+   */
+  name?: string
   /**
    * Authentication kind. oauth2 is excluded from this path DELIBERATELY, even
    * though the kind-compat MATRIX accepts it as of inc 29 (a platform can
@@ -55,8 +109,9 @@ export interface AddCredentialInput {
 /**
  * Orchestrates the credential creation lifecycle:
  *
- * 1. Validate platformId and account — return a typed Err on invalid input
- *    (so bad input is caught BEFORE the secret is ever touched by the store).
+ * 1. Validate platformId (and an explicit `name`, if supplied) — return a
+ *    typed Err on invalid input (so bad input is caught BEFORE the secret is
+ *    ever touched by the store).
  * 2. Mint an opaque secretRef (ULID) — this is what the DB row stores.
  * 3. Persist the secret in the CredentialStore (keyring or encrypted-file).
  * 4. Insert a Credential DB row with only the secretRef (never the secret).
@@ -109,100 +164,98 @@ export function addCredential(
     })
   }
 
-  // 32 KiB cap on kind "file" content, BEFORE any store write — fits macOS
-  // Keychain AND Linux keyutils' ~32 KiB item ceiling (see method file 28.9).
-  // Reuses "invalid-input" (least invasive — avoids widening the exhaustive
-  // CredentialError formatters for a single new variant).
-  if (input.kind === "file") {
-    const byteLength = Buffer.byteLength(input.secret, "utf8")
-    if (byteLength > FILE_SECRET_MAX_BYTES) {
-      return errAsync({
-        kind: "invalid-input" as const,
-        reason: `file credential exceeds 32 KiB (got ${byteLength} bytes)`,
-      })
-    }
-  }
+  // Shared: 32 KiB file cap + explicit-name slug validation, BEFORE any store
+  // write. (oauth2 exclusion stays above — its allowed-list is platform-derived.)
+  const rawValid = validateRawSecretAndName(input.kind, input.secret, input.name)
+  if (!rawValid.ok) return errAsync(rawValid.error)
+  const explicitName = rawValid.name
 
-  // Validate the full credential shape (defensive; CLI pre-validates, but we
-  // must not trust the caller).
-  const credentialParse = CredentialSchema.safeParse({
-    id: newCredentialId(),
-    platformId: platformParse.data,
-    profileName: input.account,
-    kind: input.kind,
-    secretRef: ulid(), // mint secretRef here so it's validated too
-  })
-  if (!credentialParse.success) {
-    return errAsync({
-      kind: "invalid-input" as const,
-      reason: credentialParse.error.issues.map((i) => i.message).join(", "),
-    })
-  }
-
-  const credential = credentialParse.data
-
-  // Duplicate-account guard (increment 30.12) — BEFORE the secret ever
-  // touches the store. Compares the EXACT stored `profileName` against the
-  // EXACT `input.account` as this call will store it (credential.profileName,
-  // post-Zod-parse but otherwise untrimmed) — addCredential does NOT trim
-  // `account` today, so the guard must not trim either; trimming here while
-  // the write doesn't would let a trailing-space label slip past the guard
-  // and then store a DIFFERENT string than what was checked. Case-SENSITIVE
-  // by deliberate decision: profileName is case-preserving with no case rule
-  // at the store, so "Work" and "work" are legitimately distinct accounts.
+  // One list() read serves name derivation (global uniqueness) — the
+  // increment 30.12 duplicate-account guard is GONE (increment 46, RC): once
+  // a credential's account identity IS its `name` (Fable RA), "same account
+  // on a platform" collapses to "same name," which the DB-level
+  // `credentials_name_unique` index (restored, RB) now enforces directly —
+  // stronger than the old app-level guard's documented read-then-write race.
   return credentialsRepo
-    .forPlatform(platformParse.data)
-    .andThen((existing): ResultAsync<Credential, CredentialError | DbError> => {
-      const duplicate = existing.some((c) => c.profileName === credential.profileName)
-      if (duplicate) {
+    .list()
+    .andThen((all): ResultAsync<Credential, CredentialError | DbError> => {
+      // Increment 42: derive a name when the caller didn't supply one — the
+      // SAME rule migration 0011's backfill uses (see deriveCredentialName).
+      // Increment 46 (RA): `input.account` is now an OPTIONAL derivation
+      // seed — absent, it derives from the empty string (deriveCredentialName's
+      // empty-slug guard falls back to a valid literal).
+      const existingNames = new Set(all.map((c) => c.name))
+      const name =
+        explicitName ?? deriveCredentialName(platformParse.data, input.account ?? "", existingNames)
+
+      // Validate the full credential shape (defensive; CLI pre-validates, but
+      // we must not trust the caller).
+      const credentialParse = CredentialSchema.safeParse({
+        id: newCredentialId(),
+        name,
+        platformId: platformParse.data,
+        kind: input.kind,
+        secretRef: ulid(), // mint secretRef here so it's validated too
+      })
+      if (!credentialParse.success) {
         return errAsync({
-          kind: "duplicate-account" as const,
-          platformId: platformParse.data,
-          account: credential.profileName,
+          kind: "invalid-input" as const,
+          reason: credentialParse.error.issues.map((i) => i.message).join(", "),
         })
       }
-      return writeCredential(credential, input.secret, store, credentialsRepo)
+
+      return writeCredential(
+        credentialParse.data,
+        input.secret,
+        store,
+        credentialsRepo,
+        // DB-level backstop (increment 46, RC): a name collision — including
+        // a concurrent create racing this call's list() read — surfaces as
+        // SQLITE_CONSTRAINT via `credentials_name_unique`, mapped here to the
+        // typed, friendly `duplicate-name` error.
+        (cred) => ({
+          kind: "duplicate-name" as const,
+          name: cred.name,
+        }),
+      )
     })
 }
 
-function writeCredential(
+/**
+ * The shared credential store-write + rollback PRIMITIVE (DRY per
+ * docs/principles/dry.md — a mechanical primitive, not a business policy).
+ * Used by BOTH addCredential (platform-linked) and addStandaloneCredential
+ * (unlinked). Sequence: store.set(secret) FIRST, then one DB insert; on DB
+ * failure, await a best-effort store.delete(secretRef) so no orphan secret
+ * outlives a failed row, then propagate.
+ *
+ * The ONLY per-caller difference is the exact `duplicate-name` shape each
+ * caller's `onConstraintViolation` produces, so that mapping is injected. A
+ * fresh-ULID PK collision would also map
+ * to "constraint-violation" and get remapped — astronomically unlikely (26-char
+ * Crockford ULID) and harmless. FK failures map to "in-use" separately, so they
+ * never reach this branch.
+ *
+ * SECURITY: `secret` is consumed only by store.set(); never returned, logged,
+ * or placed in any error cause.
+ */
+export function writeCredential(
   credential: Credential,
   secret: string,
   store: CredentialStore,
   credentialsRepo: CredentialsRepo,
+  onConstraintViolation: (credential: Credential) => CredentialError,
 ): ResultAsync<Credential, CredentialError | DbError> {
   return store.set(credential.secretRef, secret).andThen(() =>
     credentialsRepo
       .create(credential)
       .orElse((dbErr): ResultAsync<Credential, CredentialError | DbError> => {
-        // Best-effort cleanup: await the delete so cleanup is deterministic.
-        // A delete failure is ignored (best-effort) — the original DB error is
-        // what we propagate; don't mask it with a cleanup error.
         return store
           .delete(credential.secretRef)
           .orElse((_cleanupErr): ResultAsync<void, never> => okAsync(undefined))
           .andThen(() => {
-            // DB-level backstop (increment 32.9): the 30.12 app-level guard
-            // above already rejects most duplicate-account attempts before
-            // the store is ever touched, but a violation that slips past it
-            // (e.g. a concurrent create landing between the guard's read and
-            // this write) surfaces here as SQLITE_CONSTRAINT via the
-            // credentials_platform_profile_unique index, mapped to
-            // "constraint-violation" by mapDbError. Remap it to the same
-            // typed duplicate-account CredentialError the app-level guard
-            // produces, so callers see one consistent error shape either way.
-            // Accepted false-positive: a fresh-ULID primary-key collision
-            // would ALSO map to "constraint-violation" and get remapped here
-            // — astronomically unlikely (26-char Crockford ULID space) and
-            // harmless (the caller retries with a plain "duplicate account"
-            // message). FK failures are mapped to "in-use" separately by
-            // mapDbError, so they never reach this branch.
             if (dbErr.kind === "constraint-violation") {
-              return errAsync({
-                kind: "duplicate-account" as const,
-                platformId: credential.platformId,
-                account: credential.profileName,
-              })
+              return errAsync(onConstraintViolation(credential))
             }
             return errAsync(dbErr)
           })

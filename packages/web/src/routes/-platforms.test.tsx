@@ -86,6 +86,8 @@ const mockGetPlatformDetailFn = vi.fn()
 const mockDiscoverCliBinaryFn = vi.fn()
 const mockAddFullAccessCliPlatformFn = vi.fn()
 const mockSetFullAccessCliShortcutsFn = vi.fn()
+const mockListUnlinkedCredentialsFn = vi.fn()
+const mockBindCredentialToPlatformFn = vi.fn()
 
 vi.mock("../server/platform-mutations.functions.js", () => ({
   addPlatformFn: (...args: unknown[]) => mockAddPlatformFn(...args),
@@ -96,6 +98,18 @@ vi.mock("../server/platform-mutations.functions.js", () => ({
   discoverCliBinaryFn: (...args: unknown[]) => mockDiscoverCliBinaryFn(...args),
   addFullAccessCliPlatformFn: (...args: unknown[]) => mockAddFullAccessCliPlatformFn(...args),
   setFullAccessCliShortcutsFn: (...args: unknown[]) => mockSetFullAccessCliShortcutsFn(...args),
+  listUnlinkedCredentialsFn: (...args: unknown[]) => mockListUnlinkedCredentialsFn(...args),
+  bindCredentialToPlatformFn: (...args: unknown[]) => mockBindCredentialToPlatformFn(...args),
+}))
+
+// Increment 43 — platforms.tsx now also calls addCredentialFn/rotateCredentialFn
+// (the create-new / replace-secret paths in resolveFullAccessCredential).
+const mockAddCredentialFn = vi.fn()
+const mockRotateCredentialFn = vi.fn()
+
+vi.mock("../server/mutations.functions.js", () => ({
+  addCredentialFn: (...args: unknown[]) => mockAddCredentialFn(...args),
+  rotateCredentialFn: (...args: unknown[]) => mockRotateCredentialFn(...args),
 }))
 
 const { Route } = await import("./platforms.js")
@@ -115,6 +129,10 @@ afterEach(() => {
   mockDiscoverCliBinaryFn.mockReset()
   mockAddFullAccessCliPlatformFn.mockReset()
   mockSetFullAccessCliShortcutsFn.mockReset()
+  mockListUnlinkedCredentialsFn.mockReset()
+  mockBindCredentialToPlatformFn.mockReset()
+  mockAddCredentialFn.mockReset()
+  mockRotateCredentialFn.mockReset()
   mockInvalidate.mockReset().mockResolvedValue(undefined)
 })
 

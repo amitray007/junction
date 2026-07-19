@@ -23,6 +23,7 @@ function rowToPlatform(row: typeof platforms.$inferSelect): Platform {
     displayName: row.displayName,
     specUrl: row.specUrl ?? undefined,
     baseUrl: row.baseUrl ?? undefined,
+    oauthProviderId: row.oauthProviderId ?? undefined,
   }
   if (row.connection) {
     // Validate JSON on read — boundary validation per docs/rules/data.md
@@ -56,6 +57,7 @@ function toPlatformRow(p: Platform) {
     graphql: p.graphql ? JSON.stringify(p.graphql) : null,
     cli: p.cli ? JSON.stringify(p.cli) : null,
     http: p.http ? JSON.stringify(p.http) : null,
+    oauthProviderId: p.oauthProviderId ?? null,
   }
 }
 
@@ -93,6 +95,7 @@ export function createPlatformsRepo(db: Db) {
               graphql: row.graphql,
               cli: row.cli,
               http: row.http,
+              oauthProviderId: row.oauthProviderId,
             },
           })
           .run()

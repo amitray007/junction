@@ -7,10 +7,17 @@
 //   validator (pure: trim, requireString, type checks) → handler (assertLocalHost → thin server helper).
 
 import { createServerFn } from "@tanstack/react-start"
-import { assertLocalHost, requireString } from "./fn-guards.server.js"
+import {
+  assertLocalHost,
+  optionalString,
+  optionalStringArray,
+  optionalStringRecord,
+  requireString,
+} from "./fn-guards.server.js"
 import type {
   AddFullAccessCliPlatformInput,
   AddPlatformInput,
+  BindCredentialToPlatformInput,
   CliConnectionInput,
   CliToolArgInput,
   CliToolInput,
@@ -24,8 +31,10 @@ import type {
 import {
   discoverCliBinary,
   getPlatformDetail,
+  listUnlinkedCredentials,
   mutateAddFullAccessCliPlatform,
   mutateAddPlatform,
+  mutateBindCredentialToPlatform,
   mutateDeletePlatform,
   mutateRefreshPlatform,
   mutateSetFullAccessCliShortcuts,
@@ -38,10 +47,12 @@ import {
 export type {
   AddFullAccessCliPlatformResult,
   AddPlatformInput,
+  BindCredentialToPlatformResult,
   CliBinaryCandidate,
   CliConnectionInput,
   CliToolArgInput,
   CliToolInput,
+  CredentialMutationMetaLike,
   DiscoverCliBinaryResult,
   HttpConnectionInput,
   HttpParamInput,
@@ -52,32 +63,15 @@ export type {
 } from "./platform-mutations.server.js"
 
 // ---------------------------------------------------------------------------
-// Validator helpers — pure, no I/O, no core.
+// Validator helpers — pure, no I/O, no core. optionalString/optionalStringArray/
+// optionalStringRecord moved to fn-guards.server.ts (increment 45) once
+// oauth-design-mutations.functions.ts became a second verbatim consumer.
 // ---------------------------------------------------------------------------
-
-function optionalString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined
-}
 
 /** Shared pure validator for the id-only mutations (delete, refresh, detail). */
 function validateIdOnly(raw: unknown): { id: string } {
   const d = raw as Record<string, unknown>
   return { id: requireString(d.id, "id") }
-}
-
-function optionalStringArray(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) return undefined
-  return value.filter((v): v is string => typeof v === "string")
-}
-
-/** Validate an optional record<string,string> — used for stdio env + tool envAllow. */
-function optionalStringRecord(value: unknown): Record<string, string> | undefined {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined
-  const out: Record<string, string> = {}
-  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-    if (typeof v === "string") out[k] = v
-  }
-  return Object.keys(out).length > 0 ? out : undefined
 }
 
 function stringRecord(value: unknown): Record<string, string> {
@@ -406,4 +400,39 @@ export const setFullAccessCliShortcutsFn = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     assertLocalHost()
     return mutateSetFullAccessCliShortcuts(data)
+  })
+
+// ---------------------------------------------------------------------------
+// Inline credential bind (increment 43, Phase 2) — Add-Platform / Full CLI
+// Access panel's "use an existing unlinked credential" step.
+// docs/methods/43-platform-inline-credential-bind.md Slice B (B0).
+// ---------------------------------------------------------------------------
+
+function validateListUnlinkedCredentialsInput(raw: unknown): { kind?: string } {
+  const d = raw as Record<string, unknown> | undefined
+  return { kind: typeof d?.kind === "string" && d.kind.trim() !== "" ? d.kind.trim() : undefined }
+}
+
+/** List the vault's unlinked credentials — metadata only, optionally kind-filtered. */
+export const listUnlinkedCredentialsFn = createServerFn({ method: "GET" })
+  .validator(validateListUnlinkedCredentialsInput)
+  .handler(async ({ data }) => {
+    assertLocalHost()
+    return listUnlinkedCredentials(data.kind)
+  })
+
+function validateBindCredentialToPlatformInput(raw: unknown): BindCredentialToPlatformInput {
+  const d = raw as Record<string, unknown>
+  return {
+    credentialId: requireString(d.credentialId, "credentialId"),
+    platformId: requireString(d.platformId, "platformId"),
+  }
+}
+
+/** Bind an existing (unlinked) credential to a platform — verify-then-commit for a verifiable platform kind, confirm-then-commit otherwise. */
+export const bindCredentialToPlatformFn = createServerFn({ method: "POST" })
+  .validator(validateBindCredentialToPlatformInput)
+  .handler(async ({ data }) => {
+    assertLocalHost()
+    return mutateBindCredentialToPlatform(data)
   })

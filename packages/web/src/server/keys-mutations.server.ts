@@ -45,6 +45,7 @@ function apiKeyErrorMessage(kind: (ApiKeyError | DbError)["kind"]): string {
     case "db-error":
       return "Database error"
     case "migration-failed":
+    case "migration-refused":
     case "constraint-violation":
     case "in-use":
     case "duplicate-namespace":

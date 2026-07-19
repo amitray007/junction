@@ -69,6 +69,67 @@ export interface CliBinaryCandidateState {
   source: "path" | "common-dir"
 }
 
+// ---------------------------------------------------------------------------
+// Inline credential section (increment 43, Slice B1/B2) — the Credential
+// step after credentialEnvVar in the Full Access panel. Mirrors
+// docs/methods/43-platform-inline-credential-bind.md's three modes: skip
+// (default, public CLI) / use-existing (bind a vault-unlinked credential) /
+// create-new (mint one inline, CREATE-only — no silent upsert).
+// ---------------------------------------------------------------------------
+
+export type FullAccessCredentialMode = "skip" | "existing" | "new"
+
+/** One unlinked credential option for the "use existing" Select — metadata only. */
+export interface UnlinkedCredentialOption {
+  id: string
+  name: string
+  account: string
+  kind: string
+}
+
+export interface FullAccessCredentialFormState {
+  mode: FullAccessCredentialMode
+  /** Populated by listUnlinkedCredentialsFn, kind-filtered to "env" client-side. */
+  unlinkedOptions: UnlinkedCredentialOption[]
+  /** True while the unlinked-credentials fetch is in flight. */
+  loadingUnlinked: boolean
+  /** Selected credential id — "use existing" mode only. */
+  selectedCredentialId: string
+  /** "Create new" mode fields. */
+  newName: string
+  newSecret: string
+  newAccount: string
+  /**
+   * Set when a create-new submit hits a duplicate-account collision — the
+   * account label that already has a credential on this platform. Drives the
+   * explicit "use it / replace its secret" recovery UI (R4 — never a silent
+   * overwrite). Cleared once the user picks a recovery action.
+   */
+  duplicateAccount?: string
+  /** The colliding credential's id, resolved once the recovery UI needs to bind/rotate it. */
+  duplicateCredentialId?: string
+  /** True once the user clicks "Replace its secret" — reveals the inline new-secret field. */
+  replacingSecret: boolean
+  /** The new secret typed into the inline replace field — sent to rotateCredentialFn on submit. */
+  replaceSecretValue: string
+  /** Bind/create error message, if the last submit failed (surfaced by the route). */
+  error?: string
+}
+
+export function emptyFullAccessCredentialState(): FullAccessCredentialFormState {
+  return {
+    mode: "skip",
+    unlinkedOptions: [],
+    loadingUnlinked: false,
+    selectedCredentialId: "",
+    newName: "",
+    newSecret: "",
+    newAccount: "",
+    replacingSecret: false,
+    replaceSecretValue: "",
+  }
+}
+
 export interface FullAccessFormState {
   /** Bare command name typed into the discovery input, e.g. "gh". */
   binaryName: string
@@ -96,6 +157,8 @@ export interface FullAccessFormState {
   discoverError?: string
   /** Set once install succeeds — the summary line ("Mapped N commands…"). */
   installSummary?: string
+  /** Increment 43 — the inline Credential section's state (skip/existing/new). */
+  credential: FullAccessCredentialFormState
 }
 
 export function emptyFullAccessState(): FullAccessFormState {
@@ -109,6 +172,7 @@ export function emptyFullAccessState(): FullAccessFormState {
     allowNet: [],
     credentialEnvVar: "",
     discovering: false,
+    credential: emptyFullAccessCredentialState(),
   }
 }
 

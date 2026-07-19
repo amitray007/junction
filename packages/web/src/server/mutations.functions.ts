@@ -45,12 +45,33 @@ function requireCredentialKind(value: unknown): Exclude<CredentialKind, "oauth2"
 // Server functions (POST — mutations)
 // ---------------------------------------------------------------------------
 
+// Credential name slug — lowercase, digits, hyphens, must start alphanumeric
+// (mirrors core's CredentialNameSchema; duplicated here as a light validator
+// so this module stays a pure boundary check with no @junction/core import —
+// core re-validates authoritatively inside addCredential/addStandaloneCredential).
+const CREDENTIAL_NAME_RE = /^[a-z0-9][a-z0-9-]*$/
+
+function optionalCredentialName(value: unknown): string | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== "string" || !CREDENTIAL_NAME_RE.test(value)) {
+    throw new Response("Bad Request: name must be a lowercase slug matching ^[a-z0-9][a-z0-9-]*$", {
+      status: 400,
+    })
+  }
+  return value
+}
+
 export const addCredentialFn = createServerFn({ method: "POST" })
   .validator((raw: unknown) => {
     const d = raw as Record<string, unknown>
     return {
-      platformId: requireString(d.platformId, "platformId"),
-      account: requireString(d.account, "account"),
+      // Increment 42 — OPTIONAL: absent → the standalone (unlinked) vault
+      // create path. Back-compat: existing callers that always pass
+      // platformId (platform-linked adds) are unaffected.
+      platformId:
+        d.platformId === undefined ? undefined : requireString(d.platformId, "platformId"),
+      account: d.account === undefined ? undefined : requireString(d.account, "account"),
+      name: optionalCredentialName(d.name),
       kind: requireCredentialKind(d.kind),
       // requireSecretString (32.13 Slice E4) — NOT requireString: a secret's
       // leading/trailing whitespace must be preserved, not silently trimmed.
