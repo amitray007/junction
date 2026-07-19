@@ -475,7 +475,7 @@ const listCommand = defineCommand({
       return {
         id: c.id,
         platformId: c.platformId,
-        account: c.profileName,
+        account: c.name,
         kind: c.kind,
         lastVerifyResult: c.lastVerifyResult ?? null,
         lastVerifiedAt:
@@ -1075,7 +1075,7 @@ function reportCredentialOpError(
     e.kind === "io-failed" ||
     e.kind === "invalid-input" ||
     e.kind === "kind-incompatible" ||
-    e.kind === "duplicate-account"
+    e.kind === "duplicate-name"
   ) {
     reportCredentialError(e as Parameters<typeof reportCredentialError>[0], json)
   } else {
@@ -1099,7 +1099,6 @@ function writeCredentialMeta(
     // has one.
     name?: string
     platformId: unknown
-    profileName: string
     kind: string
   },
   json: boolean,
@@ -1111,7 +1110,7 @@ function writeCredentialMeta(
     id: cred.id,
     ...(cred.name !== undefined ? { name: cred.name } : {}),
     platformId: cred.platformId,
-    account: cred.profileName,
+    account: cred.name,
     kind: cred.kind,
   }
   if (json) {
@@ -1126,13 +1125,13 @@ function writeCredentialMeta(
   } else {
     const nameLabel = cred.name !== undefined ? `name: ${cred.name}, ` : ""
     // An unlinked credential (platformId null, increment 42) has no
-    // meaningful account/platform to report — profileName mirrors `name`
-    // for that case (addStandaloneCredential), so the "account: X, platform:
-    // null" line would be redundant/confusing noise.
+    // meaningful account/platform to report — increment 46: `name` IS the
+    // account identity now, so the "account: X, platform: null" line would
+    // be redundant/confusing noise (X would equal nameLabel's X).
     const scopeLabel =
       cred.platformId === null
         ? ""
-        : `account: ${cred.profileName}, platform: ${String(cred.platformId)}, `
+        : `account: ${cred.name ?? ""}, platform: ${String(cred.platformId)}, `
     consola.success(`Credential ${successVerb} — ${nameLabel}${scopeLabel}id: ${String(cred.id)}`)
     if (verifyOutcome !== undefined) {
       consola.info(formatVerifyOutcome(verifyOutcome))

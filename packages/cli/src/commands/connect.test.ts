@@ -180,8 +180,8 @@ const NORMALIZED_TOKENS = {
 function fakeCredential(overrides: Record<string, unknown> = {}) {
   return {
     id: "cred-1",
+    name: "github-default",
     platformId: "github",
-    profileName: "default",
     kind: "oauth2" as const,
     secretRef: "ref-access",
     oauthMeta: { providerId: "github", needsReauth: false },
@@ -613,19 +613,19 @@ describe("junction connect (unit)", () => {
 })
 
 // ---------------------------------------------------------------------------
-// formatOAuthConnectError — 32.13 Slice B1: duplicate-account surfaces as a
-// specific, non-misleading message (not the generic "persist-failed").
+// formatOAuthConnectError — increment 46 (RETIRES 32.13 Slice B1's
+// duplicate-account): a name collision surfaces as a specific, non-misleading
+// message (not the generic "persist-failed").
 // ---------------------------------------------------------------------------
 
-describe("formatOAuthConnectError — duplicate-account (32.13 Slice B1)", () => {
-  it("surfaces a typed duplicate-account message naming the account, not generic persist-failed text", () => {
+describe("formatOAuthConnectError — duplicate-name (increment 46)", () => {
+  it("surfaces a typed duplicate-name message naming the credential, not generic persist-failed text", () => {
     const message = formatOAuthConnectError({
-      kind: "duplicate-account",
-      platformId: "github",
-      account: "work",
+      kind: "duplicate-name",
+      name: "github-work",
     })
-    expect(message).toContain("work")
-    expect(message).toContain("already connected")
+    expect(message).toContain("github-work")
+    expect(message).toContain("already exists")
     expect(message).not.toContain("persist-failed")
     expect(message).not.toContain("failed to persist")
   })

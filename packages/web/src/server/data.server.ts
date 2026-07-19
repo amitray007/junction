@@ -259,7 +259,7 @@ export async function readCredentials(): Promise<CredentialMeta[]> {
       id: String(c.id),
       name: c.name,
       platformId: c.platformId === null ? null : String(c.platformId),
-      account: c.profileName,
+      account: c.name,
       kind: c.kind,
       ...(c.lastVerifiedAt !== undefined ? { lastVerifiedAt: c.lastVerifiedAt } : {}),
       ...(c.lastVerifyResult !== undefined ? { lastVerifyResult: c.lastVerifyResult } : {}),
@@ -472,7 +472,7 @@ export async function readProfiles(): Promise<ProfileMeta[]> {
     await Promise.all(
       Array.from(allCredentialIds).map(async (id) => {
         const result = await repos.credentials.get(id)
-        credentialAccountMap.set(id, result.isOk() ? result.value.profileName : "(unknown)")
+        credentialAccountMap.set(id, result.isOk() ? result.value.name : "(unknown)")
       }),
     )
 

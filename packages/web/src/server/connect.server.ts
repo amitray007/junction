@@ -202,8 +202,8 @@ function mapConnectError(error: ConnectError): ConnectFnResult {
   if (error.kind === "platform-kind-conflict") {
     return { conflict: { existingKind: error.existingKind } }
   }
-  if (error.kind === "duplicate-account") {
-    return { duplicateAccount: error.account }
+  if (error.kind === "duplicate-name") {
+    return { duplicateAccount: error.name }
   }
   return { error: "Failed to connect this surface" }
 }

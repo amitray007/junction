@@ -23,7 +23,7 @@ function makeCredential(): Credential {
   return {
     id: "cred-1",
     platformId: "plat-1",
-    profileName: "work",
+    name: "plat-1-work",
     kind: "bearer",
     secretRef: "secret-ref-abc123",
   }

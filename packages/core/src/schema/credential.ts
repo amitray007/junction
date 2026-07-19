@@ -108,14 +108,6 @@ export const CredentialSchema = z.object({
    * (identity lives entirely in `name`).
    */
   platformId: PlatformIdSchema.nullable(),
-  /**
-   * @deprecated Increment 42 — vestigial, WRITE-ONLY legacy column. The OAuth
-   * connect flow still writes it (Phase 1 leaves OAuth untouched), but
-   * nothing NEW may read it for identity or uniqueness — use `name`
-   * exclusively. Phase 3 (docs/specs/2026-07-17-credential-platform-
-   * normalization.md) physically drops this column.
-   */
-  profileName: z.string().min(1),
   /** Authentication mechanism kind */
   kind: CredentialKind,
   /**

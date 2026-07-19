@@ -7,16 +7,21 @@
 // --account` (no `--name`). Keeps those paths' BEHAVIOR unchanged — they just
 // gain a derived name instead of requiring one from the caller.
 //
+// Increment 46 (Fable RA) — the 2nd param is a name-derivation SEED, not a
+// stored field: `profileName` is gone; a real account string (e.g. the OAuth
+// connect flow's provider username) still feeds this seed, its meaning
+// landing entirely in the derived `name` — nothing lost.
+//
 // Pure function — no I/O, no DB query. Callers resolve the "existing names"
 // set themselves (typically via `repos.credentials.list()`), matching the
-// migration's collision rule: `<platformId>-<profileName>`, `-2`/`-3`
-// suffixed on collision.
+// migration's collision rule: `<platformId>-<label>`, `-2`/`-3` suffixed on
+// collision.
 
 import { CredentialNameSchema } from "../schema/credential.js"
 
 /**
  * Lowercase + strip characters CredentialNameSchema's slug regex
- * (`^[a-z0-9][a-z0-9-]*$`) rejects, so a platformId/profileName containing
+ * (`^[a-z0-9][a-z0-9-]*$`) rejects, so a platformId/label containing
  * uppercase or other punctuation still derives a valid slug rather than
  * throwing downstream at CredentialSchema.parse. Collapses runs of stripped
  * characters to a single hyphen (never a double hyphen from two adjacent
@@ -29,25 +34,25 @@ function slugifyPart(part: string): string {
 }
 
 /**
- * Derive a deterministic credential name from `<platformId>-<profileName>`,
+ * Derive a deterministic credential name from `<platformId>-<label>`,
  * suffixed `-2`, `-3`, … on collision against `existingNames`. Mirrors
  * migration 0011's backfill rule exactly (ROW_NUMBER()-ordered by id there;
  * here the caller controls ordering by calling this once per new credential
  * against the CURRENT existing-names set, which is the live equivalent).
  *
  * The returned name is always a valid CredentialNameSchema slug — a
- * malformed platformId/profileName is slugified first (see slugifyPart), so
- * this function never throws.
+ * malformed platformId/label is slugified first (see slugifyPart), so this
+ * function never throws.
  */
 export function deriveCredentialName(
   platformId: string,
-  profileName: string,
+  label: string,
   existingNames: ReadonlySet<string>,
 ): string {
-  const base = `${slugifyPart(platformId)}-${slugifyPart(profileName)}`
+  const base = `${slugifyPart(platformId)}-${slugifyPart(label)}`
   const slugged = CredentialNameSchema.safeParse(base).success ? base : slugifyPart(base)
   // Empty-slug guard (data-migration review, LOW): if BOTH parts slugify to
-  // nothing (e.g. platformId="*" + profileName="*" → base "-" → ""), fall back
+  // nothing (e.g. platformId="*" + label="*" → base "-" → ""), fall back
   // to a valid literal so this never returns a name CredentialNameSchema would
   // reject. The collision loop below then uniquifies it. (The migration's
   // parallel path uses lower(id); this pure fn has no id, so "credential" is

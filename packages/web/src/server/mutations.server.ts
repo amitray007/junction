@@ -70,7 +70,7 @@ function toMutationMeta(c: Credential): CredentialMutationMeta {
     id: String(c.id),
     name: c.name,
     platformId: c.platformId === null ? null : String(c.platformId),
-    account: c.profileName,
+    account: c.name,
     kind: c.kind,
   }
 }
@@ -113,15 +113,14 @@ export type AddVerifyResult =
  * between them (increment 42 introduced the standalone branch; this
  * factor-out is what keeps the two from becoming near-duplicate switch
  * statements). Increment 43 — exported so platform-mutations.server.ts's
- * bind path reuses the SAME kind-incompatible/duplicate-account copy rather
+ * bind path reuses the SAME kind-incompatible/duplicate-name copy rather
  * than inventing new wording (bindCredentialToPlatform's core error shapes
- * are identical to addCredential's — both come from the same isKindAccepted
- * gate + the same forPlatform-scoped duplicate-account guard). `scope`
- * tailors the kind-incompatible wording to whether a platform is in play —
- * pass "" for the standalone (no-platform) path (which can never hit
- * duplicate-account — addStandaloneCredential has no account concept — but
- * the branch is kept for type-exhaustiveness against the shared
- * CredentialError union).
+ * are identical to addCredential's). `scope` tailors the kind-incompatible
+ * wording to whether a platform is in play — pass "" for the standalone
+ * (no-platform) path. Increment 46 (RC) — the old platform-scoped
+ * `duplicate-account` guard is GONE; `duplicate-name` is now the DB-backed,
+ * globally-unique collision (a credential with this `name` already exists),
+ * reachable from BOTH the standalone and platform-linked branches.
  */
 export function addCredentialErrorMessage(
   e: CredentialError | DbError,
@@ -132,8 +131,8 @@ export function addCredentialErrorMessage(
     const suffix = scope === "platform" ? " for this platform" : ""
     return `Credential kind "${e.requested}" not accepted${suffix}; allowed: ${e.allowed.join(", ")}`
   }
-  if (e.kind === "duplicate-account") {
-    return `an account named "${e.account}" is already connected to this platform`
+  if (e.kind === "duplicate-name") {
+    return `a credential named "${e.name}" already exists`
   }
   return e.kind
 }

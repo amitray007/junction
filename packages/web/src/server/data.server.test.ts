@@ -146,7 +146,6 @@ describe("data.server", () => {
       id: credId,
       name: "work-1",
       platformId,
-      profileName: "work",
       kind: "bearer",
       secretRef: "FAKE_SECRET_REF_NEVER_EXPOSE",
     })
@@ -160,7 +159,8 @@ describe("data.server", () => {
     // Shape: expected metadata fields
     expect(cred.id).toBe(String(credId))
     expect(cred.platformId).toBe(String(platformId))
-    expect(cred.account).toBe("work")
+    // Increment 46 — a credential's account IS its name (profileName is gone).
+    expect(cred.account).toBe("work-1")
     expect(cred.kind).toBe("bearer")
 
     // SECURITY: no secret or secretRef keys
@@ -187,7 +187,6 @@ describe("data.server", () => {
       id: credId,
       name: "work-2",
       platformId,
-      profileName: "work",
       kind: "oauth2",
       secretRef: "FAKE_ACCESS_REF_NEVER_EXPOSE",
       oauthMeta: {
@@ -241,7 +240,6 @@ describe("data.server", () => {
       id: newCredentialId(),
       name: "work-3",
       platformId,
-      profileName: "work",
       kind: "bearer",
       secretRef: "REF",
     })
@@ -297,7 +295,6 @@ describe("data.server", () => {
       id: credId,
       name: "personal-4",
       platformId,
-      profileName: "personal",
       kind: "bearer",
       secretRef: "FAKE_REF",
     })
@@ -326,7 +323,8 @@ describe("data.server", () => {
     if (!src) throw new Error("no source in result")
     expect(src.namespace).toBe("my_ns")
     expect(src.platform).toBe(String(platformId))
-    expect(src.credentialAccount).toBe("personal")
+    // Increment 46 — a credential's account IS its name (profileName is gone).
+    expect(src.credentialAccount).toBe("personal-4")
     expect(src.enabled).toBe(true)
     // secretRef must not appear in the serialized profile output
     expect(JSON.stringify(profiles)).not.toContain("FAKE_REF")
@@ -392,7 +390,6 @@ describe("data.server", () => {
       id: newCredentialId(),
       name: "work-5",
       platformId,
-      profileName: "work",
       kind: "oauth2",
       secretRef: "FAKE_ACCESS_REF_NEVER_EXPOSE",
       oauthMeta: {
@@ -406,7 +403,8 @@ describe("data.server", () => {
     const github = groups.find((g) => g.appId === "github")
     expect(github).toBeDefined()
     expect(github?.connections).toHaveLength(1)
-    expect(github?.connections[0]?.account).toBe("work")
+    // Increment 46 — a credential's account IS its name (profileName is gone).
+    expect(github?.connections[0]?.account).toBe("work-5")
   })
 
   it("readApps: a platform with no matching id/provider lands in 'other' (negative control)", async () => {
@@ -420,7 +418,6 @@ describe("data.server", () => {
       id: newCredentialId(),
       name: "work-6",
       platformId,
-      profileName: "work",
       kind: "bearer",
       secretRef: "REF",
     })
@@ -457,7 +454,6 @@ describe("data.server", () => {
       id: newCredentialId(),
       name: "work-r3a",
       platformId,
-      profileName: "work",
       kind: "oauth2",
       secretRef: "FAKE_ACCESS_REF_NEVER_EXPOSE",
       oauthMeta: {
@@ -485,7 +481,6 @@ describe("data.server", () => {
       id: newCredentialId(),
       name: "work-r3b",
       platformId,
-      profileName: "work",
       kind: "oauth2",
       secretRef: "FAKE_ACCESS_REF_NEVER_EXPOSE",
       oauthMeta: {
@@ -606,7 +601,6 @@ describe("data.server", () => {
       id: credId,
       name: "work-7",
       platformId,
-      profileName: "work",
       kind: "oauth2",
       secretRef: "FAKE_ACCESS_REF_NEVER_EXPOSE",
       oauthMeta: {
@@ -666,7 +660,6 @@ describe("data.server", () => {
       id: newCredentialId(),
       name: "work-8",
       platformId,
-      profileName: "work",
       kind: "oauth2",
       secretRef: "REF1",
       oauthMeta: { needsReauth: false },
@@ -675,7 +668,6 @@ describe("data.server", () => {
       id: newCredentialId(),
       name: "personal-9",
       platformId,
-      profileName: "personal",
       kind: "oauth2",
       secretRef: "REF2",
       oauthMeta: { needsReauth: false },
@@ -685,7 +677,8 @@ describe("data.server", () => {
     const github = groups.find((g) => g.appId === "github")
     expect(github?.connections).toHaveLength(2)
     const accounts = github?.connections.map((c) => c.account).sort()
-    expect(accounts).toEqual(["personal", "work"])
+    // Increment 46 — a credential's account IS its name (profileName is gone).
+    expect(accounts).toEqual(["personal-9", "work-8"])
   })
 
   // ---------------------------------------------------------------------------
@@ -880,7 +873,6 @@ describe("data.server", () => {
         id: credA,
         name: "healthy-no-tools-10",
         platformId,
-        profileName: "healthy-no-tools",
         kind: "bearer",
         secretRef: "REF_A",
       })
@@ -892,7 +884,6 @@ describe("data.server", () => {
         id: credB,
         name: "unhealthy-with-tools-11",
         platformId,
-        profileName: "unhealthy-with-tools",
         kind: "bearer",
         secretRef: "REF_B",
       })
@@ -926,7 +917,6 @@ describe("data.server", () => {
         id: cred,
         name: "healthy-with-tools-12",
         platformId,
-        profileName: "healthy-with-tools",
         kind: "bearer",
         secretRef: "REF",
       })

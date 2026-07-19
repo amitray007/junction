@@ -38,9 +38,6 @@ export const credentials = sqliteTable(
     // Increment 42 — nullable (a credential no longer requires a platform to
     // exist). No uniqueness role; identity lives entirely in `name`.
     platformId: text("platform_id").references(() => platforms.id),
-    // @deprecated Increment 42 — vestigial, WRITE-ONLY legacy column. See
-    // schema/credential.ts's CredentialSchema doc-comment.
-    profileName: text("profile_name").notNull(),
     kind: text("kind").notNull(),
     // secrets-as-references: ONLY a handle, NEVER a secret value
     secretRef: text("secret_ref").notNull(),

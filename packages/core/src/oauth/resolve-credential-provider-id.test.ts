@@ -20,7 +20,6 @@ function makeCredential(overrides: Partial<Credential> = {}): Credential {
     id: "cred_1",
     name: "cred-1",
     platformId: "plat_1",
-    profileName: "cred-1",
     kind: "oauth2",
     secretRef: "ref_secret",
     ...overrides,

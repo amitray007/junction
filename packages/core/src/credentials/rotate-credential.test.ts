@@ -133,7 +133,6 @@ describe("rotateCredential", () => {
     // Identity fields must not change.
     expect(String(cred.id)).toBe(credId)
     expect(String(cred.platformId)).toBe(platformId)
-    expect(cred.profileName).toBe("work")
     expect(cred.kind).toBe("bearer")
 
     // New secretRef must differ from the old one.
@@ -176,7 +175,7 @@ describe("rotateCredential", () => {
     if (result.isOk()) {
       expect(String(result.value.id)).not.toContain(SENTINEL)
       expect(String(result.value.platformId)).not.toContain(SENTINEL)
-      expect(result.value.profileName).not.toContain(SENTINEL)
+      expect(result.value.name).not.toContain(SENTINEL)
       expect(result.value.secretRef).not.toContain(SENTINEL)
     }
   })

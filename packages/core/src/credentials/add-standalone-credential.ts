@@ -7,8 +7,8 @@
 //
 // Mirrors addCredential's lifecycle (mint secretRef, store.set FIRST, then
 // one DB insert, best-effort cleanup on DB failure) minus the platform-scoped
-// steps (kind-compat check, duplicate-ACCOUNT guard, profileName). `name`
-// uniqueness is GLOBAL and required — see CredentialSchema's `name` field.
+// steps (kind-compat check). `name` uniqueness is GLOBAL and required — see
+// CredentialSchema's `name` field.
 
 import { errAsync, type ResultAsync } from "neverthrow"
 import { ulid } from "ulid"
@@ -61,10 +61,6 @@ export function addStandaloneCredential(
     id: newCredentialId(),
     name,
     platformId: null,
-    // profileName is write-only legacy (CredentialSchema doc-comment) — a
-    // standalone credential has no account label, so this mirrors `name`
-    // (never READ for identity; kept only because the column is NOT NULL).
-    profileName: name,
     kind: input.kind,
     secretRef: ulid(),
   })
@@ -76,11 +72,12 @@ export function addStandaloneCredential(
   }
 
   // Reuse the shared store-write + rollback primitive (see add-credential.ts).
-  // The only per-caller difference is the constraint-violation mapping: this
-  // path never had an account, so a name collision surfaces as invalid-input
-  // with an honest reason rather than the misleading "duplicate-account" shape.
+  // Increment 46 — upgraded from the old stringly `invalid-input` mapping to
+  // the typed `duplicate-name` shape (RC's friendly-error principle,
+  // preserved not abandoned): a name collision against the global
+  // `credentials_name_unique` index now surfaces uniformly with addCredential.
   return writeCredential(credentialParse.data, input.secret, store, credentialsRepo, (cred) => ({
-    kind: "invalid-input" as const,
-    reason: `a credential named "${cred.name}" already exists`,
+    kind: "duplicate-name" as const,
+    name: cred.name,
   }))
 }

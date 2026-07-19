@@ -259,72 +259,18 @@ describe("addCredential — 32 KiB file-content cap (increment 28.9 slice D)", (
   })
 })
 
-describe("addCredential — duplicate-account guard (increment 30.12)", () => {
-  it("duplicate {platformId, account} -> duplicate-account Err, NOTHING written (store.set + repo.create never called)", async () => {
+describe("addCredential — name derivation from the account seed (increment 46)", () => {
+  it("two credentials on the same platform with different account seeds -> both succeed, distinct derived names", async () => {
     const platform = cliPlatform()
+    // deriveCredentialName slugifies (lowercases) platformId — the fixture's
+    // ULID platform.id is uppercase, so the derived name is lowercase.
+    const platformIdLower = String(platform.id).toLowerCase()
     const { store, setCalls } = makeSpyStore()
     const { repo, createCalls } = makeRecordingRepo([
       {
         id: newCredentialId(),
+        name: `${platformIdLower}-work`,
         platformId: String(platform.id),
-        profileName: "work",
-        kind: "bearer",
-        secretRef: "existing-ref",
-      },
-    ])
-
-    const result = await addCredential(
-      { platformId: String(platform.id), account: "work", kind: "bearer", secret: "tok" },
-      platform,
-      store,
-      repo,
-    )
-
-    expect(result.isErr()).toBe(true)
-    if (result.isErr()) {
-      expect(result.error.kind).toBe("duplicate-account")
-      if (result.error.kind === "duplicate-account") {
-        expect(result.error.platformId).toBe(String(platform.id))
-        expect(result.error.account).toBe("work")
-      }
-    }
-    expect(setCalls).toHaveLength(0)
-    expect(createCalls).toHaveLength(0)
-  })
-
-  it("duplicate check is case-SENSITIVE — 'Work' does not collide with an existing 'work'", async () => {
-    const platform = cliPlatform()
-    const { store, setCalls } = makeSpyStore()
-    const { repo, createCalls } = makeRecordingRepo([
-      {
-        id: newCredentialId(),
-        platformId: String(platform.id),
-        profileName: "work",
-        kind: "bearer",
-        secretRef: "existing-ref",
-      },
-    ])
-
-    const result = await addCredential(
-      { platformId: String(platform.id), account: "Work", kind: "bearer", secret: "tok" },
-      platform,
-      store,
-      repo,
-    )
-
-    expect(result.isOk()).toBe(true)
-    expect(setCalls).toHaveLength(1)
-    expect(createCalls).toHaveLength(1)
-  })
-
-  it("a distinct account label on the same platform succeeds — 2 credentials, no collision", async () => {
-    const platform = cliPlatform()
-    const { store, setCalls } = makeSpyStore()
-    const { repo, createCalls } = makeRecordingRepo([
-      {
-        id: newCredentialId(),
-        platformId: String(platform.id),
-        profileName: "work",
         kind: "bearer",
         secretRef: "existing-ref",
       },
@@ -340,7 +286,7 @@ describe("addCredential — duplicate-account guard (increment 30.12)", () => {
     expect(result.isOk()).toBe(true)
     expect(setCalls).toHaveLength(1)
     expect(createCalls).toHaveLength(1)
-    expect(createCalls[0]?.profileName).toBe("personal")
+    expect(createCalls[0]?.name).toBe(`${platformIdLower}-personal`)
   })
 
   it("no existing credentials on the platform -> succeeds (first account)", async () => {
@@ -359,11 +305,39 @@ describe("addCredential — duplicate-account guard (increment 30.12)", () => {
     expect(setCalls).toHaveLength(1)
     expect(createCalls).toHaveLength(1)
   })
+
+  it("a SAME account seed on the same platform now succeeds too — the old duplicate-account app-level guard is GONE (RC); derivation just suffixes -2", async () => {
+    const platform = cliPlatform()
+    const platformIdLower = String(platform.id).toLowerCase()
+    const { store, setCalls } = makeSpyStore()
+    const { repo, createCalls } = makeRecordingRepo([
+      {
+        id: newCredentialId(),
+        name: `${platformIdLower}-work`,
+        platformId: String(platform.id),
+        kind: "bearer",
+        secretRef: "existing-ref",
+      },
+    ])
+
+    const result = await addCredential(
+      { platformId: String(platform.id), account: "work", kind: "bearer", secret: "tok" },
+      platform,
+      store,
+      repo,
+    )
+
+    expect(result.isOk()).toBe(true)
+    expect(setCalls).toHaveLength(1)
+    expect(createCalls).toHaveLength(1)
+    expect(createCalls[0]?.name).toBe(`${platformIdLower}-work-2`)
+  })
 })
 
-describe("addCredential — DB-level unique-index backstop (increment 32.9)", () => {
-  it("a constraint-violation from repo.create() surfaces as typed duplicate-account, AND the just-set store secret is cleaned up", async () => {
+describe("addCredential — DB-level unique-name backstop (increment 46, RC)", () => {
+  it("a constraint-violation from repo.create() surfaces as typed duplicate-name, AND the just-set store secret is cleaned up", async () => {
     const platform = cliPlatform()
+    const platformIdLower = String(platform.id).toLowerCase()
     const { store, setCalls, deleteCalls } = makeCleanupSpyStore()
     const repo = makeConstraintViolatingRepo()
 
@@ -376,16 +350,15 @@ describe("addCredential — DB-level unique-index backstop (increment 32.9)", ()
 
     expect(result.isErr()).toBe(true)
     if (result.isErr()) {
-      expect(result.error.kind).toBe("duplicate-account")
-      if (result.error.kind === "duplicate-account") {
-        expect(result.error.platformId).toBe(String(platform.id))
-        expect(result.error.account).toBe("work")
+      expect(result.error.kind).toBe("duplicate-name")
+      if (result.error.kind === "duplicate-name") {
+        expect(result.error.name).toBe(`${platformIdLower}-work`)
       }
     }
 
-    // The secret WAS written to the store (the app-level guard didn't catch
-    // it — only the DB index did), and cleanup must have deleted it: no
-    // stranded fresh secret.
+    // The secret WAS written to the store (name derivation didn't catch it —
+    // only the DB index did), and cleanup must have deleted it: no stranded
+    // fresh secret.
     expect(setCalls).toHaveLength(1)
     expect(deleteCalls).toEqual([setCalls[0]?.ref])
   })

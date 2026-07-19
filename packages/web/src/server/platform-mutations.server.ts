@@ -1132,14 +1132,13 @@ function toBindCredentialMeta(c: {
   id: string
   name: string
   platformId: string | null
-  profileName: string
   kind: string
 }): CredentialMutationMetaLike {
   return {
     id: c.id,
     name: c.name,
     platformId: c.platformId,
-    account: c.profileName,
+    account: c.name,
     kind: c.kind,
   }
 }

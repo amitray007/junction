@@ -236,7 +236,7 @@ export function refreshIfExpired(
       // increment 42 — only raw-kind credentials can be unlinked); the `?? ""`
       // fallback is unreachable defensive code, not a real null case.
       platformId: credential.platformId ?? "",
-      account: credential.profileName,
+      account: credential.name,
     })
   }
 
@@ -279,7 +279,7 @@ function performRefresh(
   // oauth2 credentials always carry a platformId (see the identical comment
   // above in refreshIfExpired) — the `?? ""` fallback is unreachable.
   const platformId = credential.platformId ?? ""
-  const account = credential.profileName
+  const account = credential.name
   const needsReauth = (): RefreshError => ({ kind: "needs-reauth", platformId, account })
 
   // Increment 44 (R1/R3) — resolve the design BEFORE any store I/O, so a
@@ -398,7 +398,7 @@ function callRefreshAndPersist(
   // oauth2 credentials always carry a platformId (see the identical comment
   // in refreshIfExpired above) — the `?? ""` fallback is unreachable.
   const platformId = credential.platformId ?? ""
-  const account = credential.profileName
+  const account = credential.name
   // providerId is now RESOLVED (increment 44, R3 — platform.oauthProviderId;
   // increment 45, Slice E — the legacy oauthMeta.providerId fallback is
   // gone), sourced by the caller (performRefresh) via resolveOAuthProviderId

@@ -424,7 +424,10 @@ describe("credential add — name derivation + standalone create (inc 42, unit)"
       expect(parsed.ok).toBe(true)
       expect(parsed.credential?.name).toBe("gh-personal")
       expect(parsed.credential?.platformId).toBe("gh")
-      expect(parsed.credential?.account).toBe("personal")
+      // Increment 46 — a credential's account IS its name (profileName is
+      // gone); "personal" was only ever the derivation seed, discarded once
+      // `name` is minted.
+      expect(parsed.credential?.account).toBe("gh-personal")
       expect(process.exitCode).toBe(0)
     })
   })
@@ -969,7 +972,6 @@ async function seedOAuthCredential(
     id: `${platformId}-cred-1`,
     name: `${platformId}-work`,
     platformId,
-    profileName: "work",
     kind: "oauth2" as const,
     secretRef: "ref-access-1",
     // Increment 45, Slice E — the design lives on the PLATFORM
@@ -1022,7 +1024,6 @@ describe("credential list — oauth2 state derivation (D3, unit)", () => {
           id: "oauth-connected-plat-cred-1",
           name: "oauth-connected-plat-work",
           platformId: "oauth-connected-plat",
-          profileName: "work",
           kind: "oauth2" as const,
           secretRef: "ref-access-1",
           oauthMeta: {
@@ -1191,7 +1192,7 @@ describe("credential rename (Task 5, unit)", () => {
       expect(parsed.credential?.account).toBe("work-primary")
       // Persisted.
       const reread = (await repos.credentials.get(added.value.id))._unsafeUnwrap()
-      expect(reread.profileName).toBe("work-primary")
+      expect(reread.name).toBe("work-primary")
       // The secret still resolves under the unchanged secretRef.
       const secret = (await storeResult.value.get(reread.secretRef))._unsafeUnwrap()
       expect(secret).toBe("v")
@@ -1846,7 +1847,10 @@ describe.skipIf(!builtBinReady)("credential commands (built bin, child process)"
       expect(parsed.ok).toBe(true)
       const cred = parsed.credential ?? {}
       expect(cred).toHaveProperty("id")
-      expect(cred).toHaveProperty("account", "work")
+      // Increment 46 — a credential's account IS its name (profileName is
+      // gone); "work" was only the derivation seed, discarded once the
+      // derived name (add-meta-plat-work) is minted.
+      expect(cred).toHaveProperty("account", "add-meta-plat-work")
       expect(cred).toHaveProperty("kind", "bearer")
       // MUST NOT expose secret or secretRef
       expect(cred).not.toHaveProperty("secretRef")
@@ -2097,7 +2101,10 @@ describe.skipIf(!builtBinReady)("credential commands (built bin, child process)"
       // Output is metadata-only (no secretRef, no secret).
       const cred = rotateParsed.credential ?? {}
       expect(cred).toHaveProperty("id", credId)
-      expect(cred).toHaveProperty("account", "work")
+      // Increment 46 — a credential's account IS its name (profileName is
+      // gone); "work" was only the derivation seed, discarded once the
+      // derived name (rotate-plat-work) is minted.
+      expect(cred).toHaveProperty("account", "rotate-plat-work")
       expect(cred).toHaveProperty("kind", "bearer")
       expect(cred).not.toHaveProperty("secretRef")
       expect(cred).not.toHaveProperty("secret")

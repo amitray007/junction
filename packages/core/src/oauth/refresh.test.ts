@@ -157,7 +157,7 @@ function makeCredential(overrides: Partial<Credential> = {}, meta: OAuthMeta = {
   return {
     id: "cred_test",
     platformId: "test-platform",
-    profileName: "work",
+    name: "work",
     kind: "oauth2",
     secretRef: "access-ref-old",
     oauthMeta: meta,

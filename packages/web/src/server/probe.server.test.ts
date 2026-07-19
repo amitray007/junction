@@ -606,7 +606,6 @@ describe("probe.server", () => {
         id: credId,
         name: "work-13",
         platformId,
-        profileName: "work",
         kind: "bearer",
         secretRef: "FAKE_REF_NEVER_EXPOSE",
       })

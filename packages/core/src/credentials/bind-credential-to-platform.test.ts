@@ -164,7 +164,7 @@ describe("bindCredentialToPlatform", () => {
     })
   })
 
-  it("duplicate-account: two unlinked standalone credentials both profileName 'default' -> binding the 2nd to the same platform is refused", async () => {
+  it("increment 46 (RC): two unlinked standalone credentials bind to the SAME platform without a duplicate-account guard — name uniqueness is orthogonal to platform binding", async () => {
     await withTempHome(async () => {
       const paths = getPaths()
       const dbResult = await getDatabase(paths)
@@ -175,9 +175,6 @@ describe("bindCredentialToPlatform", () => {
       const platformId = newPlatformId()
       await repos.platforms.create(envPlatform(platformId))
 
-      // addStandaloneCredential sets profileName = name (write-only legacy
-      // column) — so seed both standalone creds' `name` (and thus
-      // profileName) to the SAME "default" label to hit the guard.
       const first = await addStandaloneCredential(
         { name: "default", kind: "env", secret: "sekrit-1" },
         store,
@@ -192,15 +189,6 @@ describe("bindCredentialToPlatform", () => {
       )
       if (second.isErr()) throw new Error("test setup: second addStandaloneCredential failed")
 
-      // Force the 2nd credential's profileName to collide with the 1st's —
-      // addStandaloneCredential derives profileName from the (unique) name,
-      // so the collision must be engineered directly via setProfileName to
-      // reach the SAME real-world state addCredential's app-level guard
-      // protects against (two credentials on one platform sharing an account
-      // label), independent of standalone naming.
-      const renamed = await repos.credentials.setProfileName(String(second.value.id), "default")
-      if (renamed.isErr()) throw new Error("test setup: setProfileName failed")
-
       const firstBind = await bindCredentialToPlatform(
         { credentialsRepo: repos.credentials, platformsRepo: repos.platforms },
         String(first.value.id),
@@ -208,27 +196,19 @@ describe("bindCredentialToPlatform", () => {
       )
       expect(firstBind.isOk()).toBe(true)
 
+      // Increment 46 — binding never touches `name`, so a 2nd, distinctly-named
+      // credential binds to the SAME platform freely (the old app-level
+      // duplicate-account guard, gate 4, is DELETED — RC).
       const secondBind = await bindCredentialToPlatform(
         { credentialsRepo: repos.credentials, platformsRepo: repos.platforms },
         String(second.value.id),
         platformId,
       )
-      expect(secondBind.isErr()).toBe(true)
-      if (secondBind.isErr()) {
-        expect(secondBind.error.kind).toBe("duplicate-account")
-        if (secondBind.error.kind === "duplicate-account") {
-          expect(secondBind.error.platformId).toBe(platformId)
-          expect(secondBind.error.account).toBe("default")
-        }
-      }
+      expect(secondBind.isOk()).toBe(true)
 
-      // The 2nd credential is STILL unlinked — the guard fired before the write.
-      const reread = await repos.credentials.get(String(second.value.id))
-      if (reread.isOk()) expect(reread.value.platformId).toBeNull()
-
-      // Only the 1st credential is bound.
+      // Both credentials are now bound.
       const forPlatform = await repos.credentials.forPlatform(platformId)
-      if (forPlatform.isOk()) expect(forPlatform.value).toHaveLength(1)
+      if (forPlatform.isOk()) expect(forPlatform.value).toHaveLength(2)
     })
   })
 

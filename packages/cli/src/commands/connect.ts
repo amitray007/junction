@@ -77,7 +77,7 @@ export function credentialMeta(cred: Credential, providerId: string): ConnectedC
   return {
     id: String(cred.id),
     platformId: String(cred.platformId),
-    account: cred.profileName,
+    account: cred.name,
     providerId,
   }
 }
@@ -105,8 +105,8 @@ export function formatOAuthConnectError(e: OAuthConnectError): string {
       return `invalid input: ${e.reason}`
     case "persist-failed":
       return `failed to persist tokens: ${e.cause.kind}`
-    case "duplicate-account":
-      return `an account named "${e.account}" is already connected to this platform`
+    case "duplicate-name":
+      return `a credential named "${e.name}" already exists`
     default: {
       const _: never = e
       return _

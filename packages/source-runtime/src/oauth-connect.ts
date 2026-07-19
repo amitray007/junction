@@ -64,12 +64,13 @@ export type OAuthConnectError =
   | { kind: "invalid-input"; reason: string }
   | { kind: "persist-failed"; cause: DbError }
   /**
-   * A credential with the same `{platformId, account}` already exists
-   * (increment 32.13 Slice B1) — mirrors core's addCredential duplicate-
-   * account guard (30.12). ONLY reachable on `mode: "create"`; `mode:
-   * "update"` repoints an EXISTING credential by id and never collides.
+   * A credential with the same `name` already exists (increment 46 — DB-
+   * enforced `credentials_name_unique`; RETIRES the 32.13 Slice B1
+   * `duplicate-account` kind, mirroring core's addCredential/RC). ONLY
+   * reachable on `mode: "create"`; `mode: "update"` repoints an EXISTING
+   * credential by id and never collides.
    */
-  | { kind: "duplicate-account"; platformId: string; account: string }
+  | { kind: "duplicate-name"; name: string }
 
 // ---------------------------------------------------------------------------
 // buildAuthorizeUrl — browser auth-code + PKCE
@@ -393,6 +394,12 @@ export interface PersistOAuthTokensArgs {
   /** Create a new credential row. */
   mode: "create"
   platformId: string
+  /**
+   * The OAuth provider's username/account label — a name-derivation SEED
+   * ONLY (increment 46, Fable RA). Never stored as a field; it feeds
+   * `deriveCredentialName` to produce the credential's `name`, then is
+   * discarded.
+   */
   account: string
   /**
    * OPTIONAL (increment 38) — when present, the caller has already assembled
@@ -451,23 +458,21 @@ export function persistOAuthTokens(
 
   // Increment 42 — derived name for a fresh oauth2 credential (mode:"create"
   // only; mode:"update" repoints an EXISTING credential and never mints a
-  // new name). Populated inside the mode:"create" branch below, once the
-  // duplicate-account guard's `all` read is in hand — keeps the SAME "one
-  // list() read serves both checks" shape as core's addCredential.
+  // new name). Populated inside the mode:"create" branch below.
   let derivedName: string | undefined
 
   const work = async (): Promise<Result<Credential, OAuthConnectError>> => {
-    // Duplicate-account guard (32.13 Slice B1) — BEFORE any store write,
-    // mirroring core's addCredential (30.12): a same-{platformId,account}
-    // collision must surface as a typed duplicate-account error, not the
-    // generic/misleading persist-failed a DB constraint hit produces (the
-    // 32.9 unique index now backstops this at the DB layer too). Checked
-    // ONLY on mode:"create" — mode:"update" repoints an EXISTING credential
-    // by id and can never collide with itself.
+    // Increment 46 (RC) — the old 32.13 Slice B1 duplicate-account guard is
+    // GONE: once a credential's account identity IS its `name` (Fable RA),
+    // "same account on a platform" collapses to "same name," which the DB's
+    // `credentials_name_unique` index now enforces directly (the
+    // `credentials.create` constraint-violation branch below maps that to
+    // the typed `duplicate-name` error). Checked ONLY on mode:"create" —
+    // mode:"update" repoints an EXISTING credential by id and can never
+    // collide with itself.
     if (args.mode === "create") {
-      // Brand-validate platformId before it reaches forPlatform (which requires
-      // the branded PlatformId type) — an invalid id surfaces here rather than
-      // later at CredentialSchema.safeParse, but the check is identical.
+      // Brand-validate platformId before it reaches CredentialSchema.safeParse
+      // — an invalid id surfaces here with a clear reason.
       const platformIdParse = PlatformIdSchema.safeParse(args.platformId)
       if (!platformIdParse.success) {
         return err({
@@ -475,21 +480,11 @@ export function persistOAuthTokens(
           reason: `invalid platformId: ${platformIdParse.error.issues.map((i) => i.message).join(", ")}`,
         })
       }
-      // list() (not forPlatform) — increment 42's name uniqueness is GLOBAL,
-      // so derivation needs every existing name, not just this platform's.
+      // list() — increment 42's name uniqueness is GLOBAL, so derivation
+      // needs every existing name, not just this platform's.
       const allResult = await repos.credentials.list()
       if (allResult.isErr()) {
         return err({ kind: "persist-failed", cause: allResult.error })
-      }
-      const duplicate = allResult.value.some(
-        (c) => c.platformId === platformIdParse.data && c.profileName === args.account,
-      )
-      if (duplicate) {
-        return err({
-          kind: "duplicate-account",
-          platformId: args.platformId,
-          account: args.account,
-        })
       }
       derivedName = deriveCredentialName(
         platformIdParse.data,
@@ -535,14 +530,13 @@ export function persistOAuthTokens(
       // repos.credentials.create's internal parse to be the only guard.
       const credentialParse = CredentialSchema.safeParse({
         id: newCredentialId(),
-        // derivedName is always set on this branch — the duplicate-account
-        // guard above (which also computes it) is unconditional for
-        // mode:"create". The `?? ""` fallback is unreachable defensive code;
-        // an empty-string name would fail CredentialNameSchema below anyway,
-        // surfacing as a clean invalid-input rather than a TypeScript-only guarantee.
+        // derivedName is always set on this branch — computed unconditionally
+        // above for mode:"create". The `?? ""` fallback is unreachable
+        // defensive code; an empty-string name would fail CredentialNameSchema
+        // below anyway, surfacing as a clean invalid-input rather than a
+        // TypeScript-only guarantee.
         name: derivedName ?? "",
         platformId: args.platformId,
-        profileName: args.account,
         kind: "oauth2",
         secretRef: accessRef,
         // Increment 45, Slice E — `providerId` no longer exists on
@@ -630,6 +624,13 @@ export function persistOAuthTokens(
         // delete failure; never let cleanup mask the original persist error.
         if (platformWasCreatedHere && platformBuild !== undefined) {
           await cleanupOrphanPlatform(args.repos, platformBuild.platform.id)
+        }
+        // Increment 46 (RC) — a `credentials_name_unique` violation is the DB
+        // backstop for the deleted duplicate-account guard: surface it as the
+        // typed, friendly `duplicate-name` error rather than the generic
+        // persist-failed.
+        if (createResult.error.kind === "constraint-violation") {
+          return err({ kind: "duplicate-name", name: credentialParse.data.name })
         }
         return err({ kind: "persist-failed", cause: createResult.error })
       }

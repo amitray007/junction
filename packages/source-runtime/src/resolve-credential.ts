@@ -89,7 +89,9 @@ export function resolveCredentialSecret(
     return ok({
       secret: secretResult.value,
       kind: credential.kind,
-      account: credential.profileName,
+      // Increment 46 — a credential's account identity IS its `name` now
+      // (Fable RA); `profileName` is gone.
+      account: credential.name,
     })
   }
 

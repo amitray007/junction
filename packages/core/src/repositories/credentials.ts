@@ -38,7 +38,6 @@ function rowToCredential(row: typeof credentials.$inferSelect): Credential {
     id: row.id,
     name: row.name,
     platformId: row.platformId,
-    profileName: row.profileName,
     kind: row.kind,
     secretRef: row.secretRef,
     oauthMeta: row.oauthMeta
@@ -59,7 +58,6 @@ export function createCredentialsRepo(db: Db) {
             id: validated.id,
             name: validated.name,
             platformId: validated.platformId,
-            profileName: validated.profileName,
             kind: validated.kind,
             secretRef: validated.secretRef,
             oauthMeta: validated.oauthMeta ? JSON.stringify(validated.oauthMeta) : null,
@@ -119,7 +117,7 @@ export function createCredentialsRepo(db: Db) {
 
     /**
      * Update a credential row's secretRef (used by rotateCredential).
-     * Only the secretRef column is modified; id, platformId, profileName, and kind
+     * Only the secretRef column is modified; id, platformId, and kind
      * are immutable through this path.
      */
     setSecretRef(id: string, newSecretRef: string): ResultAsync<Credential, DbError> {
@@ -135,34 +133,14 @@ export function createCredentialsRepo(db: Db) {
     },
 
     /**
-     * Update a credential row's profileName (the account label) in place — used
-     * by renameCredential. Only the profileName column is modified; id,
-     * platformId, kind, secretRef, and oauthMeta are untouched. Read-before-write
-     * so a not-found surfaces (and the full updated Credential is returned).
-     */
-    setProfileName(id: string, newProfileName: string): ResultAsync<Credential, DbError> {
-      try {
-        const found = fetchRowOrNotFound(db, id)
-        if (!found.ok) return errAsync(found.error)
-        db.update(credentials)
-          .set({ profileName: newProfileName })
-          .where(eq(credentials.id, id))
-          .run()
-        return okAsync(rowToCredential({ ...found.row, profileName: newProfileName }))
-      } catch (cause) {
-        return errAsync(mapDbError(cause))
-      }
-    },
-
-    /**
      * Update a credential row's `name` (the credential's SOLE identity,
-     * increment 42) in place — used by renameCredential's new identity-rename
-     * path. Only the name column is modified; id, platformId, profileName,
-     * kind, secretRef, and oauthMeta are untouched. Read-before-write so a
-     * not-found surfaces (and the full updated Credential is returned). A
-     * collision with the global `credentials_name_unique` index surfaces as
-     * `constraint-violation` via mapDbError — callers map that to a typed
-     * duplicate error (mirrors setProfileName's discipline).
+     * increment 42; the SOLE account label since increment 46 — `profileName`
+     * is gone) in place — used by renameCredential. Only the name column is
+     * modified; id, platformId, kind, secretRef, and oauthMeta are untouched.
+     * Read-before-write so a not-found surfaces (and the full updated
+     * Credential is returned). A collision with the global
+     * `credentials_name_unique` index surfaces as `constraint-violation` via
+     * mapDbError — callers map that to the typed `duplicate-name` error.
      */
     setName(id: string, newName: string): ResultAsync<Credential, DbError> {
       try {
@@ -179,13 +157,13 @@ export function createCredentialsRepo(db: Db) {
      * Update a credential row's platformId (bind an unlinked credential to a
      * platform, or re-point an already-linked one) — used by
      * bindCredentialToPlatform (increment 43). Only the platformId column is
-     * modified; id, profileName, kind, secretRef, and oauthMeta are untouched.
+     * modified; id, name, kind, secretRef, and oauthMeta are untouched.
      * Read-before-write so a not-found surfaces (and the full updated
      * Credential is returned). No schema change (increment 42 already made
-     * the column nullable) and NO uniqueness enforcement here — the
-     * duplicate-account guard is an APP-level check the caller
-     * (bindCredentialToPlatform) runs BEFORE calling this (see
-     * docs/futures/gotchas.md — migration 0011 dropped the DB-level unique).
+     * the column nullable) and NO uniqueness enforcement here — binding never
+     * touches `name` (increment 46, RC — the old duplicate-account guard is
+     * DELETED, not re-pointed; "same account on a platform" now collapses to
+     * "same name," globally DB-enforced by `credentials_name_unique`).
      */
     setPlatformId(id: string, platformId: string): ResultAsync<Credential, DbError> {
       try {

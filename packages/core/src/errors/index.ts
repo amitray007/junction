@@ -41,13 +41,17 @@ export type CredentialError =
   | { kind: "invalid-input"; reason: string }
   | { kind: "kind-incompatible"; requested: string; allowed: string[] }
   /**
-   * A credential with the same `{platformId, account}` already exists
-   * (increment 30.12 — the app-level duplicate-account guard; see
-   * `addCredential`). No DB migration: this is an application-level check,
-   * not a unique constraint — see docs/futures/gotchas.md for the deferred
-   * DB-level hardening.
+   * A credential with the same `name` already exists (increment 46 — the
+   * DB-enforced `credentials_name_unique` index, RC). RETIRES the increment
+   * 30.12 app-level `duplicate-account` kind: once a credential's account
+   * identity IS its `name` (Fable RA), "same account on a platform" collapses
+   * to "same name," globally DB-enforced — stronger than the old app-level
+   * guard, which had a documented read-then-write race. Surfaced by
+   * `addCredential`/`addStandaloneCredential`/`renameCredential` mapping the
+   * `credentials_name_unique` constraint violation (or a friendly pre-check)
+   * to this shape.
    */
-  | { kind: "duplicate-account"; platformId: string; account: string }
+  | { kind: "duplicate-name"; name: string }
   /**
    * Master-key rotation (increment 32.3) and vault export/import (increment 32.4) kinds —
    * hoisted here by the 32.2 foundation slice so the exhaustive switch in

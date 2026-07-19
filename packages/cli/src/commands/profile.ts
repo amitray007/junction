@@ -214,7 +214,7 @@ const showCommand = defineCommand({
   async run({ args }) {
     await withNamedProfile(args, async ({ json, profile, repos }) => {
       // Build source view: for each SourceRef, join platform + credential metadata.
-      // NEVER include secret or secretRef — only account label (credential.profileName).
+      // NEVER include secret or secretRef — only the account identity (credential.name).
       const sources: Array<{
         namespace: string
         platform: string
@@ -230,7 +230,7 @@ const showCommand = defineCommand({
           credentialAccount = "(none)"
         } else {
           const credResult = await repos.credentials.get(String(sr.credentialId))
-          credentialAccount = credResult.isOk() ? credResult.value.profileName : "(unknown)"
+          credentialAccount = credResult.isOk() ? credResult.value.name : "(unknown)"
         }
         sources.push({
           namespace: sr.toolNamespace,

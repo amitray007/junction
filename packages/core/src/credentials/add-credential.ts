@@ -70,11 +70,13 @@ export interface AddCredentialInput {
   /** FK → Platform */
   platformId: string
   /**
-   * Logical account label, e.g. "work", "personal", "client-acme".
-   * Stored as profileName in the Credential row (increment 42: WRITE-ONLY
-   * legacy — see CredentialSchema's profileName doc-comment).
+   * OPTIONAL (increment 46, Fable RA) — a name-derivation SEED, e.g. "work",
+   * "personal", "client-acme". A credential's account identity IS its `name`
+   * now; `account` is used ONLY when `name` is absent, to derive one
+   * (`<platformId>-<account>`, `-2`/`-3` suffixed on collision — see
+   * deriveCredentialName), then DISCARDED — it is never stored on the row.
    */
-  account: string
+  account?: string
   /**
    * The credential's identity slug (increment 42). OPTIONAL — callers that
    * don't take a user-supplied name (legacy CLI `credential add --account`
@@ -107,8 +109,9 @@ export interface AddCredentialInput {
 /**
  * Orchestrates the credential creation lifecycle:
  *
- * 1. Validate platformId and account — return a typed Err on invalid input
- *    (so bad input is caught BEFORE the secret is ever touched by the store).
+ * 1. Validate platformId (and an explicit `name`, if supplied) — return a
+ *    typed Err on invalid input (so bad input is caught BEFORE the secret is
+ *    ever touched by the store).
  * 2. Mint an opaque secretRef (ULID) — this is what the DB row stores.
  * 3. Persist the secret in the CredentialStore (keyring or encrypted-file).
  * 4. Insert a Credential DB row with only the secretRef (never the secret).
@@ -167,35 +170,23 @@ export function addCredential(
   if (!rawValid.ok) return errAsync(rawValid.error)
   const explicitName = rawValid.name
 
-  // One list() read serves BOTH the duplicate-account guard (platform-scoped
-  // subset) and name derivation (global uniqueness) — a single DB round-trip
-  // rather than two.
+  // One list() read serves name derivation (global uniqueness) — the
+  // increment 30.12 duplicate-account guard is GONE (increment 46, RC): once
+  // a credential's account identity IS its `name` (Fable RA), "same account
+  // on a platform" collapses to "same name," which the DB-level
+  // `credentials_name_unique` index (restored, RB) now enforces directly —
+  // stronger than the old app-level guard's documented read-then-write race.
   return credentialsRepo
     .list()
     .andThen((all): ResultAsync<Credential, CredentialError | DbError> => {
-      const existingForPlatform = all.filter((c) => c.platformId === platformParse.data)
-
-      // Duplicate-account guard (increment 30.12) — BEFORE the secret ever
-      // touches the store. Compares the EXACT stored `profileName` against the
-      // EXACT `input.account` as this call will store it (post-Zod-parse but
-      // otherwise untrimmed) — addCredential does NOT trim `account` today, so
-      // the guard must not trim either. Case-SENSITIVE by deliberate decision:
-      // profileName is case-preserving with no case rule at the store, so
-      // "Work" and "work" are legitimately distinct accounts.
-      const duplicateAccount = existingForPlatform.some((c) => c.profileName === input.account)
-      if (duplicateAccount) {
-        return errAsync({
-          kind: "duplicate-account" as const,
-          platformId: platformParse.data,
-          account: input.account,
-        })
-      }
-
       // Increment 42: derive a name when the caller didn't supply one — the
       // SAME rule migration 0011's backfill uses (see deriveCredentialName).
+      // Increment 46 (RA): `input.account` is now an OPTIONAL derivation
+      // seed — absent, it derives from the empty string (deriveCredentialName's
+      // empty-slug guard falls back to a valid literal).
       const existingNames = new Set(all.map((c) => c.name))
       const name =
-        explicitName ?? deriveCredentialName(platformParse.data, input.account, existingNames)
+        explicitName ?? deriveCredentialName(platformParse.data, input.account ?? "", existingNames)
 
       // Validate the full credential shape (defensive; CLI pre-validates, but
       // we must not trust the caller).
@@ -203,7 +194,6 @@ export function addCredential(
         id: newCredentialId(),
         name,
         platformId: platformParse.data,
-        profileName: input.account,
         kind: input.kind,
         secretRef: ulid(), // mint secretRef here so it's validated too
       })
@@ -219,16 +209,13 @@ export function addCredential(
         input.secret,
         store,
         credentialsRepo,
-        // DB-level backstop: the 30.12 app-level duplicate-ACCOUNT guard above
-        // already rejects most collisions before the store is touched, but a
-        // violation that slips past it (e.g. a concurrent create between the
-        // guard's read and the write) surfaces as SQLITE_CONSTRAINT via
-        // `credentials_name_unique`. This call always has platformId+account, so
-        // "duplicate-account" is the more actionable shape for its callers.
+        // DB-level backstop (increment 46, RC): a name collision — including
+        // a concurrent create racing this call's list() read — surfaces as
+        // SQLITE_CONSTRAINT via `credentials_name_unique`, mapped here to the
+        // typed, friendly `duplicate-name` error.
         (cred) => ({
-          kind: "duplicate-account" as const,
-          platformId: cred.platformId ?? "",
-          account: cred.profileName,
+          kind: "duplicate-name" as const,
+          name: cred.name,
         }),
       )
     })
@@ -242,9 +229,9 @@ export function addCredential(
  * failure, await a best-effort store.delete(secretRef) so no orphan secret
  * outlives a failed row, then propagate.
  *
- * The ONLY per-caller difference is how a unique-constraint violation is
- * surfaced (a name collision vs a duplicate-account), so that mapping is
- * injected as `onConstraintViolation`. A fresh-ULID PK collision would also map
+ * The ONLY per-caller difference is the exact `duplicate-name` shape each
+ * caller's `onConstraintViolation` produces, so that mapping is injected. A
+ * fresh-ULID PK collision would also map
  * to "constraint-violation" and get remapped — astronomically unlikely (26-char
  * Crockford ULID) and harmless. FK failures map to "in-use" separately, so they
  * never reach this branch.

@@ -22,7 +22,7 @@ import {
   ResultAsync,
 } from "@junction/core"
 import { withTempHome } from "@junction/core/testing"
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import { confirmThenBind, verifyThenBind } from "./bind-credential.js"
 import { verifyCredential } from "./verify-credential.js"
 
@@ -100,7 +100,6 @@ describe("verifyThenBind", () => {
         id: "cred-verify-ok",
         name: "standalone-verify-ok",
         platformId: null,
-        profileName: "standalone-verify-ok",
         kind: "env",
         secretRef: "ref-verify-ok",
       })
@@ -152,7 +151,6 @@ describe("verifyThenBind", () => {
         id: "cred-auth-failed",
         name: "standalone-auth-failed",
         platformId: null,
-        profileName: "standalone-auth-failed",
         kind: "env",
         secretRef: "ref-auth-failed",
       })
@@ -199,7 +197,6 @@ describe("verifyThenBind", () => {
         id: "cred-unreachable",
         name: "standalone-unreachable",
         platformId: null,
-        profileName: "standalone-unreachable",
         kind: "env",
         secretRef: "ref-unreachable",
       })
@@ -253,7 +250,6 @@ describe("verifyThenBind", () => {
         id: "cred-no-secret",
         name: "standalone-no-secret",
         platformId: null,
-        profileName: "standalone-no-secret",
         kind: "env",
         secretRef: "ref-that-resolves-to-nothing",
       })
@@ -303,7 +299,6 @@ describe("confirmThenBind", () => {
         id: "cred-confirm",
         name: "standalone-confirm",
         platformId: null,
-        profileName: "standalone-confirm",
         kind: "env",
         secretRef: "ref-confirm",
       })
@@ -333,7 +328,7 @@ describe("confirmThenBind", () => {
     })
   })
 
-  it("confirmThenBind still runs core's structural gates (duplicate-account refuses)", async () => {
+  it("increment 46 (RC): confirmThenBind no longer refuses on a same-account-label collision — binding never touches `name`, so a 2nd distinctly-named credential binds freely", async () => {
     await withTempHome(async () => {
       const paths = getPaths()
       const dbResult = await getDatabase(paths)
@@ -347,7 +342,6 @@ describe("confirmThenBind", () => {
         id: "cred-dup-a",
         name: "standalone-dup-a",
         platformId,
-        profileName: "default",
         kind: "env",
         secretRef: "ref-dup-a",
       })
@@ -357,7 +351,6 @@ describe("confirmThenBind", () => {
         id: "cred-dup-b",
         name: "standalone-dup-b",
         platformId: null,
-        profileName: "default",
         kind: "env",
         secretRef: "ref-dup-b",
       })
@@ -369,14 +362,14 @@ describe("confirmThenBind", () => {
         repos,
       })
 
-      expect(result.isErr()).toBe(true)
-      if (result.isErr()) {
-        expect(result.error.kind).toBe("duplicate-account")
-      }
+      expect(result.isOk()).toBe(true)
       expect(verifyCredential).not.toHaveBeenCalled()
 
       const reread = await repos.credentials.get("cred-dup-b")
-      if (reread.isOk()) expect(reread.value.platformId).toBeNull()
+      if (reread.isOk()) expect(reread.value.platformId).toBe(platformId)
+
+      const forPlatform = await repos.credentials.forPlatform(platformId as never)
+      if (forPlatform.isOk()) expect(forPlatform.value).toHaveLength(2)
     })
   })
 })

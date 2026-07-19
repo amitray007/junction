@@ -179,7 +179,6 @@ describe("deleteCustomDesign", () => {
         id: credentialId,
         name: "legacy-cred",
         platformId,
-        profileName: "work",
         kind: "oauth2",
         secretRef: "FAKE_REF_NEVER_EXPOSE",
         oauthMeta: {

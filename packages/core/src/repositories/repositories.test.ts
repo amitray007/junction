@@ -129,7 +129,6 @@ describe("repositories", () => {
         id: newCredentialId(),
         name: "work-1",
         platformId,
-        profileName: "work",
         kind: "api-key" as const,
         secretRef: "keyring://junction/ref_plat_del",
       })
@@ -246,7 +245,6 @@ describe("repositories", () => {
         id: newCredentialId(),
         name: "work-2",
         platformId,
-        profileName: "work",
         kind: "api-key" as const,
         secretRef: "keyring://junction/cred_abc",
       }
@@ -276,7 +274,6 @@ describe("repositories", () => {
         id: newCredentialId(),
         name: "work-3",
         platformId: platformId1,
-        profileName: "work",
         kind: "api-key" as const,
         secretRef: "ref1",
       })
@@ -284,7 +281,6 @@ describe("repositories", () => {
         id: newCredentialId(),
         name: "personal-4",
         platformId: platformId1,
-        profileName: "personal",
         kind: "api-key" as const,
         secretRef: "ref2",
       })
@@ -292,7 +288,6 @@ describe("repositories", () => {
         id: newCredentialId(),
         name: "work-5",
         platformId: platformId2,
-        profileName: "work",
         kind: "api-key" as const,
         secretRef: "ref3",
       })
@@ -318,7 +313,6 @@ describe("repositories", () => {
         id: credId,
         name: "work-6",
         platformId,
-        profileName: "work",
         kind: "api-key" as const,
         secretRef: "keyring://junction/cred_roundtrip",
       })
@@ -383,7 +377,6 @@ describe("repositories", () => {
         id: credId,
         name: "work-7",
         platformId,
-        profileName: "work",
         kind: "api-key" as const,
         secretRef: "keyring://junction/cred_cascade",
       })
@@ -457,7 +450,6 @@ describe("repositories", () => {
         id: credId,
         name: "work-8",
         platformId,
-        profileName: "work",
         kind: "api-key" as const,
         secretRef: "keyring://junction/cred_del_test",
       })
@@ -547,7 +539,6 @@ describe("repositories", () => {
         id: credId,
         name: "work-9",
         platformId,
-        profileName: "work",
         kind: "bearer" as const,
         secretRef: "ref_m0004_cred",
       })
@@ -628,7 +619,6 @@ describe("repositories", () => {
         id: newCredentialId(),
         name: "work-10",
         platformId,
-        profileName: "work",
         kind: "api-key" as const,
         secretRef: "keyring://junction/cred_abc",
       })
@@ -762,7 +752,6 @@ describe("repositories", () => {
         id: credId,
         name: "work-11",
         platformId,
-        profileName: "work",
         kind: "bearer" as const,
         secretRef: "ref_add_source_test",
       })
@@ -797,7 +786,6 @@ describe("repositories", () => {
         id: credId,
         name: "work-12",
         platformId,
-        profileName: "work",
         kind: "bearer" as const,
         secretRef: "ref_tool_filter",
       })
@@ -834,7 +822,6 @@ describe("repositories", () => {
         id: credId,
         name: "work-13",
         platformId,
-        profileName: "work",
         kind: "bearer" as const,
         secretRef: "ref_dup_ns",
       })
@@ -875,7 +862,6 @@ describe("repositories", () => {
         id: credId,
         name: "work-14",
         platformId,
-        profileName: "work",
         kind: "bearer" as const,
         secretRef: "ref_ns_diff_profile",
       })
@@ -974,7 +960,6 @@ describe("repositories", () => {
         id: credId,
         name: "work-15",
         platformId,
-        profileName: "work",
         kind: "bearer" as const,
         secretRef: "ref_credentialed_source",
       })
@@ -1008,7 +993,6 @@ describe("repositories", () => {
         id: credId,
         name: "work-16",
         platformId,
-        profileName: "work",
         kind: "bearer" as const,
         secretRef: "ref_restrict_test",
       })
@@ -1033,7 +1017,6 @@ describe("repositories", () => {
         id: credId,
         name: "work-17",
         platformId,
-        profileName: "work",
         kind: "bearer" as const,
         secretRef: "ref_null_exempt",
       })
@@ -1069,7 +1052,6 @@ describe("repositories", () => {
         id: credId,
         name: "work-18",
         platformId,
-        profileName: "work",
         kind: "bearer" as const,
         secretRef: "ref_rs_test",
       })
@@ -1118,7 +1100,6 @@ describe("repositories", () => {
         id: credId,
         name: "work-19",
         platformId,
-        profileName: "work",
         kind: "bearer" as const,
         secretRef: "ref_rs_cross",
       })
@@ -1156,7 +1137,6 @@ describe("repositories", () => {
         id: credId,
         name: "work-20",
         platformId,
-        profileName: "work",
         kind: "bearer" as const,
         secretRef: "ref_sse_test",
       })
@@ -1185,7 +1165,6 @@ describe("repositories", () => {
         id: credId,
         name: "work-21",
         platformId,
-        profileName: "work",
         kind: "bearer" as const,
         secretRef: "ref_sse_re",
       })
@@ -1229,7 +1208,6 @@ describe("repositories", () => {
         id: credId,
         name: "work-22",
         platformId,
-        profileName: "work",
         kind: "bearer" as const,
         secretRef: "ref_idempotent_disable",
       })
@@ -1265,7 +1243,6 @@ describe("repositories", () => {
         id: credId,
         name: "work-23",
         platformId,
-        profileName: "work",
         kind: "bearer" as const,
         secretRef: "ref_ssf_test",
       })
@@ -1631,7 +1608,6 @@ describe("repositories", () => {
         id: newCredentialId(),
         name: "work-24",
         platformId,
-        profileName: "work",
         kind: "bearer",
         secretRef: "ref-verify-1",
       })
@@ -1692,7 +1668,6 @@ describe("repositories", () => {
         id: newCredentialId(),
         name: "work-25",
         platformId,
-        profileName: "work",
         kind: "oauth2",
         secretRef: "ref-access-initial",
       })
@@ -1912,7 +1887,6 @@ describe("repositories", () => {
         id: credId,
         name: "work-26",
         platformId,
-        profileName: "work",
         kind: "bearer" as const,
         secretRef,
       })
@@ -1947,7 +1921,6 @@ describe("repositories", () => {
         id: credId,
         name: "work-27",
         platformId,
-        profileName: "work",
         kind: "bearer" as const,
         secretRef,
       })
@@ -1997,7 +1970,6 @@ describe("repositories", () => {
         id: credId,
         name: "work-28",
         platformId,
-        profileName: "work",
         kind: "bearer" as const,
         secretRef,
       })
@@ -2045,7 +2017,6 @@ describe("repositories", () => {
         id: credId,
         name: "work-29",
         platformId,
-        profileName: "work",
         kind: "bearer" as const,
         secretRef,
       })
@@ -2082,7 +2053,6 @@ describe("repositories", () => {
         id: credId,
         name: "work-30",
         platformId,
-        profileName: "work",
         kind: "bearer" as const,
         secretRef: "ref_dup_create",
       })
@@ -2140,7 +2110,6 @@ describe("repositories", () => {
         id: credId,
         name: "work-31",
         platformId,
-        profileName: "work",
         kind: "bearer" as const,
         secretRef: "ref_legacy_sr",
       })
@@ -2202,7 +2171,6 @@ describe("repositories", () => {
         id: credId,
         name: "work-32",
         platformId,
-        profileName: "work",
         kind: "bearer" as const,
         secretRef: "ref_corrupt_filter",
       })
@@ -3075,7 +3043,6 @@ describe("migration 0011 — credential standalone identity", () => {
         id: newCredentialId(),
         name: "gh-fresh",
         platformId,
-        profileName: "work",
         kind: "bearer" as const,
         secretRef: "ref_fresh",
       })
@@ -3410,6 +3377,193 @@ describe("migration 0012 — platform oauth_provider_id backfill", () => {
       const fetched = await repos.platforms.get(platformId)
       expect(fetched.isOk()).toBe(true)
       if (fetched.isOk()) expect(fetched.value.oauthProviderId).toBe("github")
+    } finally {
+      if (prevHome === undefined) delete process.env.JUNCTION_HOME
+      else process.env.JUNCTION_HOME = prevHome
+      await rm(home, { recursive: true, force: true })
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Migration 0014 — increment 46 Slice A (Fable RA-RE): drops
+// `credentials.profile_name`. Table-rebuild (mirrors 0011): snapshot every
+// row's (id, profile_name) into `_profilename_drop_backup` BEFORE the drop,
+// rebuild without the column, recreate `credentials_name_unique` in the SAME
+// transaction — no window where the table exists without its unique index.
+// No name backfill, no dedup pass (RB adds no new constraint — the existing
+// UNIQUE(name) from migration 0011 already covers it).
+// ---------------------------------------------------------------------------
+
+describe("migration 0014 — drop credential profile_name", () => {
+  const PRE_0014_TAGS = [
+    "0000_odd_amazoness",
+    "0001_illegal_kingpin",
+    "0002_natural_lady_bullseye",
+    "0003_add_openapi_column",
+    "0004_neat_spirit",
+    "0005_confused_swordsman",
+    "0006_violet_kinsey_walden",
+    "0007_burly_elektra",
+    "0008_sticky_marvel_boy",
+    "0009_dear_yellowjacket",
+    "0010_gifted_namor",
+    "0011_credential_standalone_identity",
+    "0012_platform_oauth_provider_id",
+    "0013_drop_oauth_meta_provider_id",
+  ]
+
+  it("snapshots every row's (id, profile_name) into _profilename_drop_backup BEFORE the drop, rebuilds credentials WITHOUT profile_name, and keeps every other column faithful", async () => {
+    const rawDb = new Database(":memory:")
+    try {
+      rawDb.pragma("foreign_keys = ON")
+      for (const tag of PRE_0014_TAGS) await applyMigration(rawDb, tag)
+
+      const idA = ulid(1_700_000_050_000)
+      // Adversarial row: an EXPLICIT-name credential where `name` was NOT
+      // derived from profile_name (RE's divergence path 1) — profile_name
+      // "alt-account" has nothing to do with name "custom-explicit-name".
+      const idB = ulid(1_700_000_051_000)
+      rawDb.exec(`
+        INSERT INTO platforms (id, kind, display_name) VALUES ('gh', 'mcp', 'GitHub');
+        INSERT INTO credentials (id, name, platform_id, profile_name, kind, secret_ref, oauth_meta, last_verified_at, last_verify_result)
+          VALUES ('${idA}', 'gh-work', 'gh', 'work', 'bearer', 'ref_a', NULL, 1700000000000, 'ok');
+        INSERT INTO credentials (id, name, platform_id, profile_name, kind, secret_ref)
+          VALUES ('${idB}', 'custom-explicit-name', 'gh', 'alt-account', 'api-key', 'ref_b');
+      `)
+
+      await expect(
+        applyMigration(rawDb, "0014_drop_credential_profile_name"),
+      ).resolves.toBeUndefined()
+
+      // 1. The recovery snapshot is populated with EVERY row's (id, profile_name),
+      // written BEFORE the drop — including the adversarial explicit-name row,
+      // which proves the snapshot captures the REAL profile_name, not one
+      // re-derived from name (RE: profileName is not reconstructable from name).
+      const backupRows = rawDb
+        .prepare("SELECT id, profile_name FROM _profilename_drop_backup ORDER BY id")
+        .all() as Array<{ id: string; profile_name: string }>
+      const backupById = new Map(backupRows.map((r) => [r.id, r.profile_name]))
+      expect(backupById.get(idA)).toBe("work")
+      expect(backupById.get(idB)).toBe("alt-account")
+      expect(backupRows).toHaveLength(2)
+
+      // 2. The rebuilt `credentials` table has NO profile_name column.
+      const cols = rawDb
+        .prepare("SELECT name FROM pragma_table_info('credentials')")
+        .all() as Array<{ name: string }>
+      expect(cols.map((c) => c.name)).not.toContain("profile_name")
+      expect(cols.map((c) => c.name)).toEqual(
+        expect.arrayContaining([
+          "id",
+          "name",
+          "platform_id",
+          "kind",
+          "secret_ref",
+          "oauth_meta",
+          "last_verified_at",
+          "last_verify_result",
+        ]),
+      )
+
+      // 3. Every OTHER column survived the rebuild faithfully.
+      const rows = rawDb
+        .prepare(
+          "SELECT id, name, platform_id, kind, secret_ref, last_verified_at, last_verify_result FROM credentials ORDER BY id",
+        )
+        .all() as Array<{
+        id: string
+        name: string
+        platform_id: string
+        kind: string
+        secret_ref: string
+        last_verified_at: number | null
+        last_verify_result: string | null
+      }>
+      const byId = new Map(rows.map((r) => [r.id, r]))
+      expect(byId.get(idA)).toMatchObject({
+        name: "gh-work",
+        platform_id: "gh",
+        kind: "bearer",
+        secret_ref: "ref_a",
+        last_verified_at: 1700000000000,
+        last_verify_result: "ok",
+      })
+      expect(byId.get(idB)).toMatchObject({
+        name: "custom-explicit-name",
+        platform_id: "gh",
+        kind: "api-key",
+        secret_ref: "ref_b",
+      })
+
+      // 4. credentials_name_unique still exists (recreated in the SAME
+      // transaction — RB: no new index, the existing global UNIQUE(name) IS
+      // the restored invariant).
+      const indexes = rawDb
+        .prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='credentials'")
+        .all() as Array<{ name: string }>
+      expect(indexes.map((i) => i.name)).toContain("credentials_name_unique")
+
+      // 5. It still REJECTS a duplicate name.
+      expect(() =>
+        rawDb.exec(
+          `INSERT INTO credentials (id, name, platform_id, kind, secret_ref)
+             VALUES ('${ulid(1_700_000_052_000)}', 'gh-work', 'gh', 'bearer', 'ref_new_dup')`,
+        ),
+      ).toThrow(/UNIQUE constraint failed/)
+
+      // 6. Every migrated row parses via CredentialSchema (readable, not
+      // bricked) — the boundary validation rowToCredential runs.
+      const full = rawDb
+        .prepare("SELECT id, name, platform_id, kind, secret_ref FROM credentials")
+        .all() as Array<Record<string, unknown>>
+      for (const r of full) {
+        const parsed = CredentialSchema.safeParse({
+          id: r.id,
+          name: r.name,
+          platformId: r.platform_id,
+          kind: r.kind,
+          secretRef: r.secret_ref,
+        })
+        expect(parsed.success).toBe(true)
+      }
+    } finally {
+      rawDb.close()
+    }
+  })
+
+  it("the recovery snapshot is NEVER read by app code — rowToCredential ignores it, a credential round-trips through the repo layer post-migration", async () => {
+    const home = await mkdtemp(join(tmpdir(), "junction-m14-fresh-test-"))
+    const prevHome = process.env.JUNCTION_HOME
+    process.env.JUNCTION_HOME = home
+    try {
+      const dbResult = await getDatabase(getPaths())
+      if (dbResult.isErr()) throw dbResult.error
+      const repos = createRepositories(dbResult.value)
+
+      const platformId = newPlatformId()
+      await repos.platforms.create({ id: platformId, kind: "mcp" as const, displayName: "GitHub" })
+      const created = await repos.credentials.create({
+        id: newCredentialId(),
+        name: "gh-m14-fresh",
+        platformId,
+        kind: "bearer" as const,
+        secretRef: "ref_m14_fresh",
+      })
+      expect(created.isOk()).toBe(true)
+      if (created.isOk()) {
+        expect(created.value.name).toBe("gh-m14-fresh")
+        expect(created.value.platformId).toBe(platformId)
+        // No profileName field on the returned Credential at all.
+        expect(Object.hasOwn(created.value, "profileName")).toBe(false)
+      }
+
+      // A fresh DB never even creates _profilename_drop_backup rows (nothing
+      // pre-existed to snapshot) — table exists (migration ran) but is empty.
+      const backupRows = dbResult.value.$client
+        .prepare("SELECT COUNT(*) AS n FROM _profilename_drop_backup")
+        .get() as { n: number }
+      expect(backupRows.n).toBe(0)
     } finally {
       if (prevHome === undefined) delete process.env.JUNCTION_HOME
       else process.env.JUNCTION_HOME = prevHome

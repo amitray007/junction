@@ -61,8 +61,8 @@ function describeCredentialError(e: CredentialError): string {
       return e.reason
     case "kind-incompatible":
       return `kind "${e.requested}" not accepted; allowed: ${e.allowed.join(", ")}`
-    case "duplicate-account":
-      return `duplicate account for ${e.platformId}/${e.account}`
+    case "duplicate-name":
+      return `a credential named "${e.name}" already exists`
     case "rotate-refused":
       return e.reason
     case "export-failed":
@@ -108,6 +108,25 @@ export interface ImportSummary {
 }
 
 type ManifestCredential = VaultManifest["credentials"][number]
+
+/**
+ * The manifest credential's EFFECTIVE identity (increment 46, Fable RD): a
+ * pre-46 archive already carries `name` (increment 42+) and that wins
+ * outright; a pre-42 archive has no `name` at all, so one is DERIVED from
+ * `account` as the seed (the `label` role of deriveCredentialName's 2nd
+ * param — see derive-name.ts). `existingNames` is passed in by the caller so
+ * the SAME derivation (and its collision-suffixing) can be evaluated against
+ * whatever "already claimed" set is appropriate for that call site (a DB
+ * read for the real collision check, an empty set for strict's shape-only
+ * prevalidation — mirrors buildCandidateForValidation's existing pattern).
+ */
+function effectiveCredentialName(
+  mc: Pick<ManifestCredential, "name" | "account">,
+  platformId: string,
+  existingNames: ReadonlySet<string>,
+): string {
+  return mc.name ?? deriveCredentialName(platformId, mc.account, existingNames)
+}
 
 /**
  * Import a `.jvlt` archive: decrypt (wrong passphrase / tamper → generic import-failed,
@@ -325,16 +344,25 @@ async function runImport(
       continue
     }
 
-    const existingForPlatform = await repos.credentials.forPlatform(platform.id)
-    if (existingForPlatform.isErr()) {
+    // Increment 46 (Fable RD) — the collision check is a GLOBAL name match,
+    // not a per-platform account match: a credential's account identity IS
+    // its `name` (RA), globally unique via `credentials_name_unique` (RB).
+    // A per-platform check would let a credential pass here and then explode
+    // on that DB constraint at write — turning a clean skip/overwrite
+    // decision into an opaque failure. `repos.credentials.list()` (not
+    // `forPlatform`) is the read this now requires.
+    const allExisting = await repos.credentials.list()
+    if (allExisting.isErr()) {
       summary.credentials.failed.push({
         platformId: mcPlatformId,
         account: mc.account,
-        reason: `failed to check for collision: ${describeDbError(existingForPlatform.error)}`,
+        reason: `failed to check for collision: ${describeDbError(allExisting.error)}`,
       })
       continue
     }
-    const collision = existingForPlatform.value.find((c) => c.profileName === mc.account)
+    const existingNames = new Set(allExisting.value.map((c) => c.name))
+    const effectiveName = effectiveCredentialName(mc, mcPlatformId, existingNames)
+    const collision = allExisting.value.find((c) => c.name === effectiveName)
 
     if (collision !== undefined) {
       if (onCollision === "error") {
@@ -603,7 +631,16 @@ async function prevalidateStrict(
   }
 
   // ---- credentials: shape, kind-compat, file cap, archive-internal dups, DB collisions ----
-  const seenAccounts = new Set<string>()
+  // Increment 46 (Fable RD) — keyed by EFFECTIVE NAME, not [platformId, account]:
+  // the credential's real identity (and the DB's actual uniqueness invariant,
+  // `credentials_name_unique`) is `name`. Each entry's effective name is
+  // derived against an EMPTY set (mirrors buildCandidateForValidation's
+  // shape-only derivation) — NOT the accumulating `seenNames` set, which
+  // would feed deriveCredentialName's OWN collision-suffixing and mask a
+  // true duplicate as a `-2`-suffixed near-miss instead of catching it.
+  // `seenNames` is used ONLY to detect the duplicate, never to influence
+  // derivation.
+  const seenNames = new Set<string>()
   for (const mc of manifest.credentials) {
     const label = `${mc.platformId ?? "(unlinked)"}/${mc.account}`
 
@@ -629,17 +666,14 @@ async function prevalidateStrict(
       })
     }
 
-    // JSON-array key, NOT a delimiter-joined string — platform ids/accounts may
-    // themselves contain any delimiter we could pick (("a b","c") vs ("a","b c")
-    // would spuriously collide under a space-join).
-    const dupKey = JSON.stringify([mcPlatformId, mc.account])
-    if (seenAccounts.has(dupKey)) {
+    const effectiveName = effectiveCredentialName(mc, mcPlatformId, new Set())
+    if (seenNames.has(effectiveName)) {
       return err({
         kind: "import-failed",
         reason: `archive contains a duplicate credential for ${label}`,
       })
     }
-    seenAccounts.add(dupKey)
+    seenNames.add(effectiveName)
 
     const candidateResult = buildCandidateForValidation(mc, platform)
     if (candidateResult.isErr()) {
@@ -671,14 +705,16 @@ async function prevalidateStrict(
     }
 
     if (onCollision === "error") {
-      const existingForPlatform = await repos.credentials.forPlatform(platform.id)
-      if (existingForPlatform.isErr()) {
+      // Global name match (RD) — mirrors runImport's collision check, not a
+      // per-platform `forPlatform` sweep (see the comment there for why).
+      const allExisting = await repos.credentials.list()
+      if (allExisting.isErr()) {
         return err({
           kind: "import-failed",
-          reason: `failed to check for collision on ${label}: ${describeDbError(existingForPlatform.error)}`,
+          reason: `failed to check for collision on ${label}: ${describeDbError(allExisting.error)}`,
         })
       }
-      const collision = existingForPlatform.value.find((c) => c.profileName === mc.account)
+      const collision = allExisting.value.find((c) => c.name === effectiveName)
       if (collision !== undefined) {
         return err({ kind: "import-failed", reason: `credential ${label} already exists` })
       }
@@ -752,14 +788,16 @@ function buildCandidateForValidation(
   // validate SHAPE here (empty existing-names set — TRUE global uniqueness is
   // re-checked at the real DB write in phase 2, which strict's journal/
   // compensation machinery already covers via the constraint-violation path).
-  const candidateName = mc.name ?? deriveCredentialName(platform.id, mc.account, new Set())
+  // Increment 46 (Fable RD) — `profileName` is gone from CredentialSchema;
+  // `account` now feeds ONLY the name-derivation seed (effectiveCredentialName),
+  // never a stored field.
+  const candidateName = effectiveCredentialName(mc, platform.id, new Set())
 
   if (mc.kind !== "oauth2") {
     const parsed = CredentialSchema.safeParse({
       id: newCredentialId(),
       name: candidateName,
       platformId: platform.id,
-      profileName: mc.account,
       kind: mc.kind,
       secretRef: newCredentialId(),
     })
@@ -773,7 +811,6 @@ function buildCandidateForValidation(
     id: newCredentialId(),
     name: candidateName,
     platformId: platform.id,
-    profileName: mc.account,
     kind: "oauth2",
     secretRef: newCredentialId(),
     oauthMeta: {
@@ -1064,8 +1101,8 @@ async function addAndRecord(
 
 function describeAddError(e: { kind: string } & Record<string, unknown>): string {
   switch (e.kind) {
-    case "duplicate-account":
-      return "duplicate account (unexpected — collision was already checked)"
+    case "duplicate-name":
+      return "duplicate name (unexpected — collision was already checked)"
     case "kind-incompatible":
       return `kind "${String(e.requested)}" not accepted for this platform`
     case "invalid-input":
@@ -1117,7 +1154,6 @@ async function addOAuthImportedCredential(
     id,
     name,
     platformId,
-    profileName: mc.account,
     kind: "oauth2",
     secretRef,
     oauthMeta: {

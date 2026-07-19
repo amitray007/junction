@@ -2,8 +2,9 @@
 // bindCredentialToPlatform — associate an existing (typically unlinked)
 // credential with a platform (increment 43, Phase 2 of
 // docs/specs/2026-07-17-credential-platform-normalization.md). This is
-// STRUCTURAL policy only — not-found, kind-compat, duplicate-account — plus
-// the write. It does NOT verify the credential's secret against the target
+// STRUCTURAL policy only — not-found, kind-compat — plus the write
+// (increment 46 dropped the duplicate-account guard, RC). It does NOT verify
+// the credential's secret against the target
 // platform: core is HTTP-free and must never import verifyCredential (that
 // lives in @junction/source-runtime, one-way dependency). The verify-then-
 // commit wrapper (source-runtime's verifyThenBind/confirmThenBind) calls this
@@ -34,13 +35,13 @@ import { compatibleCredentialKinds, isKindAccepted } from "./kind-compat.js"
  *   3. kind-incompatible — the credential's `kind` isn't accepted by the
  *                          target platform's kind-compat matrix (the SAME
  *                          isKindAccepted gate addCredential uses).
- *   4. duplicate-account — another credential already bound to this platform
- *                          shares the EXACT (case-sensitive, untrimmed)
- *                          profileName (the app-level guard; see
- *                          docs/futures/gotchas.md — migration 0011 dropped
- *                          the DB-level unique, so every platformId/
- *                          profileName-mutating op must carry this manually).
- *   5. write             — credentialsRepo.setPlatformId(id, platformId).
+ *   4. write             — credentialsRepo.setPlatformId(id, platformId).
+ *
+ * Increment 46 (RC) — the old app-level duplicate-account guard (gate 4) is
+ * DELETED, not re-pointed: binding never touches `name`, so there is no
+ * "same account on this platform" concept left to check here — a
+ * credential's global `name` uniqueness (enforced by `credentials_name_unique`)
+ * is orthogonal to which platform it's bound to.
  *
  * No plaintext secret is touched or read here — this only repoints a DB row.
  */
@@ -50,8 +51,7 @@ export function bindCredentialToPlatform(
   platformId: string,
 ): ResultAsync<Credential, CredentialError | DbError> {
   // Validate + brand platformId up front (mirrors addCredential) — a bad id
-  // is caught before either repo is touched, and forPlatform below needs the
-  // branded PlatformId type.
+  // is caught before either repo is touched.
   const platformIdParse = PlatformIdSchema.safeParse(platformId)
   if (!platformIdParse.success) {
     return errAsync({
@@ -59,7 +59,6 @@ export function bindCredentialToPlatform(
       reason: `invalid platformId: ${platformIdParse.error.issues.map((i) => i.message).join(", ")}`,
     })
   }
-  const brandedPlatformId = platformIdParse.data
 
   return deps.credentialsRepo.get(id).andThen((credential) =>
     deps.platformsRepo.get(platformId).andThen((platform) => {
@@ -71,28 +70,7 @@ export function bindCredentialToPlatform(
         })
       }
 
-      return deps.credentialsRepo
-        .forPlatform(brandedPlatformId)
-        .andThen((existingForPlatform): ResultAsync<Credential, CredentialError | DbError> => {
-          // Same exact-match comparison as addCredential (add-credential.ts)
-          // and renameCredential (rename-credential.ts): case-sensitive,
-          // untrimmed. No own-row-on-platform to exclude here — the
-          // credential being bound is, by definition, not yet on this
-          // platform (or is being re-pointed from elsewhere), so unlike
-          // renameCredential there is no "rename to own label" no-op case.
-          const duplicateAccount = existingForPlatform.some(
-            (c) => c.profileName === credential.profileName,
-          )
-          if (duplicateAccount) {
-            return errAsync({
-              kind: "duplicate-account" as const,
-              platformId,
-              account: credential.profileName,
-            })
-          }
-
-          return deps.credentialsRepo.setPlatformId(id, platformId)
-        })
+      return deps.credentialsRepo.setPlatformId(id, platformId)
     }),
   )
 }

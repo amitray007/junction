@@ -486,7 +486,6 @@ describe("platform-mutations.server", () => {
         id: newCredentialId(),
         name: "acct-14",
         platformId,
-        profileName: "acct",
         kind: "bearer",
         secretRef: "keyring://junction/ref_plat_in_use",
       })
@@ -823,14 +822,13 @@ describe("platform-mutations.server", () => {
     }
 
     /** An UNLINKED (platformId: null) "env" credential — listUnlinked's target row shape. */
-    async function seedUnlinkedCredential(profileName = "default", name = "unlinked-cred") {
+    async function seedUnlinkedCredential(name = "unlinked-cred") {
       const repos = await makeRepos(tmpHome)
       const id = newCredentialId()
       await repos.credentials.create({
         id,
         name,
         platformId: null,
-        profileName,
         kind: "env",
         secretRef: `keyring://junction/ref_${name}`,
       })
@@ -838,7 +836,7 @@ describe("platform-mutations.server", () => {
     }
 
     it("listUnlinkedCredentials returns metadata only — NO secret/secretRef field", async () => {
-      await seedUnlinkedCredential("default", "unlinked-a")
+      await seedUnlinkedCredential("unlinked-a")
       const result = await listUnlinkedCredentials()
       expect(result.length).toBeGreaterThan(0)
       for (const c of result) {
@@ -855,7 +853,6 @@ describe("platform-mutations.server", () => {
         id: newCredentialId(),
         name: "linked-cred",
         platformId,
-        profileName: "default",
         kind: "env",
         secretRef: "keyring://junction/ref_linked",
       })
@@ -864,13 +861,12 @@ describe("platform-mutations.server", () => {
     })
 
     it("listUnlinkedCredentials(kind) filters by kind", async () => {
-      await seedUnlinkedCredential("default", "env-cred")
+      await seedUnlinkedCredential("env-cred")
       const repos = await makeRepos(tmpHome)
       await repos.credentials.create({
         id: newCredentialId(),
         name: "bearer-cred",
         platformId: null,
-        profileName: "default",
         kind: "bearer",
         secretRef: "keyring://junction/ref_bearer",
       })
@@ -929,7 +925,6 @@ describe("platform-mutations.server", () => {
         id,
         name: "api-key-cred",
         platformId: null,
-        profileName: "default",
         kind: "api-key",
         secretRef: "keyring://junction/ref_api_key",
       })
@@ -943,28 +938,27 @@ describe("platform-mutations.server", () => {
       expect(result.error).toMatch(/not accepted/i)
     })
 
-    it("duplicate-account: a second credential with the SAME profileName on the SAME platform is refused (not a silent overwrite)", async () => {
+    it("increment 46 (RC): binding never touches `name` — a second, differently-named credential binds to the SAME platform fine (the old platform-scoped duplicate-account guard is deleted; only global name-uniqueness, enforced at ADD time, remains)", async () => {
       const platformId = await seedCliPlatform()
-      const firstId = await seedUnlinkedCredential("default", "first-cred")
+      const firstId = await seedUnlinkedCredential("first-cred")
       const firstBind = await mutateBindCredentialToPlatform({
         credentialId: firstId,
         platformId,
       })
       expect(firstBind.ok).toBe(true)
 
-      const secondId = await seedUnlinkedCredential("default", "second-cred")
+      const secondId = await seedUnlinkedCredential("second-cred")
       const secondBind = await mutateBindCredentialToPlatform({
         credentialId: secondId,
         platformId,
       })
-      expect(secondBind.ok).toBe(false)
-      if (secondBind.ok) throw new Error("expected error")
-      if (!("error" in secondBind)) throw new Error("expected an error message, not verifyFailed")
-      expect(secondBind.error).toMatch(/already connected/i)
+      expect(secondBind.ok).toBe(true)
 
-      // The second credential is STILL unlinked — no partial/silent write.
+      // Both credentials are now linked — no platform-scoped collision exists
+      // post-46 (binding never touches `name`).
       const stillUnlinked = await listUnlinkedCredentials()
-      expect(stillUnlinked.some((c) => c.id === secondId)).toBe(true)
+      expect(stillUnlinked.some((c) => c.id === firstId)).toBe(false)
+      expect(stillUnlinked.some((c) => c.id === secondId)).toBe(false)
     })
   })
 })

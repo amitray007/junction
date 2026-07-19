@@ -154,7 +154,7 @@ function resolveCredentials(
 
   const step = async (): Promise<StepResult> => {
     for (const cred of allCredentials) {
-      const label = `${cred.platformId ?? "(unlinked)"}/${cred.profileName}`
+      const label = `${cred.platformId ?? "(unlinked)"}/${cred.name}`
 
       // Increment 42 — an UNLINKED credential (platformId: null) has no
       // platform to resolve or collision-check; skip straight to the secret
@@ -165,7 +165,7 @@ function resolveCredentials(
           if (skipMissing) {
             skipped.push({
               platformId: cred.platformId,
-              account: cred.profileName,
+              account: cred.name,
               reason: "references a missing platform",
             })
             continue
@@ -184,7 +184,7 @@ function resolveCredentials(
         if (skipMissing) {
           skipped.push({
             platformId: cred.platformId,
-            account: cred.profileName,
+            account: cred.name,
             reason: "secret missing from store",
           })
           continue
@@ -212,7 +212,7 @@ function resolveCredentials(
             if (skipMissing) {
               skipped.push({
                 platformId: cred.platformId,
-                account: cred.profileName,
+                account: cred.name,
                 reason: `oauth2 ${field} secret missing from store`,
               })
               skipThisCredential = true
@@ -235,11 +235,12 @@ function resolveCredentials(
       manifestCredentials.push({
         name: cred.name,
         ...(cred.platformId !== null ? { platformId: cred.platformId } : {}),
-        // account stays required in the manifest (ManifestCredentialSchema) —
-        // an unlinked credential has no meaningful account label, so `name`
-        // (its actual identity) fills the slot instead of the meaningless
-        // write-only profileName.
-        account: cred.platformId !== null ? cred.profileName : cred.name,
+        // account stays required in the manifest (ManifestCredentialSchema,
+        // schema v1 unchanged) — increment 46 (Fable RD) collapses the old
+        // linked/unlinked ternary: a credential's account identity IS its
+        // `name` now (RA), so every credential (linked or not) writes
+        // `account: cred.name`.
+        account: cred.name,
         kind: cred.kind,
         ...(cred.oauthMeta !== undefined
           ? {

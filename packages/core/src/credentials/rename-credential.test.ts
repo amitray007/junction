@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// renameCredential tests.
+// renameCredential tests (re-pointed onto `name`, increment 46 — Fable RA).
 //
 // Coverage:
-//   (a) happy path — profileName changes; id/platformId/kind/secretRef stable;
+//   (a) happy path — `name` changes; id/platformId/kind/secretRef stable;
 //       the secret still resolves under the SAME secretRef (rename touches no ref).
-//   (b) empty/whitespace-only account → typed invalid-input error, no write.
+//   (b) invalid name (fails CredentialNameSchema) → typed invalid-input error, no write.
 //   (c) trims surrounding whitespace before persisting.
 //   (d) unknown credentialId → typed not-found error.
 //   (e) oauth-shaped credential (oauthMeta present) — oauthMeta is untouched.
+//   (f)/(g) duplicate-name guard (now GLOBAL, not per-platform — increment 46, RC).
+//   (h) two different platforms' credentials still can't share a name (global uniqueness).
 
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -87,7 +89,7 @@ describe("renameCredential", () => {
     return String(result.value.id)
   }
 
-  it("(a) renames the account label in place, leaving id/platform/kind/secretRef stable + secret resolvable", async () => {
+  it("(a) renames the identity `name` in place, leaving id/platform/kind/secretRef stable + secret resolvable", async () => {
     const id = await seedCredential("work")
     const before = (await repos.credentials.get(id))._unsafeUnwrap()
 
@@ -98,7 +100,7 @@ describe("renameCredential", () => {
     expect(result.isOk()).toBe(true)
     const updated = result._unsafeUnwrap()
 
-    expect(updated.profileName).toBe("work-primary")
+    expect(updated.name).toBe("work-primary")
     expect(updated.id).toBe(before.id)
     expect(updated.platformId).toBe(before.platformId)
     expect(updated.kind).toBe(before.kind)
@@ -108,27 +110,30 @@ describe("renameCredential", () => {
     expect(secret).toBe("the-secret")
     // Persisted, not just returned.
     const reread = (await repos.credentials.get(id))._unsafeUnwrap()
-    expect(reread.profileName).toBe("work-primary")
+    expect(reread.name).toBe("work-primary")
   })
 
-  it("(b) rejects an empty account with typed invalid-input and writes nothing", async () => {
+  it("(b) rejects an invalid name with typed invalid-input and writes nothing", async () => {
     const id = await seedCredential("work")
-    const result = await renameCredential({ credentialId: id, account: "   " }, repos.credentials)
+    const result = await renameCredential(
+      { credentialId: id, account: "Not A Valid Slug!" },
+      repos.credentials,
+    )
     expect(result.isErr()).toBe(true)
     const err = result._unsafeUnwrapErr()
     expect(err.kind).toBe("invalid-input")
     // Unchanged.
     const reread = (await repos.credentials.get(id))._unsafeUnwrap()
-    expect(reread.profileName).toBe("work")
+    expect(reread.name).not.toBe("Not A Valid Slug!")
   })
 
   it("(c) trims surrounding whitespace before persisting", async () => {
     const id = await seedCredential("work")
     const result = await renameCredential(
-      { credentialId: id, account: "  personal  " },
+      { credentialId: id, account: "  personal-renamed  " },
       repos.credentials,
     )
-    expect(result._unsafeUnwrap().profileName).toBe("personal")
+    expect(result._unsafeUnwrap().name).toBe("personal-renamed")
   })
 
   it("(d) unknown credentialId → typed not-found error", async () => {
@@ -148,11 +153,9 @@ describe("renameCredential", () => {
         id: `${platformId}-oauth-cred`,
         name: "oauth-work",
         platformId,
-        profileName: "work",
         kind: "oauth2",
         secretRef: "ref-access",
         oauthMeta: {
-          providerId: "github",
           refreshTokenRef: "ref-refresh",
           clientIdRef: "ref-client-id",
           clientSecretRef: "ref-client-secret",
@@ -162,56 +165,62 @@ describe("renameCredential", () => {
     )._unsafeUnwrap()
 
     const result = await renameCredential(
-      { credentialId: String(created.id), account: "work-renamed" },
+      { credentialId: String(created.id), account: "oauth-work-renamed" },
       repos.credentials,
     )
-    expect(result._unsafeUnwrap().profileName).toBe("work-renamed")
+    expect(result._unsafeUnwrap().name).toBe("oauth-work-renamed")
 
     // Assert oauthMeta preservation from a RE-READ of the persisted row — not the
-    // returned object (setProfileName rebuilds its return from the pre-update row,
-    // so that alone could pass even if the DB write corrupted oauth_meta). The
+    // returned object (setName rebuilds its return from the pre-update row, so
+    // that alone could pass even if the DB write corrupted oauth_meta). The
     // reread proves the stored oauth_meta is intact + the rename persisted.
     const reread = (await repos.credentials.get(String(created.id)))._unsafeUnwrap()
-    expect(reread.profileName).toBe("work-renamed")
+    expect(reread.name).toBe("oauth-work-renamed")
     expect(reread.oauthMeta).toEqual(created.oauthMeta)
   })
 
   // ---------------------------------------------------------------------------
-  // (f)/(g) 32.13 Slice B2 — duplicate-account guard (excludes own id)
+  // (f)/(g) increment 46 (RC) — duplicate-NAME guard, now GLOBAL (not
+  // per-platform — the old profileName duplicate-account guard was
+  // platform-scoped; name uniqueness spans every credential).
   // ---------------------------------------------------------------------------
 
-  it("(f) renaming to a SIBLING credential's existing label -> typed duplicate-account, nothing written", async () => {
+  it("(f) renaming to a SIBLING credential's existing name -> typed duplicate-name, nothing written", async () => {
     const idA = await seedCredential("work")
     const idB = await seedCredential("personal")
+    const nameA = (await repos.credentials.get(idA))._unsafeUnwrap().name
 
-    const result = await renameCredential({ credentialId: idB, account: "work" }, repos.credentials)
+    const result = await renameCredential({ credentialId: idB, account: nameA }, repos.credentials)
     expect(result.isErr()).toBe(true)
     const err = result._unsafeUnwrapErr()
-    expect(err.kind).toBe("duplicate-account")
-    if (err.kind === "duplicate-account") {
-      expect(err.account).toBe("work")
+    expect(err.kind).toBe("duplicate-name")
+    if (err.kind === "duplicate-name") {
+      expect(err.name).toBe(nameA)
     }
 
     // idA/idB unchanged.
     const rereadA = (await repos.credentials.get(idA))._unsafeUnwrap()
     const rereadB = (await repos.credentials.get(idB))._unsafeUnwrap()
-    expect(rereadA.profileName).toBe("work")
-    expect(rereadB.profileName).toBe("personal")
+    expect(rereadA.name).toBe(nameA)
+    expect(rereadB.name).not.toBe(nameA)
   })
 
-  it("(g) renaming a credential to its OWN existing label is a no-op success, not a false duplicate", async () => {
+  it("(g) renaming a credential to its OWN existing name is a no-op success, not a false duplicate", async () => {
     const id = await seedCredential("work")
+    const currentName = (await repos.credentials.get(id))._unsafeUnwrap().name
 
-    const result = await renameCredential({ credentialId: id, account: "work" }, repos.credentials)
+    const result = await renameCredential(
+      { credentialId: id, account: currentName },
+      repos.credentials,
+    )
     expect(result.isOk()).toBe(true)
     if (result.isOk()) {
-      expect(result.value.profileName).toBe("work")
+      expect(result.value.name).toBe(currentName)
     }
   })
 
-  it("(h) two DIFFERENT platforms may each have a credential labeled the same — no cross-platform false collision", async () => {
-    // Seed a second platform + credential sharing the SAME label as an
-    // existing credential on the FIRST platform.
+  it("(h) two DIFFERENT platforms' credentials still can't share a name — global uniqueness, not platform-scoped", async () => {
+    // Seed a second platform + credential.
     const platform2Id = newPlatformId()
     await repos.platforms.create({
       id: platform2Id,
@@ -221,6 +230,8 @@ describe("renameCredential", () => {
     const platform2 = (await repos.platforms.get(platform2Id))._unsafeUnwrap()
 
     const idOnPlatform1 = await seedCredential("work")
+    const nameOnPlatform1 = (await repos.credentials.get(idOnPlatform1))._unsafeUnwrap().name
+
     const otherCredResult = await addCredential(
       { platformId: String(platform2Id), account: "personal", kind: "bearer", secret: "s2" },
       platform2,
@@ -230,17 +241,19 @@ describe("renameCredential", () => {
     if (otherCredResult.isErr()) throw otherCredResult.error
     const idOnPlatform2 = String(otherCredResult.value.id)
 
-    // Rename the platform-2 credential to "work" — same label as platform-1's
-    // credential, but a DIFFERENT platformId, so this must succeed.
+    // Rename the platform-2 credential to platform-1's credential's name —
+    // increment 46 (RC): name uniqueness is GLOBAL, so this MUST be refused
+    // even though the two credentials are on different platforms (unlike the
+    // old profileName guard, which was platform-scoped).
     const result = await renameCredential(
-      { credentialId: idOnPlatform2, account: "work" },
+      { credentialId: idOnPlatform2, account: nameOnPlatform1 },
       repos.credentials,
     )
-    expect(result.isOk()).toBe(true)
-    if (result.isOk()) expect(result.value.profileName).toBe("work")
+    expect(result.isErr()).toBe(true)
+    if (result.isErr()) expect(result.error.kind).toBe("duplicate-name")
 
     // platform-1's credential is untouched.
     const reread1 = (await repos.credentials.get(idOnPlatform1))._unsafeUnwrap()
-    expect(reread1.profileName).toBe("work")
+    expect(reread1.name).toBe(nameOnPlatform1)
   })
 })

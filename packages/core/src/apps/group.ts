@@ -21,7 +21,8 @@ import { listApps } from "./catalog.js"
 export interface Connection {
   /** Resolved app id, or "other" — NEVER undefined (see appIdForConnection). */
   appId: string
-  /** Credential profileName, or "—" for a public/no-credential platform. */
+  /** Credential name (a credential's account identity IS its name, since
+   *  increment 46), or "—" for a public/no-credential platform. */
   account: string
   platformId: string
   /** The chosen vertical for this connection. */

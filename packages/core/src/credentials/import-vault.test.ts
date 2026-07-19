@@ -16,6 +16,7 @@ import { ensureHome, getPaths } from "../paths/index.js"
 import type { Repositories } from "../repositories/index.js"
 import { createRepositories } from "../repositories/index.js"
 import { addCredential, FILE_SECRET_MAX_BYTES } from "./add-credential.js"
+import { addStandaloneCredential } from "./add-standalone-credential.js"
 import { createEncryptedFileStore } from "./encrypted-file-store.js"
 import { exportVault } from "./export-vault.js"
 import { importVault } from "./import-vault.js"
@@ -213,7 +214,6 @@ describe("importVault", () => {
           id: "cred-oauth-rt",
           name: "oauth-account-cred-oauth-rt",
           platformId: String(platformA.id),
-          profileName: "oauth-account",
           kind: "oauth2",
           secretRef: "ref-access-rt",
           oauthMeta: {
@@ -250,7 +250,10 @@ describe("importVault", () => {
       const dstCreds = (await dst.repos.credentials.list())._unsafeUnwrap()
       expect(dstCreds).toHaveLength(3)
 
-      const dstBearer = dstCreds.find((c) => c.profileName === "work")
+      // Increment 46 (RD) — export/import carries `name` through unchanged
+      // (the account identity IS the name); match on the SOURCE credential's
+      // `name` rather than the old write-only `profileName` account label.
+      const dstBearer = dstCreds.find((c) => c.name === bearer.name)
       expect(dstBearer).toBeDefined()
       if (dstBearer) {
         expect((await dst.store.get(dstBearer.secretRef))._unsafeUnwrap()).toBe("BEARER_1")
@@ -258,7 +261,7 @@ describe("importVault", () => {
         expect(dstBearer.secretRef).not.toBe(bearer.secretRef)
       }
 
-      const dstApiKey = dstCreds.find((c) => c.profileName === "personal")
+      const dstApiKey = dstCreds.find((c) => c.name === apiKey.name)
       expect(dstApiKey).toBeDefined()
       if (dstApiKey) {
         expect((await dst.store.get(dstApiKey.secretRef))._unsafeUnwrap()).toBe("APIKEY_1")
@@ -373,7 +376,6 @@ describe("importVault", () => {
           id: "cred-oauth-vs",
           name: "verify-state-account-cred-oauth-vs",
           platformId: String(platform.id),
-          profileName: "verify-state-account",
           kind: "oauth2",
           secretRef: "ref-access-vs",
           oauthMeta: {
@@ -653,9 +655,8 @@ describe("importVault", () => {
       await src.store.set("ref-access-h2new", "NEW_ACCESS")
       await src.repos.credentials.create({
         id: "cred-oauth-h2new",
-        name: "oauth-work-cred-oauth-h2new",
+        name: "oauth-work-h2",
         platformId: String(platform.id),
-        profileName: "oauth-work",
         kind: "oauth2",
         secretRef: "ref-access-h2new",
         oauthMeta: { needsReauth: false },
@@ -672,11 +673,14 @@ describe("importVault", () => {
       await dst.store.set("ref-refresh-h2old", "OLD_REFRESH")
       await dst.store.set("ref-clientid-h2old", "OLD_CLIENTID")
       await dst.store.set("ref-clientsecret-h2old", "OLD_CLIENTSECRET")
+      // Increment 46 (RD) — the collision is now a GLOBAL NAME match: the dst
+      // row must carry the SAME `name` the archive's manifest credential will
+      // export as `account`/`name` for the collision to fire (the old
+      // per-platform `profileName` match no longer exists).
       await dst.repos.credentials.create({
         id: "cred-oauth-h2old",
-        name: "oauth-work-cred-oauth-h2old",
+        name: "oauth-work-h2",
         platformId: String(platform.id),
-        profileName: "oauth-work",
         kind: "oauth2",
         secretRef: "ref-access-h2old",
         oauthMeta: {
@@ -839,8 +843,16 @@ describe("importVault", () => {
 
       const afterSecond = (await dst.repos.credentials.list())._unsafeUnwrap()
       expect(afterSecond).toHaveLength(2) // both present, no dupes
-      const accounts = afterSecond.map((c) => c.profileName).sort()
-      expect(accounts).toEqual(["one", "two"])
+      // Increment 46 (RA) — the account seed ("one"/"two") lands entirely in
+      // the derived `name` (`<platformId>-<account>`, slugified/lowercased);
+      // there is no separate stored account label to assert on anymore.
+      const names = afterSecond.map((c) => c.name).sort()
+      expect(names).toEqual(
+        [
+          `${String(platformA.id).toLowerCase()}-one`,
+          `${String(platformB.id).toLowerCase()}-two`,
+        ].sort(),
+      )
     })
 
     it("profiles: added credential's route remaps to the new id; public route unchanged", async () => {
@@ -900,7 +912,7 @@ describe("importVault", () => {
 
       // The remapped route's credentialId must point at the FRESH dst credential.
       const dstCreds = (await dst.repos.credentials.list())._unsafeUnwrap()
-      const dstCred = dstCreds.find((c) => c.profileName === "work")
+      const dstCred = dstCreds.find((c) => c.name === cred.name)
       expect(dstCred).toBeDefined()
       expect(String(remapRoute?.credentialId)).toBe(String(dstCred?.id))
       expect(String(remapRoute?.credentialId)).not.toBe(String(cred.id))
@@ -1147,7 +1159,6 @@ describe("importVault", () => {
         id: "cred-oauth-dedicated",
         name: "oauth-dedicated-cred-oauth-dedicated",
         platformId: String(platform.id),
-        profileName: "oauth-dedicated",
         kind: "oauth2",
         secretRef: "ref-access-dedicated",
         oauthMeta: { needsReauth: false },
@@ -1389,7 +1400,6 @@ describe("importVault", () => {
             id: "cred-oauth-comp",
             name: "comp-account-cred-oauth-comp",
             platformId: String(platformOauth.id),
-            profileName: "comp-account",
             kind: "oauth2",
             secretRef: "ref-access-comp",
             oauthMeta: {
@@ -1896,7 +1906,7 @@ describe("importVault", () => {
 
         // Every pre-existing row/ref survived the compensation untouched.
         const survivingCred = (await dst.repos.credentials.get(preCred.id))._unsafeUnwrap()
-        expect(survivingCred.profileName).toBe("pre-existing")
+        expect(survivingCred.name).toBe(preCred.name)
         expect((await dst.store.get(preCred.secretRef))._unsafeUnwrap()).toBe("PRE_EXISTING_SECRET")
         const survivingPlatform = (await dst.repos.platforms.get(prePlatform.id))._unsafeUnwrap()
         expect(survivingPlatform.displayName).toBe("Pre-existing Platform")
@@ -2165,6 +2175,230 @@ describe("importVault", () => {
           expect(resolved.error.kind).toBe("no-provider-source")
         }
       })
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // Increment 46 (Fable RD/RE) — identity re-point: effective name (not
+  // per-platform account) is the collision key; pre-46/pre-42 archives still
+  // import cleanly.
+  // ---------------------------------------------------------------------------
+  describe("identity re-point (increment 46, RD)", () => {
+    let dst: Fixture
+
+    beforeEach(async () => {
+      dst = await makeHome("junction-import-namerepoint-dst-")
+    })
+
+    afterEach(async () => {
+      await dst.restore()
+    })
+
+    it("pre-46 archive where account !== name imports cleanly, with `name` winning as identity", async () => {
+      const platform = await seedPlatform(src.repos, "Pre-46 Platform")
+      // A pre-46 archive can carry a manifest credential whose `account`
+      // (the old profileName-sourced label) diverges from `name` — e.g. an
+      // explicit-name create (`--name gh-main --account work`) or a
+      // subsequent rename that only touched `name` (RE's divergence paths).
+      const manifest: VaultManifest = {
+        v: 1,
+        exportedAt: new Date().toISOString(),
+        platforms: [platform],
+        credentials: [
+          {
+            name: "gh-main",
+            platformId: String(platform.id),
+            account: "work", // diverges from `name` — must be IGNORED as identity
+            kind: "bearer",
+            secret: "PRE46_SECRET",
+            _srcId: "src-pre46-divergent-1",
+          },
+        ],
+      }
+      const archive = await buildRawArchive(manifest, "pre46-divergent-pass")
+
+      const result = await importVault({
+        repos: dst.repos,
+        store: dst.store,
+        archive,
+        passphrase: "pre46-divergent-pass",
+      })
+      expect(result.isOk()).toBe(true)
+      if (!result.isOk()) return
+      expect(result.value.credentials.added).toBe(1)
+      expect(result.value.credentials.failed).toHaveLength(0)
+
+      const dstCreds = (await dst.repos.credentials.list())._unsafeUnwrap()
+      expect(dstCreds).toHaveLength(1)
+      // `name` wins as identity — NOT `account`.
+      expect(dstCreds[0]?.name).toBe("gh-main")
+      expect((await dst.store.get(dstCreds[0]?.secretRef ?? ""))._unsafeUnwrap()).toBe(
+        "PRE46_SECRET",
+      )
+    })
+
+    it("pre-42 archive with NO mc.name derives a name from account and imports", async () => {
+      const platform = await seedPlatform(src.repos, "Pre-42 Platform")
+      // A pre-42 archive predates the `name` field entirely — the manifest
+      // credential carries only `account` (no `name` key at all).
+      const manifest: VaultManifest = {
+        v: 1,
+        exportedAt: new Date().toISOString(),
+        platforms: [platform],
+        credentials: [
+          {
+            platformId: String(platform.id),
+            account: "legacy-account",
+            kind: "bearer",
+            secret: "PRE42_SECRET",
+            _srcId: "src-pre42-1",
+          },
+        ],
+      }
+      const archive = await buildRawArchive(manifest, "pre42-pass")
+
+      const result = await importVault({
+        repos: dst.repos,
+        store: dst.store,
+        archive,
+        passphrase: "pre42-pass",
+      })
+      expect(result.isOk()).toBe(true)
+      if (!result.isOk()) return
+      expect(result.value.credentials.added).toBe(1)
+      expect(result.value.credentials.failed).toHaveLength(0)
+
+      const dstCreds = (await dst.repos.credentials.list())._unsafeUnwrap()
+      expect(dstCreds).toHaveLength(1)
+      // Derived per deriveCredentialName's rule: `<platformId>-<account>`, slugified.
+      expect(dstCreds[0]?.name).toBe(`${String(platform.id).toLowerCase()}-legacy-account`)
+    })
+
+    it("collision is keyed by NAME globally, regardless of platform — a manifest credential whose effective name already exists on a DIFFERENT platform is detected", async () => {
+      const platformSrc = await seedPlatform(src.repos, "Collision Src Platform")
+
+      // Seed a pre-existing dst credential — UNLINKED, on no platform at all —
+      // carrying the SAME name the incoming (platform-linked) archive
+      // credential will resolve to. Proves the collision check is global
+      // across the linked/unlinked divide too, not just cross-platform.
+      const existing = (
+        await addStandaloneCredential(
+          { name: "shared-global-name", kind: "bearer", secret: "EXISTING_SECRET" },
+          dst.store,
+          dst.repos.credentials,
+        )
+      )._unsafeUnwrap()
+
+      const manifest: VaultManifest = {
+        v: 1,
+        exportedAt: new Date().toISOString(),
+        platforms: [platformSrc],
+        credentials: [
+          {
+            name: "shared-global-name",
+            platformId: String(platformSrc.id),
+            account: "irrelevant-account",
+            kind: "bearer",
+            secret: "INCOMING_SECRET",
+            _srcId: "src-global-collide-1",
+          },
+        ],
+      }
+      const archive = await buildRawArchive(manifest, "global-collide-pass")
+
+      // skip (default): the DIFFERENT-platform, SAME-name credential is still
+      // recognized as a collision — proves the check is global, not per-platform.
+      const skipResult = await importVault({
+        repos: dst.repos,
+        store: dst.store,
+        archive,
+        passphrase: "global-collide-pass",
+      })
+      expect(skipResult.isOk()).toBe(true)
+      if (!skipResult.isOk()) return
+      expect(skipResult.value.credentials.skipped).toBe(1)
+      expect(skipResult.value.credentials.added).toBe(0)
+      const afterSkip = (await dst.repos.credentials.list())._unsafeUnwrap()
+      expect(afterSkip).toHaveLength(1)
+      expect((await dst.store.get(afterSkip[0]?.secretRef ?? ""))._unsafeUnwrap()).toBe(
+        "EXISTING_SECRET",
+      ) // untouched
+
+      // error: aborts on the same cross-platform name collision.
+      const errorResult = await importVault({
+        repos: dst.repos,
+        store: dst.store,
+        archive,
+        passphrase: "global-collide-pass",
+        onCollision: "error",
+      })
+      expect(errorResult.isErr()).toBe(true)
+      if (errorResult.isErr()) expect(errorResult.error.kind).toBe("import-failed")
+
+      // overwrite: replaces the pre-existing (different-platform) row.
+      const overwriteResult = await importVault({
+        repos: dst.repos,
+        store: dst.store,
+        archive,
+        passphrase: "global-collide-pass",
+        onCollision: "overwrite",
+      })
+      expect(overwriteResult.isOk()).toBe(true)
+      if (!overwriteResult.isOk()) return
+      expect(overwriteResult.value.credentials.overwritten).toBe(1)
+      const afterOverwrite = (await dst.repos.credentials.list())._unsafeUnwrap()
+      expect(afterOverwrite).toHaveLength(1)
+      expect(afterOverwrite[0]?.id).not.toBe(existing.id)
+      expect((await dst.store.get(afterOverwrite[0]?.secretRef ?? ""))._unsafeUnwrap()).toBe(
+        "INCOMING_SECRET",
+      )
+    })
+
+    it("strict prevalidation's within-archive duplicate check is keyed by effective NAME (not [platformId, account])", async () => {
+      const platformA = await seedPlatform(src.repos, "Strict Name Dup A")
+      const platformB = await seedPlatform(src.repos, "Strict Name Dup B")
+      // Two DIFFERENT platforms, DIFFERENT accounts, but the SAME explicit
+      // `name` — under the old [platformId, account] key this would NOT have
+      // collided; under the new effective-name key it must.
+      const manifest: VaultManifest = {
+        v: 1,
+        exportedAt: new Date().toISOString(),
+        platforms: [platformA, platformB],
+        credentials: [
+          {
+            name: "clashing-name",
+            platformId: String(platformA.id),
+            account: "account-a",
+            kind: "bearer",
+            secret: "SECRET_A",
+            _srcId: "src-name-dup-a",
+          },
+          {
+            name: "clashing-name",
+            platformId: String(platformB.id),
+            account: "account-b",
+            kind: "bearer",
+            secret: "SECRET_B",
+            _srcId: "src-name-dup-b",
+          },
+        ],
+      }
+      const archive = await buildRawArchive(manifest, "strict-name-dup-pass")
+
+      const result = await importVault({
+        repos: dst.repos,
+        store: dst.store,
+        archive,
+        passphrase: "strict-name-dup-pass",
+        strict: true,
+      })
+      expect(result.isErr()).toBe(true)
+      if (result.isErr()) {
+        expect(result.error.kind).toBe("import-failed")
+        expect(result.error.kind === "import-failed" && result.error.reason).toContain("duplicate")
+      }
+      const dstCreds = (await dst.repos.credentials.list())._unsafeUnwrap()
+      expect(dstCreds).toHaveLength(0)
     })
   })
 })

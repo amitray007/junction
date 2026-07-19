@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// renameCredential — edit a credential's account LABEL (profileName) in place.
+// renameCredential — edit a credential's identity `name` in place.
 //
-// This is the ONLY editable metadata (increment 29 follow-up, Task 5). It is a
-// pure display/organization label with no token-integrity coupling and no
-// uniqueness constraint, so it can be changed freely without touching the
-// secret, the OAuth tokens, or any *Ref.
+// This is the ONLY editable identity metadata (increment 29 follow-up, Task
+// 5; re-pointed onto `name` by increment 46, Fable RA — the old profileName
+// "account label" concept is gone, and a credential's account identity IS its
+// `name`). It is a pure display/organization label with no token-integrity
+// coupling, so it can be changed freely without touching the secret, the
+// OAuth tokens, or any *Ref — but its GLOBAL uniqueness IS enforced (the
+// `credentials_name_unique` index), unlike the old profileName rename.
 //
 // DELIBERATELY NOT editable in place:
 //   - the secret            → rotate-only (rotateCredential); a deliberate boundary.
@@ -20,70 +23,74 @@ import { errAsync, type ResultAsync } from "neverthrow"
 import type { CredentialError, DbError } from "../errors/index.js"
 import type { CredentialsRepo } from "../repositories/credentials.js"
 import type { Credential } from "../schema/credential.js"
+import { CredentialNameSchema } from "../schema/credential.js"
 
 export interface RenameCredentialInput {
   /** ID of the credential to rename. */
   credentialId: string
-  /** The new account label (profileName), e.g. "work" → "work-primary". */
+  /** The new identity name, e.g. "gh-work" → "gh-work-primary". */
   account: string
 }
 
 /**
- * Rename a credential's account label (profileName) in place.
+ * Rename a credential's identity `name` in place.
  *
- * Validates the new label (non-empty after trim), then reads the credential
- * (to learn its platformId, so the duplicate-account guard below can scope
- * correctly) before writing via the repo's setProfileName (read-before-write,
- * so a missing credential surfaces as not-found). Returns the updated
- * Credential (metadata only — no secret ever enters this path).
- *
- * DUPLICATE-ACCOUNT GUARD (32.13 Slice B2): mirrors addCredential's
- * forPlatform pre-check, but EXCLUDES the credential's OWN id from the
- * collision set — renaming a credential to its EXISTING label must be a
- * no-op success, not a false "duplicate" (it always collides with itself).
- * Without this guard, the rename write would fall through to the DB's
- * `credentials_platform_profile_unique` index (32.9) and surface the
- * generic/wrong "constraint violation (check that referenced
- * platform/credential/profile exists)" — actively misleading, since nothing
- * referenced is missing; the real cause is a sibling credential already
- * holding that label.
+ * Validates the new name against `CredentialNameSchema` (trimmed first —
+ * the schema itself doesn't trim), then reads the credential so a rename to
+ * its OWN existing name is a no-op success (never a false "duplicate" — it
+ * always collides with itself). Otherwise runs a friendly global `list()`
+ * pre-check for a `duplicate-name` error BEFORE the write, with the DB's
+ * `credentials_name_unique` index as the backstop for a race that slips past
+ * the pre-check (surfaced via `setName`'s `constraint-violation` mapping).
+ * Returns the updated Credential (metadata only — no secret ever enters this
+ * path).
  */
 export function renameCredential(
   input: RenameCredentialInput,
   credentialsRepo: CredentialsRepo,
 ): ResultAsync<Credential, CredentialError | DbError> {
-  const account = input.account.trim()
-  if (account === "") {
+  const trimmed = input.account.trim()
+  const nameParse = CredentialNameSchema.safeParse(trimmed)
+  if (!nameParse.success) {
     return errAsync({
       kind: "invalid-input" as const,
-      reason: "account label must not be empty",
+      reason: `invalid name: ${nameParse.error.issues.map((i) => i.message).join(", ")}`,
     })
   }
+  const name = nameParse.data
+
+  // DB backstop: a `credentials_name_unique` violation that slips past the
+  // list() pre-check below (e.g. a concurrent rename racing this call's read)
+  // surfaces from setName as a raw `constraint-violation` DbError — remapped
+  // here to the SAME typed `duplicate-name` shape as the pre-check, so every
+  // caller sees one uniform error regardless of which path caught it.
+  const setNameOrDuplicate = (
+    id: string,
+    newName: string,
+  ): ResultAsync<Credential, CredentialError | DbError> =>
+    credentialsRepo.setName(id, newName).orElse((dbErr) => {
+      if (dbErr.kind === "constraint-violation") {
+        return errAsync({ kind: "duplicate-name" as const, name: newName })
+      }
+      return errAsync(dbErr)
+    })
+
   return credentialsRepo.get(input.credentialId).andThen((current) => {
-    // Rename-to-own-label is always a no-op success — never a false collision.
-    if (current.profileName === account) {
-      return credentialsRepo.setProfileName(input.credentialId, account)
+    // Rename-to-own-name is always a no-op success — never a false collision.
+    if (current.name === name) {
+      return setNameOrDuplicate(input.credentialId, name)
     }
-    // Increment 42 — an UNLINKED credential (platformId: null) has no
-    // platform-scoped duplicate-account guard to run (the guard's purpose is
-    // "no two credentials on the SAME platform share this label," which is
-    // moot with no platform) — rename it directly.
-    if (current.platformId === null) {
-      return credentialsRepo.setProfileName(input.credentialId, account)
-    }
-    const platformId = current.platformId
+    // Increment 46 — global uniqueness pre-check (name identity is no longer
+    // platform-scoped; the old per-platform duplicate-account guard collapsed
+    // into `credentials_name_unique`, which spans every credential).
     return credentialsRepo
-      .forPlatform(platformId)
-      .andThen((existing): ResultAsync<Credential, CredentialError | DbError> => {
-        const duplicate = existing.some((c) => c.id !== current.id && c.profileName === account)
+      .list()
+      .andThen((all): ResultAsync<Credential, CredentialError | DbError> => {
+        const duplicate = all.some((c) => c.id !== current.id && c.name === name)
         if (duplicate) {
-          return errAsync({
-            kind: "duplicate-account" as const,
-            platformId: String(platformId),
-            account,
-          })
+          return errAsync({ kind: "duplicate-name" as const, name })
         }
-        return credentialsRepo.setProfileName(input.credentialId, account)
+        return setNameOrDuplicate(input.credentialId, name)
       })
   })
 }

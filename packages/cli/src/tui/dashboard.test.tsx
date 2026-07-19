@@ -234,7 +234,6 @@ describe("loadDashboardSnapshot (DB integration)", () => {
       id: credId,
       name: "work-dash-1",
       platformId,
-      profileName: "work",
       kind: "api-key",
       secretRef: SECRET_REF, // must NOT appear in TUI output
     })
@@ -287,7 +286,6 @@ describe("loadDashboardSnapshot (DB integration)", () => {
       id: credId,
       name: "work-dash-2",
       platformId,
-      profileName: "work",
       kind: "bearer",
       secretRef: SECRET_REF, // must NOT appear in output
     })
