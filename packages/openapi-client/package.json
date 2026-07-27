@@ -15,10 +15,10 @@
   },
   "dependencies": {
     "@junction/core": "workspace:*",
-    "@scalar/openapi-parser": "^0.28.8",
+    "@scalar/openapi-parser": "^0.28.10",
     "neverthrow": "catalog:"
   },
   "devDependencies": {
-    "@types/node": "^26.1.0"
+    "@types/node": "^26.1.1"
   }
 }
