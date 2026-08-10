@@ -31,7 +31,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         with:
           cache: true
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - run: pnpm install --frozen-lockfile
@@ -111,7 +111,7 @@ jobs:
       - uses: pnpm/action-setup@v6
         with:
           cache: true
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - run: pnpm install --frozen-lockfile
@@ -175,7 +175,7 @@ jobs:
       - name: Run osv-scanner (report-only step — severity gate follows)
         id: scan
         continue-on-error: true
-        uses: google/osv-scanner-action/osv-scanner-action@9a498708959aeaef5ef730655706c5a1df1edbc2 # v2.3.8
+        uses: google/osv-scanner-action/osv-scanner-action@8deb546fdb875b9996d27d4950be7312dac076a1 # v2.5.0
         with:
           scan-args: |-
             --recursive
