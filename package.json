@@ -34,19 +34,19 @@
     "type-coverage:check": "type-coverage -p tsconfig.typecoverage.json --strict --at-least 99"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.2",
+    "@biomejs/biome": "^2.5.9",
     "@changesets/changelog-github": "^0.7.0",
     "@changesets/cli": "^2.31.0",
-    "dependency-cruiser": "^18.0.0",
-    "jscpd": "^5.0.11",
-    "knip": "^6.25.0",
-    "lefthook": "^2.1.9",
-    "syncpack": "^15.3.2",
-    "tsdown": "^0.22.3",
-    "type-coverage": "^2.29.7",
+    "dependency-cruiser": "^18.2.0",
+    "jscpd": "^5.0.16",
+    "knip": "^6.32.2",
+    "lefthook": "^2.1.10",
+    "syncpack": "^15.3.3",
+    "tsdown": "^0.22.14",
+    "type-coverage": "^2.30.1",
     "typescript": "^6.0.3",
     "unrun": "^0.3.1",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
