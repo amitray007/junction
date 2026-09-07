@@ -3,5 +3,5 @@ packages:
   - "packages/mcp/*"
 
 catalog:
-  zod: "^4.4.0"
+  zod: "^4.5.4"
   neverthrow: "^8.2.0"
